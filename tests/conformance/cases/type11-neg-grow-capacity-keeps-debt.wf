@@ -1,0 +1,15 @@
+struct Stack {
+  window: Box<Slots<u64>>;
+  invariant roomy(stack): stack.window.inner.cap <= 16_u64;
+}
+
+fn room(stack: &Stack) -> result: u64 reads(stack) {
+  let n = stack^.window.inner.cap;
+  return n;
+}
+
+fn widen(stack: &Stack) -> result: u64 writes(stack) {
+  grow(cell: &stack^.window, capacity: 32_u64);
+  let got = room(stack: stack);
+  return got;
+}

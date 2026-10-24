@@ -1,0 +1,21 @@
+struct Stack {
+  window: Box<Slots<u64>>;
+  invariant short(stack): stack.window.inner.len < 16_u64;
+}
+
+struct Holder {
+  stack: Stack;
+}
+
+fn depth(stack: &Stack) -> result: u64 reads(stack) {
+  let n = stack^.window.inner.len;
+  return n;
+}
+
+fn widen(holder: &Holder, capacity: u64) -> result: u64 writes(holder) contract {
+  requires capacity >= holder^.stack.window.inner.cap;
+} {
+  grow(cell: &holder^.stack.window, capacity: capacity);
+  let got = depth(stack: &holder^.stack);
+  return got;
+}

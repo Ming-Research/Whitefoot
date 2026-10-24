@@ -861,27 +861,39 @@ impl Input<'_, '_> {
     /// of `invariant` at `anchor`: the storage of a fragment-integer datum,
     /// or the descriptor word a measure member names, which a write of that
     /// word, of the measured place or above it replaces, and a write of an
-    /// element or of another word does not [MSR-2].
+    /// element or of another word does not [MSR-2]. A `relocation` write of
+    /// `grow` or `grow_paged` at a cell reaches no datum its classification
+    /// keeps, such as the length of the cell's window.
     fn write_reaches_read_set(
         &self,
         oracle: &dyn SeparationOracle,
         written: &ResolvedPlace,
         anchor: &ResolvedPlace,
         invariant: &CheckedAffineInvariant,
+        relocation: bool,
     ) -> bool {
         invariant.data.iter().any(|datum| {
             let mut place = anchor.clone();
             place.path.extend(datum_steps(datum));
-            places_overlap(oracle, written, &place)
+            if !relocation {
+                return places_overlap(oracle, written, &place);
+            }
+            // A measure reads its supporting word [MSR-2].
+            if let Some(PlaceStep::Measure(measure)) = place.path.last_mut() {
+                *measure = measure.support_word();
+            }
+            self.relocation_reaches(oracle, &place, written)
         })
     }
 
     /// [TYPE-11.S3] the write row: a write at `written` adds a debt for each
     /// anchor strictly above the first `limit` steps of the written place and
-    /// each affine invariant of the anchor whose read set the write reaches.
-    /// A write through the reference `through` names, whose referent is the
-    /// written place's first steps up to the given count, records that
-    /// reference on each debt at or below the referent [TYPE-11.S5].
+    /// each affine invariant of the anchor whose read set the write reaches,
+    /// a `relocation` write under its [ENT-5] classification. A write through
+    /// the reference `through` names, whose referent is the written place's
+    /// first steps up to the given count, records that reference on each
+    /// debt at or below the referent [TYPE-11.S5].
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn seal_write(
         &self,
         debts: &mut Debts,
@@ -889,6 +901,7 @@ impl Input<'_, '_> {
         written: &ResolvedPlace,
         limit: usize,
         through: Option<(BindingId, usize)>,
+        relocation: bool,
         source: &crate::NodePath,
     ) {
         if !self.sealing {
@@ -913,7 +926,7 @@ impl Input<'_, '_> {
                 path: written.path[..depth].to_vec(),
             };
             for (index, invariant) in invariants.iter().enumerate() {
-                if self.write_reaches_read_set(oracle, written, &anchor, invariant) {
+                if self.write_reaches_read_set(oracle, written, &anchor, invariant, relocation) {
                     debts.add(Debt {
                         anchor: anchor.clone(),
                         invariant: Some(index),
@@ -2546,6 +2559,7 @@ impl Analyzer<'_, '_> {
                         &written,
                         written.path.len(),
                         through,
+                        false,
                         node_path,
                     );
                     if !sealed {
@@ -2607,6 +2621,11 @@ impl Analyzer<'_, '_> {
             if transport == CallTransport::ReadOnlyReference || writes.is_empty() {
                 continue;
             }
+            // [ENT-5] the cell write of `grow` or `grow_paged`, as the kill
+            // judgment classifies it.
+            let relocation = formal_effects.is_none()
+                && callee.is_some_and(|callee| callee.relocation)
+                && index == 0;
             let referents = self
                 .input
                 .argument_referents(argument)
@@ -2641,6 +2660,7 @@ impl Analyzer<'_, '_> {
                         &written,
                         referent.path.len(),
                         None,
+                        relocation,
                         call,
                     );
                 }

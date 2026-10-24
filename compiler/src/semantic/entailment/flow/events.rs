@@ -119,36 +119,46 @@ impl Input<'_, '_> {
             return true;
         }
         supports.iter().any(|support| {
-            writes.iter().any(|write| {
-                if !self.places.overlaps(separations, support, write) {
-                    return false;
-                }
-                if support.path.len() < write.path.len() {
-                    return true;
-                }
-                let mut selected_cell = support.clone();
-                selected_cell.path.truncate(write.path.len());
-                // [OWN-7] two positions of one fixed slot shape are equal
-                // or disjoint. In both cases relocation preserves a filled
-                // descendant or length of the selected cell. An unresolved
-                // descendant cover or shifted range needs actual identity,
-                // exactly as the shared exchange judgment requires.
-                if !write.exchange_safe(separations, &selected_cell) {
-                    return true;
-                }
-                let suffix = &support.path[write.path.len()..];
-                // The Box's identity, logical length, and every descendant
-                // of an already filled selection remain the same value.
-                !matches!(
-                    suffix,
-                    [] | [PlaceStep::Deref, PlaceStep::Measure(CheckedMeasure::Length)]
-                        | [PlaceStep::Deref, PlaceStep::Index(_), ..]
-                        | [PlaceStep::Deref, PlaceStep::Range(_), ..]
-                        | [PlaceStep::Deref, PlaceStep::Part(WindowPart::Filled), ..]
-                        | [PlaceStep::Deref, PlaceStep::Page(_), ..]
-                )
-            })
+            writes.iter().any(|write| self.relocation_reaches(separations, support, write))
         })
+    }
+
+    /// [ENT-5] whether a relocation write at the resolved cell `write`
+    /// reaches the resolved `support`: the cell's identity, its window's
+    /// length word and every descendant of a filled selection survive it.
+    pub(super) fn relocation_reaches(
+        &self,
+        separations: &dyn SeparationOracle,
+        support: &ResolvedPlace,
+        write: &ResolvedPlace,
+    ) -> bool {
+        if !self.places.overlaps(separations, support, write) {
+            return false;
+        }
+        if support.path.len() < write.path.len() {
+            return true;
+        }
+        let mut selected_cell = support.clone();
+        selected_cell.path.truncate(write.path.len());
+        // [OWN-7] two positions of one fixed slot shape are equal or
+        // disjoint. In both cases relocation preserves a filled descendant or
+        // length of the selected cell. An unresolved descendant cover or
+        // shifted range needs actual identity, exactly as the shared exchange
+        // judgment requires.
+        if !write.exchange_safe(separations, &selected_cell) {
+            return true;
+        }
+        let suffix = &support.path[write.path.len()..];
+        // The Box's identity, logical length, and every descendant of an
+        // already filled selection remain the same value.
+        !matches!(
+            suffix,
+            [] | [PlaceStep::Deref, PlaceStep::Measure(CheckedMeasure::Length)]
+                | [PlaceStep::Deref, PlaceStep::Index(_), ..]
+                | [PlaceStep::Deref, PlaceStep::Range(_), ..]
+                | [PlaceStep::Deref, PlaceStep::Part(WindowPart::Filled), ..]
+                | [PlaceStep::Deref, PlaceStep::Page(_), ..]
+        )
     }
 
     /// [MSR-2] whether one event kills a measure of `support`.

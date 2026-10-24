@@ -8,11 +8,14 @@
 # programs), the trial compile of the downstream programs with the branch's
 # compiler and main's at the branch's latest merge of it, the cases of a
 # whole store of a sealed value through a reference that may name several
-# places, each checked with main's compiler, the branch's at its previous
-# head, which removed every debt proved at or below each member of such a
-# store, the branch's head, the head that removes no debt at such a store,
-# and the head that removes every debt the reference recorded wherever it
-# lies, and the repository-level static checks and the change-log check
+# places and of a grow's relocation write, each checked with main's
+# compiler, the branch's before both changes, which removed every debt
+# proved at or below each member of such a store and gave a relocation
+# write the debts of an ordinary one, the branch's head, the head that
+# removes no debt at such a store, the head that removes every debt the
+# reference recorded wherever it lies, the head that judges a relocation
+# write as an ordinary one, and the head whose relocation write reaches no
+# datum, and the repository-level static checks and the change-log check
 # against the branch's fork point. Removed before the branch is ready.
 name: tmp-sealed-invariants
 
@@ -292,24 +295,30 @@ jobs:
           done
 
   # The cases of a whole store of a sealed value through a reference that
-  # may name several places, and the cases of such references that predate
-  # this change, each checked with main's compiler at the branch's latest
-  # merge of it, the branch's at its previous head, which removed the debts
+  # may name several places, the cases of such references that predate
+  # this change, and the cases of a grow's relocation write under a struct's
+  # invariant, each checked with main's compiler at the branch's latest
+  # merge of it, the branch's before both changes, which removed the debts
   # proved at or below every member and so accepts the case that keeps a
-  # debt a straight write left, the branch's head, the head that removes no
-  # debt at such a store, which must reject the case that restores through
-  # the store, and the head that removes every debt the reference recorded
-  # wherever it lies, which must accept the case whose debt lies above the
-  # stored field; each verdict is printed with its first error and the
-  # opening of each rejection. One probe stores below a recorded debt's
-  # anchor's field instead of at the reference's referent.
+  # debt a straight write left, and gave a relocation write the debts of an
+  # ordinary one and so refuses the case whose window keeps its length, the
+  # branch's head, the head that removes no debt at such a store, which must
+  # reject the case that restores through the store, the head that removes
+  # every debt the reference recorded wherever it lies, which must accept
+  # the case whose debt lies above the stored field, the head that judges a
+  # relocation write as an ordinary one, which must reject the case whose
+  # window keeps its length, and the head whose relocation write reaches no
+  # datum, which must accept the case whose capacity grows past the bound;
+  # each verdict is printed with its first error and the opening of each
+  # rejection. One probe stores below a recorded debt's anchor's field
+  # instead of at the reference's referent.
   probe:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        compiler: [main, previous-head, head, without-recorded-removal, recorded-anywhere]
+        compiler: [main, previous-head, head, without-recorded-removal, recorded-anywhere, relocation-as-ordinary, relocation-reaches-nothing]
     steps:
       - uses: actions/checkout@v4
       - name: Install the host toolchain
@@ -341,6 +350,16 @@ jobs:
               ;;
             recorded-anywhere)
               perl -0777 -pi -e 's/!\(proved_at_or_below\(debt, place\)\n\s*&& debt\.through/!(debt.through/ or die "the recorded removal is gone\n"' \
+                compiler/src/semantic/entailment/flow/sealing.rs
+              git diff
+              ;;
+            relocation-as-ordinary)
+              perl -0777 -pi -e 's/if !relocation \{/if !relocation || std::hint::black_box(true) {/ or die "the relocation judgment is gone\n"' \
+                compiler/src/semantic/entailment/flow/sealing.rs
+              git diff
+              ;;
+            relocation-reaches-nothing)
+              perl -0777 -pi -e 's/self\.relocation_reaches\(oracle, &place, written\)/std::hint::black_box(false) && self.relocation_reaches(oracle, &place, written)/ or die "the relocation judgment is gone\n"' \
                 compiler/src/semantic/entailment/flow/sealing.rs
               git diff
               ;;
@@ -407,7 +426,8 @@ jobs:
             type11-pos-joined-reference-store-restores \
             type11-neg-joined-reference-field-store-keeps-debt \
             type11-pos-reference-two-targets-restored type11-neg-reference-rebound-before-restored \
-            type11-neg-swap-joined-reference-keeps-debt type11-pos-call-result-sealed-at-receiver; do
+            type11-neg-swap-joined-reference-keeps-debt type11-pos-call-result-sealed-at-receiver \
+            type11-pos-grow-keeps-length-sealed type11-neg-grow-capacity-keeps-debt; do
             check "case $case" "$cases/$case.wf"
           done
           echo "compiler ${{ matrix.compiler }}:"
