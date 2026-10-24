@@ -84,7 +84,11 @@ jobs:
             llvm-objdump -d --no-show-raw-insn --no-leading-addr "$out/bench-$arm" > "$out/dis-$arm.txt"
             F='wf_std\.collections\.hash_map\.hash_map_rebuild\$instance\$[0-9a-f]+' awk '$0 ~ ("^<" ENVIRON["F"] ">:$"){p=1} p&&/^$/{p=0} p' "$out/dis-$arm.txt" \
               | awk 'NR>1{print $1}' > "$out/ops-$arm.txt"
+            # The moving loop: from the first hash constant to the old backing's release.
+            awk '/movabsq/{p=1} p{print} /heap_give/{if(p) exit}' "$out/ops-$arm.txt" > "$out/move-$arm.txt"
             printf '%s: %s instructions, %s movabsq, called from %s sites\n' "$arm" "$(wc -l < "$out/ops-$arm.txt")" "$(grep -c movabsq "$out/ops-$arm.txt")" \
               "$(grep -cE 'call.*hash_map_(rebuild|migrate)' "$out/dis-$arm.txt")"
           done
           diff "$out/ops-base.txt" "$out/ops-candidate.txt" || true
+          echo "moving loop: base $(wc -l < "$out/move-base.txt"), candidate $(wc -l < "$out/move-candidate.txt") instructions"
+          diff "$out/move-base.txt" "$out/move-candidate.txt" && echo "moving loop: same instruction sequence as the merge base"

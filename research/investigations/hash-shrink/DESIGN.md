@@ -301,9 +301,10 @@ node.
 the same function growth uses. The rebuild now refuses a bucket count below
 the length, the condition its migration needs, instead of one below the
 current bucket count; reserve, rehash and insertion never pass a smaller
-count, so they behave as before. Its zero-bucket early return is gone: a
-zero target drains the vacant and deleted buckets and takes the static empty
-backing, so it still allocates nothing. An earlier revision split the
+count, so they behave as before. Its zero-bucket early return now applies
+only to a map that already has zero buckets; any other zero target drains
+the vacant and deleted buckets and takes the static empty backing, so it
+allocates nothing. An earlier revision split the
 migration into a helper behind a refusing wrapper; that compiled the moving
 loop with two of its three hash constants reloaded for every pair and one
 pair copy split into two stores, and growth of a 1,000-pair map measured
