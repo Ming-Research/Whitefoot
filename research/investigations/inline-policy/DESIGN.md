@@ -190,7 +190,8 @@ Reading of round 1, against the criteria written before it:
 - Thresholds 325, 1,000 and 2,000 recover the witness (both intervals wholly
   below 1); 500 does not, on a different runner model, which the hosted
   noise does not let this round separate from a real difference. `-O3` does
-  not; its locally-hot boost does not reach the bench's call sites. Full LTO
+  not, although 36 of the bench's sites met its locally-hot threshold of 525;
+  which sites those are this round did not report. Full LTO
   alone moves remove-insert about 2%, not the 4%–4.5% that shrinking cost.
 - Code size grows steeply above 500: Halo's text doubles at 1,000 and
   quadruples at 2,000, so those are rejected as a global setting whatever
