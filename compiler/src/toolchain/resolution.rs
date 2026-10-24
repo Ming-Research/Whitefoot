@@ -457,7 +457,7 @@ mod tests {
                 .join("ld.lld"),
         );
         assert_eq!(arguments, [OsString::from("-fuse-ld=lld"), expected]);
-        assert!(toolchain.cache_identity().is_ok());
+        toolchain.cache_identity().expect("fake clang version");
     }
 
     #[cfg(target_os = "linux")]
@@ -566,7 +566,7 @@ mod tests {
             arguments,
             [OsString::from("-isysroot"), sdk.into_os_string(), expected]
         );
-        assert!(toolchain.cache_identity().is_ok());
+        toolchain.cache_identity().expect("fake clang version");
     }
 
     #[cfg(unix)]

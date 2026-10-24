@@ -1,0 +1,80 @@
+# Temporary (board item wf-toolchain-test-flaky); remove before the branch is ready.
+# Runs the toolchain unit tests many times at high thread counts, the way the
+# gate's unit group ran them when one failed, and prints the error text of
+# every failure, so that a cause (the exec of a just-written script failing
+# with ETXTBSY, "Text file busy") is read from a log rather than inferred.
+name: tmp-toolchain-flaky
+
+on:
+  push:
+    branches: [wf-toolchain-test-flaky]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: tmp-toolchain-flaky-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  WHITEFOOT_CHECK_TIMEOUT: 1800
+
+jobs:
+  loop:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    name: toolchain tests in a loop
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          sudo sysctl -w kernel.core_pattern=core
+          rustup default stable
+          nproc
+          grep -m 1 'model name' /proc/cpuinfo
+      - name: Build the library tests
+        run: |
+          perl .github/run-check.pl tft-fetch cargo fetch --locked --manifest-path compiler/Cargo.toml
+          perl .github/run-check.pl tft-build cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib --no-run
+      - name: Run the toolchain tests in a loop
+        run: |
+          bin=$(cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib --no-run --message-format=json 2>/dev/null \
+            | jq -r 'select(.reason=="compiler-artifact" and .profile.test==true and .executable!=null) | .executable' | tail -1)
+          echo "test binary: $bin"
+          cd compiler
+          out="$RUNNER_TEMP/loop"
+          mkdir -p "$out"
+          # Four loops at once, each with sixteen test threads: the tests that
+          # write a script and start it run at the same moment, as they do in
+          # the unit group.
+          loop() {
+            fails=0
+            for i in $(seq 1 "$2"); do
+              if ! "$bin" toolchain:: --test-threads=16 > "$out/run-$1.txt" 2>&1; then
+                fails=$((fails + 1))
+                { echo "== loop $1 iteration $i"; grep -E -A8 '^---- |panicked|Text file busy' "$out/run-$1.txt"; } >> "$out/failures-$1.txt"
+              fi
+            done
+            echo "$fails" > "$out/fails-$1"
+          }
+          iterations=${ITERATIONS:-500}
+          for worker in 1 2 3 4; do loop "$worker" "$iterations" & done
+          wait
+          total=0
+          for worker in 1 2 3 4; do total=$((total + $(cat "$out/fails-$worker"))); done
+          cat "$out"/failures-*.txt 2>/dev/null || true
+          echo "toolchain tests: $total failures in $((iterations * 4)) runs"
+          echo "toolchain tests: $total failures in $((iterations * 4)) runs" >> "$GITHUB_STEP_SUMMARY"
+          test "$total" -eq 0
