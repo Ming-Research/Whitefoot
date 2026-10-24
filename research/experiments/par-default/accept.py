@@ -42,7 +42,7 @@ HERE = Path(__file__).resolve().parent
 UNIFIED = ("small_constant", "small_split", "recursion", "spine", "hot_helper", "large_helper",
            "mandelbrot", "records", "fir", "stencil", "prefix", "histogram")
 # Whole-process programs: each is compiled from one staged source by both
-# compilers. which= rewrites vm.wf's kernel selector as match-dispatch/build.sh does.
+# compilers. which= selects vm.wf's kernel (see select_vm_kernel).
 PROGRAMS = {
     "hist256": dict(kind="indexed", source="research/experiments/indexed-reduction-timing/histogram.wf",
                     widths=(1, 2, 4, 8)),
@@ -54,6 +54,7 @@ PROGRAMS = {
     "vm-mandel": dict(kind="dispatch", source="research/experiments/match-dispatch/wf/vm.wf", which=3, widths=(1, 8)),
 }
 VM_SELECTOR = "  let which = 0_u64;"
+VM_KERNELS = 4
 INDEXED = frozenset(("prefix", "histogram", "hist256", "hist4096"))
 # Workloads whose frozen manifest declares a nonhoistable per-repetition decision.
 DECISION_WORKLOADS = ("small_split",)
@@ -169,6 +170,40 @@ def checksum(completed, label):
 
 # ---------------------------------------------------------------- construction
 
+def select_vm_kernel(text, which):
+    """Keep only the selected kernel's arm of vm.wf's `if which == K` chain.
+
+    With the selector a constant every one of those conditions is decided, and
+    the redundant-condition rule [OP-5] rejects a decided condition; this is
+    the mechanical repair its diagnostic gives, applied to each arm.
+    """
+    lines = text.split("\n")
+    if lines.count(VM_SELECTOR) != 1:
+        raise SystemExit("vm.wf must contain its kernel selector exactly once")
+    kept, index, arms = [], 0, set()
+    while index < len(lines):
+        line = lines[index]
+        arm = next((k for k in range(VM_KERNELS) if line == f"  if which == {k}_u64 {{"), None)
+        if line == VM_SELECTOR:
+            index += 1
+            continue
+        if arm is None:
+            kept.append(line)
+            index += 1
+            continue
+        end = lines.index("  }", index + 1)
+        if arm == which:
+            body = lines[index + 1:end]
+            if not all(row.startswith("    ") or not row for row in body):
+                raise SystemExit(f"vm.wf kernel {arm}: arm body is not indented under its test")
+            kept.extend(row[2:] for row in body)
+        arms.add(arm)
+        index = end + 1
+    if arms != set(range(VM_KERNELS)):
+        raise SystemExit(f"vm.wf kernel chain has arms {sorted(arms)}, expected 0..{VM_KERNELS - 1}")
+    return "\n".join(kept)
+
+
 def build_programs(root, candidate, base, build):
     """Stage each program once; compile it with both compilers; twin is a copy."""
     staged_dir = build / "programs"
@@ -176,9 +211,7 @@ def build_programs(root, candidate, base, build):
     for name, meta in PROGRAMS.items():
         text = (root / meta["source"]).read_text()
         if "which" in meta:
-            if text.count(VM_SELECTOR) != 1:
-                raise SystemExit(f"{name}: vm.wf must contain its kernel selector exactly once")
-            text = text.replace(VM_SELECTOR, f"  let which = {meta['which']}_u64;")
+            text = select_vm_kernel(text, meta["which"])
         staged = staged_dir / f"{name}.wf"
         staged.write_text(text)
         for arm, compiler, flags in (("seq", candidate, []), ("demand", candidate, ["--par"]), ("par", base, ["--par"])):
@@ -666,6 +699,24 @@ def self_test():
         groups, _ = load_rows(path, 2)
         expect(evaluate("hist256", 2, groups["hist256", 2, 1], None)["status"] == "inconclusive",
                "a nonpositive differenced time is inconclusive")
+
+    # Kernel selection keeps exactly the chosen arm, and refuses a chain it
+    # does not recognize instead of staging a program with the wrong kernel.
+    vm = (HERE.parents[1] / "match-dispatch" / "wf" / "vm.wf").read_text()
+    for which in range(VM_KERNELS):
+        staged = select_vm_kernel(vm, which)
+        expect("which" not in staged,
+               f"kernel {which}: the selector survives staging")
+        for other, builder in enumerate(("build_loop", "build_fib", "build_sieve", "build_mandel")):
+            calls = staged.count(f"set ok = {builder}(code: &code);")
+            expect(calls == (other == which), f"kernel {which}: {builder} staged {calls} times")
+    for broken, reason in ((vm.replace("  if which == 3_u64 {", "  if which == 4_u64 {"), "a missing arm"),
+                           (vm.replace(VM_SELECTOR, ""), "no selector")):
+        try:
+            select_vm_kernel(broken, 0)
+        except SystemExit:
+            continue
+        raise AssertionError(f"select_vm_kernel accepted {reason}")
     print("accept.py self-test: pass")
 
 

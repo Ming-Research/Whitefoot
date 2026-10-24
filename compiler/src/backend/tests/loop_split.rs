@@ -2433,7 +2433,8 @@ fn assert_combine_rows(reference: &[u8], published: &[u8], setting: &str) {
 }
 
 /// Two dynamic split loops surround an ordinary call join and precede a
-/// loop-header phi. One image checks requested and unrequested execution and the sequential world;
+/// loop-header phi. One image checks forced-request execution, execution where only idle
+/// lanes may request, and the sequential world;
 /// native construction also verifies every emitted phi predecessor.
 #[test]
 fn multiple_split_loops_and_an_ordinary_join_keep_phi_predecessors() {
@@ -2535,7 +2536,10 @@ static void report(void) {
     unsigned entered = atomic_load(&splitters);
     int sequential = strcmp(getenv("WF_WORKERS"), "1") == 0;
     int positive = getenv("WF_TEST_POSITIVE_BUDGET") != NULL;
-    if (sequential ? entered != 0 : (positive ? entered <= 2 : entered != 2)) {
+    /* Without the observer's request an idle lane may still send an advisory
+     * request (a failed steal scan does), so that run enters each splitter at
+     * least once and may split; the forced request always splits. */
+    if (sequential ? entered != 0 : (positive ? entered <= 2 : entered < 2)) {
         fprintf(stderr, "composed loops: splitters=%u\n", entered);
         _Exit(118);
     }
@@ -3097,7 +3101,7 @@ fn main() -> status: std::process::ExitStatus pure {
             "weak",
         ),
         (
-            "x86_64-pc-windows-msvc",
+            crate::target::WINDOWS_X86_64_TRIPLE,
             "thread_local global i64",
             "external",
         ),
