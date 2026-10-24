@@ -33,8 +33,10 @@ pub(super) fn contradictory_successes(name: &str, source: &[u8]) -> Result<Vec<S
 
 /// Each pinned repair is carried out by its programs [DIAG-1]: each
 /// alternative is accepted, and its construct runs in a state that is not
-/// contradictory.
+/// contradictory. Every pair is judged, and the run fails naming each pair
+/// that failed, whose own message the panic hook has printed.
 pub(super) fn run_pairs() {
+    let mut failed = Vec::new();
     for pair in super::REPAIRS
         .iter()
         .chain(super::call_separations::CALL_SEPARATIONS)
@@ -70,82 +72,93 @@ pub(super) fn run_pairs() {
         .chain(super::common_syntax::COMMON_SYNTAX)
         .chain(super::reserved_names::RESERVED_NAMES)
     {
-        let failure = compile(
-            &[SourceInput::new(pair.name, pair.rejected)],
-            CompilerLimits::default(),
-        )
-        .expect_err(pair.name);
-        super::entry_formers::assert_span(pair, &failure);
-        assert_eq!(
-            failure.kind(),
-            CompilationFailureKind::Source,
-            "{}: {failure}",
-            pair.name
+        let judged = std::panic::catch_unwind(|| run_pair(pair));
+        if judged.is_err() {
+            failed.push(pair.name);
+        }
+    }
+    assert!(failed.is_empty(), "pinned repairs failed: {failed:?}");
+}
+
+/// One pair: the rejection carries the repair, and each alternative carries
+/// it out.
+fn run_pair(pair: &super::RepairPair) {
+    let Err(failure) = compile(
+        &[SourceInput::new(pair.name, pair.rejected)],
+        CompilerLimits::default(),
+    ) else {
+        panic!("{}: the rejected program is accepted", pair.name);
+    };
+    super::entry_formers::assert_span(pair, &failure);
+    assert_eq!(
+        failure.kind(),
+        CompilationFailureKind::Source,
+        "{}: {failure}",
+        pair.name
+    );
+    assert_eq!(
+        failure.rule_id(),
+        Some(pair.rule),
+        "{}: {failure}",
+        pair.name
+    );
+    // [TYPE-9] semantic tests pin the complete call or written targ
+    // span. Pin its rendered start here with the existing repair run.
+    let citation = match pair.name {
+        "type9-neg-runtime-slots-content-swap.wf" => {
+            Some(("  ", "swap(first: &small.inner, second: &large.inner)"))
+        }
+        "type9-neg-generic-runtime-content-swap.wf" => Some(("exchange::<", "Slots<u64>")),
+        "type9-neg-function-actual-runtime-content-swap.wf" => {
+            Some(("fn swap::<", "Slots<u64>"))
+        }
+        _ => None,
+    };
+    if let Some((prefix, cited)) = citation {
+        let source = std::str::from_utf8(pair.rejected).expect("source is text");
+        let start = source
+            .find(&format!("{prefix}{cited}"))
+            .expect("refused construct")
+            + prefix.len();
+        let before = &source[..start];
+        let line = before.bytes().filter(|byte| *byte == b'\n').count() as u64 + 1;
+        let column = before
+            .rsplit('\n')
+            .next()
+            .expect("source line")
+            .chars()
+            .count() as u64
+            + 1;
+        let location = failure.location().expect("source location");
+        assert_eq!(location.path(), pair.name);
+        assert_eq!((location.line(), location.column()), (line, column));
+    }
+    let rendered = format!("{failure}\n");
+    if pair.sentences.is_empty() {
+        assert!(
+            !rendered.contains("\n  mechanical_fix:"),
+            "{}: this position must not offer an unverified repair: {rendered}",
+            pair.name,
         );
-        assert_eq!(
-            failure.rule_id(),
-            Some(pair.rule),
-            "{}: {failure}",
-            pair.name
+    }
+    for sentence in pair.sentences {
+        assert!(
+            rendered.contains(sentence),
+            "{}: the rejection no longer carries this repair.\nwanted: {sentence}\ngot:    {rendered}",
+            pair.name,
         );
-        // [TYPE-9] semantic tests pin the complete call or written targ
-        // span. Pin its rendered start here with the existing repair run.
-        let citation = match pair.name {
-            "type9-neg-runtime-slots-content-swap.wf" => {
-                Some(("  ", "swap(first: &small.inner, second: &large.inner)"))
-            }
-            "type9-neg-generic-runtime-content-swap.wf" => Some(("exchange::<", "Slots<u64>")),
-            "type9-neg-function-actual-runtime-content-swap.wf" => {
-                Some(("fn swap::<", "Slots<u64>"))
-            }
-            _ => None,
-        };
-        if let Some((prefix, cited)) = citation {
-            let source = std::str::from_utf8(pair.rejected).expect("source is text");
-            let start = source
-                .find(&format!("{prefix}{cited}"))
-                .expect("refused construct")
-                + prefix.len();
-            let before = &source[..start];
-            let line = before.bytes().filter(|byte| *byte == b'\n').count() as u64 + 1;
-            let column = before
-                .rsplit('\n')
-                .next()
-                .expect("source line")
-                .chars()
-                .count() as u64
-                + 1;
-            let location = failure.location().expect("source location");
-            assert_eq!(location.path(), pair.name);
-            assert_eq!((location.line(), location.column()), (line, column));
-        }
-        let rendered = format!("{failure}\n");
-        if pair.sentences.is_empty() {
-            assert!(
-                !rendered.contains("\n  mechanical_fix:"),
-                "{}: this position must not offer an unverified repair: {rendered}",
-                pair.name,
-            );
-        }
-        for sentence in pair.sentences {
-            assert!(
-                rendered.contains(sentence),
-                "{}: the rejection no longer carries this repair.\nwanted: {sentence}\ngot:    {rendered}",
-                pair.name,
-            );
-        }
-        for (alternative, source) in pair.repaired.iter().enumerate() {
-            match contradictory_successes(pair.name, source) {
-                Ok(contradictions) => assert!(
-                    contradictions.is_empty(),
-                    "{}: alternative {alternative} succeeds only where its state is contradictory: {contradictions:?}",
-                    pair.name
-                ),
-                Err(rejection) => panic!(
-                    "{}: alternative {alternative} is rejected:\n{rejection}",
-                    pair.name
-                ),
-            }
+    }
+    for (alternative, source) in pair.repaired.iter().enumerate() {
+        match contradictory_successes(pair.name, source) {
+            Ok(contradictions) => assert!(
+                contradictions.is_empty(),
+                "{}: alternative {alternative} succeeds only where its state is contradictory: {contradictions:?}",
+                pair.name
+            ),
+            Err(rejection) => panic!(
+                "{}: alternative {alternative} is rejected:\n{rejection}",
+                pair.name
+            ),
         }
     }
 }
