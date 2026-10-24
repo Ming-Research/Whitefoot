@@ -54,10 +54,11 @@ if [ -z "$ARM_REMARKS" ]; then
 fi
 # A per-module compile prints its remarks; an LTO link writes the remarks of
 # its link-time optimization, whose decisions are the final ones, to a YAML
-# file of its own beside the collected text (one per ThinLTO backend task).
+# file of its own beside the collected text (one per ThinLTO backend task);
+# lld takes these two options' values as separate arguments.
 if [ "$links" = 1 ] && [ "$lto" = 1 ]; then
-    exec "$ARM_CLANG" "${args[@]}" "-Wl,--opt-remarks-filename=$ARM_REMARKS.lto.$$.yaml" \
-        -Wl,--opt-remarks-passes=inline
+    exec "$ARM_CLANG" "${args[@]}" "-Wl,--opt-remarks-filename,$ARM_REMARKS.lto.$$.yaml" \
+        -Wl,--opt-remarks-passes,inline
 fi
 printf '### invocation %s\n' "$*" >> "$ARM_REMARKS"
 exec "$ARM_CLANG" "${args[@]}" -Rpass=inline -Rpass-missed=inline 2>> "$ARM_REMARKS"
