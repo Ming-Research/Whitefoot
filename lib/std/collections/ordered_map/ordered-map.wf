@@ -1,6 +1,6 @@
 fn ordered_map_new<K, V, const ceiling: u64>() -> result: OrderedMap<K, V, ceiling> pure {
   let root = slots_new::<Box<OrderedNode<K, V>>, 1>();
-  return OrderedMap<K, V, ceiling>(root: move root, length: 0_u64);
+  return OrderedMap<K, V, ceiling>(root: move root, length: 0_u64, version: 0_u64);
 }
 
 fn ordered_map_len<K, V, const ceiling: u64>(map: &OrderedMap<K, V, ceiling>) -> length: u64 reads(map) contract {
@@ -139,6 +139,7 @@ fn ordered_map_put<interface OrderedKey<K, E>, V, const ceiling: u64>(map: &Orde
     }
   }
   set map^.length = map^.length + 1_u64;
+  set map^.version = map^.version +wrap 1_u64;
   return OrderedPut<K, V>::OrderedInserted();
 }
 
@@ -361,6 +362,7 @@ fn ordered_map_remove<interface OrderedKey<K, E>, V, const ceiling: u64>(map: &O
       if map^.length > 0_u64 {
         set map^.length = map^.length - 1_u64;
       }
+      set map^.version = map^.version +wrap 1_u64;
       return Some<OrderedPair<K, V>>(value: move removed_pair);
     }
   }
@@ -477,6 +479,339 @@ fn ordered_map_range<interface OrderedKey<K, E>, V, F, fn visit(env: &F, key: &K
   return unit;
 }
 
+enum OrderedMove {
+  OrderedMoved();
+  OrderedExhausted();
+  OrderedLost();
+}
+
+fn ordered_map_cursor_at(version: u64) -> cursor: OrderedCursor pure {
+  doc "A cursor on no pair. A cursor's path holds, for each level from the root, the child it descends to, a child index from 0 (the leading link) to the entry count, and at its last level, depth minus one, the index of the entry it is on; depth zero is no pair.";
+  let path = array_filled::<u8, 32>(value: 0_u8);
+  return OrderedCursor(path: path, depth: 0_u64, version: version);
+}
+
+fn ordered_map_cursor_mark(cursor: &OrderedCursor, level: u64, index: u64) -> result: unit writes(cursor) contract {
+  requires level < 32_u64;
+} {
+  doc "Records index at level and makes level the cursor's last. Callers stop at the 33rd level, leaving the cursor on no pair: fifteen entries a node and at least seven in every node below the root put that level beyond 10^28 pairs.";
+  let narrow = cvt.wrap::<u64, u8>(index);
+  set cursor^.path[level] = narrow;
+  set cursor^.depth = level + 1_u64;
+  return unit;
+}
+
+fn ordered_map_edge_node<K, V>(node: &OrderedNode<K, V>, cursor: &OrderedCursor, level: u64, last: Bool) -> result: OrderedMove reads(node), writes(cursor) {
+  doc "Places the cursor, from level down, on the first pair of the node's subtree, or its last when last is set.";
+  if level < 32_u64 {
+  } else {
+    set cursor^.depth = 0_u64;
+    return OrderedMove::OrderedLost();
+  }
+  let next = level + 1_u64;
+  if last {
+    let count = node^.entries.len;
+    if count == 0_u64 {
+      set cursor^.depth = 0_u64;
+      return OrderedMove::OrderedLost();
+    }
+    let final = count - 1_u64;
+    if node^.entries[final].after.len > 0_u64 {
+      ordered_map_cursor_mark(cursor: cursor, level: level, index: count);
+      return ordered_map_edge_node::<K, V>(node: &node^.entries[final].after[0_u64].inner, cursor: cursor, level: next, last: last);
+    }
+    ordered_map_cursor_mark(cursor: cursor, level: level, index: final);
+    return OrderedMove::OrderedMoved();
+  }
+  if node^.leading.len > 0_u64 {
+    ordered_map_cursor_mark(cursor: cursor, level: level, index: 0_u64);
+    return ordered_map_edge_node::<K, V>(node: &node^.leading[0_u64].inner, cursor: cursor, level: next, last: last);
+  }
+  if node^.entries.len == 0_u64 {
+    set cursor^.depth = 0_u64;
+    return OrderedMove::OrderedLost();
+  }
+  ordered_map_cursor_mark(cursor: cursor, level: level, index: 0_u64);
+  return OrderedMove::OrderedMoved();
+}
+
+fn ordered_map_edge<K, V, const ceiling: u64>(map: &OrderedMap<K, V, ceiling>, last: Bool) -> cursor: OrderedCursor reads(map) {
+  let cursor = ordered_map_cursor_at(version: map^.version);
+  if map^.root.len > 0_u64 {
+    let placed = ordered_map_edge_node::<K, V>(node: &map^.root[0_u64].inner, cursor: &cursor, level: 0_u64, last: last);
+  }
+  return cursor;
+}
+
+fn ordered_map_first<K, V, const ceiling: u64>(map: &OrderedMap<K, V, ceiling>) -> cursor: OrderedCursor reads(map) {
+  let last = False();
+  let first = ordered_map_edge::<K, V, ceiling>(map: map, last: last);
+  return first;
+}
+
+fn ordered_map_last<K, V, const ceiling: u64>(map: &OrderedMap<K, V, ceiling>) -> cursor: OrderedCursor reads(map) {
+  let last = True();
+  let found = ordered_map_edge::<K, V, ceiling>(map: map, last: last);
+  return found;
+}
+
+fn ordered_map_partition<K, V, E, P, fn place(env: &E, left: &K, right: &P) -> order: i32 reads(env), reads(left), reads(right)>(node: &OrderedNode<K, V>, exclusive: Bool, probe: &P, env: &E) -> position: u64 reads(node), reads(probe), reads(env) contract {
+  ensures position <= node^.entries.len;
+} {
+  doc "The number of leading entries whose keys lie before the sought position: ordered before the probe, or at it too when exclusive is set.";
+  let count = node^.entries.len;
+  for (index in 0_u64..count) {
+    let order = place(env: env, left: &node^.entries[index].pair.key, right: probe);
+    let beyond = order >= 0_i32;
+    if exclusive {
+      set beyond = order > 0_i32;
+    }
+    if beyond {
+      return index;
+    }
+  }
+  return count;
+}
+
+fn ordered_map_seek_link<K, V, E, P, fn place(env: &E, left: &K, right: &P) -> order: i32 reads(env), reads(left), reads(right)>(link: &Slots<Box<OrderedNode<K, V>>, 1>, cursor: &OrderedCursor, level: u64, exclusive: Bool, upward: Bool, probe: &P, env: &E) -> result: OrderedMove reads(link), reads(probe), reads(env), writes(cursor) {
+  if link^.len > 0_u64 {
+    return ordered_map_seek_node::<K, V, E, P, fn place>(node: &link^[0_u64].inner, cursor: cursor, level: level, exclusive: exclusive, upward: upward, probe: probe, env: env);
+  }
+  return OrderedMove::OrderedExhausted();
+}
+
+fn ordered_map_seek_node<K, V, E, P, fn place(env: &E, left: &K, right: &P) -> order: i32 reads(env), reads(left), reads(right)>(node: &OrderedNode<K, V>, cursor: &OrderedCursor, level: u64, exclusive: Bool, upward: Bool, probe: &P, env: &E) -> result: OrderedMove reads(node), reads(probe), reads(env), writes(cursor) {
+  doc "Places the cursor on the first entry of the subtree past the sought position when upward is set, or the last before it otherwise. The child between the entries on either side of the position is searched first; when it holds no such entry, the entry beside the position in this node is the one, if it exists.";
+  let position = ordered_map_partition::<K, V, E, P, fn place>(node: node, exclusive: exclusive, probe: probe, env: env);
+  if level < 32_u64 {
+  } else {
+    return OrderedMove::OrderedLost();
+  }
+  ordered_map_cursor_mark(cursor: cursor, level: level, index: position);
+  let next = level + 1_u64;
+  let below = OrderedMove::OrderedExhausted();
+  if position == 0_u64 {
+    set below = ordered_map_seek_link::<K, V, E, P, fn place>(link: &node^.leading, cursor: cursor, level: next, exclusive: exclusive, upward: upward, probe: probe, env: env);
+  } else {
+    let previous = position - 1_u64;
+    set below = ordered_map_seek_link::<K, V, E, P, fn place>(link: &node^.entries[previous].after, cursor: cursor, level: next, exclusive: exclusive, upward: upward, probe: probe, env: env);
+  }
+  match below {
+    OrderedMoved() => {
+      return OrderedMove::OrderedMoved();
+    }
+    OrderedLost() => {
+      return OrderedMove::OrderedLost();
+    }
+    OrderedExhausted() => {
+    }
+  }
+  if upward {
+    if position < node^.entries.len {
+      ordered_map_cursor_mark(cursor: cursor, level: level, index: position);
+      return OrderedMove::OrderedMoved();
+    }
+    return OrderedMove::OrderedExhausted();
+  }
+  if position == 0_u64 {
+    return OrderedMove::OrderedExhausted();
+  }
+  let previous = position - 1_u64;
+  ordered_map_cursor_mark(cursor: cursor, level: level, index: previous);
+  return OrderedMove::OrderedMoved();
+}
+
+fn ordered_map_seek<K, V, E, P, fn place(env: &E, left: &K, right: &P) -> order: i32 reads(env), reads(left), reads(right), const ceiling: u64>(map: &OrderedMap<K, V, ceiling>, seek: OrderedSeek, probe: &P, env: &E) -> cursor: OrderedCursor reads(map), reads(probe), reads(env) {
+  doc "Each seek is one monotone split of the keys, before or past a position: at least and at most split after the keys ordered before the probe or at it, respectively; above and below the other way. At least and above take the first key past the split, at most and below the last key before it.";
+  let exclusive = False();
+  let upward = True();
+  match seek {
+    OrderedAtLeast() => {
+    }
+    OrderedAbove() => {
+      set exclusive = True();
+    }
+    OrderedAtMost() => {
+      set exclusive = True();
+      set upward = False();
+    }
+    OrderedBelow() => {
+      set upward = False();
+    }
+  }
+  let cursor = ordered_map_cursor_at(version: map^.version);
+  let found = ordered_map_seek_link::<K, V, E, P, fn place>(link: &map^.root, cursor: &cursor, level: 0_u64, exclusive: exclusive, upward: upward, probe: probe, env: env);
+  match found {
+    OrderedMoved() => {
+    }
+    OrderedLost() => {
+      set cursor.depth = 0_u64;
+    }
+    OrderedExhausted() => {
+      set cursor.depth = 0_u64;
+    }
+  }
+  return cursor;
+}
+
+fn ordered_map_step_link<K, V>(link: &Slots<Box<OrderedNode<K, V>>, 1>, cursor: &OrderedCursor, level: u64, forward: Bool) -> result: OrderedMove reads(link), writes(cursor) {
+  if link^.len > 0_u64 {
+    return ordered_map_step_node::<K, V>(node: &link^[0_u64].inner, cursor: cursor, level: level, forward: forward);
+  }
+  return OrderedMove::OrderedLost();
+}
+
+fn ordered_map_step_node<K, V>(node: &OrderedNode<K, V>, cursor: &OrderedCursor, level: u64, forward: Bool) -> result: OrderedMove reads(node), writes(cursor) {
+  doc "Follows the cursor's path through this node. At its last level the cursor moves into the child beside its entry, to that subtree's nearest pair, or else to the neighbouring entry here; at a level above, a child that has no further pair in the direction hands the move to the entry beside that child.";
+  if level < 32_u64 {
+  } else {
+    return OrderedMove::OrderedLost();
+  }
+  let index = cvt::<u8, u64>(cursor^.path[level]);
+  let next = level + 1_u64;
+  if next >= cursor^.depth {
+    if index < node^.entries.len {
+    } else {
+      return OrderedMove::OrderedLost();
+    }
+    if forward {
+      if node^.entries[index].after.len > 0_u64 {
+        let child = index + 1_u64;
+        ordered_map_cursor_mark(cursor: cursor, level: level, index: child);
+        let first = False();
+        return ordered_map_edge_node::<K, V>(node: &node^.entries[index].after[0_u64].inner, cursor: cursor, level: next, last: first);
+      }
+      let following = index + 1_u64;
+      if following < node^.entries.len {
+        ordered_map_cursor_mark(cursor: cursor, level: level, index: following);
+        return OrderedMove::OrderedMoved();
+      }
+      return OrderedMove::OrderedExhausted();
+    }
+    if index == 0_u64 {
+      if node^.leading.len > 0_u64 {
+        ordered_map_cursor_mark(cursor: cursor, level: level, index: 0_u64);
+        let last = True();
+        return ordered_map_edge_node::<K, V>(node: &node^.leading[0_u64].inner, cursor: cursor, level: next, last: last);
+      }
+      return OrderedMove::OrderedExhausted();
+    }
+    let previous = index - 1_u64;
+    if node^.entries[previous].after.len > 0_u64 {
+      ordered_map_cursor_mark(cursor: cursor, level: level, index: index);
+      let last = True();
+      return ordered_map_edge_node::<K, V>(node: &node^.entries[previous].after[0_u64].inner, cursor: cursor, level: next, last: last);
+    }
+    ordered_map_cursor_mark(cursor: cursor, level: level, index: previous);
+    return OrderedMove::OrderedMoved();
+  }
+  let below = OrderedMove::OrderedLost();
+  if index == 0_u64 {
+    set below = ordered_map_step_link::<K, V>(link: &node^.leading, cursor: cursor, level: next, forward: forward);
+  } else {
+    let previous = index - 1_u64;
+    if previous < node^.entries.len {
+      set below = ordered_map_step_link::<K, V>(link: &node^.entries[previous].after, cursor: cursor, level: next, forward: forward);
+    }
+  }
+  match below {
+    OrderedMoved() => {
+      return OrderedMove::OrderedMoved();
+    }
+    OrderedLost() => {
+      return OrderedMove::OrderedLost();
+    }
+    OrderedExhausted() => {
+    }
+  }
+  if forward {
+    if index < node^.entries.len {
+      ordered_map_cursor_mark(cursor: cursor, level: level, index: index);
+      return OrderedMove::OrderedMoved();
+    }
+    return OrderedMove::OrderedExhausted();
+  }
+  if index == 0_u64 {
+    return OrderedMove::OrderedExhausted();
+  }
+  let previous = index - 1_u64;
+  ordered_map_cursor_mark(cursor: cursor, level: level, index: previous);
+  return OrderedMove::OrderedMoved();
+}
+
+fn ordered_map_step<K, V, const ceiling: u64>(map: &OrderedMap<K, V, ceiling>, cursor: &OrderedCursor, direction: OrderedDirection) -> moved: Bool reads(map), writes(cursor) {
+  if cursor^.version != map^.version {
+    set cursor^.depth = 0_u64;
+    return False();
+  }
+  if cursor^.depth == 0_u64 {
+    return False();
+  }
+  let forward = True();
+  match direction {
+    OrderedForward() => {
+    }
+    OrderedBackward() => {
+      set forward = False();
+    }
+  }
+  let stepped = ordered_map_step_link::<K, V>(link: &map^.root, cursor: cursor, level: 0_u64, forward: forward);
+  match stepped {
+    OrderedMoved() => {
+      return True();
+    }
+    OrderedLost() => {
+      set cursor^.depth = 0_u64;
+      return False();
+    }
+    OrderedExhausted() => {
+      set cursor^.depth = 0_u64;
+      return False();
+    }
+  }
+}
+
+fn ordered_map_read_link<K, V, F, R, fn observe(env: &F, key: &K, value: &V) -> result: R reads(key), reads(value), writes(env)>(link: &Slots<Box<OrderedNode<K, V>>, 1>, cursor: &OrderedCursor, level: u64, env: &F) -> result: Result<R, unit> reads(link), reads(cursor), writes(env) {
+  if link^.len > 0_u64 {
+    return ordered_map_read_node::<K, V, F, R, fn observe>(node: &link^[0_u64].inner, cursor: cursor, level: level, env: env);
+  }
+  return Err<R, unit>(error: unit);
+}
+
+fn ordered_map_read_node<K, V, F, R, fn observe(env: &F, key: &K, value: &V) -> result: R reads(key), reads(value), writes(env)>(node: &OrderedNode<K, V>, cursor: &OrderedCursor, level: u64, env: &F) -> result: Result<R, unit> reads(node), reads(cursor), writes(env) {
+  if level < 32_u64 {
+  } else {
+    return Err<R, unit>(error: unit);
+  }
+  let index = cvt::<u8, u64>(cursor^.path[level]);
+  let next = level + 1_u64;
+  if next >= cursor^.depth {
+    if index < node^.entries.len {
+      let observed = observe(env: env, key: &node^.entries[index].pair.key, value: &node^.entries[index].pair.value);
+      return Ok<R, unit>(value: move observed);
+    }
+    return Err<R, unit>(error: unit);
+  }
+  if index == 0_u64 {
+    return ordered_map_read_link::<K, V, F, R, fn observe>(link: &node^.leading, cursor: cursor, level: next, env: env);
+  }
+  let previous = index - 1_u64;
+  if previous < node^.entries.len {
+    return ordered_map_read_link::<K, V, F, R, fn observe>(link: &node^.entries[previous].after, cursor: cursor, level: next, env: env);
+  }
+  return Err<R, unit>(error: unit);
+}
+
+fn ordered_map_read<K, V, F, R, fn observe(env: &F, key: &K, value: &V) -> result: R reads(key), reads(value), writes(env), const ceiling: u64>(map: &OrderedMap<K, V, ceiling>, cursor: &OrderedCursor, env: &F) -> result: Result<R, unit> reads(map), reads(cursor), writes(env) {
+  if cursor^.version != map^.version {
+    return Err<R, unit>(error: unit);
+  }
+  if cursor^.depth == 0_u64 {
+    return Err<R, unit>(error: unit);
+  }
+  return ordered_map_read_link::<K, V, F, R, fn observe>(link: &map^.root, cursor: cursor, level: 0_u64, env: env);
+}
+
 fn ordered_map_free_node<K, V, F, fn consume(env: &F, key: K, value: V) -> result: unit writes(env)>(node: Box<OrderedNode<K, V>>, env: &F) -> result: unit writes(env) {
   loop @entries {
     if node.inner.entries.len == 0_u64 {
@@ -504,7 +839,7 @@ fn ordered_map_free_link<K, V, F, fn consume(env: &F, key: K, value: V) -> resul
 }
 
 fn ordered_map_free<K, V, F, fn consume(env: &F, key: K, value: V) -> result: unit writes(env), const ceiling: u64>(map: OrderedMap<K, V, ceiling>, env: &F) -> result: unit writes(env) {
-  let OrderedMap(root: root, length: length) = move map;
+  let OrderedMap(root: root, length: length, version: version) = move map;
   ordered_map_free_link::<K, V, F, fn consume>(link: move root, env: env);
   return unit;
 }

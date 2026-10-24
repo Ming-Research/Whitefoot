@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-24 The ordered map hides its tree and walks by an owned cursor
+
+Nodes: language/data-model/ordered-map-storage
+
+Summary: Clients could position, reverse or stop an ordered-map walk only by reading the published node fields, so the fanout-16 node shape, a measured baseline, had become a client contract. The node gains two decisions: the root becomes a private field and the node and entry types module-private, with only the length published for its contract; and positioned traversal is an owned cursor, an index path plus the map's version advanced by insertions and removals, made at either end or by four seeks under a caller placement, stepped either way and read through a lending callback. A stopping callback walk, successor queries by key and a cursor that silently resumes after a change are refused. The comparison and the path bound are in the [ordered-map cursor](../research/investigations/containers-and-resources/X1-LIBRARY.md#ordered-map-cursor) section.
+
 ## 2026-10-23 A returned computed integer expression proves a postcondition as a `let` of it would
 
 Nodes: language/checks-and-proofs/automatic-facts
