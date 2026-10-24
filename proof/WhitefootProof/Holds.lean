@@ -412,11 +412,11 @@ theorem Snapshot.Fresh.mono {s : Snapshot} {n n' : Nat} {new : List (Nat × Int 
 entry values `E0`, under a valuation `G` of the atoms and `ν` of the terms:
 the frame fits the binding table, whose identities are distinct; every term
 lies in its type; every atom lies in the interval a view reads for it; a
-tracked place takes its binding's value; the L0 facts hold and name the
-places of bindings in the table with their types; every image is its
-binding's value; every call datum's image is its term's value; every premise
-holds; every goal has its sign's value; every live link's binding has its
-right-hand side's value; every stable parameter still has its entry value;
+tracked place takes its binding's value; the L0 facts hold and name the places
+of bindings in the table with their types; every image is its binding's value;
+the image of every call datum and returned value is its term's value; every
+premise holds; every goal has its sign's value; every live link's binding has
+its right-hand side's value; every stable parameter still has its entry value;
 and every captured quotient is its division's quotient. -/
 structure Snapshot.HoldsWith (s : Snapshot) (E E0 : Env) (G : Nat → Int) (ν : TermVal) :
     Prop where

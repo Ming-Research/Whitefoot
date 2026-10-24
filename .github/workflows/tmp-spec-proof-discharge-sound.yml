@@ -25,6 +25,9 @@ jobs:
           "$HOME/.elan/bin/lake" --version
       - name: Restore main's checker
         run: git show origin/main:proof/WhitefootProof/Checker.lean > proof/WhitefootProof/Checker.lean
+      # The new proofs rest on the fix, so the harness is built without them.
+      - name: Leave out the proofs of the fix
+        run: sed -i -E '/^import WhitefootProof\.(Holds|DischargeSound|ObligationSound|ValueSound)$/d' proof/WhitefootProof.lean
       - name: Conformance on main's checker
         working-directory: proof
         run: |

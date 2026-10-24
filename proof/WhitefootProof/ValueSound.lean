@@ -12,9 +12,10 @@ value, which the transfer proofs use, and the obligation of a return:
 - `evalRhs_sound` and `evalRhs_val`: so does the value of any right-hand side
   that calls no function of the program, and the snapshot holds and stays
   fresh at the generator the right-hand side leaves;
-- `return_ensures`: a returned value lies in its type's range, and the
-  function's postconditions hold of it and of the parameters' entry values
-  [FN-9].
+- `return_ensures`: when the state a return's check reads holds and the value
+  it checks describes the returned value, that value lies in its type's range
+  and the function's postconditions hold of it and of the parameters' entry
+  values [FN-9].
 -/
 
 namespace Whitefoot
@@ -1270,34 +1271,20 @@ theorem ensures_holds {env : Env} {st : State} {g : Gen} {E E0 : Whitefoot.Env}
 
 /-- A return the checker accepted gives a value in its type's range, and the
 function's postconditions hold of it and of the parameters' entry values
-[FN-9]. -/
-theorem return_ensures {env : Env} {st : State} {g g1 g2 : Gen} {E E0 : Whitefoot.Env}
-    {e : Expr} {r : Rhs} {v : Value}
-    (hs : (⟨env.vars, st, g.atoms⟩ : Snapshot).Holds (E, E0))
-    (hf : (⟨env.vars, st, g.atoms⟩ : Snapshot).Fresh g.next)
-    (hr : (evalRhs env st e).run g = .ok (r, g1))
-    (ht : Static.exprTy env.prog (scopeOf env.vars) e =
-      .ok (Static.normTy env.prog env.fn.resultTy))
+[FN-9]: the state the return's check reads holds on the frame, and the checker
+value it checks describes the returned value. -/
+theorem return_ensures {env : Env} {st : State} {g g' : Gen} {E E0 : Whitefoot.Env}
+    {G : Nat → Int} {ν : TermVal} {ret : Val} {w : Value}
+    (hs : (⟨env.vars, st, g.atoms⟩ : Snapshot).HoldsWith E E0 G ν)
+    (hd : ret.Denotes (valueOf env.vars E) ν G w)
+    (hwt : w.Typed (Static.normTy env.prog env.fn.resultTy))
     (hp : env.prog.accepts = true) (hfn : env.prog.fn? env.fn.name = some env.fn)
     (hpar : ∀ prm ∈ env.fn.params, ∃ vr, env.var? prm.name = some vr ∧
       env.params.find? (·.1 == prm.name) = some (prm.name, vr.id))
     (hE0 : EnvTyped E0 (Typing.paramScope env.prog env.fn))
-    (hcall : r.call = none) (hret : (checkReturn env st r.val).run g1 = .ok ((), g2))
-    (hv : evalExpr env.prog E e = .ok v) :
-    v.InRange ∧ allHold ((env.fn.result, v) :: E0) env.fn.ensures = .ok true := by
-  obtain ⟨G, ν, hw⟩ := hs
-  obtain ⟨G1, hg1, -, hden⟩ := evalRhs_sound ⟨hw, hf⟩ hr ht hcall
-  have hE : EnvTyped E (scopeOf env.vars) := hw.fits
-  have hnofn : ∀ path targs as f', e = .call path targs as →
-      env.prog.callee? path ≠ some (.fn f') := by
-    intro path targs as f' he hc
-    obtain ⟨vs, hc', -⟩ := evalRhs_call_some hr he hc
-    rw [hcall] at hc'
-    cases hc'
-  have hvT : v.Typed (Static.normTy env.prog env.fn.resultTy) :=
-    ok_get (P := fun w => w.Typed (Static.normTy env.prog env.fn.resultTy)) (a := v)
-      (Typing.evalExpr_ok hE ht hnofn) hv
-  refine ⟨hvT.inRange, ?_⟩
+    (hret : (checkReturn env st ret).run g = .ok ((), g')) :
+    w.InRange ∧ allHold ((env.fn.result, w) :: E0) env.fn.ensures = .ok true := by
+  refine ⟨hwt.inRange, ?_⟩
   obtain ⟨u, hck⟩ := Typing.checkFn_of_mem (Typing.accepts_static hp) (fn_mem hfn)
   have hdis := checkReturn_inv hret
   rcases (Typing.checkFn_inv hck).2.1 with hnil | ⟨t, hrt, hR⟩
@@ -1306,14 +1293,14 @@ theorem return_ensures {env : Env} {st : State} {g g1 g2 : Gen} {E E0 : Whitefoo
       simp at hrq
   · apply allHold_of
     intro rq hrq
-    have hvt : v.Typed (.int t) := by
+    have hvt : w.Typed (.int t) := by
       rw [← hrt]
-      exact hvT
+      exact hwt
     obtain ⟨z, rfl, -⟩ := hvt.int
     obtain ⟨⟨_, hl⟩, ⟨_, hrr⟩⟩ := hR rq hrq
     rw [holds_val (EnvTyped.cons hvt hE0) hl hrr]
     obtain ⟨hstab, hq⟩ := hdis rq hrq
-    refine congrArg Except.ok (ensures_holds hg1.holds (hden _ hv) ?_ hq)
+    refine congrArg Except.ok (ensures_holds hs hd ?_ hq)
     intro x hx hxr
     have hxs : x ∈ ((env.fn.result, Ty.int t) :: Typing.paramScope env.prog env.fn).map (·.1) := by
       rcases relNames_names hx with h | h
@@ -1327,7 +1314,7 @@ theorem return_ensures {env : Env} {st : State} {g g1 g2 : Gen} {E E0 : Whitefoo
       have hpn' : prm.name = x := hpn
       obtain ⟨vr, hvr, hfind⟩ := hpar prm (List.mem_reverse.mp hprm)
       rw [hpn'] at hvr hfind
-      have hnc : st.contra = false := hg1.holds.not_contra
+      have hnc : st.contra = false := hs.not_contra
       have hcont : st.stable.contains vr.id = true := by
         rcases hstab x hx hxr x vr.id hfind with h | h
         · exact h
@@ -1336,10 +1323,10 @@ theorem return_ensures {env : Env} {st : State} {g g1 g2 : Gen} {E E0 : Whitefoo
       have hvr' : env.vars.find? (·.name == x) = some vr := hvr
       have hmem : vr.id ∈ st.stable := List.contains_iff_mem.mp hcont
       have hname : vr.name = x := by simpa using List.find?_some hvr'
-      obtain ⟨w, hgw, -, hval⟩ :=
-        Env.Fits.get (vars := env.vars) hg1.holds.fits hg1.holds.ids hvr'
+      obtain ⟨wx, hgw, -, hval⟩ :=
+        Env.Fits.get (vars := env.vars) hs.fits hs.ids hvr'
       have hst : Checker.valueOf env.vars E vr.id = (Whitefoot.Env.get E0 vr.name).toOption :=
-        hg1.holds.stable vr (List.mem_of_find?_eq_some hvr') hmem
+        hs.stable vr (List.mem_of_find?_eq_some hvr') hmem
       rw [hval, hname] at hst
       rw [toOption_some hst.symm, hgw]
 

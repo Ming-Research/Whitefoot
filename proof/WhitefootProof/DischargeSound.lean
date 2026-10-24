@@ -108,7 +108,7 @@ theorem candidates_sound {env : Env} {st : State} {A : List (Nat × Int × Int)}
       have himg : ∀ (x : Term) (fx : Form), x ∈ [a, b] →
           (match x with
             | .place id _ => st.image? id
-            | .datum _ _ => (st.data.find? (·.1 == x)).map (·.2)
+            | .datum _ _ | .commit _ _ => (st.data.find? (·.1 == x)).map (·.2)
             | _ => none) = some fx → ν.val x = fx.eval G := by
         intro x fx hx hfx
         cases x with
@@ -127,8 +127,12 @@ theorem candidates_sound {env : Env} {st : State} {A : List (Nat × Int × Int)}
           have hid : p.1 = Term.datum id ty := by simpa using List.find?_some hp
           rw [← hid]
           exact h.data p (List.mem_of_find?_eq_some hp)
+        | commit id ty =>
+          obtain ⟨p, hp, rfl⟩ := Option.map_eq_some_iff.mp hfx
+          have hid : p.1 = Term.commit id ty := by simpa using List.find?_some hp
+          rw [← hid]
+          exact h.data p (List.mem_of_find?_eq_some hp)
         | z => cases hfx
-        | commit _ _ => cases hfx
         | sum _ _ => cases hfx
       dsimp only
       rw [ν.val_sum, Form.eval_add, himg a fa (by simp) ha, himg b fb (by simp) hb]
