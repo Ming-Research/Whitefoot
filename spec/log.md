@@ -22,6 +22,12 @@ archive `spec/kernel-spec-<version>.md` marks a milestone: a copy of the active
 file added by a change that edits no rule. The earlier procedure archived the
 outgoing version with every amendment; git holds the rest of the history.
 
+## 2026-10-24 a relative path names a file below its root, and open_read refuses a link at any component
+
+Rules: changed PRE-2
+
+Summary: PRE-2 said `open_read` opens the file that the host's lookup of its path from the root selects, the host resolving the `..` components and every symbolic link, so a program given only a read half of a subdirectory could read `../outside.txt`, or a file behind a link planted below the root, while each name operation (`open_file`, `open_directory`, `open_append`, `open_directory_write`) refuses `.`, `..` and links. `relative_path` now returns `PathInvalid` for a path with a component `..`, a component being the code units between separators (`/` on a POSIX host, `/` or `\` on a Windows host), so `..x`, `x..` and `a/.../b` stay valid; `open_read` looks the components up in order, each directly below the directory the ones before it reached, a `.` or empty component selecting the directory it is looked up in, and returns `Err` and opens no object when a component names a symbolic link (on a Windows host a reparse point), the last component included, as an operation given a name does. Before: `open_read` of `../outside.txt` or of `link/file.txt` opened the file the host selected, and `relative_path("a/../b")` returned `Ok`. After: the first is `PathInvalid` from `relative_path`, the second is an `IoError` from `open_read`, and `a/b/./c.txt` and `a//b/c.txt` still read the file `a/b/c.txt`. `open_host_read` and the other host-path opens keep the host's own lookup and are the deliberately unconfined route. Selection ground: option A of the design card read-path-confinement on item coord-wfbl-04-21 gives the root the same meaning for every operation that takes one, instead of rejecting only `..` while links stay followed, folding `..` lexically, or recording the host's lookup as the rule, and it puts the check where an absolute path is already refused, so `open_read` gains no new error; no program in the repository passes a path with a parent step or a link to `open_read`, and the one test that did (`./inner/../inner/input`) now expects `PathInvalid`.
+
 ## 2026-10-23 a returned computed integer expression proves a postcondition as a `let` of it would
 
 Rules: changed FN-9, ENT-2, ENT-3.S7, ENT-6

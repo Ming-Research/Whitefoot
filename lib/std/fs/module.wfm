@@ -45,7 +45,7 @@ public enum PathEncoding {
 
 public fn relative_path(value: HostString) -> result: Result<RelativePath, PathError> pure doc "Returns value as a path relative to a directory, or PathInvalid when it cannot name one.";
 
-public fn open_read(factory: &HandleFactory, root: &DirectoryRead, path: &RelativePath) -> result: Result<ReadFile, IoError> reads(root), reads(path), writes(factory) waits doc "Opens for reading the file that the host's lookup of path from root selects [PRE-2].";
+public fn open_read(factory: &HandleFactory, root: &DirectoryRead, path: &RelativePath) -> result: Result<ReadFile, IoError> reads(root), reads(path), writes(factory) waits doc "Opens for reading the file that path names below root [PRE-2].";
 
 public fn open_host_read(factory: &HandleFactory, paths: &HostPaths, base: &DirectoryRead, path: &HostString) -> result: Result<ReadFile, IoError> reads(paths), reads(base), reads(path), writes(factory) waits doc "Opens for reading the existing regular file that path names, looked up from base as a host path [PRE-2].";
 

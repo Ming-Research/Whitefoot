@@ -58,6 +58,16 @@ static inline int wf_file_open_kind_flags(enum wf_file_expected_kind expected) {
     return expected == WF_FILE_EXPECT_REGULAR ? O_NONBLOCK : 0;
 }
 
+/* [PRE-2] Whether an open looks its path up one component at a time. The host
+ * flag O_NOFOLLOW refuses a link only at the last component, and an open that
+ * asked not to follow a link follows none: a path of several components, which
+ * only `open_read` gives such an open, is made by `wf_file_open_beneath`
+ * (`file_posix.c`). An io_uring open is one call on the whole path, so the
+ * ring does not carry such an open and the adapter makes it. */
+static inline int wf_file_open_walks(const char *path, int flags) {
+    return (flags & O_NOFOLLOW) != 0 && strchr(path, '/') != NULL;
+}
+
 /* One socket of the family one portable address names, closed on exec.
  *
  * A socket made for a listen gets SO_REUSEADDR before its bind
