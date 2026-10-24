@@ -79,10 +79,12 @@ fn make_inline() -> result: Inline pure {
   return move result;
 }
 
-fn mapped() -> result: Box<Array<u8>> pure {
+fn mapped(limit: u64) -> result: Box<Array<u8>> pure contract {
+  requires limit <= 16_u64;
+} {
   let output = box_array_filled::<u8>(count: 16_u64, value: 0_u8);
   let inline = make_inline();
-  for @fill (i in 0_u64..16_u64) {
+  for @fill (i in 0_u64..limit) {
     set output.inner[i] = 1_u8;
     set inline.values[i] = 2_u8;
   }
@@ -90,7 +92,7 @@ fn mapped() -> result: Box<Array<u8>> pure {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let output = mapped();
+  let output = mapped(limit: 16_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -357,14 +359,14 @@ fn nested_wide_frame_source(depth: usize) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let mut source = format!(
-        "fn folded(source: &Box<Array<u64>>, {parameters}) -> result: u64 reads(source) {{\n"
+        "fn folded(source: &Box<Array<u64>>, limit: u64, {parameters}) -> result: u64 reads(source) {{\n"
     );
     for level in 0..depth {
         let indent = "  ".repeat(level + 1);
         writeln!(source, "{indent}let total{level} = 0_u64;").expect("write fixture");
         writeln!(
             source,
-            "{indent}for @level{level} (i{level} in 0_u64..2_u64) {{"
+            "{indent}for @level{level} (i{level} in 0_u64..limit) {{"
         )
         .expect("write fixture");
     }
@@ -403,7 +405,7 @@ fn nested_wide_frame_source(depth: usize) -> String {
         .join(", ");
     writeln!(
         source,
-        "  let observed = folded(source: &input, {arguments});"
+        "  let observed = folded(source: &input, limit: 2_u64, {arguments});"
     )
     .expect("write fixture");
     writeln!(source, "  if observed == {}_u64 {{", 497_u64 << depth).expect("write fixture");
@@ -467,8 +469,10 @@ fn a_fitting_loop_retains_its_interface_and_one_extra_field_triggers_rescue() {
             .map(|index| format!("a{index}: {index}_u64"))
             .collect::<Vec<_>>()
             .join(", ");
+        // Reuse an existing captured formal for a runtime range, preserving
+        // the exact fitting and rescue interfaces this test observes.
         let source = format!(
-            "fn folded({parameters}) -> result: u64 pure {{\n  let total = 0_u64;\n  for @items (i in 0_u64..2_u64) {{\n    set total = total +wrap a0;\n  }}\n  return total;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  let total = folded({arguments});\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+            "fn folded({parameters}) -> result: u64 pure {{\n  let total = 0_u64;\n  for @items (i in 0_u64..a0) {{\n    set total = total +wrap a0;\n  }}\n  return total;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  let total = folded({arguments});\n  return std::process::exit_status(code: 0_u8);\n}}\n"
         );
         with_ir_mode(source.as_bytes(), OverlapLowering::On, |program| {
             assert_eq!(program.loop_candidate_constructions, 1);
@@ -528,8 +532,10 @@ fn aggregate_loop_frames_fit_the_selected_target_before_outlining() {
             .expect("supported selected target"),
     ] {
         for (length, expected_bytes) in [(1, Some(48)), (216, Some(256)), (217, None)] {
+            // The identity helper preserves both result and frame captures,
+            // while keeping literal cheap-site pruning out of the size oracle.
             let source = format!(
-                "fn folded(values: Array<u8, {length}>) -> result: u64 pure {{\n  let total = 7_u64;\n  for (i in 0_u64..2_u64) {{\n    let copied = values;\n    let byte = copied[0_u64];\n    let word = cvt::<u8, u64>(byte);\n    set total = total +wrap word;\n  }}\n  return total;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  let values = array_filled::<u8, {length}>(value: 19_u8);\n  let total = folded(values: values);\n  return std::process::exit_status(code: 0_u8);\n}}\n"
+                "fn frame_value(word: u64) -> result: u64 pure {{\n  return word;\n}}\n\nfn folded(values: Array<u8, {length}>) -> result: u64 pure {{\n  let total = 7_u64;\n  for @items (i in 0_u64..2_u64) {{\n    let copied = values;\n    let byte = copied[0_u64];\n    let word = cvt::<u8, u64>(byte);\n    let contribution = frame_value(word: word);\n    set total = total +wrap contribution;\n  }}\n  return total;\n}}\n\nfn main() -> status: std::process::ExitStatus pure {{\n  let values = array_filled::<u8, {length}>(value: 19_u8);\n  let total = folded(values: values);\n  return std::process::exit_status(code: 0_u8);\n}}\n"
             );
             with_checked(source.as_bytes(), |checked| {
                 let program =
@@ -1651,11 +1657,215 @@ fn probe_needle_counts(program: &IrProgram) -> Vec<usize> {
         .collect()
 }
 
+/// An indexed site enters the same request-driven range driver as every
+/// other range. Its far offer names the driver's current destinations; the
+/// overlap group carries exactly the site's families, so only a granted lane
+/// privatizes them, and the request word is read once, after the far half's
+/// setup charge over every family's initialized cells.
 #[test]
-fn indexed_aliases_select_one_private_family_and_one_block_per_resolved_root() {
+fn indexed_drivers_pass_destinations_and_carry_their_families_on_the_far_offer() {
+    let source = include_bytes!("../../../tests/programs/parallel/indexed_reductions.wf");
+    with_ir_mode(source, OverlapLowering::On, |program| {
+        let mut sites = 0;
+        for function in program.functions() {
+            for instruction in function
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+            {
+                let IrInstruction::Define {
+                    operation:
+                        IrOperation::LoopSplit {
+                            splitter,
+                            captures,
+                            indexed,
+                            ..
+                        },
+                    ..
+                } = instruction
+                else {
+                    continue;
+                };
+                let driver = &program.functions()[*splitter as usize];
+                let [overlap] = driver.overlaps() else {
+                    panic!("{}: one far offer", driver.name());
+                };
+                assert_eq!(&overlap.indexed, indexed, "{}", driver.name());
+                if indexed.is_empty() {
+                    continue;
+                }
+                sites += 1;
+                let [far] = overlap.handed_out() else {
+                    panic!("{}: one handed-out half", driver.name());
+                };
+                let definitions: Vec<_> = driver
+                    .blocks()
+                    .iter()
+                    .flat_map(|block| block.instructions())
+                    .filter_map(|instruction| match instruction {
+                        IrInstruction::Define {
+                            result, operation, ..
+                        } => Some((*result, operation)),
+                        _ => None,
+                    })
+                    .collect();
+                let arguments = definitions
+                    .iter()
+                    .find_map(|(result, operation)| match operation {
+                        IrOperation::Call { arguments, .. } if result == far => Some(arguments),
+                        _ => None,
+                    })
+                    .expect("the far offer is a call");
+                let parameters = driver.parameters();
+                for position in 3..3 + captures.len() {
+                    assert_eq!(
+                        arguments[position],
+                        parameters[position].0,
+                        "{}: the far offer names the current destination",
+                        driver.name()
+                    );
+                }
+                assert_eq!(
+                    definitions
+                        .iter()
+                        .filter(|(_, operation)| matches!(operation, IrOperation::DemandRequested))
+                        .count(),
+                    1,
+                    "{}",
+                    driver.name()
+                );
+                for family in indexed {
+                    let count = parameters[3 + family.count].0;
+                    assert!(
+                        definitions.iter().any(|(_, operation)| matches!(
+                            operation,
+                            IrOperation::Integer {
+                                operation: IrIntegerOperation::AddSaturating,
+                                arguments,
+                                ..
+                            } if arguments.contains(&count)
+                        )),
+                        "{}: the setup charge counts every family's cells",
+                        driver.name()
+                    );
+                }
+            }
+        }
+        assert_eq!(sites, 3, "histogram, extrema and products");
+    });
+}
+
+/// A fixture whose named literal loop extents are read from a parameter
+/// instead, so a call-free loop that the compile-time small-site rule makes
+/// ordinary code keeps its range split. Each replaced text occurs once.
+fn with_runtime_extents(source: &[u8], replacements: &[(&str, &str)]) -> Vec<u8> {
+    let mut text = std::str::from_utf8(source)
+        .expect("UTF-8 fixture")
+        .to_owned();
+    for (literal, runtime) in replacements {
+        assert_eq!(text.matches(literal).count(), 1, "{literal}");
+        text = text.replacen(literal, runtime, 1);
+    }
+    text.into_bytes()
+}
+
+/// `direct`, the case's one call-free loop, with its extent a parameter.
+const RUNTIME_DIRECT: &[(&str, &str)] = &[
+    (
+        "fn direct() -> result: u64 pure {",
+        "fn direct(limit: u64) -> result: u64 pure {",
+    ),
+    (
+        "  for (i in 0_u64..16_u64) {\n    set first^[0_u64]",
+        "  for (i in 0_u64..limit) {\n    set first^[0_u64]",
+    ),
+    (
+        "let updated = direct();",
+        "let updated = direct(limit: 16_u64);",
+    ),
+];
+
+/// Both call-free loops of the field case, with their extents parameters.
+const RUNTIME_FIELDS: &[(&str, &str)] = &[
+    (
+        "fn reduce() -> result: u64 pure {",
+        "fn reduce(limit: u64) -> result: u64 pure {",
+    ),
+    ("for (i in 0_u64..128_u64)", "for (i in 0_u64..limit)"),
+    (
+        "let result = reduce();",
+        "let result = reduce(limit: 128_u64);",
+    ),
+    (
+        "fn different_maps() -> result: u64 pure {",
+        "fn different_maps(limit: u64) -> result: u64 pure contract {\n  requires limit <= 4_u64;\n} {",
+    ),
+    (
+        "for (i in 0_u64..4_u64) {\n    let next",
+        "for (i in 0_u64..limit) {\n    let next",
+    ),
+    (
+        "let maps = different_maps();",
+        "let maps = different_maps(limit: 4_u64);",
+    ),
+];
+
+/// A call-free indexed loop over a literal range whose complete work is below
+/// the grain is ordinary code, like any other compile-time small site: no
+/// split, driver or chunk remains for `direct`. `calls` keeps its split over
+/// the same sixteen iterations, because a short literal count does not bound
+/// a helper's work.
+#[test]
+fn a_compile_time_small_indexed_loop_keeps_ordinary_code() {
     let source =
         include_bytes!("../../../tests/conformance/cases/par2-pos-indexed-aliased-updates.wf");
     with_ir_mode(source, OverlapLowering::On, |program| {
+        let splits = |name: &str| {
+            function(program, name)
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+                .filter(|instruction| {
+                    matches!(
+                        instruction,
+                        IrInstruction::Define {
+                            operation: IrOperation::LoopSplit { .. },
+                            ..
+                        }
+                    )
+                })
+                .count()
+        };
+        assert_eq!(splits("direct"), 0);
+        assert_eq!(splits("calls"), 1);
+        assert!(
+            program.functions().iter().all(|function| {
+                !function.name().starts_with("_par_split_direct.")
+                    && !function.name().starts_with("_par_chunk_direct.")
+            }),
+            "a proven-small site reserves no helper"
+        );
+        assert!(
+            program
+                .actualization_ledger()
+                .iter()
+                .any(|line| line.contains("direct")
+                    && line.contains(
+                        "sequential: constant range is indivisible or below the split grain"
+                    )),
+            "{:?}",
+            program.actualization_ledger()
+        );
+    });
+}
+
+#[test]
+fn indexed_aliases_select_one_private_family_and_one_block_per_resolved_root() {
+    let source = with_runtime_extents(
+        include_bytes!("../../../tests/conformance/cases/par2-pos-indexed-aliased-updates.wf"),
+        RUNTIME_DIRECT,
+    );
+    with_ir_mode(&source, OverlapLowering::On, |program| {
         for (name, count, blocked) in [
             ("calls", 1, true),
             ("direct", 1, false),
@@ -2908,8 +3118,11 @@ fn run_borrows_below_range_elements_keep_the_outer_projection() {
 
 #[test]
 fn indexed_field_families_share_the_root_length_and_keep_distinct_projections() {
-    let source = include_bytes!("../../../tests/conformance/cases/par2-pos-indexed-fields.wf");
-    with_ir_mode(source, OverlapLowering::On, |program| {
+    let source = with_runtime_extents(
+        include_bytes!("../../../tests/conformance/cases/par2-pos-indexed-fields.wf"),
+        RUNTIME_FIELDS,
+    );
+    with_ir_mode(&source, OverlapLowering::On, |program| {
         for name in ["reduce", "different_maps"] {
             let function = program
                 .functions()

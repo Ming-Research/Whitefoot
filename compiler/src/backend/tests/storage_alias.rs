@@ -984,3 +984,94 @@ fn storage_alias_definitions_survive_cached_fragment_roundtrips() {
         }
     }
 }
+
+#[test]
+fn ordinary_import_retains_owner_scopes_through_parallel_cached_fragments() {
+    let source = std::str::from_utf8(COPY)
+        .unwrap()
+        .replace("  for (\n", "  for @copy_rows (\n")
+        .replace(
+            "  copy_windows(source: &source, destination: &destination);",
+            "  let other_destination = box_slots_new::<u8>(capacity: 2_u64);\n  paired_copy(source: &source, first: &destination, second: &other_destination);",
+        )
+        + r#"
+fn paired_copy(source: &Box<Array<u8>>, first: &Box<Slots<u8>>, second: &Box<Slots<u8>>) -> result: unit reads(source), writes(first), writes(second) contract {
+  requires first^.inner.len == 0_u64;
+  requires second^.inner.len == 0_u64;
+  requires source^.inner.len <= first^.inner.cap;
+  requires source^.inner.len <= second^.inner.cap;
+} {
+  copy_windows(source: source, destination: first);
+  copy_windows(source: source, destination: second);
+  return unit;
+}
+"#;
+    let emit = |overlap| {
+        crate::compile_for_emission(
+            &[crate::SourceInput::new(
+                "ordinary-owner-scopes.wf",
+                source.as_bytes(),
+            )],
+            crate::CompilerLimits::default(),
+            overlap,
+            None,
+            true,
+        )
+        .expect("independent copies compile with partitionable layouts")
+        .0
+    };
+    let ordinary = emit(crate::OverlapLowering::Off);
+    let parallel = emit(crate::OverlapLowering::On);
+    assert!(parallel.contains("call void @wf__par_publish("));
+    let actual = parallel
+        .model
+        .entities
+        .iter()
+        .find(|entity| entity.name == "wf__par_seq_copy_windows")
+        .expect("copy is in the ordinary closure");
+    let expected = ordinary
+        .model
+        .entities
+        .iter()
+        .find(|entity| entity.name == "wf_copy_windows")
+        .unwrap();
+    for attachment in ["scope.decl(metadata !", "!alias.scope !", "!noalias !"] {
+        assert!(
+            actual.body.contains(attachment),
+            "fixture must exercise {attachment}: {}",
+            actual.body
+        );
+    }
+    assert_eq!(
+        super::canonical_compute::restore_definition(
+            &parallel.model,
+            &ordinary.model,
+            actual,
+            expected,
+            &actual.body
+        ),
+        expected.body,
+        "the real emitter must record, import and remap every instruction attachment"
+    );
+    let restored = crate::LlvmModule::decode(&parallel.encode()).expect("metadata graph roundtrip");
+    assert_eq!(parallel.as_str(), restored.as_str());
+    assert_eq!(parallel.model, restored.model);
+    for granularity in [
+        crate::FragmentGranularity::Function,
+        crate::FragmentGranularity::Module,
+    ] {
+        let fragments = crate::split_module(&parallel, granularity).expect("ordinary scopes split");
+        assert_eq!(
+            fragments,
+            crate::split_module(&restored, granularity).unwrap()
+        );
+        for fragment in fragments {
+            for (id, node) in &parallel.model.metadata {
+                assert!(
+                    fragment.contains(&format!("!{id} = {}\n", node.body)),
+                    "missing metadata !{id}"
+                );
+            }
+        }
+    }
+}

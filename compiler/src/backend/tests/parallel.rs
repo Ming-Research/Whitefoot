@@ -217,10 +217,12 @@ fn conditional_call_grain_omits_a_tiny_guard() {
     .expect("conditional calls compile with call grain");
     let module = module.into_string();
     assert!(!function_body(&module, "@wf_both").contains("@wf__par_publish("));
+    // The retained `fill` is priced first: below the grain, it runs after the
+    // join, and the guard left alone dissolves the group.
     assert!(
-        ledger
-            .iter()
-            .any(|line| line.contains("omitted offer of _par_cond_both.0")),
+        ledger.iter().any(|line| line.starts_with(
+            "PAR actualization  both  call grain: join site fill runs after the join (kept static work "
+        )),
         "{ledger:?}"
     );
 }
@@ -427,17 +429,26 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 fn fold_module(parallel: bool) -> String {
+    fold_emission(parallel).into_string()
+}
+
+fn fold_emission(parallel: bool) -> crate::LlvmModule {
     use std::sync::OnceLock;
-    static PLAIN: OnceLock<String> = OnceLock::new();
-    static PARALLEL: OnceLock<String> = OnceLock::new();
+    static PLAIN: OnceLock<crate::LlvmModule> = OnceLock::new();
+    static PARALLEL: OnceLock<crate::LlvmModule> = OnceLock::new();
     let cell = if parallel { &PARALLEL } else { &PLAIN };
     let module = cell
         .get_or_init(|| {
-            if parallel {
-                emit_with_overlap(OVERLAPPING_FOLD)
-            } else {
-                emit(OVERLAPPING_FOLD)
-            }
+            crate::compile_with_overlap(
+                &[crate::SourceInput::new("test.wf", OVERLAPPING_FOLD)],
+                crate::CompilerLimits::default(),
+                if parallel {
+                    crate::OverlapLowering::On
+                } else {
+                    crate::OverlapLowering::Off
+                },
+            )
+            .expect("fold fixture emits")
         })
         .clone();
     super::exhaustion::assert_stack_probes(&module);
@@ -1449,37 +1460,83 @@ fn handing_a_call_out_adds_no_stack_slot() {
 /// an operand read in a different order — would be a second lowering nobody
 /// audited, and this case is what stops that.
 ///
-/// The comparison restores the clone's own symbols, because the calls inside a
-/// clone name clones: that renaming *is* the difference between the two
-/// worlds, and after it there must be nothing left.
+/// The comparison restores the clone's symbols and alpha-renames module-local
+/// metadata IDs only after verifying their complete graph and distinct
+/// identities. After those namespace changes there must be nothing left.
 #[test]
 fn the_sequential_clone_is_the_sequential_lowering() {
-    let sequential = fold_module(false);
-    let overlapped = fold_module(true);
+    let sequential = fold_emission(false);
+    let overlapped = fold_emission(true);
 
-    // The closure, spelled out: every function from which a handed-out call is
-    // reachable. `pair`, `quad`, and `oct` hand out their sibling
-    // constructors, `fold` its recursion, and `main` its four `oct` calls.
-    // `leaf`, `branch`, `mix`, `low_byte`, and `spell` reach no hand-out at
-    // all, so both worlds call the one copy of each and neither needs a clone.
-    let mut cloned: Vec<_> = clone_symbols(&overlapped);
-    cloned.sort_unstable();
-    assert_eq!(
-        cloned,
-        [
-            "@wf__par_seq_fold",
-            "@wf__par_seq_main",
-            "@wf__par_seq_oct",
-            "@wf__par_seq_pair",
-            "@wf__par_seq_quad",
-        ],
-        "the clone set must be the closure of the eligible calls:\n{overlapped}"
+    // Ordinary computation retains its complete dependency closure, including
+    // helpers with no offers. Upward offer reachability alone omitted these.
+    let cloned = clone_symbols(&overlapped);
+    for required in [
+        "fold", "main", "oct", "pair", "quad", "leaf", "branch", "mix", "low_byte", "spell",
+    ] {
+        assert!(
+            cloned.contains(&format!("@wf__par_seq_{required}")),
+            "missing ordinary dependency {required}: {cloned:?}"
+        );
+    }
+
+    let imported = overlapped
+        .model
+        .entities
+        .iter()
+        .filter(|entity| {
+            !entity.global && super::canonical_compute::ordinary_symbol(&entity.name).is_some()
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        imported
+            .iter()
+            .any(|entity| entity.name.starts_with("wf__par_seq.wf.drop.")),
+        "the fixture must exercise imported local cleanup helpers"
     );
-
-    for symbol in &cloned {
-        let clone = function_body(&overlapped, symbol);
-        let restored = clone.replace("@wf__par_seq_", "@wf_");
-        let reference = function_body(&sequential, &symbol.replace("@wf__par_seq_", "@wf_"));
+    let ordinary_targets = imported
+        .iter()
+        .map(|entity| super::canonical_compute::ordinary_symbol(&entity.name).unwrap())
+        .collect::<Vec<_>>();
+    for actual_entity in imported {
+        let symbol = format!("@{}", actual_entity.name);
+        let clone = function_body(&overlapped, &symbol);
+        let original = format!(
+            "@{}",
+            super::canonical_compute::ordinary_symbol(&actual_entity.name).unwrap()
+        );
+        let expected_entity = sequential
+            .model
+            .entities
+            .iter()
+            .find(|entity| entity.name == original.trim_start_matches('@'))
+            .unwrap();
+        assert_eq!(
+            actual_entity
+                .references
+                .symbols
+                .iter()
+                .map(|name| {
+                    super::canonical_compute::ordinary_symbol(name).unwrap_or_else(|| name.clone())
+                })
+                .collect::<std::collections::BTreeSet<_>>(),
+            expected_entity.references.symbols,
+            "{symbol} must preserve the ordinary dependency graph"
+        );
+        for forbidden in &ordinary_targets {
+            assert!(
+                !actual_entity.references.symbols.contains(forbidden),
+                "{symbol} must not reenter split target {forbidden}"
+            );
+        }
+        let restored = super::canonical_compute::restore_definition(
+            &overlapped.model,
+            &sequential.model,
+            actual_entity,
+            expected_entity,
+            clone,
+        );
+        let reference = function_body(&sequential, &original);
         assert_eq!(
             restored, reference,
             "{symbol} is not the sequential lowering of its function"
@@ -1505,7 +1562,7 @@ fn the_sequential_clone_is_the_sequential_lowering() {
 /// the cases that pin them, cannot be disturbed by it.
 #[test]
 fn the_bootstrap_selects_one_world_once() {
-    let overlapped = fold_module(true);
+    let overlapped = fold_emission(true);
 
     // Asked once, in the one place that runs once and is inside no loop and no
     // recursion.
@@ -1546,14 +1603,26 @@ fn the_bootstrap_selects_one_world_once() {
         );
     }
 
-    // No clone reaches the overlapped world. A clone may still call a function
-    // that has no clone — that copy is shared because its lowering is the same
-    // either way — so the forbidden targets are exactly the cloned ones.
-    let cloned = clone_symbols(&overlapped);
-    for symbol in &cloned {
-        let body = function_body(&overlapped, symbol);
-        for other in &cloned {
-            let forbidden = format!(" @{}(", other.replace("@wf__par_seq_", "wf_"));
+    // The complete ordinary closure never reenters split computation; shared
+    // native hooks and resource support retain their original identities.
+    let imported = overlapped
+        .model
+        .entities
+        .iter()
+        .filter(|entity| {
+            !entity.global && super::canonical_compute::ordinary_symbol(&entity.name).is_some()
+        })
+        .collect::<Vec<_>>();
+    for entity in &imported {
+        let symbol = format!("@{}", entity.name);
+        let body = function_body(&overlapped, &symbol);
+        for other in &imported {
+            let original = super::canonical_compute::ordinary_symbol(&other.name).unwrap();
+            assert!(
+                !entity.references.symbols.contains(&original),
+                "{symbol} records a dependency on split target {original}"
+            );
+            let forbidden = format!(" @{original}(");
             assert!(
                 !body.contains(&forbidden),
                 "{symbol} calls the overlapped{forbidden}, so the clone world re-enters the \
@@ -1580,7 +1649,7 @@ fn the_bootstrap_selects_one_world_once() {
         bootstrap_free = bootstrap_free.replace(variant, "");
     }
     assert!(
-        !bootstrap_free.contains("@wf__par_seq_"),
+        !mentions_ordinary_function(&bootstrap_free),
         "only the bootstrap and the budget family may name a clone:\n{bootstrap_free}"
     );
 }
@@ -1750,7 +1819,13 @@ fn pair_trailing(n: u64, x: u64, y: u64, m: u64) -> result: u64 pure {
             }
         }
     }
+    // With no call group left, `pair_dependent` chooses at entry from `n`,
+    // the span of the splits it reaches; the order below is the parallel
+    // body's, after that choice's own arithmetic.
     let dependent = function_body(&module, "@wf_pair_dependent");
+    let dependent = &dependent[dependent
+        .find("\nentry:\n")
+        .unwrap_or_else(|| panic!("the parallel body follows the entry choice:\n{dependent}"))..];
     assert!(!dependent.contains("@wf__par_publish("), "{dependent}");
     assert!(!dependent.contains("@wf__par_join("), "{dependent}");
     assert_eq!(dependent.matches("call i64 @wf_heavy(").count(), 2);
@@ -2110,30 +2185,65 @@ fn budget_symbols(module: &str) -> Vec<String> {
         .collect()
 }
 
-/// The module with every sequential clone definition removed, leaving the
-/// overlapped world and everything the two worlds share.
+fn mentions_ordinary_function(text: &str) -> bool {
+    [
+        "@wf__par_seq_",
+        "@wf__par_seq.",
+        "@\"wf__par_seq_",
+        "@\"wf__par_seq.",
+    ]
+    .iter()
+    .any(|prefix| text.contains(prefix))
+}
+
+/// The module with every ordinary source and generated helper definition
+/// removed, leaving the overlapped world and shared computation support.
 fn without_clones(module: &str) -> String {
     let mut kept = String::with_capacity(module.len());
-    let mut rest = module;
-    while let Some(offset) = rest.find("\ndefine ") {
-        let (before, definition) = rest.split_at(offset + 1);
-        kept.push_str(before);
-        let end = definition
-            .find("\n}\n")
-            .map(|at| at + 3)
-            .expect("a definition must close");
-        let (definition, remainder) = definition.split_at(end);
-        if !definition
-            .lines()
-            .next()
-            .is_some_and(|header| header.contains(" @wf__par_seq_"))
-        {
-            kept.push_str(definition);
+    let mut skipping = false;
+    for line in module.split_inclusive('\n') {
+        if line.starts_with("define ") {
+            skipping = mentions_ordinary_function(line);
         }
-        rest = remainder;
+        if !skipping {
+            kept.push_str(line);
+        }
+        if line.trim_end() == "}" {
+            skipping = false;
+        }
     }
-    kept.push_str(rest);
     kept
+}
+
+#[test]
+fn world_observers_keep_adjacent_function_boundaries() {
+    // Structured import need not add a blank line between definitions. Keep
+    // every parallel definition and stop a selected body before its caller.
+    let ordinary = "define i64 @wf__par_seq_leaf() {\nentry:\n  ret i64 1\n}\n";
+    let parallel = "define i64 @wf_leaf() {\nentry:\n  ret i64 1\n}\n";
+    let caller = "define i64 @wf__par_seq_main() {\nentry:\n  %v0 = call i64 @wf__par_seq_leaf()\n  ret i64 %v0\n}\n";
+    let parallel_caller =
+        "define i64 @wf_main() {\nentry:\n  %v0 = call i64 @wf_leaf()\n  ret i64 %v0\n}\n";
+    let helper = "define internal void @wf__par_seq.wf.drop.cell() {\nentry:\n  ret void\n}\n";
+    let module = format!("{ordinary}{helper}{parallel}{caller}{parallel_caller}");
+    assert_eq!(
+        without_clones(&module),
+        format!("{parallel}{parallel_caller}")
+    );
+    assert_eq!(super::emitted_function(&module, "_par_seq_leaf"), ordinary);
+    let outside = without_clones(&module);
+    assert!(!mentions_ordinary_function(&outside));
+    let wrong_caller = parallel_caller.replace(
+        "  %v0 = call i64 @wf_leaf()",
+        "  call void @wf__par_seq.wf.drop.cell()\n  %v0 = call i64 @wf_leaf()",
+    );
+    let wrong_module = format!("{ordinary}{helper}{parallel}{caller}{wrong_caller}");
+    let wrong_outside = without_clones(&wrong_module);
+    assert_eq!(wrong_outside, format!("{parallel}{wrong_caller}"));
+    assert!(
+        mentions_ordinary_function(&wrong_outside),
+        "removing ordinary definitions must retain and reject a split caller's ordinary-helper edge"
+    );
 }
 
 /// The definition that carries `symbol`'s emitted body: its own definition,
@@ -2771,11 +2881,12 @@ fn main() -> status: std::process::ExitStatus pure waits {
     std::fs::remove_dir_all(&directory).expect("remove the test directory");
 }
 
-/// Omitting offers below the call grain must preserve the last join site and
+/// Omitting offers below the call grain must preserve a join boundary and
 /// the ordinary evaluation of every removed member, including members inside
 /// a mixed run. `counted` is a recursion that offers its own calls, so its
 /// offers stay; `increment` is a few instructions and loses its offers; `e`,
-/// the join site, is never published.
+/// the join site the caller would keep, is below the grain too, so it runs
+/// after the join and `d` becomes the join site. Only `b` is handed out.
 #[test]
 fn call_grain_keeps_mixed_chain_results_and_join_boundary() {
     let source = br#"fn increment(x: u64) -> result: u64 pure {
@@ -2824,13 +2935,13 @@ fn main() -> status: std::process::ExitStatus pure {
         function_body(&filtered, "@wf_mixed")
             .matches("call void @wf__par_publish(")
             .count(),
-        2
+        1
     );
     assert_eq!(
         function_body(&filtered, "@wf_mixed")
             .matches("call void @wf__par_join(")
             .count(),
-        2
+        1
     );
     for module in [&all, &filtered] {
         let output = compile_and_run(module);
@@ -2844,7 +2955,7 @@ fn main() -> status: std::process::ExitStatus pure {
         function_body(&renamed, "@wf_mixed")
             .matches("call void @wf__par_publish(")
             .count(),
-        2
+        1
     );
     let (_, ledger) = crate::compile_with_permission_ledger(
         &[crate::SourceInput::new("test.wf", source)],
@@ -2861,6 +2972,79 @@ fn main() -> status: std::process::ExitStatus pure {
             .count(),
         2,
         "each omitted offer is named with its callee's static work: {ledger:?}"
+    );
+    assert_eq!(
+        ledger
+            .iter()
+            .filter(|line| line.starts_with(
+                "PAR actualization  mixed  call grain: join site increment runs after the join (kept static work "
+            ))
+            .count(),
+        1,
+        "the cheap join site is named too: {ledger:?}"
+    );
+}
+
+/// A single costly call whose caller keeps only a tiny call before the join
+/// offers nothing: the kept side cannot cover a hand-out, so the pair runs as
+/// the source's ordinary calls, while a balanced pair of the same recursion
+/// keeps its offer. Under the former rule only the handed-out side was priced
+/// and the chain published `counted` beside the one-instruction `increment`.
+#[test]
+fn call_grain_prices_the_kept_side_of_a_chain() {
+    let source = br#"fn increment(x: u64) -> result: u64 pure {
+  return x +wrap 1_u64;
+}
+
+fn counted(x: u64, steps: u64) -> result: u64 pure {
+  if steps == 0_u64 {
+    return x;
+  }
+  let fewer = steps -wrap 1_u64;
+  let left = counted(x: x, steps: fewer);
+  let right = counted(x: x, steps: fewer);
+  return left +wrap right;
+}
+
+fn chain(x: u64) -> result: u64 pure {
+  let a = counted(x: x, steps: 4_u64);
+  let e = increment(x: x);
+  return a +wrap e;
+}
+
+fn balanced(x: u64) -> result: u64 pure {
+  let a = counted(x: x, steps: 4_u64);
+  let b = counted(x: x, steps: 3_u64);
+  return a +wrap b;
+}
+"#;
+    let all = super::emit_lowered(source, crate::OverlapLowering::On);
+    let filtered = super::emit_lowered(source, crate::OverlapLowering::OnWithCallGrain);
+    assert!(function_body(&all, "@wf_chain").contains("call void @wf__par_publish("));
+    let chain = function_body(&filtered, "@wf_chain");
+    assert!(!chain.contains("@wf__par_publish("), "{chain}");
+    assert!(!chain.contains("@wf__par_join("), "{chain}");
+    assert!(
+        function_body(&filtered, "@wf_balanced").contains("call void @wf__par_publish("),
+        "a kept call reaching the offered recursion keeps the group"
+    );
+    let (_, ledger) = crate::compile_with_permission_ledger(
+        &[crate::SourceInput::new("test.wf", source)],
+        crate::CompilerLimits::default(),
+        crate::OverlapLowering::OnWithCallGrain,
+    )
+    .expect("the chain compiles");
+    assert!(
+        ledger.iter().any(|line| line.starts_with(
+            "PAR actualization  chain  call grain: join site increment runs after the join (kept static work "
+        )),
+        "{ledger:?}"
+    );
+    assert!(
+        !ledger
+            .iter()
+            .any(|line| line.starts_with("PAR actualization  balanced  call grain:")),
+        "{ledger:?}"
     );
 }
 
@@ -3028,12 +3212,14 @@ fn main() -> status: std::process::ExitStatus pure {
         crate::OverlapLowering::OnWithCallGrain,
     )
     .expect("the linear recursion compiles");
+    // The second lookup is the join site and is priced first; leaving the
+    // group, it dissolves it, so no handed-out member remains to omit.
     assert!(
         ledger.iter().any(|line| line.starts_with(
-            "PAR actualization  main  call grain: omitted offer of lookup (static work "
+            "PAR actualization  main  call grain: join site lookup runs after the join (kept static work "
         ) && line
             .ends_with(", reaches only recursion that offers none of its own calls)")),
-        "the omitted offer names the recursion it reaches: {ledger:?}"
+        "the cheap join site names the recursion it reaches: {ledger:?}"
     );
     let forking = String::from_utf8(linear.to_vec()).unwrap().replace(
         "  let below = descend(n: m);\n  return below +wrap 1_u64;",

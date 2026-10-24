@@ -13,6 +13,24 @@
 #include <stdlib.h>
 #include <string.h>
 
+static VOID CALLBACK wf_prim_exit_dispatch(PVOID opaque) {
+    wf_prim_exit_registration *registration = opaque;
+    registration->key->cleanup(registration->argument);
+}
+
+int wf_prim_exit_key_init(wf_prim_exit_key *key, void (*cleanup)(void *)) {
+    key->cleanup = cleanup;
+    key->native = FlsAlloc(wf_prim_exit_dispatch);
+    return key->native == FLS_OUT_OF_INDEXES ? 1 : 0;
+}
+
+int wf_prim_exit_bind(wf_prim_exit_registration *registration,
+                     wf_prim_exit_key *key, void *argument) {
+    registration->key = key;
+    registration->argument = argument;
+    return FlsSetValue(key->native, registration) ? 0 : 1;
+}
+
 static unsigned __stdcall wf_prim_thread_main(void *opaque) {
     wf_prim_thread *thread = (wf_prim_thread *)opaque;
     thread->entry(thread->argument);

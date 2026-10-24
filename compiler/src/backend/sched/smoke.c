@@ -199,6 +199,29 @@ int main(int argc, char **argv) {
         worker_limit = 2;
     }
     wf__runtime_start();
+    if (!hold_startup) {
+        int requested_pool = wf__sched_lanes() >= 2;
+        check(wf__par_pool_active() == requested_pool,
+              "world selection changed the requested-width policy");
+        if (!requested_pool) {
+            check(!wf__par_attached && wf__par_self == NULL
+                      && wf__sched_pool_running() == 0,
+                  "one-worker world selection started or attached a pool");
+        } else if (!owner_allowed || worker_limit == 1) {
+            check(wf__par_self == NULL && wf__sched_pool_running() == 0,
+                  "refused startup registered a compute lane");
+            check(wf__par_pool_active(),
+                  "refused startup changed the selected world");
+        } else {
+            check(wf__par_self == &wf__par_lanes[0],
+                  "world selection did not attach the owner before its first offer");
+            check(__atomic_load_n(&wf__par_lanes[0].request_word, __ATOMIC_ACQUIRE)
+                      == &wf__par_demand_word,
+                  "world selection did not register the owner request word");
+            check(__atomic_load_n(&wf__par_demand_word, __ATOMIC_RELAXED) != 0,
+                  "world selection did not request the owner's first offer");
+        }
+    }
     if (hold_startup) {
         starting_owner = 1;
         void *frame = wf__par_acquire_lane(8);
@@ -233,7 +256,6 @@ int main(int argc, char **argv) {
     }
     wf_test_guard_phase("scheduler frame capacity/reverse joins");
     check(wf__par_acquire_lane(UINT64_MAX) == NULL, "oversized frame was truncated");
-    check(wf__par_split_budget(UINT64_MAX, UINT64_MAX) <= 10, "u64 split ABI failed");
     void *frames[WF_SCHED_LANE_SLOTS];
     for (unsigned i = 0; i < WF_SCHED_LANE_SLOTS; ++i) {
         frames[i] = wf__par_acquire_lane(8);

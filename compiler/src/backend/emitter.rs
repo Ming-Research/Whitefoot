@@ -10,11 +10,13 @@ mod array;
 mod boxes;
 mod buffer;
 mod call_entries;
+mod canonical_world;
 mod cleanup;
 mod constants;
 mod contexts;
 mod conversion;
 pub(super) mod dispatch;
+mod entry_versions;
 mod floating;
 mod floor;
 mod frames;
@@ -61,6 +63,7 @@ use crate::{
     IrOperation, IrOverlap, IrProgram, IrShared, IrTargetDomainObligation, IrTerminator, IrType,
     IrValueId, IrWindowShape,
 };
+use canonical_world::{canonical_clone_roots, validate_crossovers};
 use cleanup::{CleanupOperand, emit_cleanup, emit_resource_drop_helpers, type_requires_cleanup};
 pub use floor::FLOOR_STACK_BYTES;
 use floor::floor_runtime_fallback;
@@ -72,8 +75,7 @@ use parallel::{
     HandedOut, LoopSplitSite, ParallelThunks, parallel_pool_query_declaration,
     parallel_pool_query_fallback, parallel_recursion_budget_declaration,
     parallel_recursion_budget_fallback, parallel_runtime_declarations, parallel_runtime_fallback,
-    parallel_split_budget_declaration, parallel_split_budget_fallback, sequential_clone_set,
-    sequential_clone_symbol,
+    sequential_clone_set, sequential_clone_symbol,
 };
 use resource_records::{
     emit_posix_resource_write, latched_resource_record_writer, resource_record_latch,
@@ -131,7 +133,7 @@ impl LlvmModule {
 
     pub(crate) fn append(&mut self, module: Module) -> Result<(), BackendFailure> {
         self.model.append(module);
-        if self.model.has_conflict() {
+        if self.model.has_conflict() || self.model.missing_metadata().is_some() {
             return Err(BackendFailure::InvalidIr);
         }
         self.text = self.model.render();
@@ -156,7 +158,7 @@ impl LlvmModule {
             _ => return None,
         };
         let model = Module::decode(bytes)?;
-        if model.has_conflict() {
+        if model.has_conflict() || model.missing_metadata().is_some() {
             return None;
         }
         Some(Self {
@@ -257,6 +259,11 @@ pub(crate) fn emit_llvm_with_layout(
 
 pub(crate) use handler_words::prepare_dispatch_layout;
 
+/// The entrance check alone, for tests that make the two worlds disagree about
+/// one nominal's representation.
+#[cfg(test)]
+pub(crate) use canonical_world::validate_crossovers as validate_world_crossovers;
+
 /// Emits using the same explicit layout plan that selected nominal storage.
 pub(crate) fn emit_prepared_llvm(
     prepared: &handler_words::PreparedDispatch<'_>,
@@ -267,6 +274,7 @@ pub(crate) fn emit_prepared_llvm(
         target,
         WindowAddressFacts::Emit,
         &prepared.plan,
+        prepared.fragments,
     )
 }
 
@@ -292,6 +300,7 @@ pub(super) fn emit_llvm_with_window_address_facts(
         target,
         window_address_facts,
         &selected.plan,
+        selected.fragments,
     )
 }
 
@@ -300,6 +309,7 @@ fn emit_module(
     target: TargetLayout,
     window_address_facts: WindowAddressFacts,
     dispatch_layout: &handler_words::DispatchLayoutPlan,
+    fragments: bool,
 ) -> Result<LlvmModule, BackendFailure> {
     crate::toolchain::prepare_toolchain().map_err(|_| BackendFailure::Toolchain)?;
     if snapshot::required(program) && target.triple() != "x86_64-unknown-linux-gnu" {
@@ -402,22 +412,28 @@ fn emit_module(
             .emit()?,
         );
     }
-    // The second world. It exists only where the first one actualizes
-    // something, so a build that hands nothing out — every default build among
-    // them — emits exactly the module it emitted before this path existed.
-    //
-    // A build launcher can select the sequential clone of its ordinary entry.
-    // The clone set is closed upwards through the module's call graph and
-    // does not depend on the presence or spelling of a selected entry.
-    let clones = if thunks.is_used() {
+    // Retain captured-ABI fallback helpers, but import every ordinary entrance
+    // and its complete dependencies from the graph before optional extraction.
+    // The bootstrap and recursion cuts keep their existing entry selection.
+    let mut clones = if thunks.is_used() || thunks.selects_entry_versions {
         sequential_clone_set(program)
     } else if frontiers.is_used() {
         frontier_clones
     } else {
         HashSet::new()
     };
+    let canonical = program.canonical_sequential.as_deref();
+    let (mut canonical_roots, crossovers) = if let Some(canonical) = canonical {
+        canonical_clone_roots(program, canonical, &mut clones)?
+    } else {
+        (BTreeSet::new(), BTreeSet::new())
+    };
+    canonical_roots.extend(dispatch_layout.canonical_roots());
     for (ordinal, function) in program.functions().iter().enumerate() {
         if u32::try_from(ordinal).is_ok_and(|ordinal| clones.contains(&ordinal)) {
+            if canonical_roots.contains(&source_symbol(function.name())) {
+                continue;
+            }
             functions.append(
                 FunctionEmitter::new(
                     program,
@@ -627,6 +643,9 @@ fn emit_module(
         text.text("\n");
         text.append(thunks.take_context_definitions());
     }
+    if thunks.queries_demand {
+        text.append(parallel::demand_runtime(windows));
+    }
     // Emitted only where a permitted overlap group is actually handed out, so
     // a module that overlaps nothing names no runtime symbol at all.
     if thunks.is_used() {
@@ -641,13 +660,6 @@ fn emit_module(
                 parallel_pool_query_declaration()?
             } else {
                 parallel_pool_query_fallback()?
-            });
-        }
-        if thunks.queries_split_budget() {
-            text.append(if windows {
-                parallel_split_budget_declaration()?
-            } else {
-                parallel_split_budget_fallback()?
             });
         }
         if thunks.queries_recursion_budget() {
@@ -720,6 +732,29 @@ fn emit_module(
             target.stack_probe_attributes(crate::toolchain::facts().darwin_stack_probe_helper)
         ),
     );
+    // Every emitted body may use the small fixed storage-role vocabulary,
+    // including cleanup/transfer helpers built outside FunctionEmitter. Keep
+    // these roots explicit without recovering dependencies from LLVM text.
+    for entity in &mut text.entities {
+        if !entity.global {
+            entity.references.metadata.extend(12..22);
+        }
+    }
+    if let Some(canonical) = canonical.filter(|_| !canonical_roots.is_empty()) {
+        let selected = prepare_dispatch_layout(canonical, target, fragments)?;
+        validate_crossovers(program, &selected.program, &crossovers)?;
+        let module = emit_module(
+            &selected.program,
+            target,
+            window_address_facts,
+            &selected.plan,
+            fragments,
+        )?;
+        // A sequential closure may execute on a worker after a budget cut or
+        // refusal; preserve the shared, worker-safe resource diagnostic latch.
+        let shared = BTreeSet::from(["wf_resource_abort".to_owned()]);
+        text.import_canonical_closure(&module.model, &canonical_roots, &shared)?;
+    }
     let mut ledger = frontiers.ledger().to_vec();
     ledger.extend(lane_frame_ledger(program, target, &frontiers)?);
     // Emit source acquisition decisions once, independently of backend clones
@@ -730,7 +765,7 @@ fn emit_module(
             text.source_comment(LOCK_LEDGER_PREFIX, line.clone());
         }
     }
-    if text.has_conflict() {
+    if text.has_conflict() || text.missing_metadata().is_some() {
         return Err(BackendFailure::InvalidIr);
     }
     Ok(LlvmModule {
@@ -1596,6 +1631,9 @@ struct FunctionEmitter<'program, 'state> {
     /// complete them.
     overlap_handed_out: HashSet<IrValueId>,
     overlap_join_sites: HashSet<IrValueId>,
+    /// The indexed families a handed-out range half privatizes when its lane
+    /// is granted, keyed by that member; see [`crate::IrOverlap`].
+    overlap_indexed: HashMap<IrValueId, Vec<crate::ir::IrIndexedReduction>>,
     /// Selected-target layouts of the exact `{ arguments..., result }`
     /// aggregates this world may place in runtime lane storage.
     ///
@@ -1731,6 +1769,16 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             .iter()
             .filter_map(crate::IrOverlap::join_site)
             .collect();
+        let overlap_indexed = overlaps
+            .iter()
+            .filter(|overlap| !overlap.indexed.is_empty())
+            .flat_map(|overlap| {
+                overlap
+                    .handed_out()
+                    .iter()
+                    .map(|member| (*member, overlap.indexed.clone()))
+            })
+            .collect();
         let storage =
             FunctionStoragePlan::build_in_world(program, function, sequential_clones.is_some())?;
         let result_slot = places::returned_storage_slot(function, &storage);
@@ -1768,6 +1816,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             parallel,
             overlap_handed_out,
             overlap_join_sites,
+            overlap_indexed,
             ordinary_lane_frames,
             handed_out: Vec::new(),
             sequential_clones,
@@ -2100,6 +2149,10 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 self.function,
                 &self.incoming,
             );
+            self.output
+                .references
+                .metadata
+                .extend(self.owner_alias.metadata_roots());
             for scope in self.owner_alias.scopes() {
                 self.intrinsics.insert(IntrinsicDeclaration::OwnerScope);
                 self.output.symbol("llvm.experimental.noalias.scope.decl");
@@ -2173,6 +2226,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 .push(Parameter::named("i64", "%wf.budget"));
         }
         self.emit_grain_entry(&public)?;
+        self.emit_entry_version(&public)?;
         if waiting {
             self.emit_frame_entry()?;
         }
@@ -2658,6 +2712,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Err(BackendFailure::InvalidIr);
         }
         match operation {
+            IrOperation::DemandRequested => self.emit_demand_requested(result, ty),
             IrOperation::Constant(constant) => self.emit_constant(result, ty, *constant),
             IrOperation::Call {
                 function,
@@ -2688,7 +2743,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 captures,
                 weight,
                 work,
-                indexed,
+                // The driver's overlap group carries these families.
+                indexed: _,
             } => self.emit_loop_split(
                 result,
                 ty,
@@ -2701,7 +2757,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                     captures,
                     weight: *weight,
                     work: work.as_ref(),
-                    indexed,
                 },
             ),
             IrOperation::Integer {
@@ -2843,7 +2898,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             }
             IrOperation::SliceFromRun { run } => self.emit_slice_from_run(result, ty, *run),
             IrOperation::SliceRange { slice, start, end } => {
-                self.emit_slice_range(result, ty, *slice, *start, *end, None)
+                self.emit_slice_range(result, ty, *slice, *start, *end)
             }
             IrOperation::IndexedBlocks { address } => {
                 self.emit_indexed_blocks(result, ty, *address)
@@ -2852,12 +2907,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::IndexedReference { original, roots } => {
                 self.emit_indexed_reference(result, *original, roots)
             }
-            IrOperation::IndexedRange {
-                slice,
-                start,
-                end,
-                private_type,
-            } => self.emit_slice_range(result, ty, *slice, *start, *end, Some(*private_type)),
             IrOperation::IndexedAddress {
                 slice,
                 offset,

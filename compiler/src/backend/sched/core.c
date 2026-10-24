@@ -202,91 +202,6 @@
 #ifndef WF_PAR_YIELD_ROUNDS
 #define WF_PAR_YIELD_ROUNDS 16
 #endif
-/* How many chunks an independent map may be split into, as a multiple of the
- * lane count. `wf__par_split_budget` below combines this with the work term --
- * span / ceil(work unit / weight), the floor on chunk size entry.c owns -- by
- * a MINIMUM, so this is a ceiling on chunk count and never a floor on chunk
- * size: a range too small to be worth splitting stays bounded by the work term
- * however much oversubscription this allows.
- *
- * What is known about 16, which arrived with the splitter: at the work unit
- * entry.c now carries, 150,000, it is the BINDING term for all three of the
- * compute scoreboard's map kernels at the widths a four- or eight-CPU host
- * records. The work term affords mandelbrot 143 chunks (weight 219 over 98,304
- * points), records 708 (weight 812 over 131,072 records) and fir 524 (weight
- * 150 over 524,288 outputs), so every one of them reads 32 chunks at two
- * lanes, 64 at four and 128 at eight: the cap, not the grain. Past that the
- * two large maps stay on the cap -- records and fir read 256 at sixteen lanes
- * and 512 at thirty-two -- while mandelbrot's work term binds again from
- * sixteen lanes up and holds it at 128. So for these sizes this cap IS the
- * grain at the recorded widths, and it is no longer slack anywhere below
- * sixteen lanes. (Until 2026-09-12 the work unit was 1,200,000, and the
- * division was the other way: records and fir were cap-bound at 32 and 64
- * while mandelbrot could afford only 17 chunks, so its 16 were the grain --
- * which is why the work unit's own sweep could not move the records or fir row
- * at either width. That remains a true statement about those runs
- * (research/investigations/compute-runtime/RESULTS.md, the split work unit
- * swept against the Mandelbrot grain).) Against any of these counts oneTBB's
- * auto_partitioner hands the same skewed mandelbrot map out as about 1,536
- * callbacks.
- *
- * What keeps the cap at 16 now that it is the binding term is the M1 Pro grain
- * twin of 2026-09-11, the run that moved the work unit
- * (research/investigations/compute-runtime/RESULTS.md, the M1 Pro grain twin;
- * its `wf-b` arm was built -DWF_PAR_SPLIT_WORK_UNIT=150000
- * -DWF_PAR_SPLIT_OVERSUBSCRIBE=32). That arm and the runtime now shipped agree
- * on mandelbrot at W=8: a cap of 32 per lane wants 256 chunks there and only
- * 143 are affordable, so both give 128, and the 0.692 [0.65-0.75] with five of
- * five pairs lower that the twin read at W=8 is what the work unit alone now
- * buys. Where they differ is W=4 -- 128 chunks against the 64 this cap allows
- * -- and that is the width the twin charged for: paired CPU 1.189 on
- * mandelbrot and 1.177 on fir to buy wall inside 1.5 percent either way (1.015
- * and 0.998), three to four percent of process CPU for nothing at the width a
- * four-CPU table records. The twin moved both terms at once, so those figures
- * price the finer grain as a whole rather than the cap alone; what stands
- * against 32 is that the only reading of a 32-per-lane build spends CPU at W=4
- * and returns nothing at W=8 that a 16-per-lane build does not already return,
- * while the hosted four-CPU twin that reached only the 64 chunks this cap
- * allows (run 34630112178) read neutral at W=4. So the cap stays at 16 and the
- * work unit is what moved.
- *
- * It was also swept directly, and that sweep selects nothing. The compute
- * scoreboard ran three candidate pairs against the shipped runtime through its
- * A/B twin -- the cap and the work unit raised together, so mandelbrot's chunk
- * count could pass its own cap rather than stop at it -- one
- * `compare PASSES=5 CALLS=5` each on the four-CPU Linux development host, the
- * plain image byte-identical in all three. The chunk counts moved exactly as
- * the rule predicts: (64, 300,000) gave mandelbrot 64 chunks at every width
- * with records and fir at 128/256/256, (256, 75,000) gave 256 with
- * 512/1024/1024, and (1024, 20,000) gave 1,024 with records 2048/4096/4096 and
- * fir 2,048 at every width. The acceptance was
- * mandelbrot's W=4 `wf-b/wf` wall below 1.000 with at least four of five
- * paired passes lower, no kernel reproducibly worse at W=2 or W=4, W=4 paired
- * CPU no worse than 1.05, and W=1 unchanged. It read 0.999 (3/5), 0.992 (3/5)
- * and 0.970 (5/5), and the third is not selectable, because QUADRATURE IS A
- * NULL ARM IN EVERY ONE OF THOSE RUNS -- it emits no split call at all, so its
- * two images do identical work -- and in that same third run quadrature's own
- * W=4 pair read 0.940 with five of five lower. Over the four runs quadrature's
- * identical-work W=4 pair spans 0.936 to 1.086, including both a 5/5-lower and
- * a 0/5-lower reading, which is the one thing a within-pass twin cannot remove:
- * the two images differ in bytes and therefore in code placement, this bundle's
- * largest confound. (1024, 20,000) also took fir's W=2 pair to 1.053 with one
- * of five lower. So nothing in THAT sweep selects a cap; what 16 stands on is
- * the grain twin's W=4 CPU column above, not these three pairs
- * (research/investigations/compute-runtime/RESULTS.md, the oversubscription
- * cap measured with the A/B twin). Reopen on a host whose null arm holds
- * inside one percent, or on an eight-CPU host where W=8 is the
- * recorded block -- at the oversubscribed W=8 here the middle candidate read
- * fir 0.909 with five of five lower and paired CPU 0.922.
- *
- * The guard is what lets the compute scoreboard build a runtime at another
- * value through its WF_RUNTIME_CONTROL_FLAGS and A/B twin, so the cap can be
- * swept against the shipped runtime inside one set of passes instead of edited
- * per run. This selects how finely an admitted program is actualized in
- * parallel; no acceptance path reads it. */
-#ifndef WF_PAR_SPLIT_OVERSUBSCRIBE
-#define WF_PAR_SPLIT_OVERSUBSCRIBE 16
-#endif
 /* Sequential leaves a recursive component is cut into, per lane, by
  * wf__par_recursion_budget. Measured on the compute scoreboard's quadrature
  * kernel (research/investigations/compute-runtime/RESULTS.md, the
@@ -320,6 +235,10 @@ struct wf__par_slot {
 };
 
 struct wf__par_lane {
+    /* Permanent lane storage protects the registered TLS address's lifetime. */
+    _Alignas(WF_PAR_CACHE_LINE) uint64_t *request_word;
+    unsigned request_users;
+    wf_prim_exit_registration request_cleanup;
     /* Thieves advance top; only this lane's owner writes bottom/free_head.
      * Ring cells are atomic because a losing thief may read across reuse. */
     _Alignas(WF_PAR_CACHE_LINE) unsigned long long top;
@@ -629,25 +548,6 @@ static void wf__par_trace_chunk(struct wf__par_lane *lane, uint64_t elapsed_ns) 
     }
 }
 
-/* The head of one top-level call: the splitter's single entry query, asked by
- * the offering lane before it publishes anything, with the idle mask as it
- * stood at that moment so a call where no lane had parked is visible as such. */
-static void wf__par_trace_call_head(struct wf__par_lane *lane) {
-    struct wf__par_trace_ring *ring;
-    if (lane == NULL) {
-        return;
-    }
-    ring = &wf__par_trace_rings[lane - wf__par_lanes];
-    ring->depth = 0;
-    ring->in_call = 1;
-    wf__par_trace_arm_all();
-    wf__par_trace_put(lane, WF_PAR_TRACE_CALL_HEAD,
-                      (int64_t)__atomic_load_n(&wf__par_idle, __ATOMIC_RELAXED));
-    /* The offering lane's own reading at the head, the reference every helper's
-     * post-wake probe is read against. */
-    wf__par_trace_probe(lane, 0);
-}
-
 /* Every publish reaches this, so the ordinary mid-call publish -- no lane
  * parked, the flag already clear -- must be a LOAD of a shared clean line and
  * nothing else. A store here would invalidate that line on every frame offered
@@ -714,6 +614,69 @@ static void wf__par_trace_dump(void) {
 static _Thread_local struct wf__par_lane *wf__par_self;
 
 static _Thread_local int wf__par_attached;
+
+/* Windows construction explicitly selects native PE TLS with Clang's
+ * -fno-emulated-tls. Its OS lifetime encloses the FLS cleanup; compiler-emulated
+ * TLS with an independent destructor is not this exported polling ABI. */
+#if defined(_WIN32)
+_Thread_local uint64_t wf__par_demand_word;
+#else
+__attribute__((tls_model("initial-exec"))) _Thread_local uint64_t wf__par_demand_word;
+#endif
+static wf_prim_exit_key wf__par_word_key;
+static unsigned wf__par_word_key_once;
+
+#if defined(WF_SCHED_REQUEST_TEST)
+static void wf_sched_request_test_acquired(void);
+static void wf_sched_request_test_withdrawn(void);
+static void wf_sched_request_test_released(void);
+static void wf_sched_request_test_cleared(void);
+#endif
+#if defined(WF_SCHED_STARTUP_TEST)
+static uint64_t wf_sched_startup_test_window_us(uint64_t selected);
+static void wf_sched_startup_test_before_register(void);
+static void wf_sched_startup_test_helper_ready(unsigned lane);
+static void wf_sched_startup_test_window_entered(unsigned lane);
+static void wf_sched_startup_test_before_park(unsigned lane);
+#endif
+
+/* An SC count increment precedes each pointer read. A requester either reads
+ * NULL after withdrawal, or withdrawal observes its count and waits until its
+ * last possible store is complete. Lane storage itself lasts for the process. */
+static void wf__par_withdraw_word(void *opaque) {
+    struct wf__par_lane *lane = opaque;
+    __atomic_store_n(&lane->request_word, (uint64_t *)NULL, __ATOMIC_SEQ_CST);
+#if defined(WF_SCHED_REQUEST_TEST)
+    wf_sched_request_test_withdrawn();
+#endif
+    while (__atomic_load_n(&lane->request_users, __ATOMIC_SEQ_CST) != 0)
+        wf_prim_yield();
+#if defined(WF_SCHED_REQUEST_TEST)
+    wf_sched_request_test_released();
+#endif
+}
+static void wf__par_word_key_init(void) {
+    if (wf_prim_exit_key_init(&wf__par_word_key, wf__par_withdraw_word)) abort();
+}
+static void wf__par_register_word(struct wf__par_lane *lane) {
+    wf__sched_once(&wf__par_word_key_once, wf__par_word_key_init);
+    if (wf_prim_exit_bind(&lane->request_cleanup, &wf__par_word_key, lane)) abort();
+    __atomic_store_n(&lane->request_word, &wf__par_demand_word, __ATOMIC_RELEASE);
+    /* Every registering lane gets a first opportunity to expose work, even
+     * after all potential requesters have stopped scanning or parked. */
+    __atomic_store_n(&wf__par_demand_word, (uint64_t)1, __ATOMIC_RELAXED);
+}
+static void wf__par_request(struct wf__par_lane *victim) {
+    uint64_t *word;
+    __atomic_fetch_add(&victim->request_users, 1u, __ATOMIC_SEQ_CST);
+    word = __atomic_load_n(&victim->request_word, __ATOMIC_SEQ_CST);
+#if defined(WF_SCHED_REQUEST_TEST)
+    wf_sched_request_test_acquired();
+#endif
+    if (word != NULL && __atomic_load_n(word, __ATOMIC_RELAXED) == 0)
+        __atomic_store_n(word, (uint64_t)1, __ATOMIC_RELAXED);
+    __atomic_fetch_sub(&victim->request_users, 1u, __ATOMIC_RELEASE);
+}
 
 static unsigned wf__par_ready;
 static wf_prim_thread wf__par_threads[WF_PAR_MAX_LANES];
@@ -904,6 +867,9 @@ static struct wf__par_slot *wf__par_find(struct wf__par_lane *lane) {
             return slot;
         }
     }
+    /* One advisory request per failed scan, skipping the scanning lane. */
+    if (&wf__par_lanes[offset] == lane) offset = (offset + 1) % count;
+    wf__par_request(&wf__par_lanes[offset]);
     return NULL;
 }
 
@@ -1038,6 +1004,9 @@ static int wf__par_stay_hot(struct wf__par_idling *idling) {
         if (now != 0) {
             if (idling->entered == 0) {
                 idling->entered = now;
+#if defined(WF_SCHED_STARTUP_TEST)
+                wf_sched_startup_test_window_entered((unsigned)(wf__par_self - wf__par_lanes));
+#endif
             }
             if (now - idling->entered < wf__par_idle_window_us) {
                 idling->rounds = 0;
@@ -1124,8 +1093,12 @@ static void wf__par_worker_main(void *opaque) {
     wf__par_self = lane;
     wf__par_attached = 1;
     wf_prim_floor_attach();
+    wf__par_register_word(lane);
 
     __atomic_add_fetch(&wf__par_ready, 1u, __ATOMIC_RELEASE);
+#if defined(WF_SCHED_STARTUP_TEST)
+    wf_sched_startup_test_helper_ready((unsigned)(lane - wf__par_lanes));
+#endif
 
     for (;;) {
         struct wf__par_slot *slot;
@@ -1160,6 +1133,9 @@ static void wf__par_worker_main(void *opaque) {
 #if defined(WF_PAR_TRACE)
             wf__par_trace_put(lane, WF_PAR_TRACE_PARK, (int64_t)idling.rounds);
 #endif
+#if defined(WF_SCHED_STARTUP_TEST)
+            wf_sched_startup_test_before_park((unsigned)(lane - wf__par_lanes));
+#endif
             wf_prim_wait_sleep(&lane->wait);
 #if defined(WF_PAR_TRACE)
             wf__par_trace_wake(lane);
@@ -1183,6 +1159,8 @@ static void wf__par_worker_main(void *opaque) {
 
 static void wf__par_prepare(struct wf__par_lane *lane, int index) {
     int slot;
+    lane->request_word = NULL;
+    lane->request_users = 0;
     lane->top = 0;
     lane->bottom = 0;
     lane->seed = 0x9e3779b97f4a7c15ull * (unsigned long long)(index + 1);
@@ -1233,6 +1211,9 @@ static void wf__par_start(void) {
         (cpus != 0u && (unsigned)requested <= cpus && levels <= 1u)
             ? (uint64_t)WF_PAR_IDLE_WINDOW_US
             : 0u;
+#if defined(WF_SCHED_STARTUP_TEST)
+    wf__par_idle_window_us = wf_sched_startup_test_window_us(wf__par_idle_window_us);
+#endif
     /* Prepare every deque before publishing a scan bound. Initialize the
      * owner's wait before any worker exists; preserve started workers on
      * later failure, and never destroy a station a worker may reach. */
@@ -1286,6 +1267,10 @@ static struct wf__par_lane *wf__par_attach(void) {
         return NULL;
     }
     wf__par_self = &wf__par_lanes[0];
+#if defined(WF_SCHED_STARTUP_TEST)
+    wf_sched_startup_test_before_register();
+#endif
+    wf__par_register_word(wf__par_self);
     return wf__par_self;
 }
 
@@ -1319,6 +1304,12 @@ void wf__par_publish(void *frame, void (*fn)(void *)) {
     struct wf__par_slot *slot = (struct wf__par_slot *)frame;
     slot->run = fn;
     __atomic_store_n(&slot->state, WF_PAR_SLOT_PENDING, __ATOMIC_RELAXED);
+    /* Clear before publishing, so an idle request after publication survives.
+     * Only the owner publishes its frames, so this is its own live TLS word. */
+    __atomic_store_n(&wf__par_demand_word, (uint64_t)0, __ATOMIC_RELAXED);
+#if defined(WF_SCHED_REQUEST_TEST)
+    wf_sched_request_test_cleared();
+#endif
     wf__par_push(slot->home, slot);
 #if defined(WF_PAR_TRACE)
     wf__par_trace_rings[slot->home - wf__par_lanes].depth += 1;
@@ -1393,55 +1384,22 @@ void wf__par_release(void *frame) {
 #endif
 }
 
-int wf__par_pool_active(void) { return wf__sched_lanes() >= 2; }
-
-uint64_t wf__par_split_budget(uint64_t span, uint64_t weight) {
-    struct wf__par_lane *lane = wf__par_self;
-    int lanes = wf__sched_lanes();
-    uint64_t work = wf__sched_split_work();
-    uint64_t want;
-    uint64_t affordable;
-    uint64_t chunks;
-    uint64_t budget;
-    if (lanes < 2 || work == 0) {
-        return 0;
-    }
-    if (lane != NULL) {
-        unsigned long long bottom = __atomic_load_n(&lane->bottom, __ATOMIC_RELAXED);
-        unsigned long long top = __atomic_load_n(&lane->top, __ATOMIC_RELAXED);
-        if ((long long)(bottom - top) > 0) {
-            return 0;
-        }
-    }
-#if defined(WF_PAR_TRACE)
-    wf__par_trace_call_head(lane);
-#endif
-    if (weight == 0) {
-        weight = 1;
-    }
-    want = (uint64_t)lanes * WF_PAR_SPLIT_OVERSUBSCRIBE;
-
-    if (weight >= work) {
-        affordable = span;
-    } else {
-        affordable = span / ((work + weight - 1) / weight);
-    }
-    chunks = (want < affordable) ? want : affordable;
-
-    budget = 0;
-    while ((chunks >> 1) != 0) {
-        chunks >>= 1;
-        budget += 1;
-    }
-    return budget;
+int wf__par_pool_active(void) {
+    int active = wf__sched_lanes() >= 2;
+    /* Request-gated work can reach its first acquisition only after a request
+     * exists. Start the pool and register this lane at world selection, before
+     * the first direct TLS poll; registration supplies its initial request.
+     * Keep selection based on the requested width even if startup refuses,
+     * so the selected parallel body retains its ordinary-call fallback. */
+    if (active && !wf__par_attached) (void)wf__par_attach();
+    return active;
 }
 
 /* How many times a call into an ordinary recursive component may hand work
  * out before its callees enter the sequential clone.
  *
- * The loop splitter's allowance above answers the same question for a counted
- * range and is read the same way: one query at entry, an ordinary value
- * carried down, and a leaf world with no scheduler test below the cut. With no
+ * One query at entry, an ordinary value carried down, and a leaf world with no
+ * scheduler test below the cut. With no
  * pool -- fewer than two lanes -- one lane's worth of leaves is still the
  * honest answer, because the compiled entry may run without a pool and its
  * sequential clone is what it then descends into. A scheduler-less link never

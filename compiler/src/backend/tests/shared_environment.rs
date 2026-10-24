@@ -312,7 +312,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
-fn recorded_loop_capture_loads_after_indexed_setup_in_the_call_block() {
+fn recorded_loop_capture_loads_in_the_indexed_driver_call_block() {
     let source = br#"fn count_first(left: &u64, right: &u64, spare: &u64, depth: u64, x: u64, y: u64, z: u64, p: u64, q: u64) -> result: u64 reads(left), reads(right), reads(spare) {
   doc "The recursive edge forwards borrows; the base case uses them only in an indexed loop.";
   if depth != 0_u64 {
@@ -321,7 +321,7 @@ fn recorded_loop_capture_loads_after_indexed_setup_in_the_call_block() {
     return counted;
   }
   let counts = box_array_filled::<u64>(count: 8_u64, value: 0_u64);
-  for (i in 0_u64..64_u64) {
+  for (i in 0_u64..p) {
     let bucket = i % 8_u64;
     let added = left^ +wrap right^;
     set counts.inner[bucket] = counts.inner[bucket] +wrap added;
@@ -339,7 +339,7 @@ fn main() -> status: std::process::ExitStatus pure {
   let left = 3_u64;
   let right = 2_u64;
   let spare = 0_u64;
-  let counted = count_first(left: &left, right: &right, spare: &spare, depth: 2_u64, x: 1_u64, y: 2_u64, z: 3_u64, p: 4_u64, q: 5_u64);
+  let counted = count_first(left: &left, right: &right, spare: &spare, depth: 2_u64, x: 1_u64, y: 2_u64, z: 3_u64, p: 64_u64, q: 5_u64);
   if counted != 40_u64 {
     return std::process::exit_status(code: 1_u8);
   }
@@ -355,26 +355,25 @@ fn main() -> status: std::process::ExitStatus pure {
         },
     );
     let first = emitted_function(&llvm, "_env_count_first");
-    // These assertions make an unselected indexed path fail the test rather
-    // than allowing an ordinary loop to satisfy the placement check.
-    assert!(first.contains("@wf__par_split_budget("), "{first}");
-    assert!(first.contains(".fill.head:"), "{first}");
+    // The extent is the forwarded `p`: a literal 64-iteration call-free loop
+    // is a compile-time small site and keeps no driver. The indexed loop keeps its range driver; the site itself allocates
+    // nothing and asks the runtime for no split budget.
     assert!(first.contains("@wf__par_split_count_first."), "{first}");
+    assert!(!first.contains("@wf__par_split_budget("), "{first}");
+    assert!(!first.contains("@wf__heap_take("), "{first}");
+    assert!(
+        llvm.contains(".allocation = call ptr @wf__heap_take("),
+        "the driver's granted far half owns the private contribution"
+    );
     let loads: Vec<_> = blocks(first)
         .into_iter()
         .filter(|(_, block)| block.contains("load ptr, ptr %wf.env.v"))
         .collect();
-    // Eager argument preparation queued the pointer loads before the budget
-    // query. The split function takes every record slot as a capture
-    // (left, right and spare), so each load's use is its operand of the
-    // split call after indexed preparation has constructed its join block;
-    // each slot is loaded exactly once, there, and nowhere else.
+    // The driver takes every record slot as a capture (left, right and
+    // spare), so each load's use is its operand of the driver call; each slot
+    // is loaded exactly once, in the call's block, and nowhere else.
     assert_eq!(loads.len(), 1, "{first}");
-    let (label, body) = &loads[0];
-    assert!(
-        label.starts_with("indexed.") && label.ends_with(".join"),
-        "{first}"
-    );
+    let (_, body) = &loads[0];
     assert_eq!(body.matches("load ptr, ptr %wf.env.v").count(), 3, "{body}");
     assert!(body.contains("@wf__par_split_count_first."), "{body}");
     assert_local_record_consumers(body, |line| line.contains("@wf__par_split_count_first."));
@@ -787,10 +786,10 @@ fn functions_without_a_record_resolve_their_operands_before_their_blocks() {
   return left^ == right^;
 }
 
-fn count_words(left: &u64, right: &u64) -> result: u64 reads(left), reads(right) {
-  doc "An indexed loop the splitter takes, capturing two borrows.";
+fn count_words(left: &u64, right: &u64, extent: u64) -> result: u64 reads(left), reads(right) {
+  doc "An indexed loop the range driver takes, capturing two borrows.";
   let counts = box_array_filled::<u64>(count: 8_u64, value: 0_u64);
-  for (i in 0_u64..64_u64) {
+  for (i in 0_u64..extent) {
     let bucket = i % 8_u64;
     let added = left^ +wrap right^;
     set counts.inner[bucket] = counts.inner[bucket] +wrap added;
@@ -824,7 +823,7 @@ fn main() -> status: std::process::ExitStatus pure {
   }
   let one = 3_u64;
   let two = 2_u64;
-  let counted = count_words(left: &one, right: &two);
+  let counted = count_words(left: &one, right: &two, extent: 64_u64);
   if same(left: &a, right: &b) {
     if counted == 40_u64 {
       return std::process::exit_status(code: 0_u8);
@@ -857,38 +856,39 @@ fn main() -> status: std::process::ExitStatus pure {
             .nth(1)
             .and_then(|rest| rest.split(',').next())
             .expect("an element address names its base");
-        assert!(!body.1.contains(&format!("  {base} = ")), "{base} in {same}");
+        assert!(
+            !body.1.contains(&format!("  {base} = ")),
+            "{base} in {same}"
+        );
     }
 
-    // The splitter's arguments taken from the function body exist before its
-    // budget query; the private leaf range and the budget it passes are the
-    // splitter's own, made after that query.
+    // The driver's operands taken from the function body exist before its
+    // call. The site prepares no private storage and asks for no budget. Its
+    // extent is a parameter, since a literal 64-iteration call-free loop is a
+    // compile-time small site with no driver.
     let count = emitted_function(&llvm, "count_words");
-    let budget = count
-        .find("@wf__par_split_budget(")
-        .expect("the loop is split");
+    assert!(!count.contains("@wf__par_split_budget("), "{count}");
+    assert!(!count.contains("@wf__heap_take("), "{count}");
     let call = count
         .lines()
         .find(|line| line.contains("call ") && line.contains("@wf__par_split_count_words."))
-        .expect("the split call");
-    let splitter_own = |operand: &str| {
-        operand.starts_with("%indexed.")
-            || count.lines().any(|line| {
-                line.starts_with(&format!("  {operand} = ")) && line.contains("%indexed.")
-            })
-    };
+        .expect("the loop is split");
+    let call_at = count.find(call).expect("the call line is in the body");
     let body_operands: Vec<_> = call_operands(call)
         .into_iter()
-        .filter(|op| op.starts_with("%") && !splitter_own(op))
+        .filter(|op| op.starts_with("%"))
         .collect();
-    assert!(body_operands.len() >= 3, "the captures and the counts array: {call}");
+    assert!(
+        body_operands.len() >= 3,
+        "the captures and the counts array: {call}"
+    );
     for operand in body_operands {
-        let defined = count.find(&format!("  {operand} = ")).or_else(|| {
-            header(count).contains(&format!(" {operand}")).then_some(0)
-        });
+        let defined = count
+            .find(&format!("  {operand} = "))
+            .or_else(|| header(count).contains(&format!(" {operand}")).then_some(0));
         assert!(
-            defined.is_some_and(|at| at < budget),
-            "{operand} is defined before the budget query in {count}"
+            defined.is_some_and(|at| at < call_at),
+            "{operand} is defined before the driver call in {count}"
         );
     }
 

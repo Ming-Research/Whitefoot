@@ -1,0 +1,65 @@
+# Temporary: the Linux correctness groups for the default --par
+# demand-splitting branch while its pull request is a draft, whose pushes the
+# gate skips. Removed before that pull request is marked ready; the gate's
+# manual run after the review is the full check.
+name: tmp-par-default-groups
+
+on:
+  push:
+    branches: [claude/par-demand-default]
+    paths:
+      - 'compiler/**'
+      - 'tests/**'
+      - 'design/**'
+      - 'spec/**'
+      - 'Makefile'
+      - '.github/workflows/tmp-par-default-groups.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-par-default-groups
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  group:
+    name: ${{ matrix.stage }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        stage: [static, unit, corpus, runtime]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+      - name: Prepare the host as the gate does
+        run: |
+          set -euo pipefail
+          echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+          echo "WHITEFOOT_TIME_BUDGET_RECORD=$RUNNER_TEMP/time-budget-overruns.txt" >> "$GITHUB_ENV"
+          git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+          git branch -f main origin/main
+          if [ "${{ matrix.stage }}" = static ]; then
+            echo "DESIGN_REVIEW_BASE=$(git merge-base origin/main HEAD)" >> "$GITHUB_ENV"
+          fi
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          rustup component add clippy rustfmt
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          sudo sysctl -w kernel.core_pattern=core
+      - name: ${{ matrix.stage }}
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: 1500
+        run: make check-group GROUP="${{ matrix.stage }}"
