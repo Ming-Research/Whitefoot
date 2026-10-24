@@ -567,15 +567,15 @@ fn ordered_map_last<K, V, const ceiling: u64>(map: &OrderedMap<K, V, ceiling>) -
   return found;
 }
 
-fn ordered_map_partition<K, V, E, P, fn place(env: &E, left: &K, right: &P) -> order: i32 reads(env), reads(left), reads(right)>(node: &OrderedNode<K, V>, strict: Bool, probe: &P, env: &E) -> position: u64 reads(node), reads(probe), reads(env) contract {
+fn ordered_map_partition<K, V, E, P, fn place(env: &E, left: &K, right: &P) -> order: i32 reads(env), reads(left), reads(right)>(node: &OrderedNode<K, V>, exclusive: Bool, probe: &P, env: &E) -> position: u64 reads(node), reads(probe), reads(env) contract {
   ensures position <= node^.entries.len;
 } {
-  doc "The number of leading entries whose keys lie before the sought position: ordered before the probe, or at it too when strict is set.";
+  doc "The number of leading entries whose keys lie before the sought position: ordered before the probe, or at it too when exclusive is set.";
   let count = node^.entries.len;
   for (index in 0_u64..count) {
     let order = place(env: env, left: &node^.entries[index].pair.key, right: probe);
     let beyond = order >= 0_i32;
-    if strict {
+    if exclusive {
       set beyond = order > 0_i32;
     }
     if beyond {
@@ -585,16 +585,16 @@ fn ordered_map_partition<K, V, E, P, fn place(env: &E, left: &K, right: &P) -> o
   return count;
 }
 
-fn ordered_map_seek_link<K, V, E, P, fn place(env: &E, left: &K, right: &P) -> order: i32 reads(env), reads(left), reads(right)>(link: &Slots<Box<OrderedNode<K, V>>, 1>, cursor: &OrderedCursor, level: u64, strict: Bool, upward: Bool, probe: &P, env: &E) -> result: OrderedMove reads(link), reads(probe), reads(env), writes(cursor) {
+fn ordered_map_seek_link<K, V, E, P, fn place(env: &E, left: &K, right: &P) -> order: i32 reads(env), reads(left), reads(right)>(link: &Slots<Box<OrderedNode<K, V>>, 1>, cursor: &OrderedCursor, level: u64, exclusive: Bool, upward: Bool, probe: &P, env: &E) -> result: OrderedMove reads(link), reads(probe), reads(env), writes(cursor) {
   if link^.len > 0_u64 {
-    return ordered_map_seek_node::<K, V, E, P, fn place>(node: &link^[0_u64].inner, cursor: cursor, level: level, strict: strict, upward: upward, probe: probe, env: env);
+    return ordered_map_seek_node::<K, V, E, P, fn place>(node: &link^[0_u64].inner, cursor: cursor, level: level, exclusive: exclusive, upward: upward, probe: probe, env: env);
   }
   return OrderedMove::OrderedExhausted();
 }
 
-fn ordered_map_seek_node<K, V, E, P, fn place(env: &E, left: &K, right: &P) -> order: i32 reads(env), reads(left), reads(right)>(node: &OrderedNode<K, V>, cursor: &OrderedCursor, level: u64, strict: Bool, upward: Bool, probe: &P, env: &E) -> result: OrderedMove reads(node), reads(probe), reads(env), writes(cursor) {
+fn ordered_map_seek_node<K, V, E, P, fn place(env: &E, left: &K, right: &P) -> order: i32 reads(env), reads(left), reads(right)>(node: &OrderedNode<K, V>, cursor: &OrderedCursor, level: u64, exclusive: Bool, upward: Bool, probe: &P, env: &E) -> result: OrderedMove reads(node), reads(probe), reads(env), writes(cursor) {
   doc "Places the cursor on the first entry of the subtree past the sought position when upward is set, or the last before it otherwise. The child between the entries on either side of the position is searched first; when it holds no such entry, the entry beside the position in this node is the one, if it exists.";
-  let position = ordered_map_partition::<K, V, E, P, fn place>(node: node, strict: strict, probe: probe, env: env);
+  let position = ordered_map_partition::<K, V, E, P, fn place>(node: node, exclusive: exclusive, probe: probe, env: env);
   let marked = ordered_map_cursor_mark(cursor: cursor, level: level, index: position);
   if marked {
   } else {
@@ -603,10 +603,10 @@ fn ordered_map_seek_node<K, V, E, P, fn place(env: &E, left: &K, right: &P) -> o
   let next = level + 1_u64;
   let below = OrderedMove::OrderedExhausted();
   if position == 0_u64 {
-    set below = ordered_map_seek_link::<K, V, E, P, fn place>(link: &node^.leading, cursor: cursor, level: next, strict: strict, upward: upward, probe: probe, env: env);
+    set below = ordered_map_seek_link::<K, V, E, P, fn place>(link: &node^.leading, cursor: cursor, level: next, exclusive: exclusive, upward: upward, probe: probe, env: env);
   } else {
     let previous = position - 1_u64;
-    set below = ordered_map_seek_link::<K, V, E, P, fn place>(link: &node^.entries[previous].after, cursor: cursor, level: next, strict: strict, upward: upward, probe: probe, env: env);
+    set below = ordered_map_seek_link::<K, V, E, P, fn place>(link: &node^.entries[previous].after, cursor: cursor, level: next, exclusive: exclusive, upward: upward, probe: probe, env: env);
   }
   match below {
     OrderedMoved() => {
@@ -635,16 +635,16 @@ fn ordered_map_seek_node<K, V, E, P, fn place(env: &E, left: &K, right: &P) -> o
 
 fn ordered_map_seek<K, V, E, P, fn place(env: &E, left: &K, right: &P) -> order: i32 reads(env), reads(left), reads(right), const ceiling: u64>(map: &OrderedMap<K, V, ceiling>, seek: OrderedSeek, probe: &P, env: &E) -> cursor: OrderedCursor reads(map), reads(probe), reads(env) {
   doc "Each seek is one monotone split of the keys, before or past a position: at least and at most split after the keys ordered before the probe or at it, respectively; above and below the other way. At least and above take the first key past the split, at most and below the last key before it.";
-  let strict = False();
+  let exclusive = False();
   let upward = True();
   match seek {
     OrderedAtLeast() => {
     }
     OrderedAbove() => {
-      set strict = True();
+      set exclusive = True();
     }
     OrderedAtMost() => {
-      set strict = True();
+      set exclusive = True();
       set upward = False();
     }
     OrderedBelow() => {
@@ -652,7 +652,7 @@ fn ordered_map_seek<K, V, E, P, fn place(env: &E, left: &K, right: &P) -> order:
     }
   }
   let cursor = ordered_map_cursor_at(version: map^.version);
-  let found = ordered_map_seek_link::<K, V, E, P, fn place>(link: &map^.root, cursor: &cursor, level: 0_u64, strict: strict, upward: upward, probe: probe, env: env);
+  let found = ordered_map_seek_link::<K, V, E, P, fn place>(link: &map^.root, cursor: &cursor, level: 0_u64, exclusive: exclusive, upward: upward, probe: probe, env: env);
   match found {
     OrderedMoved() => {
     }
