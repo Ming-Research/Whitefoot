@@ -158,6 +158,7 @@ impl Vocabulary {
         let ty = match self.terms.kind(anchor) {
             TermKind::ConstParameter(_, ty)
             | TermKind::Place(_, ty)
+            | TermKind::ReturnedValue { ty, .. }
             | TermKind::CallDatum { ty, .. }
             | TermKind::EntryDatum { ty, .. }
             | TermKind::MeasureDatum { ty, .. } => *ty,
@@ -214,11 +215,13 @@ impl Vocabulary {
             // fragment type u64, and nothing kills it. It participates in
             // step 6's bridge exactly as a live measure term does, which is
             // what carries a header conclusion across the write that kills
-            // the term the conclusion was published over.
+            // the term the conclusion was published over. A returned value
+            // [FN-9] is such an immutable datum too, of its own fragment type.
             if matches!(
                 self.terms.kind(id),
                 TermKind::Measure(..)
                     | TermKind::TargetMeasure { .. }
+                    | TermKind::ReturnedValue { .. }
                     | TermKind::CallDatum { .. }
                     | TermKind::EntryDatum { .. }
                     | TermKind::MeasureDatum { .. }
@@ -248,8 +251,10 @@ impl Vocabulary {
             .measure_terms()
             .into_iter()
             .filter(|term| {
-                !matches!(self.terms.kind(*term), TermKind::TargetMeasure { .. })
-                    || state.measure_atoms.borrow().contains_key(term)
+                !matches!(
+                    self.terms.kind(*term),
+                    TermKind::TargetMeasure { .. } | TermKind::ReturnedValue { .. }
+                ) || state.measure_atoms.borrow().contains_key(term)
             })
             .collect::<Vec<_>>()
         {
@@ -1553,7 +1558,7 @@ impl Reasoning<'_, '_, '_> {
             .filter(|term| {
                 !matches!(
                     self.vocabulary.terms.kind(*term),
-                    TermKind::TargetMeasure { .. }
+                    TermKind::TargetMeasure { .. } | TermKind::ReturnedValue { .. }
                 ) || affine.measure_atoms.borrow().contains_key(term)
             })
             .collect::<Vec<_>>()
@@ -3243,7 +3248,7 @@ impl Reasoning<'_, '_, '_> {
             .filter(|term| {
                 !matches!(
                     self.vocabulary.terms.kind(*term),
-                    TermKind::TargetMeasure { .. }
+                    TermKind::TargetMeasure { .. } | TermKind::ReturnedValue { .. }
                 ) || values.measure_atoms.borrow().contains_key(term)
             })
             .collect::<Vec<_>>()

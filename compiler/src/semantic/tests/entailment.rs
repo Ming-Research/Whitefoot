@@ -535,6 +535,7 @@ fn term_integer_range(summary: &FunctionEntailment, kind: &TermKind) -> Option<(
         | TermKind::EntryDatum { ty, .. }
         | TermKind::MeasureDatum { ty, .. }
         | TermKind::CommitValue { ty, .. }
+        | TermKind::ReturnedValue { ty, .. }
         | TermKind::CallDatum { ty, .. } => Some(type_range(*ty)),
         TermKind::Zero | TermKind::Constant(_) => None,
     }
