@@ -2170,7 +2170,7 @@ theorem Ctx.swapStay_same {M : Sem X} {f : F} {r : Run} (hf : M.Facts f r) {s : 
       X.mayOverlap f a b && a.steps.length == b.steps.length) = true :=
     List.any_eq_true.2 ⟨mf, hmf, List.any_eq_true.2 ⟨ms, hms, by simp [hov, hlen]⟩⟩
   unfold Ctx.swapStay
-  exact if_pos hany
+  exact ite_eq_left hany
 
 /-- A debt that covers a place below a member o of one swap target is taken
 across: exchanged onto a member t of the other target and settled, it covers t
@@ -2231,7 +2231,7 @@ theorem Ctx.swap_sealed {M : Sem X} {f : F} {kb : Kills T} {s : St T} {r r' : Ru
   obtain ⟨ms, hms, hmsd⟩ := St.resolve_denote hh.2 hps
   by_cases heq : πf = πs
   · -- one place: the run is unchanged, and every debt stays
-    rw [if_pos heq] at hrun
+    rw [ite_eq_left heq] at hrun
     rw [hrun] at hn ⊢
     rw [heq] at hpf
     obtain ⟨d, hd, hc⟩ := hh.1 π I hI hn
@@ -2240,7 +2240,7 @@ theorem Ctx.swap_sealed {M : Sem X} {f : F} {kb : Kills T} {s : St T} {r r' : Ru
     rw [Ctx.swapStay_same hf hh.2 hpf hps]
     exact he
   · have hap : πf.Apart πs := Ctx.swap_apart hf hh.2 hpf hps hchk heq
-    rw [if_neg heq] at hrun
+    rw [ite_eq_right heq] at hrun
     obtain ⟨r₁, h1, h2⟩ := hrun
     have hgf : ∀ e, r'.get ⟨πf.root, πf.path ++ e⟩ = r.get ⟨πs.root, πs.path ++ e⟩ := by
       intro e
