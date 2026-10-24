@@ -929,10 +929,8 @@ fn materialize(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, pos:
     let o = Op::Const(d: d, v: p.value);
     emit_dest(st: st, code: code, op: o, pos: pos);
   }
-  if pos < provs^.inner.len {
-    let in_temp = Prov(kind: 0_u64, value: 0_u64);
-    set provs^.inner[pos] = in_temp;
-  }
+  let in_temp = Prov(kind: 0_u64, value: 0_u64);
+  set provs^.inner[pos] = in_temp;
   return unit;
 }
 
@@ -1304,14 +1302,12 @@ fn end_block(st: &Trans, provs: &Box<Slots<Prov>>, code: &Box<Slots<Op>>, brtab:
   let from = c.fixes;
   let total = fixes^.inner.len;
   for (i in from..total) {
-    if i < fixes^.inner.len {
-      let f = fixes^.inner[i];
-      if f.depth == depth {
-        patch(code: code, brtab: brtab, p: f, target: here);
-      } else if keep < fixes^.inner.len {
-        set fixes^.inner[keep] = f;
-        set keep = keep +wrap 1_u64;
-      }
+    let f = fixes^.inner[i];
+    if f.depth == depth {
+      patch(code: code, brtab: brtab, p: f, target: here);
+    } else if keep < fixes^.inner.len {
+      set fixes^.inner[keep] = f;
+      set keep = keep +wrap 1_u64;
     }
   }
   loop @trim {
@@ -1494,9 +1490,7 @@ fn step_control(op: u8, st: &Trans, r: &Reader, bytes: &Box<Array<u8>>, funcs: &
       give Pending(depth: top, at: c.else_at, table: no2, form: 5_u64, s: c.c, d: c.fb, c: c.cmp);
     }
     patch(code: code, brtab: brtab, p: unless, target: here);
-    if top < ctls^.inner.len {
-      set ctls^.inner[top].else_at = 18446744073709551615_u64;
-    }
+    set ctls^.inner[top].else_at = 18446744073709551615_u64;
     let height = c.height +wrap c.params;
     set_height(st: st, provs: provs, height: height);
     set st^.dead = False();
@@ -1969,10 +1963,8 @@ fn add_const(consts: &Box<Slots<u64>>, cbase: u64, value: u64) -> r: unit writes
   doc "Adds value to the function's constant pool, the slots from cbase, unless it is there.";
   let length = consts^.inner.len;
   for (i in cbase..length) {
-    if i < consts^.inner.len {
-      if consts^.inner[i] == value {
-        return unit;
-      }
+    if consts^.inner[i] == value {
+      return unit;
     }
   }
   push_word(cell: consts, value: value);
@@ -2074,12 +2066,10 @@ fn translate(r: &Reader, bytes: &Box<Array<u8>>, fi: u64, funcs: &Box<Slots<Func
     return False();
   }
   let begin = code^.inner.len;
-  if fi < funcs^.inner.len {
-    set funcs^.inner[fi].locals = nl;
-    set funcs^.inner[fi].start = begin;
-    set funcs^.inner[fi].cbase = cbase;
-    set funcs^.inner[fi].cn = cn;
-  }
+  set funcs^.inner[fi].locals = nl;
+  set funcs^.inner[fi].start = begin;
+  set funcs^.inner[fi].cbase = cbase;
+  set funcs^.inner[fi].cn = cn;
   loop @clear_ctls {
     if ctls^.inner.len == 0_u64 {
       break @clear_ctls;
@@ -2165,10 +2155,8 @@ fn translate(r: &Reader, bytes: &Box<Array<u8>>, fi: u64, funcs: &Box<Slots<Func
   }
   let end = code^.inner.len;
   for (i in begin..end) {
-    if i < code^.inner.len {
-      if has_sentinel(op: code^.inner[i]) {
-        return False();
-      }
+    if has_sentinel(op: code^.inner[i]) {
+      return False();
     }
   }
   return bnot(st.failed);

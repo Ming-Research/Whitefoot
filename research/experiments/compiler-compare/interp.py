@@ -156,12 +156,16 @@ def build(args):
 
 
 def workload_command(out, workload, arm):
-    """argv, stdin path (or None) of one run of a workload by an arm's image."""
+    """argv, stdin path (or None) of one run of a workload by an arm's image.
+
+    The interpreter opens its module relative to its working directory and
+    rejects an absolute path, so a run starts in the inputs directory."""
+    out = os.path.abspath(out)
     images = os.path.join(out, "images")
     inputs = os.path.join(out, "inputs")
     if workload == "fib":
         return [os.path.join(images, f"halo-{arm}")], os.path.join(inputs, "fib.lua")
-    return ([os.path.join(images, f"v2h-{arm}"), os.path.join(inputs, "coremark.wasm")]
+    return ([os.path.join(images, f"v2h-{arm}"), "coremark.wasm"]
             + COREMARK_ARGUMENTS + [str(COREMARK_ITERATIONS)], None)
 
 
@@ -192,7 +196,7 @@ def launch(out, workload, arm, cpu, wrapper=()):
     try:
         start = time.perf_counter_ns()
         done = subprocess.run(command, stdin=stdin, capture_output=True, text=True,
-                              env=dict(os.environ, LC_ALL="C"))
+                              cwd=os.path.join(out, "inputs"), env=dict(os.environ, LC_ALL="C"))
         elapsed = time.perf_counter_ns() - start
     finally:
         if stdin:
@@ -459,7 +463,7 @@ PERF_RUNS = itertools.count()
 
 
 def perf_once(out, workload, arm, cpu, events):
-    csv_path = os.path.join(out, "perf", f"{next(PERF_RUNS):03d}-{workload}-{arm}.csv")
+    csv_path = os.path.join(os.path.abspath(out), "perf", f"{next(PERF_RUNS):03d}-{workload}-{arm}.csv")
     # timeout stays outside perf: its helper process is no part of the count.
     elapsed, _ = launch(out, workload, arm, cpu,
                         wrapper=["perf", "stat", "-x,", "--no-big-num", "-e", ",".join(events), "-o", csv_path, "--"])

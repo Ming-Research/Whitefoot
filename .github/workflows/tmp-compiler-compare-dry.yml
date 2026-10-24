@@ -154,9 +154,7 @@ jobs:
           ( time "$wfc" "$RUNNER_TEMP/p/v2h.wf" --cache "$RUNNER_TEMP/p/v2h-cache" -o "$RUNNER_TEMP/p/v2h-image" ) 2>&1 | cut -c1-600 | head -200
           test -x "$RUNNER_TEMP/p/v2h-image"
           cp "$RUNNER_TEMP/p/silverfir/benchmarks/wasi/coremark/coremark.wasm" "$RUNNER_TEMP/p/coremark.wasm"
-          echo "== absolute path, 2000 iterations"
-          ( time taskset -c 1 "$RUNNER_TEMP/p/v2h-image" "$RUNNER_TEMP/p/coremark.wasm" 0x0 0x0 0x66 2000 ) 2>&1 | tail -30
-          echo "== relative path"
+          echo "== relative path, 2000 iterations"
           cd "$RUNNER_TEMP/p"
           ( time taskset -c 1 "$RUNNER_TEMP/p/v2h-image" coremark.wasm 0x0 0x0 0x66 2000 ) 2>&1 | tail -30
       - name: Perf availability
