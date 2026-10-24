@@ -17,3 +17,9 @@ import WhitefootProof.Holds
 import WhitefootProof.DischargeSound
 import WhitefootProof.ObligationSound
 import WhitefootProof.ValueSound
+import WhitefootProof.Safety
+import WhitefootProof.Align
+import WhitefootProof.Simulation
+import WhitefootProof.Blocks
+import WhitefootProof.Loops
+import WhitefootProof.Theorems
