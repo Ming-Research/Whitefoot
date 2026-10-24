@@ -78,3 +78,98 @@ jobs:
           echo "toolchain tests: $total failures in $((iterations * 4)) runs"
           echo "toolchain tests: $total failures in $((iterations * 4)) runs" >> "$GITHUB_STEP_SUMMARY"
           test "$total" -eq 0
+
+  # The same operations the tests perform (write a script, make it executable,
+  # start it), with sixteen threads doing so at once and nothing else in the
+  # process. `old` counts how often the first start of a just-written script
+  # fails with ETXTBSY; `new` also waits for the start to succeed once and
+  # then requires every later start to succeed.
+  stress:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    name: start of a just-written script
+    steps:
+      - name: Build and run the stress program
+        run: |
+          mkdir -p "$RUNNER_TEMP/stress-src" "$RUNNER_TEMP/stress-files"
+          cat > "$RUNNER_TEMP/stress-src/stress.rs" <<'EOF'
+          use std::io::{self, ErrorKind};
+          use std::os::unix::fs::PermissionsExt;
+          use std::path::{Path, PathBuf};
+          use std::process::Command;
+          use std::sync::atomic::{AtomicUsize, Ordering};
+          use std::time::Duration;
+          use std::{fs, thread};
+
+          const SCRIPT: &str = "#!/bin/sh\nprintf '%s\\n' 'fake bundled clang 22'\n";
+
+          fn start(path: &Path) -> io::Result<()> {
+              Command::new(path).arg("--version").output().map(|_| ())
+          }
+
+          fn busy(result: &io::Result<()>) -> bool {
+              matches!(result, Err(error) if error.kind() == ErrorKind::ExecutableFileBusy)
+          }
+
+          fn main() {
+              let arguments: Vec<String> = std::env::args().collect();
+              let barrier = arguments[1] == "new";
+              let threads: usize = arguments[2].parse().unwrap();
+              let iterations: usize = arguments[3].parse().unwrap();
+              let directory = PathBuf::from(&arguments[4]);
+              let first_busy = AtomicUsize::new(0);
+              let retries = AtomicUsize::new(0);
+              let later_failed = AtomicUsize::new(0);
+              thread::scope(|scope| {
+                  for worker in 0..threads {
+                      let (directory, first_busy, retries, later_failed) =
+                          (&directory, &first_busy, &retries, &later_failed);
+                      scope.spawn(move || {
+                          for iteration in 0..iterations {
+                              let path = directory.join(format!("clang-{worker}-{iteration}"));
+                              fs::write(&path, SCRIPT).unwrap();
+                              fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+                              let mut result = start(&path);
+                              if busy(&result) {
+                                  first_busy.fetch_add(1, Ordering::Relaxed);
+                              }
+                              if barrier {
+                                  while busy(&result) {
+                                      thread::sleep(Duration::from_millis(1));
+                                      retries.fetch_add(1, Ordering::Relaxed);
+                                      result = start(&path);
+                                  }
+                              }
+                              if let Err(error) = &result {
+                                  if !busy(&result) {
+                                      panic!("{}: {error}", path.display());
+                                  }
+                              }
+                              if barrier && start(&path).is_err() {
+                                  later_failed.fetch_add(1, Ordering::Relaxed);
+                              }
+                              fs::remove_file(&path).unwrap();
+                          }
+                      });
+                  }
+              });
+              println!(
+                  "mode {}: {} threads, {} scripts, first start busy {}, retries {}, later starts failed {}",
+                  arguments[1],
+                  threads,
+                  threads * iterations,
+                  first_busy.load(Ordering::Relaxed),
+                  retries.load(Ordering::Relaxed),
+                  later_failed.load(Ordering::Relaxed)
+              );
+              if later_failed.load(Ordering::Relaxed) != 0 {
+                  std::process::exit(1);
+              }
+          }
+          EOF
+          rustc --version
+          nproc
+          rustc -O -o "$RUNNER_TEMP/stress-src/stress" "$RUNNER_TEMP/stress-src/stress.rs"
+          for mode in old new old new; do
+            "$RUNNER_TEMP/stress-src/stress" "$mode" 16 3000 "$RUNNER_TEMP/stress-files" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
