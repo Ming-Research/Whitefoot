@@ -195,3 +195,92 @@ jobs:
           fi
           git checkout -- "$bridge"
           exit $status
+
+  # The busy-ring test of this head, run on main itself: it must fail there
+  # with its own message. Main's tree plus the test's two files and its entry
+  # in the corpus list; nothing of the runtime change.
+  main-busy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Take the test files from the branch head
+        run: |
+          git fetch --no-tags origin "${{ github.sha }}"
+          git checkout "${{ github.sha }}" -- \
+            compiler/tests/programs/busy_ring_receive.rs tests/programs/busy_ring_receive.wf
+          perl -0pi -e 's/(    mod raw_deflate_vectors;\n)/$1    #[cfg(target_os = "linux")]\n    mod busy_ring_receive;\n/ or die' compiler/tests/corpus.rs
+          git rev-parse HEAD
+          git diff --stat
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          nproc
+      - name: The busy-ring receive on main
+        run: |
+          export WF_REQUIRE_LINUX_IO_URING=1
+          out="$RUNNER_TEMP/main-busy.txt"
+          code=0
+          timeout 1500s cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline \
+            --test corpus programs::busy_ring_receive:: -- --test-threads=1 --show-output > "$out" 2>&1 || code=$?
+          grep -E '^test |test result' "$out" | tail -5
+          sed -n '/panicked at/,/^note: /p' "$out" | head -40
+          if [ "$code" = 0 ]; then echo "FAIL: the busy-ring receive passed on main"; exit 1; fi
+          if grep -qF "the receive did not release the atomic computation within" "$out"; then
+            echo "PASS: on main the busy-ring receive timed out"
+          else
+            echo "FAIL: the busy-ring receive failed on main for another reason"; exit 1
+          fi
+
+  # The registered latency arms of the study's section 6.1 for the program
+  # witnesses: both placement arms at 1 and at 2 CPUs, ten invocations of
+  # three attempts per arm each, every echo within the bound.
+  latency-arms:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          nproc
+      - name: Both placement arms at 1 and 2 CPUs
+        run: |
+          set -u
+          status=0
+          export WF_REQUIRE_LINUX_IO_URING=1
+          out="$RUNNER_TEMP/arms.txt"
+          cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --test corpus --no-run
+          for cpus in 0 0,1; do
+            passed=0
+            for i in 1 2 3 4 5 6 7 8 9 10; do
+              code=0
+              taskset -c "$cpus" timeout 900s cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline \
+                --test corpus programs::ring_assist:: -- --test-threads=1 > "$out" 2>&1 || code=$?
+              if [ "$code" = 0 ]; then
+                passed=$((passed + 1))
+              else
+                echo "invocation $i on CPUs $cpus failed ($code)"
+                grep -E '^test |test result' "$out" | tail -5
+                sed -n '/panicked at/,/^note: /p' "$out" | head -30
+              fi
+            done
+            echo "CPUs $cpus: $passed of 10 invocations passed"
+            if [ "$passed" != 10 ]; then status=1; fi
+          done
+          exit $status

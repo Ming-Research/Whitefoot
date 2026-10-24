@@ -817,11 +817,12 @@ CI, and nothing runs on the Mac.
 
 ## 9. Busy-receive witness audit (2026-10-13)
 
-The reported main-only run of `busy_ring_receive.wf` passed all sixteen
-invocations, including invocations classified as same-driver. That result
-does not establish the ring-assist regression. The initial audit read code
-only, before the replacement observation was built or run. Its comparison used
-main `5b7838b328632999712aacf8313717b6dca1ade6` and branch
+A reported main-only run of `busy_ring_receive.wf` passed all sixteen
+invocations, including invocations classified as same-driver. The audit read
+code only, before the replacement observation was built or run, to find what
+could make the witness pass on main; the result at the end shows the reported
+revision was not main. The audit's comparison used main
+`5b7838b328632999712aacf8313717b6dca1ade6` and branch
 `f9f7dc5ee2faaf74a435a6ca05ccde0b32fbb5db`.
 
 The computation already has the required uninterrupted shape. Its one
@@ -853,8 +854,7 @@ Its monitor only hands off for a due deadline, and the witness supplies
 none. Spare threads and the monitor park on private wake endpoints. Ring
 setup does not enable SQPOLL. The audit therefore predicted that a pending
 receive on the computing executor's ring would not complete while that
-executor remained in this loop; the subsequently reported run below leaves
-that interpretation of the witness unresolved.
+executor remained in this loop.
 The submission may still be staged: main can select the ready child before
 flushing its deferred doorbell. Both staged submissions and unreaped CQEs
 are shapes the branch's ring trigger covers. The relevant main paths are
@@ -870,19 +870,16 @@ The replacement harness observed ordinary calls with link-time wrappers. It
 recorded the receive's actual adapter and the physical thread whose context
 wait returned 1, then recorded the thread claiming the computation's entry
 cell after its first shared-state read. It sent the peer's byte only after both
-records existed. The audit interpreted equal thread IDs, with the wait
-recorded first, as establishing the required schedule. The subsequently
-reported main pass makes that interpretation a question for the additional
-observations below. Different IDs in the direct arm are left
+records existed. Equal thread IDs, with the wait recorded first,
+establish the required schedule. Different IDs in the direct arm are left
 unclassified because a role handoff can also change physical threads. The
 explicit split arm retains its independent nonwaiting entry spin. See the
 [observer and harness](../../../compiler/tests/programs/busy_ring_receive.rs)
 and [source witness](../../../tests/programs/busy_ring_receive.wf).
 
 The wrappers do not submit, flush, reap, move a context or release the
-computation. The original placement writes preceded the measured peer send
-and occurred outside the spinning loop; the additional publication and reap
-records can occur after the send. The audit predicted that a directly observed
+computation. The placement writes precede the measured peer send and occur
+outside the spinning loop. The audit predicted that a directly observed
 same-thread run on main would miss the receive bound because only that
 receive can release the computation. On this branch, the monitor sees pending
 ring work in the same OUTSIDE epoch, reserves a spare, and binds it to the entire driver role;
@@ -891,25 +888,18 @@ criterion, not an unconditional host scheduling guarantee. See the branch's
 [ring-watch trigger](https://github.com/Ming-Research/Whitefoot/blob/f9f7dc5ee2faaf74a435a6ca05ccde0b32fbb5db/compiler/src/backend/completion/bridge.c#L5050)
 and [whole-role reservation](https://github.com/Ming-Research/Whitefoot/blob/f9f7dc5ee2faaf74a435a6ca05ccde0b32fbb5db/compiler/src/backend/completion/bridge.c#L5004).
 
-Acceptance still requires running the identical revised files against both
-runtimes on the native Linux host: main must fail on the directly observed
-same-thread schedule, the branch must pass, and the explicit split control
-must pass. If main still passes, inspect the direct trace and the native
-build provenance before claiming either that the defect is absent or that
-an alternate delivery path explains it. No main failure or branch success
-for this revision was claimed by the initial code audit.
-
-The owner subsequently reported that the replacement witness at
-`4a6376be2` also passed on main with the identical test files at `98ea9f486`,
-in the native Linux step of io-hosts run `38433098848`, with
-`WF_REQUIRE_LINUX_IO_URING=1`. This contradicts the audit's prediction for
-the recorded same-thread schedule. It does not establish whether the
-receive was serviced during the computation or whether the records have
-been misinterpreted. The next observation keeps the test's verdict unchanged
-and adds timestamped submit, wait-return, computation-marker, ring-init and
-receive-publication records in the test's link-time observer. Optional
-`WF_TRACE_RING_SERVICE=1` also records calls crossing the wrapped ring
-progress entry. Same-translation-unit calls may bypass linker wrapping;
-the receive-publication record identifies the publishing thread independently
-of that entry trace. The [test observer](../../../compiler/tests/programs/busy_ring_receive.rs)
-owns these records; no production runtime hook is added.
+**Result.** The audit's prediction holds. The run reported as main's was of
+`98ea9f486`, which contains the implementation commit `7a640099e`
+(`git merge-base --is-ancestor 7a640099e 98ea9f486` succeeds), in the native
+Linux step of io-hosts run `38433098848` with `WF_REQUIRE_LINUX_IO_URING=1`,
+so its pass was the branch's. The same witness files on a revision without the
+implementation, `d1a3efcba` (main at `3adedae9b` plus the witness), failed in
+the gate's corpus job, run `38437669835`: the direct arm's first invocation,
+with the wait and the computation recorded on one thread, reported "the
+receive did not release the atomic computation within 100ms", and the
+Firn-shaped same-driver echo case of `ring_assist.rs` failed in the same run.
+The timestamped diagnostics added to chase the reported pass were removed once
+the cause was known, so the observer in the test is again the placement
+observer alone; the verdict logic is the same as in the run that failed on
+main. On the branch the test passes, and with only the deadline trigger kept
+it fails with that message.
