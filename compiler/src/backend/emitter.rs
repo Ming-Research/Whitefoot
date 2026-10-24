@@ -259,6 +259,11 @@ pub(crate) fn emit_llvm_with_layout(
 
 pub(crate) use handler_words::prepare_dispatch_layout;
 
+/// The entrance check alone, for tests that make the two worlds disagree about
+/// one nominal's representation.
+#[cfg(test)]
+pub(crate) use canonical_world::validate_crossovers as validate_world_crossovers;
+
 /// Emits using the same explicit layout plan that selected nominal storage.
 pub(crate) fn emit_prepared_llvm(
     prepared: &handler_words::PreparedDispatch<'_>,

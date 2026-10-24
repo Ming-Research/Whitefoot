@@ -76,7 +76,7 @@ pub(super) fn canonical_clone_roots(
 
 /// Opaque pointer arguments still carry typed storage. Compare every reachable
 /// representation, including owner payloads, before importing a canonical root.
-pub(super) fn validate_crossovers(
+pub(crate) fn validate_crossovers(
     program: &IrProgram,
     canonical: &IrProgram,
     roots: &BTreeSet<String>,
