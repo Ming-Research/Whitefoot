@@ -1844,6 +1844,32 @@ mod tests {
         }
     }
 
+    /// [REF-4, OP-10] a page index names the length its formation read only
+    /// through its own source occurrence: two formations name two lengths, and
+    /// a loop-carried, value-determined or unknown index names none, so a page
+    /// reference through one keeps the unconditional invalidation at a call.
+    #[test]
+    fn a_page_index_names_its_formation_length_only_by_source_occurrence() {
+        let first = literal(4, 0)
+            .page_extent()
+            .expect("a source occurrence names one formation");
+        let second = literal(5, 0)
+            .page_extent()
+            .expect("a source occurrence names one formation");
+        assert_eq!(first.capture, CaptureId::PageExtent(4));
+        assert_ne!(first, second);
+        assert_eq!(binding(4, 1).page_extent(), Some(first));
+        assert_eq!(CapturedValue::unknown().page_extent(), None);
+        assert_eq!(literal(4, 0).goal_identity().page_extent(), None);
+        let carried = place(7, &[PlaceStep::Page(literal(14, 0))])
+            .loop_carried(CheckedLoopId(3), BindingId(9), 0)
+            .expect("small carried page identity");
+        let Some(PlaceStep::Page(page)) = carried.path.first() else {
+            panic!("a carried page keeps its page step: {:?}", carried.path);
+        };
+        assert_eq!(page.page_extent(), None);
+    }
+
     #[test]
     fn loop_carried_paths_keep_shape_but_not_source_capture_generation() {
         let original = place(
