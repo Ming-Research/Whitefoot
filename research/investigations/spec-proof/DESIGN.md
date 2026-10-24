@@ -857,6 +857,339 @@ each. Moved into the package, the proofs checked on every `proof.yml` run; one
 earlier run failed only on the build's budget of the time, 25.6 s against
 25 s, on package content another run had passed with.
 
+## Sealed type invariants
+
+Board item `spec-proof-sealed-invariants`. The amendment that
+`firn-req-invariant-through-fields` makes rewrites TYPE-11 and adds its parts
+S1 to S8: an affine type invariant travels with a value into fields, payloads,
+`Box`es and containers, a body may break it between two writes, and the body
+must restore it before it hands the value on. Until the amendment merges, its
+text is on that item's branch (Whitefoot#484, head `07d856f2c`). Cut as the
+coverage checker cuts a rule, the nine rules are 63 lines: TYPE-11 11, S1 4,
+S2 6, S3 14, S4 13, S5 4, S6 4, S7 3 and S8 4. The main line's TYPE-11 has the
+older form, and the model's fragment has no structs or references.
+
+Four review rounds of Whitefoot#484 in a row reported defects, and two were
+soundness gaps in the rules themselves, each where a rule met a write through
+a reference that may name several places: in the fifteenth round a whole-value
+store, in the sixteenth a `swap`. A proof that every event keeps an invariant
+checks each such combination: the lemma for a combination the rules get wrong
+does not go through.
+
+### Approach
+
+| Order | What it does | Trade-off |
+|---|---|---|
+| A. The rules first (chosen) | the rules' sentences become a component's functions, over the values and places the model's interpreter will hold; REF-1's resolution and OWN-7's overlap, short where TYPE-11 uses them, are formalized and proved with it; the fact core and the effect rows are premises | checks the layer where the gaps were, each row against each way of writing; the end-to-end step joins later |
+| B. Structs and references in the fragment, end to end | the model's syntax, parser, interpreter and checker gain structs, fields, references, effect rows and `swap`, and the fact core's simulation grows with them | the theorem is about accepted programs, but it waits for the fact core's simulation and most of the references part, which it duplicates |
+| C. Wait for the references part | that part models these rules with the rest | nothing is duplicated, but the rules' implementation, and the work waiting on it, waits for that part and the fact core |
+
+All three end with the rules formalized sentence by sentence in the executable
+model and proved end to end; they differ in which part comes first. A is not
+the idealized calculus that [Modeling approaches
+compared](#modeling-approaches-compared) refuses: its definitions are the
+specification's sentences, its run holds the values and places the interpreter
+will hold, and the walk will call its functions, so each theorem below is one
+step of the end-to-end induction, as the fact core's lemmas are. The
+end-to-end theorem, that an accepted program hands off only valid values,
+needs the fragment to have structs and references and the fact core's
+simulation to be proved; it then discharges the premises below. That step is
+proposed for `spec-proof-refs`.
+
+### The component
+
+`Sealing.lean` holds the definitions. The checker's side is the sealing state
+of one body at one point, its debts and each reference variable's members,
+and one function per judgment: each row of TYPE-11.S3, the hand-off of
+TYPE-11.S4 with the restoration and satisfaction of TYPE-11.S5, the merge and
+loop header of TYPE-11.S6 and the instance of TYPE-11.S7. `Ctx.step` applies
+an event's rows: a commit or update, a `let`, a `swap`, a call, the death of a
+root binding, the binding of a reference, and a kill batch alone; it rejects a
+`swap` that OP-11 rejects, one whose targets have members that may overlap at
+different levels. The run's side is a store of values at roots, local bindings,
+by-value parameters and the referents of reference parameters, and the path
+each reference variable names. A value is a tree whose children are a
+struct's fields, a `Box`'s content, an `Array`'s elements or the payload of
+the variant an enum holds. Every step of a place selects one value, so a
+place's level is its number of steps; range, page, `Segments` and window
+steps, which select runs, are outside the component.
+
+The invariant every theorem keeps is `Ctx.Holds`: at every place of the run,
+each affine invariant of the struct there holds unless a debt covers it, a
+debt that names the invariant at an anchor denoting the place, its recorded
+reference and projection denoting the place too, or a cover above the place
+(`Ctx.Sealed`); and each reference variable's path in the run is denoted by
+one of its members (`RefsOk`).
+
+### What the proofs assume
+
+The premises are stated in `Sem` and `Ctx.RunStep`. Each is a judgment the
+component reads and does not make, and the end-to-end proof discharges each
+from the rule named:
+
+1. `Sem.distinct_sound`: two offsets the facts prove distinct differ in a run
+   where the facts hold. The fact core's soundness, ENT-6.
+2. `Sem.proves_sound`: an instance the facts prove holds at the place the
+   spelled place denotes. The soundness of MSR-4's disposition, with its
+   `invariant` and `use` certificates.
+3. `Sem.Frame`: a term the kill batch does not kill keeps its value, and a
+   reference variable it does not rebind or end keeps its path. ENT-5's kill
+   judgment.
+4. `Ctx.RhsValue`: a value that is no place read is valid at its declared
+   type: a literal owns no struct, a construction owes each invariant
+   (TYPE-11 line 6, judged as an FN-8 requirement), and a call's result is
+   handed off at the callee's return (TYPE-11.S4). A place read gives the
+   value of a place of the same declared type.
+5. `Ctx.RunStep` for a call: each place apart from every place the call
+   writes keeps its value and each place below no written referent that exists
+   after the call existed before (EFF-2 and EFF-5); each written referent is
+   valid when the call returns, which `Ctx.handoff_valid` at each of a source
+   callee's exits gives and SCOPE-3's obligation gives for a supplied
+   definition; the call rebinds none of the caller's reference variables.
+6. `Ctx.RunStep` for a `swap`: both targets hold values of one declared type,
+   and the run exchanges them (OP-11).
+7. The walk: at each event the fact state holds in the run (`M.Facts f r`),
+   the fact core's simulation; at body entry no debt is open and every value
+   is valid, since the caller handed each argument and referent off.
+
+Whitefoot#540 (`lang-contract-element-term`), not merged, makes an array
+element a contract term; the facts can then prove instances at elements, and
+premise 2 covers those unchanged (inferred from the specification text).
+
+### Theorems
+
+`SealingSound.lean` proves, under those premises:
+
+- `Ctx.step_holds`: an event the rules accept keeps `Ctx.Holds`, by one lemma
+  per event (`Ctx.store_holds`, `Ctx.bind_holds`, `Ctx.swap_holds`,
+  `Ctx.call_holds`, `Ctx.death_holds`, `Ctx.bindRef_holds`,
+  `Ctx.kill_holds`).
+- `Ctx.handoff_holds` and `Ctx.handoffs_holds`: a hand-off, and a call's
+  hand-offs in order, keep it; `Ctx.handoff_valid`: the value a hand-off the
+  rules accept hands off is valid.
+- `Ctx.join_holds`: the state at a merge agrees with the run arriving on any
+  edge; `Ctx.header_entry_holds` and `Ctx.header_back_holds`: the state at a
+  loop header agrees with the run entering the loop and with the run arriving
+  on any backedge or `continue`.
+- `Ctx.instance_true`: an instance the rules establish holds.
+
+The events that write a place follow one argument, over three kinds of place.
+A place at or below the written place holds part of the new value: for a store
+or a call that value is valid, handed off, fresh or returned by the callee;
+for a `swap` it is what was below the other target, and the debts exchanged
+from there cover it. A place above it whose invariant the write breaks gets a
+debt from the write row: the invariant held before the write, so the write
+reached one of its binder data, and the write row adds a debt at every anchor
+strictly above the written place whose read set the write reaches. Every other
+place keeps its value, and the debt that covered it, if any, survives the
+event's rows. A `let` from a place read takes each debt that may be at or
+below that place, rebased onto the new binding. The axiom check accepts every
+declaration of the model: 6,037 on the last run, `Sealing*.lean` among them.
+
+### Readings
+
+Where the text admits more than one reading, the component takes the one
+below. Reading 1 is also the fix for the gap in the next section.
+
+1. One statement's rows are judged in the state before its kill batch, with
+   the members its places resolve to there (TYPE-11.S3 line 3, "in the walk's
+   event order"). The kill row runs over the debts the statement found, before
+   the rows that add debts, and restores with the facts before the batch, as
+   ENT-5 orders. The debts the statement's own rows add are not offered for
+   restoration: the batch widens each it touches (`Ctx.settle`).
+2. A store's store row removes debts before the kill row widens any. A debt
+   proved at or below the written place, in the state before the statement,
+   lies within the stored value, which is valid; widening it first would keep
+   a debt the store has paid. The write row's debts lie strictly above the
+   written place, so they are never removed by the store row, before or after.
+3. A `swap` target with several members moves no debt. A debt proved at or
+   below one member may lie where the swap did not write, so it stays and is
+   copied, exchanged, onto the other target, as a debt that may be at or below
+   a target is (TYPE-11.S3 line 11).
+4. The death row removes a cover rooted at the dead binding with the anchors
+   rooted there (TYPE-11.S3 line 12).
+5. The kill row drops the recorded reference of every debt it widens. For a
+   debt whose anchor gained a `[?]` this changes nothing: such a debt forms no
+   instance (TYPE-11.S5 line 3), and the store row for several members, the
+   only row that reads a record, cannot remove it (TYPE-11.S3 line 9).
+6. A write reaches an invariant's read set at an anchor when the written place
+   may overlap the place of one of the invariant's binder data read from the
+   anchor (`Ctx.reaches`, TYPE-11.S3 line 6).
+7. Satisfaction at a handed place needs no `[?]` of the anchor below the
+   handed place; the text implies it, since the handed place must have a
+   captured offset at each step where the anchor has `[?]` (TYPE-11.S5
+   line 3).
+
+### A gap in the rules
+
+TYPE-11.S3 does not say whether the debts a statement's write row adds are
+among those its kill row offers for restoration. They are on the literal
+reading, and the kill row restores with the facts before the batch, which can
+still prove the instance the write breaks: a write whose place has an offset
+that reads the written storage kills that offset itself. Inferred from the
+rules, not run on the compiler; the case `selfIndexed` in `SealingCases.lean`
+is this example, which the component rejects:
+
+```wf
+struct Node {
+  next: u32;
+  invariant link(node): node.next < 64_u32;
+}
+// An earlier read of nodes[nodes[i].next].next established link there.
+// This write breaks that element, and its offset nodes[i].next reads nodes,
+// so the same statement kills the offset. The facts before the batch still
+// hold the instance, so the new debt is restored and no debt records the
+// broken element.
+set nodes[nodes[i].next].next = 1000_u32;
+```
+
+The fix, reading 1: the kill row offers for restoration only the debts the
+statement found; a debt the statement's own rows add is widened to `[?]` where
+the batch kills its offset, without restoration. It is the only working form.
+Restoring the new debts with the facts before the batch is the gap; not
+widening them leaves a debt naming another element; restoring every debt with
+the facts after the batch would reject
+`type11-pos-field-offset-restored-before-moved`, whose restoration needs the
+facts before the cursor moves (inferred from the definitions, not run). The
+change to TYPE-11.S3 belongs to the amendment's work.
+
+### Cases
+
+`SealingCases.lean` writes conformance cases of Whitefoot#484 as event
+sequences with a small fact core, and the build checks each verdict with
+`#guard`, 25 checks in all:
+
+- `type11-neg-joined-reference-store-keeps-debt`, the fifteenth round's
+  example: rejected. `type11-pos-joined-reference-store-restores`, a value
+  broken through a reference and then replaced whole through the same
+  reference: accepted; without the replacement: rejected.
+- `type11-neg-swap-after-joined-write-restore-keeps-debt` and
+  `type11-neg-swap-after-joined-write-store-keeps-debt`, the sixteenth
+  round's examples: rejected. `type11-neg-reference-rebound-before-restored`:
+  rejected.
+- `type11-pos-joined-reference-swap-write-restored` and
+  `type11-pos-joined-reference-call-write-restored`: accepted with the facts
+  that restore, rejected without them.
+- `type11-neg-swap-possible-alias-keeps-debt` over an `Array`: rejected, and
+  the swapped-in value gets no instance; `type11-pos-swap-elements`: accepted.
+- From `type11-neg-stored-field-corrupt-then-read`: a broken field and its
+  copy give no instance; replacing the field restores it and not the copy.
+- `type11-neg-branch-join-broken` and `type11-pos-branch-join-restored`: a
+  merge offers each edge's debts for restoration in that edge's facts.
+- `type11-neg-field-offset-moved-before-restored` and
+  `type11-pos-field-offset-restored-before-moved` with the cursor a local:
+  five checks of a debt widened when its offset moves.
+- The gap's example above: rejected.
+
+A temporary workflow put back, one per job, the rule each of three of these
+cases protects, and required the cases to fail and the proofs not to check.
+With the fifteenth round's joined store, a store through a reference with
+several members removing the debts proved at or below every member, the checks
+of `type11-neg-joined-reference-store-keeps-debt` and
+`type11-neg-swap-after-joined-write-store-keeps-debt` failed and
+`storeRemove_keep` did not check. With the sixteenth round's recorded swap, an
+exchanged debt keeping its recorded reference, the checks of the two
+`type11-neg-swap-after-joined-write-…` cases failed and `Debt.exchange_covers`
+did not check. With the literal reading of the gap, the gap's case failed and
+`Ctx.writeDebts_cover` and `Ctx.store_holds` did not check. No other check
+failed.
+
+### Line by line
+
+Each line of the nine rules on Whitefoot#484's branch, numbered as the
+coverage checker cuts the rule (the rule's title line is line 1), with the
+FNV-1a hash the checker reads. When the amendment lands, each line with a
+definition gets a `-- spec` mark above it, and each other line an `outside`
+entry with the reason given; a line with both gets the mark and its
+definition's docstring names what is left out. 30 lines have a definition,
+and 33 are outside: 17 rule headings, 4 table heading rows and 12 sentences.
+
+| Line | Hash | Formalized by | Outside the component, and why |
+|---|---|---|---|
+| TYPE-11 1 | `cbc6dbe9a8f98d67` |  | heading of the rule; its sentences are marked or listed |
+| TYPE-11 2 | `f0a428ff06a687a7` |  | the declaration's form and its distinct names, which the grammar and the declaration check judge before any body; the component takes the declared invariants as given (`StructDecl`, `Inv`) |
+| TYPE-11 3 | `df5862927b27db50` | `Side` and `Inv`: the admitted relation, one comparison of two sides, each a binder datum reached by field and `Box` content steps that ends at a fragment integer, displaced by a constant, or a constant alone (a named const, a typed literal or a widening conversion of either is a constant, and a widening conversion of a datum has the datum's value) | the admission judgment itself, which rejects at the declaration; measure members (measures); generic structs (generics) |
+| TYPE-11 4 | `c3d84aa8041b4702` |  | the hard errors at a `type_invariant` and at a `public` field, and their repairs (the declaration check and diagnostics); the last sentence's debt is the write row of TYPE-11.S3 line 6, which the component applies to every write, having no modules |
+| TYPE-11 5 | `adc70824bc97c4b4` | `Inv.HoldsOf` with `Side.eval` |  |
+| TYPE-11 6 | `8fa530fd480e7407` |  | the construction's obligation, an FN-8 requirement the fact core judges; the component reads its consequence as the premise `Ctx.RhsValue` on `Rhs.fresh`: a constructed value is valid |
+| TYPE-11 7 | `a41b7a68f57d6f31` |  | atomic statements and `Shared` or `SharedRead` targets (shared objects) |
+| TYPE-11 8 | `0ff67ec596c9ba02` |  | range type invariants, which the range rules carry |
+| TYPE-11 9 | `92055033ac128e94` |  | range type invariants, as line 8 |
+| TYPE-11 10 | `a41ed3754ed1060c` |  | range type invariants, as line 8 |
+| TYPE-11 11 | `4686871d58a6431c` | `Ctx.Sealed` and `Ctx.Holds`, the invariant every theorem keeps, with `Ctx.handoff` (restored before the next hand-off) and `Ctx.instance?` (an instance only where no debt may denote it); a store into a place other than a complete own local binding is `Event.store`, which hands its right-hand side off. Body entry, a call's results and written referents, and a construction are premises (the walk; `Ctx.RhsValue`; `Ctx.RunStep`) | a supplied definition's result (TYPE-11.S8); atomic entries and `shared_close` results (shared objects) |
+| TYPE-11.S1 1 | `c906dbafcc33d572` |  | heading of the rule; its sentences are marked or listed |
+| TYPE-11.S1 2 | `f92e52ce97faafce` |  | heading of the rule; its sentences are marked or listed |
+| TYPE-11.S1 3 | `631d377f7252642a` | `Ctx.ValidVal` and `Ctx.Valid` over `Val`, whose children are a struct's fields, a `Box`'s content, the payload of the variant an enum holds and an `Array`'s elements | `Segments` and windows (the window part); handles, maps, key sets, decision cells, host handles and `Entries`, which own nothing (shared objects and maps); none is a type of the component |
+| TYPE-11.S1 4 | `bba13b38c9295979` | `Ctx.invsAt` and `Ctx.invsOfPlace` (an anchor is a place whose struct has an affine invariant), `Ctx.InvHolds` (the instance in a run), `Core.proves` (the instance over a spelled place), `Inv.data` with `Ctx.reaches` (the read set) | the substitution of a function instance (generics); the descriptor storage of measure members (measures) |
+| TYPE-11.S2 1 | `c909dbafcc360b49` |  | heading of the rule; its sentences are marked or listed |
+| TYPE-11.S2 2 | `d0319c847eeb7262` |  | heading of the rule; its sentences are marked or listed |
+| TYPE-11.S2 3 | `2660b2c95af932f1` | `St.debts`; `Debt` with `Debt.Covers` (an anchor shape with one invariant, or a cover standing for every anchor at or below its place); `Rec` (the recorded reference and projection); `Debt.sameKey`, `Debt.unite` and `addDebt` (uniting); `Ix`, `SStep` and `Shape` (each index position a captured offset or `[?]`) | the breaking events, which only the diagnostic reads; range and page positions (range references, pages) |
+| TYPE-11.S2 4 | `5618b0fdcacf0224` | `Ctx.mayOverlap`, `Ctx.mayAtOrBelow`, `Debt.provedAtOrBelow` with `provedPrefix`, `Ctx.mayDenote`; a level is the number of steps, each of which selects a value (`SStep`); a sealed handed place is what `Ctx.handoff` requires | range, page, `Segments` and window steps and range or run roots, which add no level (range references, pages, the window part); cover steps inside a place, which only the generalization of a reference re-pointed in a loop forms (REF-1's loop rule, the references part) |
+| TYPE-11.S2 5 | `50676a9d3b7cc413` | `Debt.rebase`: with every step selecting a value and none a cover step, p's own steps and the anchor's shortest prefix at p's level are both the anchor's first steps, as many as p has; a cover above p rebases to the cover of q; a rebased debt records nothing | an anchor that passes a cover step, as line 4 |
+| TYPE-11.S2 6 | `fadae449d7141111` |  | unfoldings, which serve only the entries of maps and `Entries`, atomic statements' targets and `shared_close` results (shared objects and maps) |
+| TYPE-11.S3 1 | `c90dd7afcc39ed54` |  | heading of the rule; its sentences are marked or listed |
+| TYPE-11.S3 2 | `ebda1d0d657236a8` |  | heading of the rule; its sentences are marked or listed |
+| TYPE-11.S3 3 | `d45c8a55493e6d99` | `Ctx.step`, each row for each member `St.resolve` and `St.resolveRec` give; the order is reading 1 |  |
+| TYPE-11.S3 4 | `d0f728660df5427f` |  | the table's heading rows |
+| TYPE-11.S3 5 | `5ff9cb7afb3a4ac3` |  | the table's heading rows |
+| TYPE-11.S3 6 | `26ffbdde631ed078` | `Ctx.writeDebts`, `Ctx.writeRows`, `Ctx.reaches` and `writeRec`, for a commit or update (`Event.store`) and each target of a `swap` (`Event.swap`); `Ctx.reaches` is reading 6 | anchors named through a cover's current target identity, and the cover a write adds through such a description (REF-1's loop rule, as TYPE-11.S2 line 4) |
+| TYPE-11.S3 7 | `772f30565627d034` | the projected writes of `Event.call` through `Ctx.writeRows`, bounded to the anchors strictly above the argument's referent; that the callee leaves the referent sealed is a premise of `Ctx.RunStep` | `map_clear` (maps); `swap` is its own event, `Event.swap` |
+| TYPE-11.S3 8 | `fcbf00d2a9fe6af6` | `storeRemove` for a place resolving to one member, in `Ctx.storeRows`; a right-hand side that is a hand-off is `Rhs.read`, a call result or construction `Rhs.fresh`; the order is reading 2 |  |
+| TYPE-11.S3 9 | `c84dfe7989a5017d` | `storeRemove` for a place resolving to several members, with `Debt.recordsAt` |  |
+| TYPE-11.S3 10 | `c889a2ac2a29907e` | `Ctx.continueRow` in `Event.bind` with `Rhs.read`: a `let`, a `let` with `move`, a `set` of a complete own local binding, and a by-value `match` or destructuring binder as a read of the payload or field place it binds | the `Ok` binder of `propagate` (error propagation, not in the fragment) |
+| TYPE-11.S3 11 | `c682fdad3739e1b6` | `Ctx.swapRow` with `Ctx.swapStay`, `Ctx.across` and `Debt.exchange`, after the write rows in the swap case of `Ctx.step`; a target with several members is reading 3 |  |
+| TYPE-11.S3 12 | `dc8504bf6ab1792f` | `deathRow` in `Event.death`; a move of a part runs the continuation row (`Event.bind`) before the death; a cover counts by its place, reading 4 |  |
+| TYPE-11.S3 13 | `5684a5abeb57f254` | `Ctx.killRow` with `Ctx.untouched`, `Ctx.widen` and `Ctx.widenSteps`; `Kills` and `Core.killed` give what a batch writes, ends or rebinds, `Core.tracked` which offsets read a tracked place; a counted loop's backedge is a kill batch for its binder (`Event.kill`); the debts of the statement's own rows are reading 1 and the gap below, a dropped record reading 5 | an anchor carrying a reference's current target identity, and widening to a cover (REF-1's loop rule) |
+| TYPE-11.S3 14 | `2af3fb7da35e525b` | `Rhs.fresh`: `Event.bind` and `Event.store` take no debt from it, so none lies at or below the place it fills; the swap case of `Ctx.step` hands neither target off | `shared_close` results (shared objects); `release` and `map_clear` (supplied definitions, maps) |
+| TYPE-11.S4 1 | `c91117afcc3c8feb` |  | heading of the rule; its sentences are marked or listed |
+| TYPE-11.S4 2 | `5bdbbbc180826764` |  | heading of the rule; its sentences are marked or listed |
+| TYPE-11.S4 3 | `c2c2a78f86bf6ce5` | `Ctx.handoff`: every debt that may be at or below a member of the handed place restored, or satisfied at that member, in the state before the hand-off's events; the restored ones leave | the exemption of anchors below an entry of a map or an `Entries` (maps and shared objects) |
+| TYPE-11.S4 4 | `49a2318fd9edc012` |  | the table's heading rows |
+| TYPE-11.S4 5 | `11ce55d3e6462cec` |  | the table's heading rows |
+| TYPE-11.S4 6 | `f7e7cedc73a4aba1` | the handed places of `Event.call`, each through `Ctx.handoff` | a spawn (parallelism), whose arguments the same `Ctx.handoff` would judge; the failure's rule and site (diagnostics) |
+| TYPE-11.S4 7 | `2a8f81177dbdcf51` | the handed places of `Event.call`: a reference argument's referent, which `Ctx.handoff` resolves to each member | a range reference's run (range references); the failure's site (diagnostics) |
+| TYPE-11.S4 8 | `13526fd25aab12a9` | `Ctx.handoff` at the returned value's place and at each written referent; `Ctx.handoff_valid` there is the callee's side of the premise `Ctx.RunStep` states for a call | propagated error exits (error propagation, not in the fragment); the failure's site (diagnostics) |
+| TYPE-11.S4 9 | `c2da17659bff10fc` |  | `give_stmt` (value blocks, not in the fragment) |
+| TYPE-11.S4 10 | `e60b9f3287963147` | `Ctx.handoff` at each operand's place; the constructed value is `Rhs.fresh` | the failure's site (diagnostics) |
+| TYPE-11.S4 11 | `c39bf31bfdee901f` | `Event.store` with `Rhs.read`, whose hand-off `Ctx.step` judges first | the failure's site (diagnostics) |
+| TYPE-11.S4 12 | `366140955f916c30` |  | diagnostic content, which acceptance does not read |
+| TYPE-11.S4 13 | `0e8b01bdc7f1cd94` | `Rhs.fresh` (a call's results carry no debt); the premise of `Ctx.RunStep` that each written referent is valid when the call returns | supplied definitions (TYPE-11.S8); `shared_close` results (shared objects) |
+| TYPE-11.S5 1 | `c9141bafcc3ecc8e` |  | heading of the rule; its sentences are marked or listed |
+| TYPE-11.S5 2 | `40ba9644ff978d6b` |  | heading of the rule; its sentences are marked or listed |
+| TYPE-11.S5 3 | `e7582cffe4d98455` | `Ctx.restored` with `Debt.instancePlace?` (the instance over `r^` followed by p for a debt that records r and p, otherwise over the anchor's place, and none at `[?]` or for a cover); `Ctx.satisfied` with `agrees`, reading 7; `Core.proves`, the fact core's MSR-4 disposition with its certificates, is a premise (`Sem.proves_sound`) | an anchor carrying a reference's current target identity (REF-1's loop rule) |
+| TYPE-11.S5 4 | `106687ed51495edf` | `Ctx.handoff` (hand-offs); the swap case of `Ctx.step` (before its events); `Ctx.killRow` (kill batches); `Ctx.absorb` with `Ctx.restoreAll`, in `Ctx.header` (backedges and `continue`) and `Ctx.join` (merges) |  |
+| TYPE-11.S6 1 | `c917dbafcc4248a5` |  | heading of the rule; its sentences are marked or listed |
+| TYPE-11.S6 2 | `35b30c78112e6ce2` |  | heading of the rule; its sentences are marked or listed |
+| TYPE-11.S6 3 | `b6cdead0b7acdc1b` | `Ctx.join` with `Ctx.absorb`; the instances a merge establishes are `Ctx.instance?` on each incoming edge, which `Ctx.instance_true` proves true there | breaking events (diagnostics); the join of the fact states (the fact core) |
+| TYPE-11.S6 4 | `23c2bb7e709598cd` | `Ctx.header`: one round of the iteration, the entering edge's debts with every backedge's and `continue`'s after restoration | the iteration to the least set, its termination and its independence of order, which belong to the walk; the component has none |
+| TYPE-11.S7 1 | `c91ad7afcc4477b0` |  | heading of the rule; its sentences are marked or listed |
+| TYPE-11.S7 2 | `60cd57c49f93f34c` |  | heading of the rule; its sentences are marked or listed |
+| TYPE-11.S7 3 | `bda737c615296732` | `Ctx.instance?`: no debt may denote the instance at any member of the place, judged after a read, at body entry, after a call's kills at each written referent, after a `let`, a destructuring or by-value `match` binder and a commit to a binding; at a selected return, the return's hand-off (`Ctx.handoff`, `Ctx.handoff_invHolds`) | the other premises (the root live, no atomic statement's target, payload steps under a current refinement, the call's kill conditions), which the walk and the fact core judge and which make the place exist in the run; the term an instance is stated over (the fact core's term formation); the `Ok` binder of `propagate` |
+| TYPE-11.S8 1 | `c8e7d7afcc191e17` |  | heading of the rule; its sentences are marked or listed |
+| TYPE-11.S8 2 | `f93bf83443cc92ec` |  | heading of the rule; its sentences are marked or listed |
+| TYPE-11.S8 3 | `89411175ae9c58f9` |  | supplied definitions generic in a type parameter, whose SCOPE-3 obligation is trusted; it gives a call's premise that written referents are valid on return |
+| TYPE-11.S8 4 | `052ad1455e3ce8c1` |  | occurrence identities and failure sites (diagnostics); range type invariants |
+
+### Size and cost
+
+The component is 1,106 lines of Lean with 127 definitions, its cases 372 lines
+and its proofs 2,472 lines with 157 theorems; it changes no earlier module
+apart from the package root's imports, and adds no coverage mark. Before the
+main line's discharge lemmas were merged in, the build of the model and
+harness took 25.4 s, 32.5 s and 48.7 s on the three green `proof.yml` runs,
+within the build's budget of the time, 65 s, against 39.9 s to 42.2 s on the
+main line's three runs of the same day; on the last run the three modules
+built in 3.4 s, 1.8 s and 5.4 s, with 5.8 s, 2.6 s and 0.9 s more for their
+object code. With those lemmas merged in, the build took 61.5 s, 66.1 s and
+64.5 s on the next three runs, the three modules 3.3 to 3.6 s, 1.5 to 2.1 s and
+5.1 to 5.7 s, and the build's provisional budget rises from 85 s to 100 s,
+1.5 times 66.1 s rounded up to 5 s. The study's estimate was about 1,200 lines
+of definitions and 4,000 of proof. The part took two engineer turns, the first
+of which also made the study, ten `proof.yml` runs and three runs of the
+temporary workflow to its review. Three runs failed to compile: the meaning of
+a cover named a place it had not bound, three steps of the first lemmas did not
+type-check, and a lemma's proof referred to itself.
+
 ## Cost
 
 Precedents with measured sizes:
