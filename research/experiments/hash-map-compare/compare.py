@@ -454,6 +454,17 @@ def run(command, **kwargs):
     subprocess.run(command, check=True, **kwargs)
 
 
+def check_images(digests, allow_identical):
+    """Whether the candidate's bench image equals the base's; refuses a set of
+    images the comparison cannot use."""
+    if digests["bench-twin"] != digests["bench-base"]:
+        raise Invalid("the twin image differs from the base image")
+    identical = digests["bench-candidate"] == digests["bench-base"]
+    if identical and not allow_identical:
+        raise Invalid("the candidate image equals the base image: the library change does not reach the program")
+    return identical
+
+
 def build(args):
     images = os.path.join(args.out, "images")
     os.makedirs(images, exist_ok=True)
@@ -469,11 +480,7 @@ def build(args):
     for name in os.listdir(images):
         os.chmod(os.path.join(images, name), 0o755)
     digests = {name: sha256(os.path.join(images, name)) for name in sorted(os.listdir(images))}
-    if digests["bench-twin"] != digests["bench-base"]:
-        raise Invalid("the twin image differs from the base image")
-    identical = digests["bench-candidate"] == digests["bench-base"]
-    if identical and not args.allow_identical_images:
-        raise Invalid("the candidate image equals the base image: the library change does not reach the program")
+    identical = check_images(digests, args.allow_identical_images)
     with open(os.path.join(args.out, "manifest.txt"), "a") as f:
         f.write(f"base compiler {sha256(args.base_wfc)}\n")
         f.write(f"candidate compiler {sha256(args.candidate_wfc)}\n")
@@ -707,6 +714,15 @@ def self_test():
         [dict(r, pairs=1) if r["mode"] == 2 else r for r in hold_rows(1, 1, 1, lambda m: 1)], sink))
     expect_invalid("hold missing size", lambda: reduce_hold(
         [r for r in hold_rows(1, 1, 1, lambda m: 1) if r["size"] != HOLD_SMALL], sink))
+    # The images of a build: a candidate equal to the base is refused unless
+    # the null run allows it, and a twin that is not the base never passes.
+    different = {"bench-base": "a", "bench-twin": "a", "bench-candidate": "b"}
+    same = dict(different, **{"bench-candidate": "a"})
+    expect("images differ", check_images(different, False), False)
+    expect("images differ, allowed", check_images(different, True), False)
+    expect_invalid("images equal", lambda: check_images(same, False))
+    expect("images equal, allowed", check_images(same, True), True)
+    expect_invalid("twin differs", lambda: check_images(dict(same, **{"bench-twin": "b"}), True))
     sink.close()
     for failure in failures:
         print("FAIL " + failure)
