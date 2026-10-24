@@ -305,20 +305,11 @@ fn hash_map_is_available<K, V>(slot: &HashMapSlot<K, V>) -> result: Bool reads(s
 }
 
 fn hash_map_rebuild<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, buckets: u64, env: &E) -> result: Result<unit, unit> reads(env), writes(map) {
-  doc "Rebuilds at the given bucket count, which the callers derive with hash_map_buckets or keep, and refuses a count below the current one before any pair moves. A zero-bucket rebuild is allocation-free.";
-  let old_count = map^.cells.inner.len;
-  if buckets < old_count {
+  doc "Moves every pair into a fresh backing of the given bucket count, zero or a power of two of at least two, and releases the old backing before it returns; refuses a count below the length before any pair moves. Reserve, rehash and insertion pass no fewer than the current bucket count, which they derive with hash_map_buckets or keep, and a shrinking removal passes four or more per remaining pair, or zero when none remains. One function serves growth and shrinking: split into a refusing wrapper and a moving helper, the moving loop compiled with two of its three hash constants reloaded for every pair, measurably slower growth of a small map. Direct migration keeps the original enum buckets and uses one temporary inline one-slot window for a pending pair. Every exchange result has useful behavior: Inserted empties the staging window; Replaced and Full restore their complete returned owner for retry. Each attempt hashes the current staged key and probes only occupancy, never equality. While a pair is pending, fewer pairs than the original length fill the new backing, so a scan bounded by its bucket count reaches a vacant bucket without any hash or equality consistency assumption, provided callbacks return. No global occupancy fact authorizes a discard or a partial operation. A zero-bucket target drains only vacant and deleted buckets and allocates nothing. The shift for home positions is set before the first pair moves. The backing swap does not publish an extent relation under the current proof rules, so this function promises no monotone extent postcondition; subsequent operations read their current bounds.";
+  let live = map^.length;
+  if buckets < live {
     return Err<unit, unit>(error: unit);
   }
-  if buckets == 0_u64 {
-    return Ok<unit, unit>(value: unit);
-  }
-  hash_map_migrate::<HashMapKey<K, E>, V, ceiling>(map: map, buckets: buckets, env: env);
-  return Ok<unit, unit>(value: unit);
-}
-
-fn hash_map_migrate<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, buckets: u64, env: &E) -> result: unit reads(env), writes(map) {
-  doc "Moves every pair into a fresh backing of the given bucket count, zero or a power of two of at least two, and releases the old backing before it returns. The callers keep length equal to the number of filled buckets and pass at least that many buckets: rebuild passes no fewer than the old bucket count, and a shrinking removal passes four or more per remaining pair, or zero when none remains. Direct migration keeps the original enum buckets and uses one temporary inline one-slot window for a pending pair. Every exchange result has useful behavior: Inserted empties the staging window; Replaced and Full restore their complete returned owner for retry. Each attempt hashes the current staged key and probes only occupancy, never equality. While a pair is pending, fewer pairs than the original length fill the new backing, so a scan bounded by its bucket count reaches a vacant bucket without any hash or equality consistency assumption, provided callbacks return. No global occupancy fact authorizes a discard or a partial operation. A zero-bucket target drains only vacant and deleted buckets. The shift for home positions is set before the first pair moves. The backing swap does not publish an extent relation under the current proof rules, so this function promises no monotone extent postcondition; subsequent operations read their current bounds.";
   let previous = box_slots_new::<HashMapSlot<K, V>>(capacity: buckets);
   hash_map_extend::<K, V, ceiling>(cells: &previous, target: buckets);
   swap(first: &map^.cells, second: &previous);
@@ -368,7 +359,7 @@ fn hash_map_migrate<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &Has
   }
   free_empty(window: move previous);
   set map^.vacated = 0_u64;
-  return unit;
+  return Ok<unit, unit>(value: unit);
 }
 
 fn hash_map_reserve<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &HashMap<K, V, ceiling>, capacity: u64, env: &E) -> result: Result<unit, unit> reads(env), writes(map) {
@@ -432,14 +423,14 @@ fn hash_map_shrink<interface HashMapKey<K, E>, V, const ceiling: u64>(map: &Hash
   let buckets = map^.cells.inner.len;
   if live == 0_u64 {
     if buckets > 0_u64 {
-      hash_map_migrate::<HashMapKey<K, E>, V, ceiling>(map: map, buckets: 0_u64, env: env);
+      let shrunk = hash_map_rebuild::<HashMapKey<K, E>, V, ceiling>(map: map, buckets: 0_u64, env: env);
     }
     return unit;
   }
   let eighth = buckets / 8_u64;
   if live < eighth {
     let target = hash_map_shrunk(live: live);
-    hash_map_migrate::<HashMapKey<K, E>, V, ceiling>(map: map, buckets: target, env: env);
+    let shrunk = hash_map_rebuild::<HashMapKey<K, E>, V, ceiling>(map: map, buckets: target, env: env);
   }
   return unit;
 }

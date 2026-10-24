@@ -71,7 +71,7 @@ the ceiling rebuilds when live plus deleted buckets reach the capacity, at
 the same bucket count when fewer than half the capacity are live, else at
 twice the buckets; it never rebuilds a map whose capacity has reached its
 ceiling. `hash_map_reserve` only grows and `hash_map_rehash` keeps the bucket
-count; the private rebuild refuses a smaller one. Migration moves pairs by
+count; the private rebuild refused a smaller one. Migration moves pairs by
 occupancy, never equality, through a one-pair pending window, so every owner
 is kept even under inconsistent callbacks.
 
@@ -201,7 +201,8 @@ publish the completed representation and free the old backing before returning.
 The existing helper swaps before draining; that internal ordering is also
 possible under its exclusive effect, provided every intermediate owner remains
 accounted for. Empty shrink must drain vacant/deleted enums and release the old
-box; the rebuild's zero-target early return cannot simply be reused.
+box; the rebuild's zero-target early return, which assumed an empty old
+backing, cannot simply be reused.
 
 Peak backing is old B plus target T buckets, plus constant pending storage;
 moving an owning key does not deep-copy its heap allocation. At the first
@@ -296,10 +297,18 @@ node.
 ## Implementation
 
 `hash_map_remove`, after a successful removal, calls a private
-`hash_map_shrink`, which applies the rule above through `hash_map_migrate`,
-the growth path's migration split out of `hash_map_rebuild`. The rebuild
-keeps its refusal of a smaller bucket count and its zero-bucket no-op for
-reserve, rehash and insertion; the shrink calls the migration directly.
+`hash_map_shrink`, which applies the rule above through `hash_map_rebuild`,
+the same function growth uses. The rebuild now refuses a bucket count below
+the length, the condition its migration needs, instead of one below the
+current bucket count; reserve, rehash and insertion never pass a smaller
+count, so they behave as before. Its zero-bucket early return is gone: a
+zero target drains the vacant and deleted buckets and takes the static empty
+backing, so it still allocates nothing. An earlier revision split the
+migration into a helper behind a refusing wrapper; that compiled the moving
+loop with two of its three hash constants reloaded for every pair and one
+pair copy split into two stores, and growth of a 1,000-pair map measured
+3.4% slower on the 14900K ([measurement](#measurement)). One function
+restores the base's moving loop instruction for instruction.
 A missing-key removal returns before any of it. No public signature or
 representation changes.
 
@@ -374,6 +383,21 @@ branch weights stop `hash_map_find` from being inlined into the removal
 library, so the slowdown is recorded rather than worked around here; its
 real effect is judged by Firn's `SREM` and `SPOP` measurements, and the
 remove-insert cell is the witness for the compiler's inlining work.
+
+The first full run with the noise floor (14900K, ten to forty rounds, on the
+revision that split the migration out of the rebuild) judged three grow-only
+cells slower: growing insertion at 1,000 pairs 1.0338 [1.0151, 1.0611],
+lookup hit at 10,000 1.0161 [1.0013, 1.0247] and lookup miss at 1,000,000
+1.0163 [1.0009, 1.0233]; growing insertion at 10,000 was faster, 0.8970
+[0.8930, 0.9192], for a reason the disassembly below does not explain. Read
+from the two bench images' disassembly on a GitHub-hosted runner: the timed
+lookup function is identical instruction for instruction, 64-byte aligned in
+both, and only placed 192 bytes lower, so the lookup cells moved with code
+placement, which the twin, a copy of the base image, cannot show. The growth
+path does the same work per rebuild, but the split helper's moving loop
+reloaded two of its three hash constants for every pair and stored each
+pair in two halves; folding the helper back into one rebuild restores the
+base's loop, which the [implementation](#implementation) now does.
 
 ## Owner decisions
 
