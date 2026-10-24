@@ -16,3 +16,4 @@ import WhitefootProof.Typing
 import WhitefootProof.Safety
 import WhitefootProof.Simulation
 import WhitefootProof.Blocks
+import WhitefootProof.Loops
