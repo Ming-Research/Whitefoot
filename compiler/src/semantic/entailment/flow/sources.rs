@@ -765,14 +765,18 @@ impl Input<'_, '_> {
             }
             CheckedExpression::ArrayIndex { root, offset, .. } => {
                 let mut place = array_root_place(root);
-                place.path.push(PlaceStep::Index(self.read_offset_capture(offset)?));
+                place
+                    .path
+                    .push(PlaceStep::Index(self.read_offset_capture(offset)?));
                 Some(place)
             }
             CheckedExpression::BufferIndex { root, offset, .. }
                 if root.subscripted_term() == Some(SubscriptedTerm::Represented) =>
             {
                 let mut place = root.proof_place();
-                place.path.push(PlaceStep::Index(self.read_offset_capture(offset)?));
+                place
+                    .path
+                    .push(PlaceStep::Index(self.read_offset_capture(offset)?));
                 Some(place)
             }
             _ => self.read_place_path(value),

@@ -99,7 +99,10 @@ before any overlapping write.
    contract footprint under [EFF-5] as every clause read does.
 7. **Loop heads.** A continuing kill compares no two subscripts at one
    position by their offsets [ENT-5], so a body write of `a[1]` removes a fact
-   over `a[2]` at the head even though the literals differ.
+   over `a[2]` at the head even though the literals differ. The rule reaches
+   every support member, so a measure over `rows[2]` and a goal over an
+   element meet a body write of `rows[1]` the same way; main had compared
+   their literal offsets there.
 8. **Redundant conditions.** Item 4 makes `set a[k] = v;` decide a later
    `if a[k] != v`, and a copy `let x = a[k];` relates x to the element, so
    [OP-5] rejects such a test as redundant, exactly as it rejects the same

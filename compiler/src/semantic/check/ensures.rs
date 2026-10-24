@@ -1278,7 +1278,8 @@ impl<'unit> Checker<'_, 'unit> {
             // projections only; a parameter datum may also carry the
             // subscripts of an [ENT-2] clause (b) place.
             ExpandedClauseExpression::Datum(ExpandedClauseDatum::NamedConst {
-                projections, ..
+                projections,
+                ..
             }) if projections.iter().any(|projection| {
                 matches!(
                     projection,

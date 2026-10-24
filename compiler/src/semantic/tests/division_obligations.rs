@@ -851,7 +851,8 @@ fn writing_the_indexed_collection_invalidates_its_old_defined_fact() {
     // The written value is a parameter, so the element's new fact bounds it
     // by nothing beyond its type: a surviving old goal would discharge the
     // addition, and only its kill leaves it unproved.
-    let source = br#"fn increment_after_write(values: Slots<u8, 1>, next: u8) -> result: u8 pure contract {
+    let source =
+        br#"fn increment_after_write(values: Slots<u8, 1>, next: u8) -> result: u8 pure contract {
   requires values.len >= 1_u64;
 } {
   if values[0_u64] +defined 1_u8 {

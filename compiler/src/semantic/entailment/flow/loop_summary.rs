@@ -211,18 +211,11 @@ impl Reasoning<'_, '_, '_> {
     ) -> Vec<KilledCell> {
         self.vocabulary
             .materialize_before_event_kill(state, &kills.events);
-        // [ENT-5] a clause (b) place term meets each continuing event with
-        // its subscripts compared by position alone.
-        let head = HeadSeparations(separations);
         let removed = state.kill(|term| {
-            let oracle: &dyn SeparationOracle = match self.vocabulary.terms.kind(term) {
-                TermKind::Place(..) | TermKind::Sum(..) => &head,
-                _ => separations,
-            };
             kills
                 .events
                 .iter()
-                .any(|event| self.event_kills_term(oracle, term, event))
+                .any(|event| self.event_kills_term(separations, term, event))
         });
         for event in &kills.events {
             self.kill_s12_candidates_for_event(separations, state, event);
@@ -276,10 +269,12 @@ impl Reasoning<'_, '_, '_> {
         // [OWN-7]. A fact these kills leave therefore meets no such event.
         let ledger = states.separations.clone();
         let live = self.event_live_bounds(states, &kills.events);
-        let separations = EventSeparations {
+        // [ENT-5] every support member meets each continuing event with its
+        // subscripts compared by position alone.
+        let separations = HeadSeparations(&EventSeparations {
             ledger: &ledger,
             live: &live,
-        };
+        });
         self.kill_result_evidence(&separations, states, &kills.events);
         self.invalidate_lost_headers(&separations, states, &kills.events);
         let removed = self.apply_loop_kills_one(&separations, &mut states.facts, kills);

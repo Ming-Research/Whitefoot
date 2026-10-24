@@ -1577,17 +1577,16 @@ impl FunctionEntailment {
             let mut offsets = Vec::new();
             let steps = place.path.iter().all(|step| match step {
                 super::places::PlaceStep::Field(_) | super::places::PlaceStep::Deref => true,
-                super::places::PlaceStep::Index(offset) | super::places::PlaceStep::Page(offset) => {
-                    match offset.term {
-                        super::places::CapturedTerm::Literal(_)
-                        | super::places::CapturedTerm::Const(_) => true,
-                        super::places::CapturedTerm::Binding(binding) => {
-                            offsets.push(TermRead::Binding(binding));
-                            true
-                        }
-                        _ => false,
+                super::places::PlaceStep::Index(offset)
+                | super::places::PlaceStep::Page(offset) => match offset.term {
+                    super::places::CapturedTerm::Literal(_)
+                    | super::places::CapturedTerm::Const(_) => true,
+                    super::places::CapturedTerm::Binding(binding) => {
+                        offsets.push(TermRead::Binding(binding));
+                        true
                     }
-                }
+                    _ => false,
+                },
                 _ => false,
             });
             // The offsets come first, so a term reads as a constant first

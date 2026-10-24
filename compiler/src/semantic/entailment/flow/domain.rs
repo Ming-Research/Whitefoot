@@ -108,7 +108,9 @@ impl Input<'_, '_> {
                 ..
             } => {
                 let mut place = super::judge::array_root_place(root);
-                place.path.push(PlaceStep::Index(self.read_offset_capture(offset)?));
+                place
+                    .path
+                    .push(PlaceStep::Index(self.read_offset_capture(offset)?));
                 Some(place)
             }
             CheckedExpression::BufferIndex { root, offset, .. }
@@ -116,7 +118,9 @@ impl Input<'_, '_> {
                     && root.subscripted_term() == Some(SubscriptedTerm::Represented) =>
             {
                 let mut place = root.proof_place();
-                place.path.push(PlaceStep::Index(self.read_offset_capture(offset)?));
+                place
+                    .path
+                    .push(PlaceStep::Index(self.read_offset_capture(offset)?));
                 Some(place)
             }
             _ => None,
@@ -232,8 +236,7 @@ impl Input<'_, '_> {
         ) else {
             return false;
         };
-        endpoint.represented
-            && (!endpoint.indexed || fragment_type(endpoint.ty).is_some())
+        endpoint.represented && (!endpoint.indexed || fragment_type(endpoint.ty).is_some())
     }
 
     pub(super) fn goal_expression_projection_type(
@@ -284,7 +287,7 @@ impl Input<'_, '_> {
                     .unwrap_or(default_type),
                 run: admission.root_is_range,
                 indexed: false,
-                    represented: true,
+                represented: true,
             },
             &suffix,
         )

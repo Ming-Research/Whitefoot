@@ -165,9 +165,11 @@ fn expand_definition_offset(
             };
             path.extend(fields.iter().copied());
             let mut place = super::super::places::ResolvedPlace::binding(root);
-            place
-                .path
-                .extend(path.iter().copied().map(super::super::places::PlaceStep::Field));
+            place.path.extend(
+                path.iter()
+                    .copied()
+                    .map(super::super::places::PlaceStep::Field),
+            );
             captured.term = CapturedTerm::Place(places.intern(place));
             *binding = root;
             *fields = path;
@@ -222,7 +224,12 @@ fn expand_definition_offsets(
                     if let Some(formation) = place.root.formation.as_deref_mut() {
                         expand_definition_offsets(formation, offsets, places);
                     }
-                    expand_definition_offset(&mut place.offset, &mut place.captured, offsets, places);
+                    expand_definition_offset(
+                        &mut place.offset,
+                        &mut place.captured,
+                        offsets,
+                        places,
+                    );
                     expand_definition_path_offsets(&mut place.path, offsets, places);
                 }
             }
@@ -274,17 +281,18 @@ fn place_hides_computed_definition(place: &CheckedExpression, places: &ClausePla
             .as_deref()
             .is_some_and(|formation| place_hides_computed_definition(formation, places)),
         CheckedExpression::BorrowSegment { root, segment, .. } => {
-            let source = match root {
-                super::super::model::CheckedSegmentSource::Storage(root) => {
-                    path_hides_computed_definition(&root.path, places)
-                }
-                super::super::model::CheckedSegmentSource::Element(place) => {
-                    place.root.formation.as_deref().is_some_and(|formation| {
-                        place_hides_computed_definition(formation, places)
-                    }) || offset_hides_computed_definition(&place.offset, places)
-                        || path_hides_computed_definition(&place.path, places)
-                }
-            };
+            let source =
+                match root {
+                    super::super::model::CheckedSegmentSource::Storage(root) => {
+                        path_hides_computed_definition(&root.path, places)
+                    }
+                    super::super::model::CheckedSegmentSource::Element(place) => {
+                        place.root.formation.as_deref().is_some_and(|formation| {
+                            place_hides_computed_definition(formation, places)
+                        }) || offset_hides_computed_definition(&place.offset, places)
+                            || path_hides_computed_definition(&place.path, places)
+                    }
+                };
             source
                 || matches!(segment,
                     super::super::model::CheckedSegmentSelect::One(index)
@@ -912,12 +920,11 @@ impl<'unit> Checker<'_, 'unit> {
                 clause: self.types.declarations.tree.path(clause)?.clone(),
                 subject: None,
             });
-            requirement_places
-                .push(clause_places.clause(
-                    &condition.expression,
-                    &mut expanded_definitions,
-                    &self.types.captured_places,
-                ));
+            requirement_places.push(clause_places.clause(
+                &condition.expression,
+                &mut expanded_definitions,
+                &self.types.captured_places,
+            ));
         }
         let definitions = clause_places
             .bindings()

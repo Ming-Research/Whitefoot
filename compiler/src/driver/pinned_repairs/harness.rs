@@ -109,9 +109,7 @@ fn run_pair(pair: &super::RepairPair) {
             Some(("  ", "swap(first: &small.inner, second: &large.inner)"))
         }
         "type9-neg-generic-runtime-content-swap.wf" => Some(("exchange::<", "Slots<u64>")),
-        "type9-neg-function-actual-runtime-content-swap.wf" => {
-            Some(("fn swap::<", "Slots<u64>"))
-        }
+        "type9-neg-function-actual-runtime-content-swap.wf" => Some(("fn swap::<", "Slots<u64>")),
         _ => None,
     };
     if let Some((prefix, cited)) = citation {
