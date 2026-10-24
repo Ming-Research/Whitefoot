@@ -1,0 +1,71 @@
+# Temporary (one-object-core): the gate's static group on Linux for a change
+# to one design-tree decision and the design log, which a draft pull request's
+# gate skips: the static group runs the design tree's lint against the merge
+# base, the prose and reference checks and the compiler's lint over every
+# target; it also runs the readiness check that a ready pull request's
+# design-readiness workflow runs, which a draft skips. Removed before the full
+# check.
+name: tmp-one-object
+
+on:
+  push:
+    branches: [one-object-core]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  group:
+    name: ${{ matrix.stage }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        stage: [static]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Set the scratch root
+        run: echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+
+      - name: Name main as a local ref
+        run: |
+          git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
+          git branch -f main origin/main
+
+      - name: Select the design review base
+        if: matrix.stage == 'static'
+        run: echo "DESIGN_REVIEW_BASE=$(git merge-base main HEAD)" >> "$GITHUB_ENV"
+
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          rustup component add clippy rustfmt
+          cargo --version
+
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+
+      - name: Decline core dumps
+        run: sudo sysctl -w kernel.core_pattern=core
+
+      - name: ${{ matrix.stage }}
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: 2400
+        run: make check-group GROUP="${{ matrix.stage }}"
+
+      - name: design-ready
+        run: make design-ready
