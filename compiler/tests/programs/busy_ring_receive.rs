@@ -6,8 +6,7 @@
 //! never services a ring or changes scheduling. Sixteen runs also include a
 //! split control whose source spins until the child publishes entry; that
 //! control must record distinct threads. Both placements must occur, and every
-//! receive must release the computation within 100 ms of the peer's send, or
-//! within one second in a sanitized build.
+//! receive must release the computation within 100 ms of the peer's send.
 
 use std::io::Write;
 use std::net::{TcpListener, TcpStream};
@@ -19,19 +18,7 @@ use crate::support::ProgramChild;
 
 const RUNS: usize = 16;
 const START_LIMIT: Duration = Duration::from_secs(3);
-
-/// The bound on the peer's send to the program's exit. The stall this case
-/// guards against does not end by itself: only the receive releases the
-/// computation, so a longer bound tells it from the fix just as well. A
-/// sanitized run executes the runtime more slowly, and the sanitized corpus
-/// shares its CPUs among many programs, so its bound is one second.
-fn receive_limit() -> Duration {
-    if crate::support::sanitizer().is_some() {
-        Duration::from_secs(1)
-    } else {
-        Duration::from_millis(100)
-    }
-}
+const RECEIVE_LIMIT: Duration = Duration::from_millis(100);
 
 // GNU ld wrapping observes the ordinary runtime entry points on main and on
 // this branch. These calls retain their real behavior; no observer progresses
@@ -142,14 +129,14 @@ fn native_ring_count(child: &ProgramChild) -> usize {
         .count()
 }
 
-/// ThreadSanitizer sleeps one second in the exiting main thread whenever
-/// another thread of the program is still alive, to give an at-exit race time
-/// to show (its `atexit_sleep_ms`, default 1000). The program's exit is the
-/// only event this witness observes after the computation is released, so the
-/// sleep would add a fixed second to the measured interval in the runs where
-/// a runtime thread outlives the main thread's last statement. Only that sleep
-/// is turned off for the witness: races are still reported, and every other
-/// program of the sanitized corpus keeps the default.
+/// ThreadSanitizer sleeps one second in the exiting main thread when another
+/// thread of the program is still alive, to give an at-exit race time to show
+/// (its `atexit_sleep_ms`, default 1000). The program's exit is the only event
+/// this witness observes after the computation is released, so in the runs
+/// where a thread outlives the main thread's last statement the sleep adds a
+/// fixed second to the measured interval, however fast the release was. Only
+/// that sleep is turned off, for this witness: races are still reported, and
+/// every other program of the sanitized corpus keeps the default.
 fn without_thread_sanitizer_exit_sleep(command: &mut Command) {
     if crate::support::sanitizer() != Some(whitefoot::Sanitizer::Thread) {
         return;
@@ -162,82 +149,8 @@ fn without_thread_sanitizer_exit_sleep(command: &mut Command) {
     command.env("TSAN_OPTIONS", options);
 }
 
-// TEMPORARY diagnostic (ring-assist stall study), removed before the review.
-fn stall_report(child: &mut ProgramChild, run: usize, split: bool, trace: &str, sent: Instant) {
-    let mut err = std::io::stderr().lock();
-    writeln!(
-        err,
-        "=== STALL BEGIN run {run} split={split} at {:?}: {}",
-        sent.elapsed(),
-        trace.replace('\n', "; ")
-    )
-    .ok();
-    let pid = child.id().to_string();
-    if let Ok(tasks) = std::fs::read_dir(format!("/proc/{pid}/task")) {
-        let mut count = 0;
-        for task in tasks.flatten() {
-            count += 1;
-            let read = |name: &str| {
-                std::fs::read_to_string(task.path().join(name))
-                    .unwrap_or_default()
-                    .trim_end()
-                    .chars()
-                    .take(60)
-                    .collect::<String>()
-            };
-            writeln!(
-                err,
-                "thread {}: comm={} wchan={} syscall={}",
-                task.file_name().to_string_lossy(),
-                read("comm"),
-                read("wchan"),
-                read("syscall")
-            )
-            .ok();
-        }
-        writeln!(err, "threads alive: {count}").ok();
-    }
-    let mut exited_at = None;
-    while sent.elapsed() < Duration::from_secs(5) {
-        if child.try_wait().expect("inspect stalled child").is_some() {
-            exited_at = Some(sent.elapsed());
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(1));
-    }
-    if let Some(at) = exited_at {
-        writeln!(err, "=== STALL RECOVERED: the program exited {at:?} after the send").ok();
-    } else {
-        writeln!(err, "=== STALL NOT RECOVERED after 5s; stacks follow").ok();
-        let pid = child.id().to_string();
-        let dump = Command::new("sudo")
-            .args([
-                "-n", "gdb", "-p", &pid, "-batch", "-ex", "info threads", "-ex",
-                "thread apply all bt 20",
-            ])
-            .output();
-        match dump {
-            Ok(output) => {
-                err.write_all(&output.stdout).ok();
-                err.write_all(&output.stderr).ok();
-            }
-            Err(error) => {
-                writeln!(err, "gdb did not run: {error}").ok();
-            }
-        }
-        if let Ok(tasks) = std::fs::read_dir(format!("/proc/{pid}/task")) {
-            for task in tasks.flatten() {
-                let stat = std::fs::read_to_string(task.path().join("stat")).unwrap_or_default();
-                writeln!(err, "task {}", stat.trim_end()).ok();
-            }
-        }
-    }
-    writeln!(err, "=== STALL END").ok();
-}
-
 #[test]
 fn a_tcp_receive_releases_an_atomic_computation_with_an_idle_driver() {
-    let receive_limit = receive_limit();
     let program = build_program_with_driver_arguments(
         &compile_program("busy_ring_receive.wf"),
         Some(PLACEMENT_OBSERVER),
@@ -277,9 +190,7 @@ fn a_tcp_receive_releases_an_atomic_computation_with_an_idle_driver() {
             .env("WF_DRIVERS", "2")
             .env("WF_SCHED_REPORT", "2")
             .env("WF_BUSY_RING_TRACE", &trace_path);
-        if std::env::var_os("WF_TMP_KEEP_ATEXIT_SLEEP").is_none() {
-            without_thread_sanitizer_exit_sleep(&mut command);
-        }
+        without_thread_sanitizer_exit_sleep(&mut command);
         let (mut child, ready) = ProgramChild::spawn_signalling_first_output(&mut command)
             .expect("start the busy-ring witness");
         ready.recv_timeout(START_LIMIT).unwrap_or_else(|error| {
@@ -332,7 +243,7 @@ fn a_tcp_receive_releases_an_atomic_computation_with_an_idle_driver() {
         assert_eq!(rings, 1, "run {run}: the retained pre-spawn root ring");
         let mut peer = TcpStream::connect_timeout(&address, START_LIMIT)
             .expect("connect to the witness's TCP listener");
-        peer.set_write_timeout(Some(receive_limit))
+        peer.set_write_timeout(Some(RECEIVE_LIMIT))
             .expect("bound the peer's write");
         // Send only after observing both the native receive's suspension and
         // the child's acquired atomic statement. Equal thread IDs also prove
@@ -379,22 +290,15 @@ fn a_tcp_receive_releases_an_atomic_computation_with_an_idle_driver() {
         peer.write_all(b"\n")
             .expect("send one byte through the TCP connection");
         while child.try_wait().expect("inspect receive progress").is_none() {
-            if sent.elapsed() >= receive_limit {
-                stall_report(&mut child, run, split, &trace, sent);
-            }
             assert!(
-                sent.elapsed() < receive_limit,
-                "run {run}: the receive did not release the atomic computation within {receive_limit:?}; placement: {trace}"
+                sent.elapsed() < RECEIVE_LIMIT,
+                "run {run}: the receive did not release the atomic computation within {RECEIVE_LIMIT:?}; placement: {trace}"
             );
             std::thread::sleep(Duration::from_millis(1));
         }
         assert!(
-            sent.elapsed() < receive_limit,
-            "run {run}: exit exceeded {receive_limit:?}; placement: {trace}"
-        );
-        println!(
-            "busy-ring receive run {run} split={split}: the program exited {:?} after the send",
-            sent.elapsed()
+            sent.elapsed() < RECEIVE_LIMIT,
+            "run {run}: exit exceeded {RECEIVE_LIMIT:?}; placement: {trace}"
         );
         drop(peer);
         let output = child

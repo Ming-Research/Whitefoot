@@ -944,3 +944,48 @@ the cause was known, so the observer in the test is again the placement
 observer alone; the verdict logic is the same as in the run that failed on
 main. On the branch the test passes, and with only the deadline trigger kept
 it fails with that message.
+
+## 10. The busy-receive witness under ThreadSanitizer
+
+The first full check of the finished branch failed one job, the
+thread-sanitized programs part of the sanitizers workflow (run `40054875044`,
+head `c777467fe`): the direct arm of `busy_ring_receive.rs` reported that the
+receive had not released the computation within 100 ms, in one of sixteen
+invocations. The ring trigger, not the sanitizer's speed, was the first
+suspect, so the failure was measured before anything changed.
+
+**Measurement.** The thread-sanitized programs part was repeated in parallel
+jobs on the hosted runner, each job a whole corpus run on 4 CPUs.
+
+| Runs (head) | Witness exit sleep | Jobs with a late exit | Late exits after the send |
+|---|---|---|---|
+| `40055683756` (`0cd64a216`, bound 1 s) | default | 1 of 3 | one over 1 s, after 7 invocations of 13.0 ms to 28.1 ms; the 32 invocations of the other two jobs took 6.9 ms to 42.0 ms |
+| `40056461636` (`58e8c9f78`) | default | 6 of 8 | 1.011 s to 1.023 s, each recovering by itself; four split-arm and two direct-arm invocations |
+| `40057162081` (`ec33293ec`) | default | 4 of 6 | 1.008 s to 1.028 s, one per job (the job's test ended at it) |
+| `40057162081` (`ec33293ec`) | `atexit_sleep_ms=0` | 0 of 6 | none: 96 invocations, longest 30.6 ms, mean 19.6 ms |
+
+Every late exit came 1.0 s plus an ordinary exit time (10 ms to 28 ms) after
+the send, in both placement arms, and every one recovered: the release had
+happened within the usual tens of milliseconds, and the exit was held back by
+one second. At the moment of the stall the process had two threads, both in
+`nanosleep` (read from `/proc/<pid>/task/*/syscall`, four jobs): the main
+thread and one other.
+
+**Cause.** ThreadSanitizer's `atexit_sleep_ms` defaults to 1000 and is applied
+when the main thread finalizes while the thread count exceeds one
+(`compiler-rt/lib/tsan/rtl/tsan_rtl.cpp`, `Finalize`; `tsan_flags.inc`). The
+witness observes the program's exit as the only sign that the computation was
+released, so the sleep lengthens the measured interval by one second in the
+invocations where a thread still lives when the main thread finalizes. The
+first full-check failure at 100 ms is the same event. Which runtime thread is
+still alive at that moment was not identified; the control and treatment rows
+above, which differ only in this option, show that the option decides the
+outcome. The runtime's handoff is not implicated: nothing in the data shows a
+release later than the ordinary tens of milliseconds.
+
+**Result in the tests.** `busy_ring_receive.rs` starts its program with
+`atexit_sleep_ms=0` appended to `TSAN_OPTIONS` under ThreadSanitizer and keeps
+the 100 ms bound in every build. Races are still reported, and the other
+programs of the sanitized corpus keep the default. `ring_assist.rs` measures
+the echo's arrival, not an exit, and its sanitized echoes took 1.4 ms to
+2.3 ms in the loaded jobs of the first run above, so it too keeps 100 ms.

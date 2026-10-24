@@ -1,7 +1,7 @@
 # Temporary claude/ring-assist workflow; remove before ready.
-# The thread-sanitized programs part of the sanitizers workflow, repeated, with
-# the busy-ring receive's stall report (whether a missed bound ever recovers,
-# and every thread's stack when it does not) printed from each run.
+# The thread-sanitized programs part of the sanitizers workflow, six times in
+# parallel jobs, to show the two witnesses pass its loaded corpus with the
+# busy-ring witness's exit sleep turned off and every bound at 100 ms.
 name: tmp-ring-assist-tsan
 on:
   workflow_dispatch:
@@ -12,13 +12,12 @@ env:
   CARGO_INCREMENTAL: 0
 jobs:
   loaded:
-    name: tsan exit sleep ${{ matrix.sleep }} ${{ matrix.rep }}
+    name: tsan programs ${{ matrix.rep }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        sleep: [keep, drop]
         rep: [1, 2, 3, 4, 5, 6]
     steps:
       - uses: actions/checkout@v4
@@ -31,7 +30,7 @@ jobs:
           curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
           version=$(tr -d '[:space:]' < .github/llvm-major)
           sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
-          sudo apt-get install -y --no-install-recommends "libclang-rt-$version-dev" gdb
+          sudo apt-get install -y --no-install-recommends "libclang-rt-$version-dev"
           sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
           sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
           rustup default stable
@@ -43,12 +42,10 @@ jobs:
           WHITEFOOT_CHECK_TIMEOUT: 1500
         run: |
           set -u
-          if [ "${{ matrix.sleep }}" = keep ]; then export WF_TMP_KEEP_ATEXIT_SLEEP=1; fi
           out="$RUNNER_TEMP/loaded.txt"
           code=0
           make -C compiler test-corpus-tsan \
             SANITIZER_FILTER="--skip the_corpus_reaches_its_declared_verdict --nocapture" \
             SANITIZER_STAGE=programs > "$out" 2>&1 || code=$?
-          grep -E "busy-ring receive run [0-9]+ split|^test programs::(ring_assist|busy_ring_receive)|test result|did not release|the echo took" "$out" | cut -c1-200
-          sed -n '/=== STALL BEGIN/,/=== STALL END/p' "$out" | cut -c1-400
+          grep -E "^test programs::(ring_assist|busy_ring_receive)|test result|did not release|exit exceeded|the echo took" "$out" | cut -c1-200
           exit $code
