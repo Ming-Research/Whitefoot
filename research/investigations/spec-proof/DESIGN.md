@@ -767,9 +767,11 @@ The part adds 740 lines of Lean in one module and no coverage mark. The
 module alone built in 14.8 s and 15.6 s, and the build of the model and
 harness took 26.9 s and 38.6 s on the first two `proof.yml` runs that
 compiled it, against 16.5 s and 16.9 s on the main line's runs of the same
-day. With the typing lemmas merged in from the main line it took 24.2 s, and
-the build's provisional budget rises from 25 s to 40 s, 1.5 times that run
-rounded up to 5 s. Four earlier runs failed to compile: a tactic macro could not resolve lemma names
+day. With the typing lemmas merged in from the main line it took 24.2 s,
+42.2 s and 29.5 s on three runs of the same content, and the build's
+provisional budget rises from 25 s to 65 s, 1.5 times the longest of them
+rounded up to 5 s: a budget from the first, faster run failed on the slower
+host. Four earlier runs failed to compile: a tactic macro could not resolve lemma names
 defined after it, then, once it could, a lemma's proof referred to itself,
 and two proofs needed steps the tactic did not take.
 
