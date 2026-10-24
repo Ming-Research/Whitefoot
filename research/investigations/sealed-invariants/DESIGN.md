@@ -318,14 +318,15 @@ Every debt whose anchor is *proved* at or below w — equal steps, equal
 captured offsets — is removed; a debt whose anchor only may overlap w (an
 index not proved equal) stays, because the store may have reached a
 different element. A store at a place spelled through a reference r whose
-place resolves to several members reached only the member r names, so no
-debt is proved at or below any member w: there T3 removes exactly each
-debt proved at or below w that records r and is anchored at r's referent
-in w followed by the projection it records. T8 restores such a debt by
-its instance over `r^` followed by that projection [TYPE-11.S5], and after
-the store that place lies within the sealed value stored, so the removal
-is a restoration the store proves; a debt that records nothing or another
-reference, such as the one a write straight to one member leaves, stays.
+place resolves to several members reached only the member r names, and is
+proved to have reached none of them: at each member w, T3 removes exactly
+each debt proved at or below w that records r and is anchored at r's
+referent in w followed by the projection it records. T8 restores such a
+debt by its instance over `r^` followed by that projection [TYPE-11.S5],
+and after the store that place lies within the sealed value stored, so
+the removal is a restoration the store proves; a debt that records
+nothing or another reference, such as the one a write straight to one
+member leaves, stays.
 T2 still adds debts for the anchors above w. A commit
 into a complete own local binding whose right-hand side is a place read or
 a `move` is not a T3 store; T4 governs it.
@@ -458,9 +459,14 @@ proved at or below s onto f. A debt that only may be at or below f — an
 index not proved equal to f's, a reference whose path set holds several
 targets — stays where it is and an exchanged copy is added at s; likewise
 for s. When the two targets may be the same place, both receive the union.
-T2 adds debts above each target. A debt exchanged onto a target t names its
-invariant at t itself when its anchor lies at the other target's level, and
-is the cover of t otherwise: an exchange appends no steps below t. So after
+T2 adds debts above each target. An exchanged debt, moved or copied,
+records no reference [TYPE-11.S2]: T8 restores a recorded debt over `r^`
+because its breaking events wrote the place r names, and the exchange put
+the value they broke at the other target, which r need not name; a debt
+that stays where it is keeps its record, since r still names its place.
+A debt exchanged onto a target t names its invariant at t itself when its
+anchor lies at the other target's level, and is the cover of t otherwise:
+an exchange appends no steps below t. So after
 `let r = &c[j]; set r^.value = 31_u64; let x = Index(value: 1_u64);
 swap(first: &c[i], second: &x);`, with i not proved equal to j, c keeps the
 debt at `c[j]` and x receives a copy at x, while a debt at `h1.index` that
@@ -672,10 +678,14 @@ program, every activation's abstract state paired with its runtime state.
   anchored at r's referent followed by the projection p it records. T8
   restores such a debt by the instance over `r^` followed by p, on the
   ground [TYPE-11.S5] states: each of its breaking events wrote through r
-  to the member r still names. After the store that place lies within the
-  sealed value stored there, so the instance holds and the removal is that
-  restoration. A debt that records nothing or another reference may lie at
-  a member the store did not reach, and stays (case
+  to the member r still names. That ground holds of every debt that
+  records r: a rebased (T4) or exchanged (T10) debt, whose value has moved,
+  records no reference [TYPE-11.S2], and a debt whose r is rebound or ends
+  drops its record unless it is restored there [TYPE-11.S3]. After the
+  store that place lies within the sealed value stored there, so the
+  instance holds and the removal is that restoration. A debt that records
+  nothing or another reference may lie at a member the store did not
+  reach, and stays (case
   `type11-neg-joined-reference-store-keeps-debt`).
   T4 takes the source's debts first, then drops only the destination's
   debts proved at or below it (its old value is gone), then adds the taken
@@ -1290,6 +1300,8 @@ other verdicts accept.
 | `type11-neg-joined-reference-store-keeps-debt` | a reference chooses `&left` or `&right`; `set right.value = 31_u64;` then a sealed store `set target^ = Index(value: 4_u64);` and the hand-off of `&right` | reject FN-8 |
 | `type11-pos-joined-reference-store-restores` | the same reference writes 31 through `target^.value`, then `set target^ = fresh();`; hand-offs of `&left` and `&right` | accept |
 | `type11-neg-joined-reference-field-store-keeps-debt` | a reference chooses between two `Holder`s; a write through it breaks the holder's own invariant, then a sealed store replaces only its `index` field; the hand-off of one holder | reject FN-8 |
+| `type11-neg-swap-after-joined-write-store-keeps-debt` | the reference that chooses `&left` or `&right` writes 31 through `target^.value`, then `swap(first: &left, second: &right);` moves each debt onto the other local recording no reference (T10), so `set target^ = fresh();` removes neither; the hand-off of `&right` | reject FN-8 |
+| `type11-neg-swap-after-joined-write-restore-keeps-debt` | the same write and `swap`, then `set target^.value = 7_u64;`, over which no exchanged debt is restored (T8); the hand-off of `&right` | reject FN-8 |
 | `type11-pos-grow-keeps-length-sealed` | `struct Stack { window: Box<Slots<u64>>; invariant short(stack): stack.window.inner.len < 16_u64; }` held in a `Holder`; `grow(cell: &holder^.stack.window, ...)`, then the hand-off of `&holder^.stack` with no read of its length (T2's relocation table keeps the length word) | accept |
 | `type11-neg-grow-capacity-keeps-debt` | the same window under `invariant roomy(stack): stack.window.inner.cap <= 16_u64;`; `grow(cell: &stack^.window, capacity: 32_u64);`, then the hand-off of `stack` | reject FN-8 |
 | `type11-neg-map-clear-other-target` | `atomic m1 = &h1, m2 = &h2 { ... break the payload of an entry through m2 ...; map_clear(map: m1); }` with h1, h2 handles of one map type | reject TYPE-11 at the atomic statement |

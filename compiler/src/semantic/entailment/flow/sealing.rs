@@ -731,6 +731,9 @@ impl Input<'_, '_> {
     /// `onto` when its anchor is at `from`'s level, and otherwise the cover
     /// of `onto`. An exchange so appends no steps below `onto`, and the
     /// debts a loop of exchanges forms are polynomially many [TYPE-11.S6].
+    /// The exchanged debt records no reference [TYPE-11.S2]: the value its
+    /// breaking events wrote through one now lies at `onto`, which that
+    /// reference need not name.
     fn exchanged(&self, debt: &Debt, from: &ResolvedPlace, onto: &ResolvedPlace) -> Debt {
         let at_level = debt.invariant.is_some()
             && self
