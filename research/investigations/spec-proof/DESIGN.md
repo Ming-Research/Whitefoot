@@ -742,8 +742,8 @@ The module adds 1,642 lines of Lean, changes no model definition and adds no
 coverage mark. The build of the model and harness took 21.9 s to 23.4 s on
 its three green `proof.yml` runs, within the 25 s budget, with the module
 itself 6.0 s to 6.5 s; the first run on `main` after the merge took 26.0 s,
-and the budget became 40 s, 1.5 times the first green run's 23.4 s rounded up
-to 5 s. The part took seven engineer turns and five
+and the budget became 30 s, 1.5 times the 16.9 s of the first run on the
+merged head rounded up to 5 s. The part took seven engineer turns and five
 `proof.yml` runs to its review. The first turn only studied the question and
 ended on an API error; the first draft was written without a local Lean and
 failed to compile in about 30 places, the second run in 9, and the two later
