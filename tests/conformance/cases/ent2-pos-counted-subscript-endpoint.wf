@@ -2,7 +2,7 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn probe(bounds: Array<u64, 2>) -> result: unit pure {
-  doc "A subscript is a valid atom whose own constant bounds discharge, but a subscripted place is a counted endpoint term only when its final step selects a readonly field, and a scalar element is none [ENT-2].";
+  doc "A scalar integer element below a constant subscript is a term of clause (b), so it is an admitted counted endpoint [ENT-2]; each subscript discharges its own bounds [OP-4].";
   for @items (i in bounds[0_u64]..bounds[1_u64]) {
   }
   return unit;

@@ -1,0 +1,34 @@
+struct Cell {
+  digits: Array<u8, 2>;
+}
+
+fn establish(cell: &Cell, index: u64) -> result: unit writes(cell.digits) contract {
+  requires index < cell^.digits.len;
+  ensures 1_u8 <= cell^.digits[index];
+} {
+  set cell^.digits[index] = 1_u8;
+  return unit;
+}
+
+fn establish_two(cell: &Cell, index: u64, choose: Bool) -> result: unit writes(cell.digits) contract {
+  requires index < cell^.digits.len;
+  ensures 1_u8 <= cell^.digits[index];
+} {
+  if choose {
+    set cell^.digits[index] = 1_u8;
+    return unit;
+  }
+  set cell^.digits[index] = 2_u8;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let digits = array_filled::<u8, 2>(value: 0_u8);
+  let cell = Cell(digits: digits);
+  establish(cell: &cell, index: 0_u64);
+  let first = cell.digits[0_u64] - 1_u8;
+  establish(cell: &cell, index: 1_u64);
+  let second = cell.digits[1_u64] - 1_u8;
+  let code = first +wrap second;
+  return std::process::exit_status(code: code);
+}

@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-24 An integer element and an integer field inside an element are terms of the fact language
+
+Nodes: language/checks-and-proofs
+
+Summary: The fact language admitted a place below a subscript only when its last step selected a readonly integer field, so the float-text module's `requires 1_u8 <= cell^.digits[0_u64];` was refused. The decision now admits every integer element and integer field inside an element under tracked or constant offsets, because the readonly-field investigation's soundness ground, that every change of the value overlaps its support, holds for them too, and readonly-only had been chosen for precision, not soundness ([element contract investigation](../research/investigations/contract-element-terms/DESIGN.md#why-readonly-only-was-chosen-and-what-that-ground-establishes)). It rejects constant offsets only and rewriting such contracts as one-element range facts.
+
 ## 2026-10-23 A returned computed integer expression proves a postcondition as a `let` of it would
 
 Nodes: language/checks-and-proofs/automatic-facts
