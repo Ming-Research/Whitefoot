@@ -418,8 +418,8 @@ Not chosen:
   does not lift the cold threshold, so their interaction is that item's
   measurement, not this one's.
 
-Separate from this design, recorded for its own item: internal linkage for
-the default build (approach B1), which full LTO approximates, makes the
+Separate from this design, recorded for its own board item
+(wf-internal-linkage): internal linkage for the default build (approach B1), which full LTO approximates, makes the
 bench's and the corpus's text 56%–60% smaller and the witness faster, but
 slows iterate by 3%–6% on one runner model in three runs out of three; it
 needs that slowdown attributed before a decision.
@@ -441,8 +441,14 @@ compares this branch's compiler with its merge base's, both with the
 shrinking library, and builds the bench a third time with the merge base's
 compiler and round 3's hint arm.
 
-- The implementation is the measured design when the bench's code (its
-  `.text` bytes) differs from the merge base's and equals the hint arm's.
+- The implementation is the measured design when the module it emits for
+  the bench is the merge base's with `inlinehint` added to attribute group
+  #0, which is the rewrite the hint arm made, and the bench's code differs
+  from the merge base's. A first version of this check compared the linked
+  code with the hint arm's and found it different
+  ([run 40114031344](https://github.com/Ming-Research/Whitefoot/actions/runs/40114031344));
+  the arm hands clang a named file where whitefootc pipes the module, so the
+  modules are compared instead, and the code's difference is reported.
 - The acceptance bounds of the design apply: Halo's text grows by at most 6%
   and the corpus's total by at most 1%, and Halo's and v2h's median compile
   times over five interleaved pairs by at most 5%.

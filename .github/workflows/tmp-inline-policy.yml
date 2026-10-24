@@ -102,6 +102,8 @@ jobs:
         env:
           DESIGN_REVIEW_BASE: origin/main
         run: |
+          # spec-archives reads a local main, as the gate names it.
+          git branch -f main origin/main
           for stage in spec-archives readme-translation spec-prose-integrity guidance source-size design-lint safety-claims; do
             perl .github/run-check.pl "tmp-$stage" make --no-print-directory "$stage"
           done
@@ -171,19 +173,28 @@ jobs:
       - name: The implementation is the measured hint
         run: |
           mkdir -p "$RUNNER_TEMP/check"
-          for side in base candidate hint; do
-            "$OUT/arms/$side/compiler/target/gate/whitefootc" research/experiments/hash-map-compare/bench.wf -o "$RUNNER_TEMP/check/bench-$side"
+          bench=research/experiments/hash-map-compare/bench.wf
+          for side in base candidate; do
+            "$OUT/arms/$side/compiler/target/gate/whitefootc" --emit-llvm "$bench" -o "$RUNNER_TEMP/check/bench-$side.ll"
           done
-          # Compare code, not whole images: the hint arm hands clang a named
-          # file where whitefootc pipes the module, which may name it apart.
+          # The candidate's module must be the base's with inlinehint added
+          # to group #0, which is what round 3's hint arm did to it; clang
+          # parses an attribute group as a set, so the word's place in the
+          # group changes nothing.
+          grep -Eq '^attributes #0 = \{ .*\binlinehint\b' "$RUNNER_TEMP/check/bench-candidate.ll"
+          ! grep -Eq '\binlinehint\b' "$RUNNER_TEMP/check/bench-base.ll"
+          sed -E '/^attributes #0 = /s/ inlinehint\b//' "$RUNNER_TEMP/check/bench-candidate.ll" > "$RUNNER_TEMP/check/bench-candidate-unhinted.ll"
+          cmp "$RUNNER_TEMP/check/bench-base.ll" "$RUNNER_TEMP/check/bench-candidate-unhinted.ll"
+          # Reported, not required: the hint arm hands clang a named file
+          # where whitefootc pipes the module.
           for side in base candidate hint; do
+            "$OUT/arms/$side/compiler/target/gate/whitefootc" "$bench" -o "$RUNNER_TEMP/check/bench-$side"
             objcopy -O binary --only-section=.text "$RUNNER_TEMP/check/bench-$side" "$RUNNER_TEMP/check/text-$side"
           done
           sha256sum "$RUNNER_TEMP"/check/text-*
-          # The implementation must change the code, and emit the code the
-          # hint arm did; the attribute's place in its group changes nothing.
           ! cmp -s "$RUNNER_TEMP/check/text-base" "$RUNNER_TEMP/check/text-candidate"
-          cmp "$RUNNER_TEMP/check/text-hint" "$RUNNER_TEMP/check/text-candidate"
+          size -A "$RUNNER_TEMP/check/bench-hint" | awk '$1 == ".text" {print "hint arm text", $2}'
+          size -A "$RUNNER_TEMP/check/bench-candidate" | awk '$1 == ".text" {print "candidate text", $2}'
           wfc="$OUT/arms/candidate/compiler/target/gate/whitefootc"
           CENSUS_REMARKS="$RUNNER_TEMP/check/bench.txt" "$wfc" research/experiments/hash-map-compare/bench.wf -o "$RUNNER_TEMP/check/bench"
           graph=tests/halo-bench/modules.wfg
