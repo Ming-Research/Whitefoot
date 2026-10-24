@@ -1313,8 +1313,9 @@ fn main() -> status: std::process::ExitStatus pure {
         ],
     },
     RepairPair {
-        // An element read is an [ENT-2] clause (b) term, which a condition
-        // naming the same place establishes [ENT-3].
+        // An element of a parameter is an [ENT-2] clause (b) term, which a
+        // requirement may name [FN-8] and a condition naming the same place
+        // establishes [ENT-3].
         name: "integer-domain-over-an-element.wf",
         rejected: br#"fn bump(values: &Array<u8, 2>) -> result: u8 reads(values) {
   let y = values^[0_u64] + 1_u8;
@@ -1328,9 +1329,21 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "OP-2",
         sentences: &[
             "\n  disposition: Unproved\n",
-            "\n  mechanical_fix: `values^[0_u64] +defined 1_u8` is not proved here: when facts that reach the operation imply it, prove it with an `invariant` whose `use` steps name them (a loop's header `invariant` for a value the loop computes); or guard the operation with `if values^[0_u64] +defined 1_u8` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare; or write the `+wrap`, `+checked` or `+sat` form\n",
+            "\n  mechanical_fix: add `requires values^[0_u64] +defined 1_u8;` to the `contract` of `bump`, which each caller then establishes; or guard the operation with `if values^[0_u64] +defined 1_u8` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare; or write the `+wrap`, `+checked` or `+sat` form\n",
         ],
-        repaired: &[br#"fn bump(values: &Array<u8, 2>) -> result: u8 reads(values) {
+        repaired: &[
+            br#"fn bump(values: &Array<u8, 2>) -> result: u8 reads(values) contract {
+  requires values^[0_u64] +defined 1_u8;
+} {
+  let y = values^[0_u64] + 1_u8;
+  return y;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn bump(values: &Array<u8, 2>) -> result: u8 reads(values) {
   if values^[0_u64] +defined 1_u8 {
     let y = values^[0_u64] + 1_u8;
     return y;
@@ -1341,7 +1354,8 @@ fn main() -> status: std::process::ExitStatus pure {
 fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
-"#],
+"#,
+        ],
     },
     // -------------------------------------------------------------------
     // [OP-6] a bare conversion's domain.
