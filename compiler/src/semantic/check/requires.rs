@@ -193,6 +193,67 @@ fn expand_definition_offsets(place: &mut CheckedExpression, offsets: &Definition
     }
 }
 
+/// Whether one subscript offset reads a definition that expands to no
+/// offset: a computed value is no clause (a) or clause (c) term, so the place
+/// it selects is no term [ENT-2, FN-8].
+fn offset_hides_computed_definition(offset: &CheckedExpression, places: &ClausePlaces) -> bool {
+    matches!(
+        offset,
+        CheckedExpression::Binding { binding, .. }
+            if places.definitions.iter().any(|definition| definition.binding == *binding)
+                && !places.offsets.contains_key(binding)
+    )
+}
+
+fn path_hides_computed_definition(path: &[CheckedPlaceStep], places: &ClausePlaces) -> bool {
+    path.iter().any(|step| {
+        matches!(step, CheckedPlaceStep::Subscript(subscript)
+            if offset_hides_computed_definition(&subscript.offset, places))
+    })
+}
+
+fn place_hides_computed_definition(place: &CheckedExpression, places: &ClausePlaces) -> bool {
+    match place {
+        CheckedExpression::ContainerMeasure { root, .. }
+        | CheckedExpression::ReadStorage { root, .. } => {
+            path_hides_computed_definition(&root.path, places)
+        }
+        CheckedExpression::RangeMeasure { root, .. } => root
+            .formation
+            .as_deref()
+            .is_some_and(|formation| place_hides_computed_definition(formation, places)),
+        CheckedExpression::BorrowSegment { root, segment, .. } => {
+            let source = match root {
+                super::super::model::CheckedSegmentSource::Storage(root) => {
+                    path_hides_computed_definition(&root.path, places)
+                }
+                super::super::model::CheckedSegmentSource::Element(place) => {
+                    place.root.formation.as_deref().is_some_and(|formation| {
+                        place_hides_computed_definition(formation, places)
+                    }) || offset_hides_computed_definition(&place.offset, places)
+                        || path_hides_computed_definition(&place.path, places)
+                }
+            };
+            source
+                || matches!(segment,
+                    super::super::model::CheckedSegmentSelect::One(index)
+                    | super::super::model::CheckedSegmentSelect::Page(index)
+                        if offset_hides_computed_definition(&index.offset, places))
+        }
+        CheckedExpression::RangeElementMeasure { place, .. }
+        | CheckedExpression::RangeIndex { place, .. } => {
+            place
+                .root
+                .formation
+                .as_deref()
+                .is_some_and(|formation| place_hides_computed_definition(formation, places))
+                || offset_hides_computed_definition(&place.offset, places)
+                || path_hides_computed_definition(&place.path, places)
+        }
+        _ => false,
+    }
+}
+
 /// [ENT-2] the clause (b) places one `contract_block` forms: each
 /// definition's own places, with every offset read through an earlier
 /// definition expanded, and the places each clause forms through the
@@ -233,6 +294,18 @@ impl ClausePlaces {
             places,
             uses,
         });
+    }
+
+    /// [ENT-2, FN-8] whether a clause place in `expression` reads a
+    /// definition with a computed value as a subscript offset. Expansion
+    /// exposes that computation as the offset, which is no term, so the
+    /// clause is refused rather than formed.
+    pub(super) fn hides_computed_offset(&self, expression: &CheckedExpression) -> bool {
+        let mut places = Vec::new();
+        collect_clause_places(expression, &mut places);
+        places
+            .iter()
+            .any(|place| place_hides_computed_definition(place, self))
     }
 
     /// The recorded definitions' bindings, in written order.
@@ -646,6 +719,12 @@ impl<'unit> Checker<'_, 'unit> {
             };
             self.types
                 .validate_clause_checked_forms(ClauseKind::Requires, definition, value)?;
+            if clause_places.hides_computed_offset(value) {
+                return self
+                    .types
+                    .declarations
+                    .invalid_clause(ClauseKind::Requires, definition);
+            }
             self.types.validate_clause_copy_local(
                 check_context,
                 ClauseKind::Requires,
@@ -713,6 +792,12 @@ impl<'unit> Checker<'_, 'unit> {
                 clause,
                 &condition.expression,
             )?;
+            if clause_places.hides_computed_offset(&condition.expression) {
+                return self
+                    .types
+                    .declarations
+                    .invalid_clause(ClauseKind::Requires, clause);
+            }
             if condition.mode != CheckedMode::Own || condition.expression.ty() != CheckedType::Bool
             {
                 return self.types.declarations.issue_node(
@@ -1111,11 +1196,24 @@ impl<'unit> DeclarationInventory<'unit> {
         // [ENT-2] clause (b): whether a subscripted place is a term depends
         // on the type it selects and on its offsets, which the typed half
         // judges once the place is checked [`validate_clause_checked_forms`].
-        if self
-            .tree
-            .first_child_with(atom, Production::Place)?
-            .is_some()
-        {
+        // An offset must itself be a clause (a) place or a clause (c)
+        // constant, so a subscript written inside an offset is refused here,
+        // before the clause's template represents the offset.
+        if let Some(place) = self.tree.first_child_with(atom, Production::Place)? {
+            for suffix in self.tree.children_with(place, Production::Psuffix)? {
+                let Some(offset) = self.tree.subscript_offset(suffix)? else {
+                    continue;
+                };
+                let Some(offset_place) = self.tree.first_child_with(offset, Production::Place)?
+                else {
+                    continue;
+                };
+                for step in self.tree.children_with(offset_place, Production::Psuffix)? {
+                    if self.tree.subscript_offset(step)?.is_some() {
+                        return self.invalid_clause(clause, entry);
+                    }
+                }
+            }
             return Ok(());
         }
         if self
@@ -2084,8 +2182,8 @@ impl<'unit> TypeContext<'unit> {
     /// substitutes its own actual there [FN-8, CALL-6]; a literal and a const
     /// are values and need no substitution. Field and dereference offsets
     /// retain their complete projected parameter identity; an
-    /// element read never reaches here, because a subscript that ends a
-    /// clause place is refused first.
+    /// element read as an offset never reaches here, because a subscript
+    /// inside an offset is refused first [`validate_clause_atom`].
     fn clause_subscript_projection(
         &self,
         check_context: &CheckContext<'_>,

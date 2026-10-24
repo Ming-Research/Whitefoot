@@ -1,4 +1,4 @@
-fn clear(digit: &u8) -> result: unit writes(digit) {
+fn reset(digit: &u8) -> result: unit writes(digit) {
   set digit^ = 0_u8;
   return unit;
 }
@@ -7,7 +7,7 @@ fn probe(values: &Array<u8, 2>, index: u64) -> result: u8 writes(values) contrac
   requires index < values^.len;
   requires 1_u8 <= values^[index];
 } {
-  clear(digit: &values^[index]);
+  reset(digit: &values^[index]);
   return values^[index] - 1_u8;
 }
 

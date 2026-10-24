@@ -1019,6 +1019,12 @@ impl<'unit> Checker<'_, 'unit> {
                     definition,
                     value,
                 )?;
+                if clause_places.hides_computed_offset(value) {
+                    return self
+                        .types
+                        .declarations
+                        .invalid_clause(ClauseKind::Postcondition(record), definition);
+                }
                 self.types.validate_clause_copy_local(
                     check_context,
                     ClauseKind::Postcondition(record),
@@ -1069,6 +1075,12 @@ impl<'unit> Checker<'_, 'unit> {
                 clause,
                 &condition.expression,
             )?;
+            if clause_places.hides_computed_offset(&condition.expression) {
+                return self
+                    .types
+                    .declarations
+                    .invalid_clause(ClauseKind::Postcondition(record), clause);
+            }
             if condition.mode != CheckedMode::Own || condition.expression.ty() != CheckedType::Bool
             {
                 return self.types.declarations.issue_node(
