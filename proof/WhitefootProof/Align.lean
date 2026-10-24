@@ -236,7 +236,9 @@ theorem op_ty {env : Env} {st : State} {o : TableOp} {as : List Atom} {g g' : Ge
     cases o with
     | unary u m =>
       dsimp only at h
-      cases m <;> cases hvt : va.ty <;> rw [hvt] at h <;> walk_pure h
+      -- Reduce the match on the operand's type and the mode first: splitting
+      -- it would leave the matched type's width as an unsolved equation.
+      cases m <;> cases hvt : va.ty <;> rw [hvt] at h <;> dsimp only at h <;> walk_pure h
     | band => walk_pure h
     | bor => walk_pure h
     | bxor => walk_pure h
