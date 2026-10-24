@@ -3265,7 +3265,7 @@ macro_rules
       repeat' first
         | exact (Discharge.run_fail $h).elim
         | (obtain ⟨_, _, hf, -⟩ := Discharge.run_bind $h; exact (Discharge.run_fail hf).elim)
-        | (obtain ⟨rfl, -⟩ := Discharge.run_pure $h; rfl)
+        | (obtain ⟨hpe, -⟩ := Discharge.run_pure $h; subst hpe; rfl)
         | (obtain ⟨_, _, -, $h:ident⟩ := Discharge.run_bind $h)
         | (split at $h:ident)
         | (dsimp only at $h:ident))
@@ -4246,9 +4246,8 @@ theorem op_sound {env : Env} {st : State} {g g1 : Gen} {E E0 : Whitefoot.Env}
       intro ho w hw
       obtain ⟨x, -, he⟩ := hone w hw
       exact bool_val_denotes (hgx w hw) (evalOp_bool (fun u m h => .inl (ho u m h)) he)
-    cases o
-    case unary u m =>
-      dsimp only at hr
+    rcases o with ⟨u, m⟩ | _ | _ | _ | _
+    · dsimp only at hr
       cases hvt : va.ty
       case int t =>
         rw [hvt] at hr
@@ -4467,7 +4466,7 @@ theorem evalRhs_sound {env : Env} {st : State} {g g1 : Gen} {E E0 : Whitefoot.En
   · exact call_sound hgood hr hty hcall
   · simp only [evalRhs] at hr
     obtain ⟨rfl, rfl⟩ := Discharge.run_pure hr
-    refine ⟨G, hgood, Ext.refl g G, fun w hw => ?_⟩
+    refine ⟨G, hgood, Ext.refl _ _, fun w hw => ?_⟩
     simp only [evalExpr] at hw
     cases hw
     exact bool_val_denotes (fun e he => by cases he; rfl) trivial
@@ -4754,7 +4753,7 @@ theorem checkReturn_inv {env : Env} {st : State} {ret : Val} {g g' : Gen} {u : U
                 rw [hfind] at hb2
                 try dsimp only at hb2
                 refine ⟨fun _ y id hf => ?_, Discharge.run_pure hb2⟩
-                rw [hfind] at hf
+                (try rw [hfind] at hf)
                 cases hf
               | some p =>
                 obtain ⟨y0, id0⟩ := p
@@ -4768,7 +4767,7 @@ theorem checkReturn_inv {env : Env} {st : State} {ret : Val} {g g' : Gen} {u : U
                        exact Discharge.run_fail hf)
                 · rename_i hst
                   refine ⟨fun _ y id hf => ?_, Discharge.run_pure hb2⟩
-                  rw [hfind] at hf
+                  (try rw [hfind] at hf)
                   cases hf
                   exact bool_or_of_not_and hst
             · rename_i hne
