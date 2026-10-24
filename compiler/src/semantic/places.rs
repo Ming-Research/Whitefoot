@@ -66,6 +66,9 @@ pub(crate) enum CaptureId {
     ValueDetermined,
     SpellingDetermined,
     Unknown,
+    /// The length word one page formation read [REF-4, OP-10], named by the
+    /// source occurrence that evaluated the page's index.
+    PageExtent(u32),
 }
 
 impl CaptureId {
@@ -207,6 +210,22 @@ impl CapturedValue {
     /// as though both were relative to one proved-identical frame.
     pub(crate) const fn unknown() -> Self {
         Self::new(UNKNOWN_CAPTURE, CapturedTerm::Opaque)
+    }
+
+    /// The datum standing for the length word the formation of a page with
+    /// this index read [REF-4]: the page's captured initialized extent
+    /// `[k * B, min((k + 1) * B, p.len))` ends at or below it, and the page
+    /// keeps that extent filled while the length stays at or above it
+    /// [OP-10]. Only a page index evaluated at one source occurrence names
+    /// one formation; a loop-carried or contract-position index names none.
+    pub(crate) const fn page_extent(self) -> Option<Self> {
+        match self.capture {
+            CaptureId::Source(occurrence) => Some(Self::new(
+                CaptureId::PageExtent(occurrence),
+                CapturedTerm::Opaque,
+            )),
+            _ => None,
+        }
     }
 
     /// A current source spelling, rather than one captured formation's extent.
@@ -1845,6 +1864,32 @@ mod tests {
             root: PlaceRoot::Binding(BindingId(binding)),
             path: path.to_vec(),
         }
+    }
+
+    /// [REF-4, OP-10] a page index names the length its formation read only
+    /// through its own source occurrence: two formations name two lengths, and
+    /// a loop-carried, value-determined or unknown index names none, so a page
+    /// reference through one keeps the unconditional invalidation at a call.
+    #[test]
+    fn a_page_index_names_its_formation_length_only_by_source_occurrence() {
+        let first = literal(4, 0)
+            .page_extent()
+            .expect("a source occurrence names one formation");
+        let second = literal(5, 0)
+            .page_extent()
+            .expect("a source occurrence names one formation");
+        assert_eq!(first.capture, CaptureId::PageExtent(4));
+        assert_ne!(first, second);
+        assert_eq!(binding(4, 1).page_extent(), Some(first));
+        assert_eq!(CapturedValue::unknown().page_extent(), None);
+        assert_eq!(literal(4, 0).goal_identity().page_extent(), None);
+        let carried = place(7, &[PlaceStep::Page(literal(14, 0))])
+            .loop_carried(CheckedLoopId(3), BindingId(9), 0)
+            .expect("small carried page identity");
+        let Some(PlaceStep::Page(page)) = carried.path.first() else {
+            panic!("a carried page keeps its page step: {:?}", carried.path);
+        };
+        assert_eq!(page.page_extent(), None);
     }
 
     #[test]
