@@ -301,15 +301,18 @@ node.
 the same function growth uses. The rebuild now refuses a bucket count below
 the length, the condition its migration needs, instead of one below the
 current bucket count; reserve, rehash and insertion never pass a smaller
-count, so they behave as before. Its zero-bucket early return now applies
-only to a map that already has zero buckets; any other zero target drains
-the vacant and deleted buckets and takes the static empty backing, so it
-allocates nothing. An earlier revision split the
+count, so they behave as before. Its zero-bucket early return moved to
+`hash_map_rehash`, the one caller that can ask a zero-bucket map for zero
+buckets; a zero target from a shrink drains the vacant and deleted buckets
+and takes the static empty backing, so it allocates nothing. An earlier
+revision split the
 migration into a helper behind a refusing wrapper; that compiled the moving
 loop with two of its three hash constants reloaded for every pair and one
 pair copy split into two stores, and growth of a 1,000-pair map measured
 3.4% slower on the 14900K ([measurement](#measurement)). One function
-restores the base's moving loop instruction for instruction.
+restores the base's moving loop instruction for instruction. The loop's
+shape is fragile: keeping the zero-bucket check inside the rebuild, after
+the refusal, brought the same reloads back, so it sits in the rehash.
 A missing-key removal returns before any of it. No public signature or
 representation changes.
 
