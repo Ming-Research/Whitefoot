@@ -66,6 +66,9 @@ pub(crate) enum CaptureId {
     ValueDetermined,
     SpellingDetermined,
     Unknown,
+    /// The length word one page formation read [REF-4, OP-10], named by the
+    /// source occurrence that evaluated the page's index.
+    PageExtent(u32),
 }
 
 impl CaptureId {
@@ -207,6 +210,22 @@ impl CapturedValue {
     /// as though both were relative to one proved-identical frame.
     pub(crate) const fn unknown() -> Self {
         Self::new(UNKNOWN_CAPTURE, CapturedTerm::Opaque)
+    }
+
+    /// The datum standing for the length word the formation of a page with
+    /// this index read [REF-4]: the page's captured initialized extent
+    /// `[k * B, min((k + 1) * B, p.len))` ends at or below it, and the page
+    /// keeps that extent filled while the length stays at or above it
+    /// [OP-10]. Only a page index evaluated at one source occurrence names
+    /// one formation; a loop-carried or contract-position index names none.
+    pub(crate) const fn page_extent(self) -> Option<Self> {
+        match self.capture {
+            CaptureId::Source(occurrence) => Some(Self::new(
+                CaptureId::PageExtent(occurrence),
+                CapturedTerm::Opaque,
+            )),
+            _ => None,
+        }
     }
 
     /// A current source spelling, rather than one captured formation's extent.
