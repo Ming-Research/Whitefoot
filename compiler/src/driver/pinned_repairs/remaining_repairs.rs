@@ -772,18 +772,25 @@ fn pass(value: Token) -> result: unit pure {
         ],
     },
     RepairPair {
-        name: "writable-len-field-counted-endpoint.wf",
+        // [ENT-2] a field below an element is a clause (b) term only when
+        // every offset is a clause (a) or (c) term; an element-read offset
+        // is neither, so the endpoint is bound first.
+        name: "writable-len-field-at-an-element-offset-endpoint.wf",
         rejected: br#"struct Span {
   len: u64;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
-  let span = Span(len: 3_u64);
-  let spans = array_filled::<Span, 2>(value: span);
+fn total(spans: &Array<Span, 2>, slots: &Array<u64, 2>) -> result: u64 reads(spans), reads(slots) contract {
+  requires slots^[0_u64] < 2_u64;
+} {
   let count = 0_u64;
-  for (i in 0_u64..spans[1_u64].len) {
+  for (i in 0_u64..spans^[slots^[0_u64]].len) {
     set count = count +wrap 1_u64;
   }
+  return count;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#,
@@ -795,14 +802,18 @@ fn main() -> status: std::process::ExitStatus pure {
   len: u64;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
-  let span = Span(len: 3_u64);
-  let spans = array_filled::<Span, 2>(value: span);
+fn total(spans: &Array<Span, 2>, slots: &Array<u64, 2>) -> result: u64 reads(spans), reads(slots) contract {
+  requires slots^[0_u64] < 2_u64;
+} {
   let count = 0_u64;
-  let length = spans[1_u64].len;
+  let length = spans^[slots^[0_u64]].len;
   for (i in 0_u64..length) {
     set count = count +wrap 1_u64;
   }
+  return count;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#],
