@@ -7960,7 +7960,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
-fn a_nested_index_offset_is_no_term_and_renders_its_canonical_bytes() {
+fn a_nested_index_offset_without_a_bound_renders_its_canonical_bytes() {
     let source = br#"const count: u64 = 4_u64;
 
 const lens: Array<u8, count> =[0_u8, 0_u8, 0_u8, 0_u8];
@@ -7987,7 +7987,7 @@ fn main() -> status: std::process::ExitStatus pure {
     );
     assert!(
         !outcomes[1].discharged,
-        "an index-bearing offset is no term [ENT-2], so the outer obligation is underivable"
+        "order[j] is a clause (b) term [ENT-2], but no fact bounds it, so the outer obligation is unproved"
     );
     assert_eq!(outcomes[1].residual.as_deref(), Some("order[j] < lens.len"));
 }
@@ -9936,7 +9936,7 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(direct[0].discharged);
     assert!(
         !direct[1].discharged,
-        "the nested subscript remains no term"
+        "no fact bounds the nested element, which S9 does not read through a constant's field"
     );
     assert_eq!(
         direct[1].residual.as_deref(),

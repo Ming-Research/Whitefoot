@@ -253,7 +253,8 @@ fn check_records_client(main: &[u8]) -> Result<(), crate::CompilationFailure> {
 /// (c) term.
 ///
 /// A bare binding offset is represented and admitted. An array-element offset
-/// is no term, so the place is no term and the endpoint is ENT-2's rejection.
+/// is no clause (a) or (c) term, so the place is no term and the endpoint is
+/// ENT-2's rejection.
 /// A tracked field place is an admitted offset with its own identity and
 /// support, so it also supplies a readonly-field endpoint.
 #[test]
@@ -285,7 +286,7 @@ fn main() -> status: std::process::ExitStatus pure {{
     };
     check_records_client(program("i").as_bytes()).expect("a bare binding offset is admitted");
     let failure = check_records_client(program("slots[0_u64]").as_bytes())
-        .expect_err("an element offset is no term");
+        .expect_err("an element offset is no clause (a) or (c) term");
     assert_eq!(failure.rule_id(), Some("ENT-2"), "{failure}");
     assert!(
         failure.to_string().contains("InvalidCountedEndpoint"),

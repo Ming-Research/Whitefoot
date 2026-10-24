@@ -15,9 +15,9 @@
 //! cannot guess otherwise, which is why those routes state the condition they
 //! need, the callee's `ensures` among them only when the goal reads a value a
 //! call returned; or a guard where skipping the construct is the program's
-//! intent. An operand
-//! that is no term [ENT-2], such as an element read, admits none of these
-//! until a `let` binds it, so that binding is its repair.
+//! intent. An operand that is no term [ENT-2], such as an element read at a
+//! computed offset, admits none of these until a `let` binds it, so that
+//! binding is its repair.
 //!
 //! The words of [TYPE-2]'s refusals of an opaque struct's construction and
 //! destructuring live here too. They turn on where the struct comes from,
