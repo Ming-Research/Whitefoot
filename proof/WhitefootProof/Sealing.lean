@@ -1017,7 +1017,7 @@ an anchor that denotes the place, and its recorded reference and projection,
 if any, denote the place too; or it is a cover above the place. -/
 def Debt.Covers : Debt T → (Run → T → Option Int) → Run → CPlace → InvId → Prop
   | .inv a J rc, ev, r, π, I => J = I ∧ a.Denotes ev r π ∧ Rec.Denotes rc ev r π
-  | .cover R, ev, r, _, _ => ∃ ρ : CPlace, R.Denotes ev r ρ ∧ π.Below ρ
+  | .cover R, ev, r, π, _ => ∃ ρ : CPlace, R.Denotes ev r ρ ∧ π.Below ρ
 
 /-- The sealing invariant [TYPE-11.S2]: each affine invariant at each runtime
 place holds unless a debt covers it. -/
