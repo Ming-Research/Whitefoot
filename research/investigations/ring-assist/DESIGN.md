@@ -950,8 +950,9 @@ it fails with that message.
 The first full check of the finished branch failed one job, the
 thread-sanitized programs part of the sanitizers workflow (run `40054875044`,
 head `c777467fe`): the direct arm of `busy_ring_receive.rs` reported that the
-receive had not released the computation within 100 ms, in one of sixteen
-invocations. The ring trigger, not the sanitizer's speed, was the first
+receive had not released the computation within 100 ms, at the fifth of its
+sixteen invocations (run 4); the test ends at its first failure, so the other
+eleven did not run. The ring trigger, not the sanitizer's speed, was the first
 suspect, so the failure was measured before anything changed.
 
 **Measurement.** The thread-sanitized programs part was repeated in parallel
@@ -977,10 +978,11 @@ when the main thread finalizes while the thread count exceeds one
 witness observes the program's exit as the only sign that the computation was
 released, so the sleep lengthens the measured interval by one second in the
 invocations where a thread still lives when the main thread finalizes. The
-first full-check failure at 100 ms is the same event. Which runtime thread is
-still alive at that moment was not identified; the control and treatment rows
-above, which differ only in this option, show that the option decides the
-outcome. The runtime's handoff is not implicated: nothing in the data shows a
+first full-check failure at 100 ms is, by the control above, the same event:
+its bound was 100 ms, so whether that exit would have recovered after about a
+second was not observed. Which runtime thread is still alive at that moment
+was not identified; the control and treatment rows above, which differ only in
+this option, show that the option decides the outcome. The runtime's handoff is not implicated: nothing in the data shows a
 release later than the ordinary tens of milliseconds.
 
 **Result in the tests.** `busy_ring_receive.rs` starts its program with
