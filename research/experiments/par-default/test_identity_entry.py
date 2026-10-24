@@ -3,7 +3,9 @@ import unittest
 import sys
 from pathlib import Path
 # entry_dispatch is part of the extracted prototype runner (see manifest_path).
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'par-demand'))
+# Appended, not prepended: the runner also carries older copies of this
+# directory's identity checker and its tests, which must not shadow these.
+sys.path.append(str(Path(__file__).resolve().parents[1] / 'par-demand'))
 from identity import Instruction, IdentityError
 from entry_dispatch import report, shape, validate_sample
 
