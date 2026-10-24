@@ -71,9 +71,13 @@ jobs:
         run: perl .github/run-check.pl tmp/grammar cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib syntax::grammar::tests -- --test-threads=1
 
   watch-fail:
-    name: watch-fail
+    name: watch-fail (${{ matrix.branch }})
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        branch: [loop-range, loop-body, arms]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -96,20 +100,42 @@ jobs:
       - name: Fetch locked compiler dependencies
         run: cargo fetch --locked --manifest-path compiler/Cargo.toml
 
-      # A checker that leaves a loop's range invariant out of the statement's
-      # invariants: the ledger test must fail and name the loop range
-      # invariant witness alone, since each other witness sets the statement's
-      # flag another way.
-      - name: ledger test without the loop range invariant branch
+      # A checker whose search of the block for invariants leaves one branch
+      # out: a loop's range invariants, a loop's body, or a match or if arm.
+      # The ledger test must fail and name exactly the one witness that sets
+      # the statement's flag through that branch alone.
+      - name: ledger test without one branch of the block's invariant search
+        env:
+          BRANCH: ${{ matrix.branch }}
         run: |
-          sed -i '/^                || loops\.get(id)\.is_some_and(|range| !range\.invariants\.is_empty())$/d' compiler/src/semantic/check/control/atomic.rs
-          if grep -n 'loops.get(id)' compiler/src/semantic/check/control/atomic.rs; then exit 1; fi
+          file=compiler/src/semantic/check/control/atomic.rs
+          case "$BRANCH" in
+            loop-range)
+              sed -i '/^                || loops\.get(id)\.is_some_and(|range| !range\.invariants\.is_empty())$/d' "$file"
+              if grep -n 'loops.get(id)' "$file"; then exit 1; fi
+              expected='a loop range invariant'
+              ;;
+            loop-body)
+              sed -i '/^                || block_states_invariants(body, loops)$/d' "$file"
+              if grep -n 'block_states_invariants(body, loops)' "$file"; then exit 1; fi
+              expected='a local invariant in a loop body'
+              ;;
+            arms)
+              sed -i 's/^            arms\.iter()\.any(|arm| block_states_invariants(&arm\.body, loops))$/            false/' "$file"
+              if grep -n 'block_states_invariants(&arm.body, loops)' "$file"; then exit 1; fi
+              expected='a local invariant in an if arm'
+              ;;
+            *)
+              exit 1
+              ;;
+          esac
+          git diff -- "$file"
           set +e
           perl .github/run-check.pl tmp/watch-ledger cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib lock_ledger_takes_every_unit_whole_for_an_invariant_the_checking_uses > "$RUNNER_TEMP/ledger.log" 2>&1
           status=$?
           set -e
           cat "$RUNNER_TEMP/ledger.log"
-          echo "the ledger test exits $status"
+          reported=$({ grep -oE '^ +"[a-z ]+: \[' "$RUNNER_TEMP/ledger.log" || true; } | sed -E 's/^ +"//; s/: \[$//' | sort -u)
+          echo "the ledger test exits $status; witnesses reported: $reported"
           test "$status" -ne 0
-          grep -n '"a loop range invariant: ' "$RUNNER_TEMP/ledger.log"
-          if grep -nE '"(an affine type invariant|a range type invariant|a local invariant|a loop affine invariant): ' "$RUNNER_TEMP/ledger.log"; then exit 1; fi
+          test "$reported" = "$expected"

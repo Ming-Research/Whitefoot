@@ -302,13 +302,13 @@ fn lock_ledger_names_an_entry_lock_and_a_whole_map_lock() {
 /// An invariant the statement's checking uses may name parts of the state
 /// its code never reaches, so the statement takes every unit, the map whole,
 /// before its block, although the block reaches only the map's entry under
-/// one key [SHARE-3]: an affine and a range type invariant of the state, and
-/// a local invariant, a loop's affine invariant and a loop's range invariant
-/// in the block. The checker keeps a loop's range invariants apart from its
-/// affine ones, so each has a witness; the range one names only a local
-/// array. Without an invariant the same block takes the entry alone (the
-/// entry witness above), so a checker or lowering that leaves one kind out
-/// reports one line and fails.
+/// one key [SHARE-3]: an affine and a range type invariant of the state; a
+/// local invariant in the block, in an `if` arm or in a loop body; and a
+/// loop's affine and range invariant. The checker keeps a loop's range
+/// invariants apart from its affine ones, so each has a witness; the range
+/// one names only a local array. Without an invariant the same block takes
+/// the entry alone (the entry witness above), so a checker or lowering that
+/// leaves one kind or one nesting out reports one line and fails.
 #[test]
 fn lock_ledger_takes_every_unit_whole_for_an_invariant_the_checking_uses() {
     let affine = (
@@ -333,6 +333,22 @@ fn lock_ledger_takes_every_unit_whole_for_an_invariant_the_checking_uses() {
             lock_ledger_source(MAP_FIRST, "", "    invariant bounded: 0_u64 <= m^.meta.count;"),
         ),
         (
+            "a local invariant in an if arm",
+            lock_ledger_source(
+                MAP_FIRST,
+                "",
+                "    if kept {\n      invariant bounded: 0_u64 <= m^.meta.count;\n    }",
+            ),
+        ),
+        (
+            "a local invariant in a loop body",
+            lock_ledger_source(
+                MAP_FIRST,
+                "",
+                "    for (at in 0_u64..1_u64) {\n      invariant bounded: 0_u64 <= m^.meta.count;\n    }",
+            ),
+        ),
+        (
             "a loop affine invariant",
             lock_ledger_source(
                 MAP_FIRST,
@@ -350,7 +366,7 @@ fn lock_ledger_takes_every_unit_whole_for_an_invariant_the_checking_uses() {
         ),
     ];
     // Every witness is judged before the assertion, so a failure names each
-    // kind of invariant the lowering left out.
+    // witness the checker or the lowering left out.
     let mut partial = Vec::new();
     for (kind, source) in witnesses {
         let module = compile(source.as_bytes());
