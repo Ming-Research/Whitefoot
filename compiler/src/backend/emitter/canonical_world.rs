@@ -127,7 +127,7 @@ pub(crate) fn validate_crossovers(
                     IrNominalKind::Enum { variants } => {
                         pending.extend(variants.iter().flat_map(|v| v.fields()).map(|f| f.ty()))
                     }
-                    IrNominalKind::Box { referent, .. } => pending.push(*referent),
+                    IrNominalKind::Box { .. } => {}
                     IrNominalKind::Shared { state, shape } => {
                         pending.push(*state);
                         if let IrShared::Map { entry } = shape {

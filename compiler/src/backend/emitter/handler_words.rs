@@ -28,9 +28,6 @@ impl DispatchLayoutPlan {
     }
 
     pub(super) fn word(&self, nominal: IrNominalId, owner: &str) -> Option<usize> {
-        if self.split_world {
-            return None;
-        }
         self.families(nominal)
             .iter()
             .position(|family| family.owner == owner)
