@@ -601,7 +601,6 @@ theorem _root_.Whitefoot.Snapshot.HoldsWith.image_place {vars : List Var} {st : 
   rw [hid] at ht'
   have e := Option.some.inj (hpl.symm.trans ht')
   injection e with _ e2
-  exact e2
 
 /-! ## The L0 images and the view -/
 
@@ -1468,11 +1467,11 @@ theorem evalAtom_index_cases {E : Whitefoot.Env} {b : String} {off : Atom} {t : 
         exact ⟨k, rfl, by simp only [Whitefoot.evalAtom, hb, ho, Typing.ok_bind]⟩
       | _ =>
         right
-        exact ⟨_, rfl, fun k' hk => by cases hk,
+        exact ⟨_, rfl, (fun k' hk => by cases hk),
           by simp only [Whitefoot.evalAtom, hb, ho, Typing.ok_bind]⟩
     all_goals
       right
-      exact ⟨_, rfl, fun k' hk => by cases hk,
+      exact ⟨_, rfl, (fun k' hk => by cases hk),
         by simp only [Whitefoot.evalAtom, hb, ho, Typing.ok_bind]⟩
 
 /-- Evaluating an atom in a state whose facts hold: the interpreter's reading
@@ -1603,6 +1602,7 @@ theorem evalAtom_sound {env : Env} {st : State} {E E0 : Whitefoot.Env} {ν : Ter
         obtain ⟨g3, g4, hget, h⟩ := Discharge.run_bind h
         obtain ⟨h3, h4⟩ := Discharge.run_get hget
         rw [h3, h4] at h
+        try dsimp only at h
         split at h
         · exfalso
           first
@@ -1611,8 +1611,8 @@ theorem evalAtom_sound {env : Env} {st : State} {E E0 : Whitefoot.Env} {ν : Ter
         · rename_i hnd
           have hdis := Discharge.not_not_true hnd
           have h' : (Checker.typeAtom t >>= fun img =>
-              (pure ({ image := some img, gexpr := o.gexpr.map (GExpr.index vb.id ·),
-                ty := .int t } : Val) : Checker.M Val)).run g2 = .ok (v, g1) := h
+              (pure { image := some img, gexpr := o.gexpr.map (GExpr.index vb.id ·),
+                      ty := .int t } : Checker.M Val)).run g2 = .ok (v, g1) := h
           obtain ⟨img, g6, himg, h⟩ := Discharge.run_bind h'
           rw [Discharge.typeAtom_run] at himg
           simp only [Except.ok.injEq, Prod.mk.injEq] at himg
@@ -1693,7 +1693,7 @@ theorem evalAtom_sound {env : Env} {st : State} {E E0 : Whitefoot.Env} {ν : Ter
               omega
             rw [ite_eq_left hlt] at hix
             have hmem : t.Mem (es.getD k.toNat 0) := hes _ (Typing.getD_mem hlt h0)
-            refine ⟨fun k' hk' => by rw [hix] at hk'; cases hk',
+            refine ⟨(fun k' hk' => by rw [hix] at hk'; cases hk'),
               fun y => if y = g2.next then es.getD k.toNat 0 else G2 y,
               hg2.typeAtom hmem, Ext.trans hext2 Good.typeAtom_ext, hbelow, ?_⟩
             intro w hw
@@ -1718,6 +1718,1165 @@ theorem evalAtom_sound {env : Env} {st : State} {E E0 : Whitefoot.Env} {ν : Ter
       | _ =>
         simp only [hty] at h
         exact (Discharge.run_fail h).elim
+
+
+/-! ## Products and quotients of bounded integers -/
+
+theorem mul_mono_r {a b c : Int} (hc : 0 ≤ c) (h : a ≤ b) : a * c ≤ b * c := by
+  have h1 : 0 ≤ (b - a) * c := Int.mul_nonneg (by omega) hc
+  rw [Int.sub_mul] at h1
+  omega
+
+theorem mul_anti_r {a b c : Int} (hc : c ≤ 0) (h : a ≤ b) : b * c ≤ a * c := by
+  have h1 : 0 ≤ (b - a) * -c := Int.mul_nonneg (by omega) (by omega)
+  rw [Int.mul_neg, Int.sub_mul] at h1
+  omega
+
+theorem mul_mono_l {a b c : Int} (hc : 0 ≤ c) (h : a ≤ b) : c * a ≤ c * b := by
+  rw [Int.mul_comm c a, Int.mul_comm c b]
+  exact mul_mono_r hc h
+
+theorem mul_anti_l {a b c : Int} (hc : c ≤ 0) (h : a ≤ b) : c * b ≤ c * a := by
+  rw [Int.mul_comm c a, Int.mul_comm c b]
+  exact mul_anti_r hc h
+
+/-- A product of two interval members is at most `M` when the four corner
+products are. -/
+theorem mul_le_corners {x y a0 a1 b0 b1 M : Int} (hx0 : a0 ≤ x) (hx1 : x ≤ a1)
+    (hy0 : b0 ≤ y) (hy1 : y ≤ b1) (h00 : a0 * b0 ≤ M) (h01 : a0 * b1 ≤ M)
+    (h10 : a1 * b0 ≤ M) (h11 : a1 * b1 ≤ M) : x * y ≤ M := by
+  rcases Int.le_total 0 y with hy | hy
+  · have e1 := mul_mono_r hy hx1
+    rcases Int.le_total 0 a1 with ha | ha
+    · have e2 := mul_mono_l ha hy1
+      omega
+    · have e2 := mul_anti_l ha hy0
+      omega
+  · have e1 := mul_anti_r hy hx0
+    rcases Int.le_total 0 a0 with ha | ha
+    · have e2 := mul_mono_l ha hy1
+      omega
+    · have e2 := mul_anti_l ha hy0
+      omega
+
+/-- A product of two interval members is at least `M` when the four corner
+products are. -/
+theorem corners_le_mul {x y a0 a1 b0 b1 M : Int} (hx0 : a0 ≤ x) (hx1 : x ≤ a1)
+    (hy0 : b0 ≤ y) (hy1 : y ≤ b1) (h00 : M ≤ a0 * b0) (h01 : M ≤ a0 * b1)
+    (h10 : M ≤ a1 * b0) (h11 : M ≤ a1 * b1) : M ≤ x * y := by
+  rcases Int.le_total 0 y with hy | hy
+  · have e1 := mul_mono_r hy hx0
+    rcases Int.le_total 0 a0 with ha | ha
+    · have e2 := mul_mono_l ha hy0
+      omega
+    · have e2 := mul_anti_l ha hy1
+      omega
+  · have e1 := mul_anti_r hy hx1
+    rcases Int.le_total 0 a1 with ha | ha
+    · have e2 := mul_mono_l ha hy0
+      omega
+    · have e2 := mul_anti_l ha hy1
+      omega
+
+/-- `q ≤ a.fdiv c` with `0 < c` gives `q * c ≤ a`. -/
+theorem le_fdiv_pos {a c q : Int} (hc : 0 < c) (h : q ≤ a.fdiv c) : q * c ≤ a := by
+  rw [Int.fdiv_eq_ediv_of_nonneg a (Int.le_of_lt hc)] at h
+  have h1 := mul_mono_r (Int.le_of_lt hc) h
+  have h2 : a / c * c ≤ a := Int.ediv_mul_le a (by omega)
+  omega
+
+/-- `q ≤ a.fdiv c` with `c < 0` gives `a ≤ q * c`. -/
+theorem le_fdiv_neg {a c q : Int} (hc : c < 0) (h : q ≤ a.fdiv c) : a ≤ q * c := by
+  rw [← Int.neg_fdiv_neg a c, Int.fdiv_eq_ediv_of_nonneg (-a) (show (0 : Int) ≤ -c by omega)] at h
+  have h1 := mul_mono_r (c := -c) (by omega) h
+  have h2 : -a / -c * -c ≤ -a := Int.ediv_mul_le (-a) (by omega)
+  have e1 : q * -c = -(q * c) := Int.mul_neg q c
+  omega
+
+/-- On a signed type the greatest member is one less than the negated least. -/
+theorem signed_maxVal {t : IntTy} (h : t.signed = true) : t.maxVal = -t.minVal - 1 := by
+  cases t <;> simp [IntTy.signed] at h <;> decide
+
+theorem Form.eval_isConst {G : Nat → Int} {f : Form} (h : f.isConst = true) :
+    f.eval G = f.c := by
+  unfold Form.isConst at h
+  unfold Form.eval
+  cases hx : f.xs with
+  | nil => simp [evalCoeffs]
+  | cons p r =>
+    rw [hx] at h
+    simp at h
+
+theorem _root_.Whitefoot.Value.Typed.int_mem {t : IntTy} {x : Int} {ty : Ty}
+    (h : (Value.int t x).Typed ty) : t.Mem x := by
+  cases ty <;> first | exact h.2 | exact (h : False).elim
+
+theorem _root_.Whitefoot.Value.Typed.int_ty {t : IntTy} {x : Int} {ty : Ty}
+    (h : (Value.int t x).Typed ty) : ty = .int t := by
+  cases ty <;> first | exact (congrArg Ty.int h.1).symm | exact (h : False).elim
+
+/-! ## Operand intervals -/
+
+/-- An operand's interval holds its value [ENT-3.S7]. -/
+theorem operandInterval_sound {st : State} {ν : TermVal} {t : IntTy} {v : Val} {x : Int}
+    (hl0 : st.l0.Sat ν) (hterm : ∀ u k, v.term = some (u, k) → ν.val u + k = x)
+    (hx : t.Mem x) :
+    (operandInterval st t v).1 ≤ x ∧ x ≤ (operandInterval st t v).2 := by
+  cases hvt : v.term with
+  | none =>
+    have e : operandInterval st t v = (t.minVal, t.maxVal) := by
+      simp only [operandInterval, hvt]
+    rw [e]
+    exact hx
+  | some p =>
+    obtain ⟨u, k⟩ := p
+    have e := hterm u k hvt
+    by_cases hu : u = .z
+    · subst hu
+      rw [ν.val_z] at e
+      have e2 : operandInterval st t v = (k, k) := by
+        simp only [operandInterval, hvt]
+      rw [e2]
+      show k ≤ x ∧ x ≤ k
+      omega
+    · have e2 : operandInterval st t v = (match st.l0.interval u with
+          | some (lo, hi) => (lo + k, hi + k)
+          | none => (t.minVal, t.maxVal)) := by
+        unfold operandInterval
+        rw [hvt]
+        cases u <;> first | exact absurd rfl hu | rfl
+      rw [e2]
+      cases hi : st.l0.interval u with
+      | none => exact hx
+      | some b =>
+        obtain ⟨lo, hi'⟩ := b
+        have hb := L0.interval_sound hl0 hi
+        show lo + k ≤ x ∧ x ≤ hi' + k
+        omega
+
+/-- An operand's interval for the interval product holds its value: each
+premise's tightening keeps the value inside [MSR-4]. -/
+theorem productInterval_sound {env : Env} {g : Gen} {st : State} {E E0 : Whitefoot.Env}
+    {G : Nat → Int} {ν : TermVal} {t : IntTy} {v : Val} {x : Int}
+    (h : (⟨env.vars, st, g.atoms⟩ : Snapshot).HoldsWith E E0 G ν)
+    (hterm : ∀ u k, v.term = some (u, k) → ν.val u + k = x)
+    (himg : ∀ f, v.image = some f → f.eval G = x) (hx : t.Mem x) :
+    (productInterval (view env g st) st t v).1 ≤ x ∧
+      x ≤ (productInterval (view env g st) st t v).2 := by
+  have hv := view_sat h
+  have hb := operandInterval_sound h.l0 hterm hx
+  cases hfi : v.image with
+  | none =>
+    unfold productInterval
+    rw [hfi]
+    exact hb
+  | some f =>
+    have hxf := himg f hfi
+    have hsub : ∀ xs, evalCoeffs G xs ≤ (view env g st).substMax xs :=
+      eval_le_substMax (fun y => View.lo_le y (hv.2.1 y).1 hv.2.2.2)
+        (fun y => View.le_hi y (hv.2.1 y).2 hv.2.2.2)
+    unfold productInterval
+    rw [hfi]
+    dsimp only
+    refine Aff.foldl_inv _ (fun p : Ineq => p.Holds G)
+      (fun acc : Int × Int => acc.1 ≤ x ∧ x ≤ acc.2) ?_ _ _ (fun p hp => hv.2.2.1 p hp) hb
+    intro acc p hp hacc
+    obtain ⟨lo, hi⟩ := acc
+    dsimp only at hacc ⊢
+    have hpp : evalCoeffs G p.xs ≤ p.c := hp
+    have hxe : x = f.c + evalCoeffs G f.xs := hxf.symm
+    have hup := hsub (addCoeffs f.xs (scaleCoeffs (-1) p.xs))
+    have hdown := hsub (addCoeffs (scaleCoeffs (-1) f.xs) (scaleCoeffs (-1) p.xs))
+    rw [eval_addCoeffs, eval_scaleCoeffs] at hup
+    rw [eval_addCoeffs, eval_scaleCoeffs, eval_scaleCoeffs] at hdown
+    constructor
+    · split
+      · exact Int.max_le.mpr ⟨hacc.1, by omega⟩
+      · exact hacc.1
+    · split
+      · exact Int.le_min.mpr ⟨hacc.2, by omega⟩
+      · exact hacc.2
+
+/-! ## Exact infix operations: the domain query [OP-2] -/
+
+/-- An infix operation's domain at its operands' values: the arithmetic rows
+need their mathematical results in the type, division and remainder their
+domain queries; a comparison always has a result. -/
+def InfixDomain (op : InfixOp) (t : IntTy) (x y : Int) : Prop :=
+  match op with
+  | .arith o _ => o.defined t x y = true
+  | .divide o _ => o.defined t x y = true
+  | .compare _ => True
+
+theorem facts_bound {ν : TermVal} {a b : Term} {c : Int}
+    (h : ∃ fs ∈ [(([⟨a, b, c⟩] : List Bound), ([] : List Diseq))], FactsHold ν fs) :
+    ν.val a - ν.val b ≤ c := by
+  obtain ⟨fs, hfs, hf⟩ := h
+  rw [List.mem_singleton] at hfs
+  subst hfs
+  exact hf.1 _ List.mem_cons_self
+
+theorem facts_ground {ν : TermVal} {ok : Bool}
+    (h : ∃ fs ∈ (if ok = true then [(([] : List Bound), ([] : List Diseq))]
+      else [(([⟨.z, .z, -1⟩] : List Bound), ([] : List Diseq))]), FactsHold ν fs) :
+    ok = true := by
+  cases ok with
+  | true => rfl
+  | false =>
+    obtain ⟨fs, hfs, hf⟩ := h
+    simp only [Bool.false_eq_true, ↓reduceIte, List.mem_singleton] at hfs
+    subst hfs
+    have : ν.val Term.z - ν.val Term.z ≤ -1 := hf.1 _ List.mem_cons_self
+    omega
+
+/-- A disequality component: its ground form when the term is Z, otherwise
+one disequality fact, gives `u + k ≠ c`. -/
+theorem facts_ne {ν : TermVal} {u : Term} {k c d : Int} {ok : Bool}
+    (hok : ok = true → k ≠ c) (hd : d = c - k)
+    (h : ∃ fs ∈ (if (u == Term.z) = true then
+        (if ok = true then [(([] : List Bound), ([] : List Diseq))]
+          else [(([⟨.z, .z, -1⟩] : List Bound), ([] : List Diseq))])
+      else [(([] : List Bound), ([⟨u, .z, d⟩] : List Diseq))]), FactsHold ν fs) :
+    ν.val u + k ≠ c := by
+  have hz := ν.val_z
+  obtain ⟨fs, hfs, hf⟩ := h
+  by_cases hu : u = Term.z
+  · subst hu
+    simp only [beq_self_eq_true, ↓reduceIte] at hfs
+    cases hok' : ok with
+    | true =>
+      have := hok hok'
+      omega
+    | false =>
+      rw [hok'] at hfs
+      simp only [Bool.false_eq_true, ↓reduceIte, List.mem_singleton] at hfs
+      subst hfs
+      have : ν.val Term.z - ν.val Term.z ≤ -1 := hf.1 _ List.mem_cons_self
+      omega
+  · have hu' : (u == Term.z) = false := by simpa using hu
+    rw [hu'] at hfs
+    simp only [Bool.false_eq_true, ↓reduceIte, List.mem_singleton] at hfs
+    subst hfs
+    have : ν.val u - ν.val Term.z ≠ d := hf.2 _ List.mem_cons_self
+    omega
+
+/-- The two bounds of a constant multiple give the product's range. -/
+theorem scaled_sound {ν : TermVal} {t : IntTy} {u : Term} {c : Int}
+    {Z cs : List (List (List Bound × List Diseq))}
+    (hcs : ((if c > 0 then [[([⟨u, .z, t.maxVal.fdiv c⟩], [])], [([⟨.z, u, (-t.minVal).fdiv c⟩], [])]]
+      else if (c == 0) = true then Z
+      else [[([⟨u, .z, t.minVal.fdiv c⟩], [])], [([⟨.z, u, (-t.maxVal).fdiv c⟩], [])]]) :
+        List (List (List Bound × List Diseq))) = cs)
+    (hall : ∀ c ∈ cs, ∃ fs ∈ c, FactsHold ν fs) :
+    t.minVal ≤ ν.val u * c ∧ ν.val u * c ≤ t.maxVal := by
+  have hz := ν.val_z
+  split at hcs
+  · rename_i hpos
+    subst hcs
+    have h1 := facts_bound (hall _ List.mem_cons_self)
+    have h2 := facts_bound (hall _ (List.mem_cons_of_mem _ List.mem_cons_self))
+    have e1 := le_fdiv_pos hpos (show ν.val u ≤ t.maxVal.fdiv c by omega)
+    have e2 := le_fdiv_pos hpos (show -ν.val u ≤ (-t.minVal).fdiv c by omega)
+    have e3 : -ν.val u * c = -(ν.val u * c) := Int.neg_mul _ _
+    omega
+  · split at hcs
+    · rename_i _ h0
+      have hc : c = 0 := by simpa using h0
+      subst hc
+      rw [Int.mul_zero]
+      exact Fact.zero_mem_type t
+    · rename_i hpos h0
+      have hneg : c < 0 := by
+        have : c ≠ 0 := by simpa using h0
+        omega
+      subst hcs
+      have h1 := facts_bound (hall _ List.mem_cons_self)
+      have h2 := facts_bound (hall _ (List.mem_cons_of_mem _ List.mem_cons_self))
+      have e1 := le_fdiv_neg hneg (show ν.val u ≤ t.minVal.fdiv c by omega)
+      have e2 := le_fdiv_neg hneg (show -ν.val u ≤ (-t.maxVal).fdiv c by omega)
+      have e3 : -ν.val u * c = -(ν.val u * c) := Int.neg_mul _ _
+      omega
+
+/-- A domain query's L0 normalization, when its facts hold, gives the
+operation's domain [MSR-4]. -/
+theorem domain_l0 {ν : TermVal} {op : InfixOp} {t : IntTy} {va vb : Val} {x y : Int}
+    {goal : GExpr} {cs : List (List (List Bound × List Diseq))}
+    (hat : ∀ u k, va.term = some (u, k) → ν.val u + k = x)
+    (hbt : ∀ u k, vb.term = some (u, k) → ν.val u + k = y)
+    (hcs : (domainQuery goal op t va vb).l0 = some cs)
+    (hall : ∀ c ∈ cs, ∃ fs ∈ c, FactsHold ν fs) : InfixDomain op t x y := by
+  have hz := ν.val_z
+  simp only [domainQuery] at hcs
+  rcases op with ⟨o, m⟩ | ⟨o, m⟩ | c
+  · obtain ⟨⟨ta, ka⟩, hta⟩ : ∃ p, va.term = some p := by
+      cases hta : va.term with
+      | none => cases htb : vb.term <;> cases o <;> simp [hta, htb] at hcs
+      | some p => exact ⟨p, rfl⟩
+    obtain ⟨⟨tb, kb⟩, htb⟩ : ∃ p, vb.term = some p := by
+      cases htb : vb.term with
+      | none => cases o <;> simp [hta, htb] at hcs
+      | some p => exact ⟨p, rfl⟩
+    have ex := hat ta ka hta
+    have ey := hbt tb kb htb
+    cases o with
+    | add =>
+      simp only [InfixDomain, ArithOp.defined, ArithOp.math, decide_eq_true_eq, IntTy.Mem]
+      simp only [hta, htb] at hcs
+      split at hcs
+      · rename_i hc
+        simp only [Bool.and_eq_true, beq_iff_eq] at hc
+        obtain ⟨rfl, rfl⟩ := hc
+        simp only [Option.some.injEq] at hcs
+        subst hcs
+        have h1 := facts_ground (hall _ List.mem_cons_self)
+        simp only [decide_eq_true_eq] at h1
+        omega
+      · split at hcs
+        · rename_i hc
+          simp only [beq_iff_eq] at hc
+          subst hc
+          simp only [Option.some.injEq] at hcs
+          subst hcs
+          have h1 := facts_bound (hall _ List.mem_cons_self)
+          have h2 := facts_bound (hall _ (List.mem_cons_of_mem _ List.mem_cons_self))
+          omega
+        · split at hcs
+          · rename_i hc
+            simp only [beq_iff_eq] at hc
+            subst hc
+            simp only [Option.some.injEq] at hcs
+            subst hcs
+            have h1 := facts_bound (hall _ List.mem_cons_self)
+            have h2 := facts_bound (hall _ (List.mem_cons_of_mem _ List.mem_cons_self))
+            omega
+          · simp at hcs
+    | sub =>
+      simp only [InfixDomain, ArithOp.defined, ArithOp.math, decide_eq_true_eq, IntTy.Mem]
+      simp only [hta, htb] at hcs
+      split at hcs
+      · rename_i hc
+        simp only [Bool.and_eq_true, beq_iff_eq] at hc
+        obtain ⟨rfl, rfl⟩ := hc
+        simp only [Option.some.injEq] at hcs
+        subst hcs
+        have h1 := facts_ground (hall _ List.mem_cons_self)
+        simp only [decide_eq_true_eq] at h1
+        omega
+      · split at hcs
+        · rename_i hc
+          simp only [beq_iff_eq] at hc
+          subst hc
+          simp only [Option.some.injEq] at hcs
+          subst hcs
+          have h1 := facts_bound (hall _ List.mem_cons_self)
+          have h2 := facts_bound (hall _ (List.mem_cons_of_mem _ List.mem_cons_self))
+          omega
+        · split at hcs
+          · rename_i hc
+            simp only [beq_iff_eq] at hc
+            subst hc
+            simp only [Option.some.injEq] at hcs
+            subst hcs
+            have h1 := facts_bound (hall _ List.mem_cons_self)
+            have h2 := facts_bound (hall _ (List.mem_cons_of_mem _ List.mem_cons_self))
+            omega
+          · simp at hcs
+    | mul =>
+      simp only [InfixDomain, ArithOp.defined, ArithOp.math, decide_eq_true_eq, IntTy.Mem]
+      simp only [hta, htb] at hcs
+      split at hcs
+      · rename_i hc
+        simp only [Bool.and_eq_true, beq_iff_eq] at hc
+        obtain ⟨rfl, rfl⟩ := hc
+        simp only [Option.some.injEq] at hcs
+        subst hcs
+        have h1 := facts_ground (hall _ List.mem_cons_self)
+        simp only [decide_eq_true_eq] at h1
+        have hx : x = ka := by omega
+        have hy : y = kb := by omega
+        subst hx hy
+        exact h1
+      · split at hcs
+        · rename_i hc
+          simp only [Bool.and_eq_true, beq_iff_eq] at hc
+          obtain ⟨rfl, rfl⟩ := hc
+          simp only [Option.some.injEq] at hcs
+          have hx : x = ν.val ta := by omega
+          have hy : y = kb := by omega
+          subst hx hy
+          exact scaled_sound hcs hall
+        · split at hcs
+          · rename_i hc
+            simp only [Bool.and_eq_true, beq_iff_eq] at hc
+            obtain ⟨rfl, rfl⟩ := hc
+            simp only [Option.some.injEq] at hcs
+            have hx : x = ka := by omega
+            have hy : y = ν.val tb := by omega
+            subst hx hy
+            rw [Int.mul_comm]
+            exact scaled_sound hcs hall
+          · simp at hcs
+  · simp only [InfixDomain, DivOp.defined, decide_eq_true_eq]
+    obtain ⟨⟨td, kd⟩, htb⟩ : ∃ p, vb.term = some p := by
+      cases htb : vb.term with
+      | none => cases hta : va.term <;> simp [hta, htb] at hcs
+      | some p => exact ⟨p, rfl⟩
+    have ey := hbt td kd htb
+    cases hta : va.term with
+    | none =>
+      simp only [hta, htb] at hcs
+      split at hcs
+      · simp only [Option.some.injEq] at hcs
+        subst hcs
+        have h1 := facts_ne (k := kd) (c := 0) (fun h => by simpa using h) (by omega)
+          (hall _ List.mem_cons_self)
+        have h2 := facts_ne (k := kd) (c := -1) (fun h => by simpa using h) (by omega)
+          (hall _ (List.mem_cons_of_mem _ List.mem_cons_self))
+        exact ⟨by omega, Or.inr (Or.inr (by omega))⟩
+      · rename_i hsig
+        simp only [Option.some.injEq] at hcs
+        subst hcs
+        have h1 := facts_ne (k := kd) (c := 0) (fun h => by simpa using h) (by omega)
+          (hall _ List.mem_cons_self)
+        exact ⟨by omega, Or.inl (by simpa using hsig)⟩
+    | some pa =>
+      obtain ⟨tn, kn⟩ := pa
+      have ex := hat tn kn hta
+      simp only [hta, htb] at hcs
+      split at hcs
+      · simp only [Option.some.injEq] at hcs
+        subst hcs
+        have h1 := facts_ne (k := kd) (c := 0) (fun h => by simpa using h) (by omega)
+          (hall _ List.mem_cons_self)
+        obtain ⟨fs, hfs, hf⟩ := hall _ (List.mem_cons_of_mem _ List.mem_cons_self)
+        rcases List.mem_append.mp hfs with hfs | hfs
+        · have h2 := facts_ne (k := kn) (c := t.minVal) (fun h => by simpa using h)
+            (by omega) ⟨fs, hfs, hf⟩
+          exact ⟨by omega, Or.inr (Or.inl (by omega))⟩
+        · have h2 := facts_ne (k := kd) (c := -1) (fun h => by simpa using h) (by omega)
+            ⟨fs, hfs, hf⟩
+          exact ⟨by omega, Or.inr (Or.inr (by omega))⟩
+      · rename_i hsig
+        simp only [Option.some.injEq] at hcs
+        subst hcs
+        have h1 := facts_ne (k := kd) (c := 0) (fun h => by simpa using h) (by omega)
+          (hall _ List.mem_cons_self)
+        exact ⟨by omega, Or.inl (by simpa using hsig)⟩
+  · exact trivial
+
+/-- A domain query's affine targets, when they hold, give the operation's
+domain [MSR-4]. -/
+theorem domain_affine {G : Nat → Int} {op : InfixOp} {t : IntTy} {va vb : Val} {x y : Int}
+    {goal : GExpr} {ts : List (Ineq × Option (Form × Term))}
+    (hai : ∀ f, va.image = some f → f.eval G = x)
+    (hbi : ∀ f, vb.image = some f → f.eval G = y)
+    (hts : (domainQuery goal op t va vb).affine = some ts)
+    (hall : ∀ q ∈ ts, q.1.Holds G) : InfixDomain op t x y := by
+  simp only [domainQuery] at hts
+  rcases op with ⟨o, m⟩ | ⟨o, m⟩ | c
+  · obtain ⟨fa, hfa⟩ : ∃ f, va.image = some f := by
+      cases hfa : va.image with
+      | none => cases hfb : vb.image <;> cases o <;> simp [hfa, hfb] at hts
+      | some f => exact ⟨f, rfl⟩
+    obtain ⟨fb, hfb⟩ : ∃ f, vb.image = some f := by
+      cases hfb : vb.image with
+      | none => cases o <;> simp [hfa, hfb] at hts
+      | some f => exact ⟨f, rfl⟩
+    have ex := hai fa hfa
+    have ey := hbi fb hfb
+    cases o with
+    | add =>
+      simp only [InfixDomain, ArithOp.defined, ArithOp.math, decide_eq_true_eq, IntTy.Mem]
+      simp only [hfa, hfb, Option.some.injEq] at hts
+      subst hts
+      have h1 : (Ineq.le (fa.add fb) (Form.const t.maxVal)).Holds G := hall _ List.mem_cons_self
+      have h2 : (Ineq.le (Form.const t.minVal) (fa.add fb)).Holds G :=
+        hall _ (List.mem_cons_of_mem _ List.mem_cons_self)
+      rw [Ineq.holds_le, Form.eval_add, Form.eval_const] at h1 h2
+      omega
+    | sub =>
+      simp only [InfixDomain, ArithOp.defined, ArithOp.math, decide_eq_true_eq, IntTy.Mem]
+      simp only [hfa, hfb, Option.some.injEq] at hts
+      subst hts
+      have h1 : (Ineq.le (fa.sub fb) (Form.const t.maxVal)).Holds G := hall _ List.mem_cons_self
+      have h2 : (Ineq.le (Form.const t.minVal) (fa.sub fb)).Holds G :=
+        hall _ (List.mem_cons_of_mem _ List.mem_cons_self)
+      rw [Ineq.holds_le, Form.eval_sub, Form.eval_const] at h1 h2
+      omega
+    | mul =>
+      simp only [InfixDomain, ArithOp.defined, ArithOp.math, decide_eq_true_eq, IntTy.Mem]
+      simp only [hfa, hfb] at hts
+      split at hts
+      · rename_i hc
+        simp only [Option.some.injEq] at hts
+        subst hts
+        have h1 : (Ineq.le (fb.scale fa.c) (Form.const t.maxVal)).Holds G :=
+          hall _ List.mem_cons_self
+        have h2 : (Ineq.le (Form.const t.minVal) (fb.scale fa.c)).Holds G :=
+          hall _ (List.mem_cons_of_mem _ List.mem_cons_self)
+        rw [Ineq.holds_le, Form.eval_scale, Form.eval_const] at h1 h2
+        have hxc : x = fa.c := by rw [← ex, Form.eval_isConst hc]
+        subst hxc
+        subst ey
+        omega
+      · split at hts
+        · rename_i hc
+          simp only [Option.some.injEq] at hts
+          subst hts
+          have h1 : (Ineq.le (fa.scale fb.c) (Form.const t.maxVal)).Holds G :=
+            hall _ List.mem_cons_self
+          have h2 : (Ineq.le (Form.const t.minVal) (fa.scale fb.c)).Holds G :=
+            hall _ (List.mem_cons_of_mem _ List.mem_cons_self)
+          rw [Ineq.holds_le, Form.eval_scale, Form.eval_const] at h1 h2
+          have hyc : y = fb.c := by rw [← ey, Form.eval_isConst hc]
+          subst hyc
+          subst ex
+          have e : fa.eval G * fb.c = fb.c * fa.eval G := Int.mul_comm _ _
+          omega
+        · simp at hts
+  · simp only [InfixDomain, DivOp.defined, decide_eq_true_eq]
+    obtain ⟨fa, hfa⟩ : ∃ f, va.image = some f := by
+      cases hfa : va.image with
+      | none => cases hfb : vb.image <;> simp [hfa, hfb] at hts
+      | some f => exact ⟨f, rfl⟩
+    obtain ⟨fb, hfb⟩ : ∃ f, vb.image = some f := by
+      cases hfb : vb.image with
+      | none => simp [hfa, hfb] at hts
+      | some f => exact ⟨f, rfl⟩
+    have ey := hbi fb hfb
+    simp only [hfa, hfb] at hts
+    split at hts
+    · rename_i hsig
+      simp only [Option.some.injEq] at hts
+      subst hts
+      have h1 : (Ineq.le (Form.const 1) fb).Holds G := hall _ List.mem_cons_self
+      rw [Ineq.holds_le, Form.eval_const] at h1
+      exact ⟨by omega, Or.inl (by simpa using hsig)⟩
+    · simp at hts
+  · exact trivial
+
+/-- A domain query's affine alternatives, when one holds, give the
+operation's domain [MSR-4]. -/
+theorem domain_affineAny {G : Nat → Int} {op : InfixOp} {t : IntTy} {va vb : Val}
+    {x y : Int} {goal : GExpr} {ts : List Ineq}
+    (hai : ∀ f, va.image = some f → f.eval G = x)
+    (hbi : ∀ f, vb.image = some f → f.eval G = y)
+    (hts : ts ∈ (domainQuery goal op t va vb).affineAny)
+    (hall : ∀ q ∈ ts, q.Holds G) : InfixDomain op t x y := by
+  simp only [domainQuery] at hts
+  rcases op with ⟨o, m⟩ | ⟨o, m⟩ | c
+  · cases hfa : va.image <;> cases hfb : vb.image <;> cases o <;> simp [hfa, hfb] at hts
+  · simp only [InfixDomain, DivOp.defined, decide_eq_true_eq]
+    obtain ⟨fa, hfa⟩ : ∃ f, va.image = some f := by
+      cases hfa : va.image with
+      | none => cases hfb : vb.image <;> simp [hfa, hfb] at hts
+      | some f => exact ⟨f, rfl⟩
+    obtain ⟨fd, hfb⟩ : ∃ f, vb.image = some f := by
+      cases hfb : vb.image with
+      | none => simp [hfa, hfb] at hts
+      | some f => exact ⟨f, rfl⟩
+    have ex := hai fa hfa
+    have ey := hbi fd hfb
+    simp only [hfa, hfb] at hts
+    split at hts
+    · simp at hts
+    · simp only [List.mem_flatMap, List.mem_map, List.mem_cons, List.not_mem_nil,
+        or_false] at hts
+      obtain ⟨z, hz, o', ho, rfl⟩ := hts
+      have h1 := hall z List.mem_cons_self
+      have h2 := hall o' (List.mem_cons_of_mem _ List.mem_cons_self)
+      rcases hz with rfl | rfl <;> rcases ho with rfl | rfl | rfl <;>
+        simp only [Ineq.holds_le, Form.eval_const] at h1 h2 <;>
+        exact ⟨by omega, Or.inr (by omega)⟩
+  · exact trivial
+
+/-- A domain query's interval product, when its four corners lie in the type,
+gives the multiplication's domain [MSR-4]. -/
+theorem domain_product {env : Env} {g : Gen} {st : State} {E E0 : Whitefoot.Env}
+    {G : Nat → Int} {ν : TermVal} {op : InfixOp} {t : IntTy} {va vb : Val} {x y : Int}
+    {goal : GExpr} {a b : Val} {t' : IntTy}
+    (h : (⟨env.vars, st, g.atoms⟩ : Snapshot).HoldsWith E E0 G ν)
+    (hat : ∀ u k, va.term = some (u, k) → ν.val u + k = x)
+    (hai : ∀ f, va.image = some f → f.eval G = x) (hax : t.Mem x)
+    (hbt : ∀ u k, vb.term = some (u, k) → ν.val u + k = y)
+    (hbi : ∀ f, vb.image = some f → f.eval G = y) (hbx : t.Mem y)
+    (hp : (domainQuery goal op t va vb).product = some (a, b, t'))
+    (hi : (intervalProduct (view env g st) st a b t').isSome = true) :
+    InfixDomain op t x y := by
+  simp only [domainQuery] at hp
+  rcases op with ⟨o, m⟩ | ⟨o, m⟩ | c
+  · cases o with
+    | add => cases hfa : va.image <;> cases hfb : vb.image <;> simp [hfa, hfb] at hp
+    | sub => cases hfa : va.image <;> cases hfb : vb.image <;> simp [hfa, hfb] at hp
+    | mul =>
+      obtain ⟨fa, hfa⟩ : ∃ f, va.image = some f := by
+        cases hfa : va.image with
+        | none => cases hfb : vb.image <;> simp [hfa, hfb] at hp
+        | some f => exact ⟨f, rfl⟩
+      obtain ⟨fb, hfb⟩ : ∃ f, vb.image = some f := by
+        cases hfb : vb.image with
+        | none => simp [hfa, hfb] at hp
+        | some f => exact ⟨f, rfl⟩
+      simp only [hfa, hfb] at hp
+      split at hp
+      · simp at hp
+      · simp only [Option.some.injEq, Prod.mk.injEq] at hp
+        obtain ⟨rfl, rfl, rfl⟩ := hp
+        have hA := productInterval_sound h hat hai hax
+        have hB := productInterval_sound h hbt hbi hbx
+        unfold intervalProduct at hi
+        revert hi hA hB
+        generalize productInterval (view env g st) st t va = pa
+        generalize productInterval (view env g st) st t vb = pb
+        obtain ⟨a0, a1⟩ := pa
+        obtain ⟨b0, b1⟩ := pb
+        intro hi hA hB
+        dsimp only at hi hA hB
+        split at hi
+        · rename_i hall
+          rw [List.all_eq_true] at hall
+          have c00 := hall (a0 * b0) (by simp)
+          have c01 := hall (a0 * b1) (by simp)
+          have c10 := hall (a1 * b0) (by simp)
+          have c11 := hall (a1 * b1) (by simp)
+          simp only [Bool.and_eq_true, decide_eq_true_eq] at c00 c01 c10 c11
+          simp only [InfixDomain, ArithOp.defined, ArithOp.math, decide_eq_true_eq, IntTy.Mem]
+          exact ⟨corners_le_mul hA.1 hA.2 hB.1 hB.2 c00.2.1 c01.2.1 c10.2.1 c11.2.1,
+            mul_le_corners hA.1 hA.2 hB.1 hB.2 c00.2.2 c01.2.2 c10.2.2 c11.2.2⟩
+        · simp at hi
+  · cases hfa : va.image <;> cases hfb : vb.image <;> simp [hfa, hfb] at hp
+  · exact trivial
+
+/-- A domain query's affine targets carry no bridge term. -/
+theorem domain_bridge_none {goal : GExpr} {op : InfixOp} {t : IntTy} {va vb : Val}
+    {ts : List (Ineq × Option (Form × Term))}
+    (hts : (domainQuery goal op t va vb).affine = some ts) : ∀ q ∈ ts, q.2 = none := by
+  simp only [domainQuery] at hts
+  repeat' split at hts
+  all_goals first
+    | (simp only [Option.some.injEq] at hts; subst hts; simp)
+    | simp at hts
+
+/-- What an infix operation's domain query means: its domain [OP-2, MSR-4]. -/
+theorem domainQuery_means {env : Env} {g : Gen} {st : State} {E E0 : Whitefoot.Env}
+    {G : Nat → Int} {ν : TermVal} {goal : GExpr} {op : InfixOp} {t : IntTy} {va vb : Val}
+    {x y : Int} (h : (⟨env.vars, st, g.atoms⟩ : Snapshot).HoldsWith E E0 G ν)
+    (ha : va.Denotes (valueOf env.vars E) ν G (.int t x))
+    (hb : vb.Denotes (valueOf env.vars E) ν G (.int t y))
+    (hg : goal.eval (valueOf env.vars E) = some (.bool true) → InfixDomain op t x y) :
+    (domainQuery goal op t va vb).Means (valueOf env.vars E) ν G
+      (fun a b t => (intervalProduct (view env g st) st a b t).isSome = true)
+      (InfixDomain op t x y) := by
+  have hat : ∀ u k, va.term = some (u, k) → ν.val u + k = x := fun u k hk => by
+    obtain ⟨t', e⟩ := ha.term u k hk
+    exact ((Value.int.inj e).2).symm
+  have hbt : ∀ u k, vb.term = some (u, k) → ν.val u + k = y := fun u k hk => by
+    obtain ⟨t', e⟩ := hb.term u k hk
+    exact ((Value.int.inj e).2).symm
+  have hai : ∀ f, va.image = some f → f.eval G = x := fun f hf => by
+    obtain ⟨t', e⟩ := ha.image f hf
+    exact ((Value.int.inj e).2).symm
+  have hbi : ∀ f, vb.image = some f → f.eval G = y := fun f hf => by
+    obtain ⟨t', e⟩ := hb.image f hf
+    exact ((Value.int.inj e).2).symm
+  have hax := ha.typed.int_mem
+  have hbx := hb.typed.int_mem
+  refine ⟨fun e he hev => ?_, fun cs hcs hall => domain_l0 hat hbt hcs hall,
+    fun ts hts hall => domain_affine hai hbi hts hall,
+    fun ts hts q hq lhs r hr => ?_, fun ts hts hall => domain_affineAny hai hbi hts hall,
+    fun a b t' hp hi => domain_product h hat hai hax hbt hbi hbx hp hi⟩
+  · simp only [domainQuery, Option.some.injEq] at he
+    subst he
+    exact hg hev
+  · rw [domain_bridge_none hts q hq] at hr
+    cases hr
+
+/-- The goal of an exact arithmetic row is its `.defined` query. -/
+theorem infix_goal_arith {σ : Nat → Option Value} {o : ArithOp} {t : IntTy} {x y : Int}
+    {ga gb : Option GExpr} (ha : ∀ e, ga = some e → e.eval σ = some (.int t x))
+    (hb : ∀ e, gb = some e → e.eval σ = some (.int t y))
+    (h : ((mk2 (GExpr.infix (.arith o .defined)) ga gb).getD .unit).eval σ =
+      some (.bool true)) :
+    o.defined t x y = true := by
+  cases ga with
+  | none => simp [mk2, GExpr.eval] at h
+  | some ea =>
+    cases gb with
+    | none => simp [mk2, GExpr.eval] at h
+    | some eb =>
+      simpa [mk2, GExpr.eval, ha ea rfl, hb eb rfl, evalInfix, Except.toOption] using h
+
+/-- The goal of an exact division or remainder is its `.defined` query. -/
+theorem infix_goal_divide {σ : Nat → Option Value} {o : DivOp} {t : IntTy} {x y : Int}
+    {ga gb : Option GExpr} (ha : ∀ e, ga = some e → e.eval σ = some (.int t x))
+    (hb : ∀ e, gb = some e → e.eval σ = some (.int t y))
+    (h : ((mk2 (GExpr.infix (.divide o .defined)) ga gb).getD .unit).eval σ =
+      some (.bool true)) :
+    o.defined t x y = true := by
+  cases ga with
+  | none => simp [mk2, GExpr.eval] at h
+  | some ea =>
+    cases gb with
+    | none => simp [mk2, GExpr.eval] at h
+    | some eb =>
+      simpa [mk2, GExpr.eval, ha ea rfl, hb eb rfl, evalInfix, Except.toOption] using h
+
+/-- The goal of an exact negation or absolute value is its `.defined` query. -/
+theorem unary_goal {σ : Nat → Option Value} {u : UnaryOp} {t : IntTy} {x : Int}
+    {ga : Option GExpr} (ha : ∀ e, ga = some e → e.eval σ = some (.int t x))
+    (hs : t.signed = true)
+    (h : ((mk1 (GExpr.op1 (.unary u .defined)) ga).getD .unit).eval σ = some (.bool true)) :
+    u.defined t x = true := by
+  cases ga with
+  | none => simp [mk1, GExpr.eval] at h
+  | some e => simpa [mk1, GExpr.eval, ha e rfl, evalOp, hs, Except.toOption] using h
+
+/-! ## Progress: a right-hand side the checker accepted never sticks -/
+
+/-- A bind whose first step and every continuation never stick never sticks. -/
+theorem noStuck_bind {α β : Type} {x : Eval α} {f : α → Eval β}
+    (hx : ∀ k, x ≠ .error (.stuck k)) (hf : ∀ a, x = .ok a → ∀ k, f a ≠ .error (.stuck k)) :
+    ∀ k, (x >>= f) ≠ .error (.stuck k) := by
+  intro k hk
+  cases hxe : x with
+  | error e =>
+    rw [hxe, Discharge.error_bind] at hk
+    cases hk
+    exact hx k hxe
+  | ok a =>
+    rw [hxe, Typing.ok_bind] at hk
+    exact hf a hxe k hk
+
+/-- An interpreter infix step sticks only at an exact form outside its
+domain. -/
+theorem evalInfix_stuck {op : InfixOp} {wa wb : Value} {k : Stuck}
+    (h : evalInfix op wa wb = .error (.stuck k)) :
+    ∃ t x y, wa = .int t x ∧ wb = .int t y ∧
+      ((∃ o, op = .arith o .exact ∧ o.exactForm t x y = none) ∨
+       (∃ o, op = .divide o .exact ∧ o.exactForm t x y = none)) := by
+  cases wa with
+  | int t x =>
+    cases wb with
+    | int t' y =>
+      by_cases htt : t = t'
+      · subst htt
+        refine ⟨t, x, y, rfl, rfl, ?_⟩
+        simp only [evalInfix, bne_self_eq_false, Bool.false_eq_true, ↓reduceIte] at h
+        rcases op with ⟨o, m⟩ | ⟨o, m⟩ | c
+        · cases m
+          · left
+            refine ⟨o, rfl, ?_⟩
+            cases hx : o.exactForm t x y with
+            | none => rfl
+            | some r => simp [hx] at h
+          · simp at h
+          · simp at h
+        · cases m
+          · right
+            refine ⟨o, rfl, ?_⟩
+            cases hx : o.exactForm t x y with
+            | none => rfl
+            | some r => simp [hx] at h
+          · simp [ill] at h
+          · simp at h
+        · simp at h
+      · have hb : (t != t') = true := by simpa using htt
+        simp [evalInfix, hb, ill] at h
+    | bool _ => simp [evalInfix, ill] at h
+    | unit => simp [evalInfix, ill] at h
+    | array _ _ => simp [evalInfix, ill] at h
+    | status _ => simp [evalInfix, ill] at h
+  | bool b =>
+    cases wb with
+    | bool b' =>
+      rcases op with ⟨o, m⟩ | ⟨o, m⟩ | c <;> (try cases c) <;> simp [evalInfix, ill] at h
+    | int _ _ => simp [evalInfix, ill] at h
+    | unit => simp [evalInfix, ill] at h
+    | array _ _ => simp [evalInfix, ill] at h
+    | status _ => simp [evalInfix, ill] at h
+  | unit => simp [evalInfix, ill] at h
+  | array _ _ => simp [evalInfix, ill] at h
+  | status _ => simp [evalInfix, ill] at h
+
+/-- An interpreter table operation sticks only at an exact negation or
+absolute value of a signed type outside its domain. -/
+theorem evalOp_stuck {o : TableOp} {ws : List Value} {k : Stuck}
+    (h : evalOp o ws = .error (.stuck k)) :
+    ∃ u t x, o = .unary u .exact ∧ ws = [.int t x] ∧ t.signed = true ∧
+      u.exactForm t x = none := by
+  unfold evalOp at h
+  split at h
+  · rename_i u m t x
+    split at h
+    · simp [ill] at h
+    · rename_i hsig
+      cases m with
+      | exact =>
+        refine ⟨u, t, x, rfl, rfl, by simpa using hsig, ?_⟩
+        cases hx : u.exactForm t x with
+        | none => rfl
+        | some r => simp [hx] at h
+      | wrap => simp at h
+      | defined => simp at h
+  all_goals simp [ill] at h
+
+/-- The static check admits only literals in their types. -/
+theorem atomTy_litOk {sc : Static.Scope} :
+    ∀ {a : Atom} {t : Ty}, Static.atomTy sc a = .ok t → a.LitOk
+  | .int _ _, _, h => by
+    simp only [Static.atomTy] at h
+    obtain ⟨_, hu, -⟩ := Typing.bind_ok h
+    exact Typing.literalOk_mem hu
+  | .unit, _, _ => trivial
+  | .var _, _, _ => trivial
+  | .index _ off, _, h => by
+    simp only [Static.atomTy] at h
+    obtain ⟨_, -, h⟩ := Typing.bind_ok h
+    obtain ⟨_, hot, -⟩ := Typing.bind_ok h
+    exact atomTy_litOk hot
+
+theorem mapM_litOk {sc : Static.Scope} :
+    ∀ {as : List Atom} {ts : List Ty}, as.mapM (Static.atomTy sc) = .ok ts → ∀ a ∈ as, a.LitOk
+  | [], _, _, a, ha => by simp at ha
+  | b :: as, ts, h, a, ha => by
+    rw [List.mapM_cons] at h
+    obtain ⟨_, hb, h⟩ := Typing.bind_ok h
+    obtain ⟨_, has, -⟩ := Typing.bind_ok h
+    rcases List.mem_cons.mp ha with rfl | ha
+    · exact atomTy_litOk hb
+    · exact mapM_litOk has a ha
+
+theorem mapM_length {α β ε : Type} {f : α → Except ε β} :
+    ∀ {as : List α} {ws : List β}, as.mapM f = .ok ws → as.length = ws.length
+  | [], ws, h => by
+    simp only [List.mapM_nil] at h
+    cases h
+    rfl
+  | a :: as, ws, h => by
+    rw [List.mapM_cons] at h
+    obtain ⟨_, -, h⟩ := Typing.bind_ok h
+    obtain ⟨bs, hbs, h⟩ := Typing.bind_ok h
+    cases h
+    simp [mapM_length hbs]
+
+theorem mapM_single_run {f : Atom → M Val} {a : Atom} {g g' : Gen} {vs : List Val}
+    (h : ([a].mapM f).run g = .ok (vs, g')) : ∃ v, vs = [v] ∧ (f a).run g = .ok (v, g') := by
+  rw [List.mapM_cons, List.mapM_nil] at h
+  obtain ⟨v, g1, hv, h⟩ := Discharge.run_bind h
+  obtain ⟨bs, g2, hbs, h⟩ := Discharge.run_bind h
+  obtain ⟨rfl, rfl⟩ := Discharge.run_pure hbs
+  obtain ⟨rfl, rfl⟩ := Discharge.run_pure h
+  exact ⟨v, rfl, hv⟩
+
+/-- Evaluating a list of atoms the checker evaluated never sticks, and the
+facts keep holding with the atoms' registrations [OP-4]. -/
+theorem evalAtoms_sound {env : Env} {st : State} {E E0 : Whitefoot.Env} {ν : TermVal} :
+    ∀ (as : List Atom) {g g1 : Gen} {vs : List Val} {G : Nat → Int},
+      Good env st g E E0 G ν → (∀ a ∈ as, a.LitOk) →
+      (as.mapM (Checker.evalAtom env st)).run g = .ok (vs, g1) →
+      (∀ k, as.mapM (Whitefoot.evalAtom E) ≠ .error (.stuck k)) ∧
+      ∃ G1, Good env st g1 E E0 G1 ν ∧ Ext g g1 G G1
+  | [], g, g1, vs, G, hg, _, h => by
+    rw [List.mapM_nil] at h
+    obtain ⟨-, rfl⟩ := Discharge.run_pure h
+    refine ⟨fun k hk => ?_, G, hg, Ext.refl _ _⟩
+    rw [List.mapM_nil] at hk
+    cases hk
+  | a :: as, g, g1, vs, G, hg, hlit, h => by
+    rw [List.mapM_cons] at h
+    obtain ⟨v, g2, hv, h⟩ := Discharge.run_bind h
+    obtain ⟨vs', g3, hvs, h⟩ := Discharge.run_bind h
+    obtain ⟨-, rfl⟩ := Discharge.run_pure h
+    obtain ⟨hna, G2, hg2, hext2, -, -⟩ := evalAtom_sound a hg (hlit a List.mem_cons_self) hv
+    obtain ⟨hnas, G3, hg3, hext3⟩ :=
+      evalAtoms_sound as hg2 (fun b hb => hlit b (List.mem_cons_of_mem _ hb)) hvs
+    refine ⟨?_, G3, hg3, Ext.trans hext2 hext3⟩
+    rw [List.mapM_cons]
+    exact noStuck_bind hna fun _ _ => noStuck_bind hnas fun _ _ k hk => by cases hk
+
+/-- An accepted infix right-hand side never sticks [OP-2, OP-4]. -/
+theorem infix_progress {env : Env} {st : State} {g g1 : Gen} {E E0 : Whitefoot.Env}
+    {G : Nat → Int} {ν : TermVal} {a b : Atom} {op : InfixOp} {r : Rhs} {sc : Static.Scope}
+    {ty : Ty} (hgood : Good env st g E E0 G ν)
+    (hr : (evalRhs env st (.infix a op b)).run g = .ok (r, g1))
+    (hty : Static.exprTy env.prog sc (.infix a op b) = .ok ty) :
+    ∀ k, evalExpr env.prog E (.infix a op b) ≠ .error (.stuck k) := by
+  obtain ⟨ta, hta, hty⟩ := Typing.bind_ok hty
+  obtain ⟨tb, htb, -⟩ := Typing.bind_ok hty
+  simp only [evalRhs] at hr
+  obtain ⟨va, g2, hva, hr⟩ := Discharge.run_bind hr
+  obtain ⟨vb, g3, hvb, hr⟩ := Discharge.run_bind hr
+  obtain ⟨hna, G2, hg2, -, hbel2, hda⟩ := evalAtom_sound a hgood (atomTy_litOk hta) hva
+  obtain ⟨hnb, G3, hg3, hext3, -, hdb⟩ := evalAtom_sound b hg2 (atomTy_litOk htb) hvb
+  simp only [evalExpr]
+  refine noStuck_bind hna fun wa hwa => noStuck_bind hnb fun wb hwb => ?_
+  intro k hk
+  obtain ⟨t, x, y, rfl, rfl, hex⟩ := evalInfix_stuck hk
+  have hda3 : va.Denotes (valueOf env.vars E) ν G3 (.int t x) :=
+    (hda _ hwa).congr fun f hf z hz => hext3.2 z (hbel2 f hf z hz)
+  have hdb3 := hdb _ hwb
+  have hvty : va.ty = .int t := (hda _ hwa).typed.int_ty
+  rw [hvty] at hr
+  rcases hex with ⟨o, rfl, hnone⟩ | ⟨o, rfl, hnone⟩
+  · try dsimp only at hr
+    obtain ⟨gen, g4, hget, hr⟩ := Discharge.run_bind hr
+    obtain ⟨h3, h4⟩ := Discharge.run_get hget
+    rw [h3, h4] at hr
+    try dsimp only at hr
+    split at hr
+    · exfalso
+      first
+        | exact Discharge.run_fail hr
+        | (obtain ⟨_, _, hf, -⟩ := Discharge.run_bind hr; exact Discharge.run_fail hf)
+    · rename_i hnd
+      have hdis : discharged env g3 st
+          (domainQuery ((mk2 (GExpr.infix (.arith o .defined)) va.gexpr vb.gexpr).getD .unit)
+            (.arith o .exact) t va vb) = true := by
+        revert hnd
+        simp
+      have hP : InfixDomain (.arith o .exact) t x y :=
+        discharged_sound hg3.holds
+          (domainQuery_means (op := .arith o .exact) hg3.holds hda3 hdb3 fun hev =>
+            infix_goal_arith hda3.gexpr hdb3.gexpr hev) hdis
+      have hP' : o.defined t x y = true := hP
+      simp [ArithOp.exactForm, hP'] at hnone
+  · try dsimp only at hr
+    obtain ⟨gen, g4, hget, hr⟩ := Discharge.run_bind hr
+    obtain ⟨h3, h4⟩ := Discharge.run_get hget
+    rw [h3, h4] at hr
+    try dsimp only at hr
+    split at hr
+    · exfalso
+      first
+        | exact Discharge.run_fail hr
+        | (obtain ⟨_, _, hf, -⟩ := Discharge.run_bind hr; exact Discharge.run_fail hf)
+    · rename_i hnd
+      have hdis : discharged env g3 st
+          (domainQuery ((mk2 (GExpr.infix (.divide o .defined)) va.gexpr vb.gexpr).getD .unit)
+            (.divide o .exact) t va vb) = true := by
+        revert hnd
+        simp
+      have hP : InfixDomain (.divide o .exact) t x y :=
+        discharged_sound hg3.holds
+          (domainQuery_means (op := .divide o .exact) hg3.holds hda3 hdb3 fun hev =>
+            infix_goal_divide hda3.gexpr hdb3.gexpr hev) hdis
+      have hP' : o.defined t x y = true := hP
+      simp [DivOp.exactForm, hP'] at hnone
+
+/-- An accepted table operation never sticks [OP-2, OP-4]. -/
+theorem op_progress {env : Env} {st : State} {g g1 : Gen} {E E0 : Whitefoot.Env}
+    {G : Nat → Int} {ν : TermVal} {o : TableOp} {as : List Atom} {r : Rhs} {sc : Static.Scope}
+    {ty : Ty} (hgood : Good env st g E E0 G ν)
+    (hr : (evalRhs env st (.op o as)).run g = .ok (r, g1))
+    (hty : Static.exprTy env.prog sc (.op o as) = .ok ty) :
+    ∀ k, evalExpr env.prog E (.op o as) ≠ .error (.stuck k) := by
+  obtain ⟨ts, hts, -⟩ := Typing.bind_ok hty
+  have hlit : ∀ a ∈ as, a.LitOk := mapM_litOk hts
+  simp only [evalRhs] at hr
+  obtain ⟨vs, g2, hvs, hr⟩ := Discharge.run_bind hr
+  obtain ⟨hnas, -⟩ := evalAtoms_sound as hgood hlit hvs
+  simp only [evalExpr]
+  refine noStuck_bind hnas fun ws hws => ?_
+  intro k hk
+  obtain ⟨u, t, x, rfl, rfl, hsig, hnone⟩ := evalOp_stuck hk
+  have hlen := mapM_length hws
+  rcases as with _ | ⟨a, _ | ⟨a', rest⟩⟩
+  · simp at hlen
+  · obtain ⟨va, rfl, hva⟩ := mapM_single_run hvs
+    obtain ⟨-, G2, hg2, -, -, hda⟩ := evalAtom_sound a hgood (hlit a List.mem_cons_self) hva
+    have hwa : Whitefoot.evalAtom E a = .ok (.int t x) := by
+      rw [List.mapM_cons, List.mapM_nil] at hws
+      obtain ⟨w, hw, h2⟩ := Typing.bind_ok hws
+      obtain ⟨_, _, h3⟩ := Typing.bind_ok h2
+      cases h3
+      exact hw
+    have hda' := hda _ hwa
+    have hvty : va.ty = .int t := hda'.typed.int_ty
+    dsimp only at hr
+    rw [hvty] at hr
+    dsimp only at hr
+    try simp only [beq_self_eq_true, ↓reduceIte] at hr
+    obtain ⟨gen, g4, hget, hr⟩ := Discharge.run_bind hr
+    obtain ⟨h3, h4⟩ := Discharge.run_get hget
+    rw [h3, h4] at hr
+    try dsimp only at hr
+    split at hr
+    · exfalso
+      first
+        | exact Discharge.run_fail hr
+        | (obtain ⟨_, _, hf, -⟩ := Discharge.run_bind hr; exact Discharge.run_fail hf)
+    · rename_i hnd
+      have hdis := Discharge.not_not_true hnd
+      have hP : t.signed = true → u.defined t x = true := by
+        refine discharged_sound hg2.holds ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ hdis
+        · intro e he hev hs'
+          simp only [Option.some.injEq] at he
+          subst he
+          exact unary_goal hda'.gexpr hs' hev
+        · intro cs hcs hall _
+          obtain ⟨⟨u', k'⟩, hxk, hcs⟩ := Option.map_eq_some_iff.mp hcs
+          have ex : ν.val u' + k' = x := by
+            obtain ⟨t', e'⟩ := hda'.term u' k' hxk
+            exact ((Value.int.inj e').2).symm
+          simp only [UnaryOp.defined, decide_eq_true_eq]
+          dsimp only at hcs
+          split at hcs
+          · rename_i hz
+            have hz' : u' = Term.z := by simpa using hz
+            subst hz'
+            subst hcs
+            obtain ⟨fs, hfs, hf⟩ := hall _ List.mem_cons_self
+            rw [List.mem_singleton] at hfs
+            subst hfs
+            rw [ν.val_z] at ex
+            split at hf
+            · rename_i hk
+              have hk' : k' ≠ t.minVal := by simpa using hk
+              omega
+            · have : ν.val Term.z - ν.val Term.z ≤ -1 := hf.1 _ List.mem_cons_self
+              omega
+          · subst hcs
+            obtain ⟨fs, hfs, hf⟩ := hall _ List.mem_cons_self
+            rw [List.mem_singleton] at hfs
+            subst hfs
+            have h1 : ν.val u' - ν.val Term.z ≠ t.minVal - k' := hf.2 _ List.mem_cons_self
+            rw [ν.val_z] at h1
+            omega
+        · intro ts hts hall _
+          obtain ⟨f, hf, hts⟩ := Option.map_eq_some_iff.mp hts
+          have ex : f.eval G2 = x := by
+            obtain ⟨t', e'⟩ := hda'.image f hf
+            exact ((Value.int.inj e').2).symm
+          simp only [UnaryOp.defined, decide_eq_true_eq]
+          cases u with
+          | neg =>
+            dsimp only at hts
+            subst hts
+            have h1 : (Ineq.le (f.scale (-1)) (Form.const t.maxVal)).Holds G2 :=
+              hall _ List.mem_cons_self
+            rw [Ineq.holds_le, Form.eval_scale, Form.eval_const] at h1
+            have hmx := signed_maxVal hsig
+            omega
+          | abs =>
+            dsimp only at hts
+            subst hts
+            have h1 : (Ineq.le (Form.const (t.minVal + 1)) f).Holds G2 :=
+              hall _ List.mem_cons_self
+            rw [Ineq.holds_le, Form.eval_const] at h1
+            omega
+        · intro ts hts q hq lhs r' hr' _
+          obtain ⟨f, hf, hts⟩ := Option.map_eq_some_iff.mp hts
+          have hnone : ∀ q ∈ ts, q.2 = none := by
+            cases u <;> (dsimp only at hts; subst hts; simp)
+          rw [hnone q hq] at hr'
+          cases hr'
+        · intro ts hts
+          simp at hts
+        · intro a' b' t' hp
+          simp at hp
+      have hd := hP hsig
+      simp [UnaryOp.exactForm, hd] at hnone
+  · simp at hlen
+
+/-- An accepted call of a host or prelude function never sticks [OP-4]; a call
+of a program function is the interpreter's call step, not an expression. -/
+theorem call_progress {env : Env} {st : State} {g g1 : Gen} {E E0 : Whitefoot.Env}
+    {G : Nat → Int} {ν : TermVal} {path : List String} {targs : List TArg}
+    {as : List (String × Atom)} {r : Rhs} {sc : Static.Scope} {ty : Ty}
+    (hgood : Good env st g E E0 G ν)
+    (hr : (evalRhs env st (.call path targs as)).run g = .ok (r, g1))
+    (hty : Static.exprTy env.prog sc (.call path targs as) = .ok ty) (hcall : r.call = none) :
+    ∀ k, evalExpr env.prog E (.call path targs as) ≠ .error (.stuck k) := by
+  simp only [Static.exprTy] at hty
+  simp only [evalRhs] at hr
+  cases hc : env.prog.callee? path with
+  | none =>
+    rw [hc] at hty
+    exact absurd hty Typing.reject_ne
+  | some ce =>
+    rw [hc] at hty hr
+    cases ce with
+    | fn f =>
+      exfalso
+      dsimp only at hr
+      obtain ⟨args, g2, -, hr⟩ := Discharge.run_bind hr
+      obtain ⟨gen, g3, -, hr⟩ := Discharge.run_bind hr
+      obtain ⟨u, g4, -, hr⟩ := Discharge.run_bind hr
+      obtain ⟨img, g5, -, hr⟩ := Discharge.run_bind hr
+      obtain ⟨hr', -⟩ := Discharge.run_pure hr
+      subst hr'
+      simp at hcall
+    | exitStatus =>
+      cases targs with
+      | cons _ _ => exact absurd hty Typing.reject_ne
+      | nil =>
+        obtain ⟨_, hn, hty⟩ := Typing.bind_ok hty
+        obtain ⟨_, ha, -⟩ := Typing.bind_ok hty
+        obtain ⟨a, rfl, hat⟩ := Typing.atomTy_one hn ha
+        dsimp only at hr
+        obtain ⟨vs, g2, hvs, -⟩ := Discharge.run_bind hr
+        rw [List.mapM_cons, List.mapM_nil] at hvs
+        obtain ⟨v, g3, hv, -⟩ := Discharge.run_bind hvs
+        try dsimp only at hv
+        have hna := (evalAtom_sound a hgood (atomTy_litOk hat) hv).1
+        simp only [evalExpr, hc]
+        refine noStuck_bind hna fun w _ => ?_
+        intro k hk
+        split at hk <;> simp [ill] at hk
+    | arrayFilled =>
+      rcases targs with _ | ⟨(et | _ | _ | ⟨_, _⟩ | _) | _, _ | ⟨_ | n, _ | ⟨_, _⟩⟩⟩ <;>
+        try exact absurd hty Typing.reject_ne
+      obtain ⟨_, hn, hty⟩ := Typing.bind_ok hty
+      obtain ⟨_, ha, -⟩ := Typing.bind_ok hty
+      obtain ⟨a, rfl, hat⟩ := Typing.atomTy_one hn ha
+      dsimp only at hr
+      obtain ⟨vs, g2, hvs, -⟩ := Discharge.run_bind hr
+      rw [List.mapM_cons, List.mapM_nil] at hvs
+      obtain ⟨v, g3, hv, -⟩ := Discharge.run_bind hvs
+      try dsimp only at hv
+      have hna := (evalAtom_sound a hgood (atomTy_litOk hat) hv).1
+      simp only [evalExpr, hc]
+      refine noStuck_bind hna fun w _ => ?_
+      intro k hk
+      split at hk
+      · split at hk <;> simp [ill] at hk
+      · simp [ill] at hk
+
+/-- A right-hand side the checker accepted, with no call of a program
+function, never sticks: its subscripts are below their lengths [OP-4] and each
+exact operation is in its domain [OP-2]. -/
+theorem evalRhs_progress {env : Env} {st : State} {g g1 : Gen} {E E0 : Whitefoot.Env}
+    {e : Expr} {r : Rhs}
+    (hs : (⟨env.vars, st, g.atoms⟩ : Snapshot).Holds (E, E0))
+    (hf : (⟨env.vars, st, g.atoms⟩ : Snapshot).Fresh g.next)
+    (hr : (evalRhs env st e).run g = .ok (r, g1))
+    (ht : ∃ sc t, Static.exprTy env.prog sc e = .ok t) (hcall : r.call = none) :
+    ∀ k, evalExpr env.prog E e ≠ .error (.stuck k) := by
+  obtain ⟨G, ν, hw⟩ := hs
+  have hgood : Good env st g E E0 G ν := ⟨hw, hf⟩
+  obtain ⟨sc, ty, hty⟩ := ht
+  rcases e with a | ⟨a, op, b⟩ | ⟨o, as⟩ | ⟨path, targs, as⟩ | bv
+  · simp only [evalRhs] at hr
+    obtain ⟨v, g2, hv, -⟩ := Discharge.run_bind hr
+    simp only [evalExpr]
+    exact (evalAtom_sound a hgood (atomTy_litOk hty) hv).1
+  · exact infix_progress hgood hr hty
+  · exact op_progress hgood hr hty
+  · exact call_progress hgood hr hty hcall
+  · intro k hk
+    simp [evalExpr] at hk
+
+/-- A subscript target the checker evaluated never sticks [OP-4]. -/
+theorem target_progress {env : Env} {st : State} {g g1 : Gen} {E E0 : Whitefoot.Env}
+    {b : String} {off : Atom} {val : Val}
+    (hs : (⟨env.vars, st, g.atoms⟩ : Snapshot).Holds (E, E0))
+    (hf : (⟨env.vars, st, g.atoms⟩ : Snapshot).Fresh g.next)
+    (hr : (Checker.evalAtom env st (.index b off)).run g = .ok (val, g1))
+    (ht : ∃ sc t, Static.atomTy sc (.index b off) = .ok t) :
+    ∀ k, Whitefoot.evalAtom E (.index b off) ≠ .error (.stuck k) := by
+  obtain ⟨G, ν, hw⟩ := hs
+  obtain ⟨sc, ty, hty⟩ := ht
+  exact (evalAtom_sound (.index b off) ⟨hw, hf⟩ (atomTy_litOk hty) hr).1
 
 end Checker
 
