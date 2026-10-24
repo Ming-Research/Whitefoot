@@ -549,6 +549,15 @@ def perf_rounds(args):
     return 0
 
 
+def ratio_range(pairs):
+    """The median of a / b over the (a, b) pairs with its [min, max], as the
+    tables print them; no ratio when some b is not above 0."""
+    if not all(b > 0 for _, b in pairs):
+        return f"{'n/a':>9} [a base value is 0]"
+    ratios = [a / b for a, b in pairs]
+    return f"{statistics.median(ratios):>9.5f} [{min(ratios):.5f}, {max(ratios):.5f}]"
+
+
 def reduce_perf(data, out):
     """Prints the tables of one perf.json: per workload and arm the median
     counts and rates, then the candidate and twin ratios to the base with
@@ -607,9 +616,8 @@ def reduce_perf(data, out):
     for workload in WORKLOADS:
         for arm in ("candidate", "twin"):
             for event in events:
-                ratios = [by[(workload, arm, r)][event] / by[(workload, "base", r)][event] for r in rounds]
-                print(f"{workload:<9} {arm:<10} {event:<26} {statistics.median(ratios):>9.5f} "
-                      f"[{min(ratios):.5f}, {max(ratios):.5f}]", file=out)
+                pairs = [(by[(workload, arm, r)][event], by[(workload, "base", r)][event]) for r in rounds]
+                print(f"{workload:<9} {arm:<10} {event:<26} {ratio_range(pairs)}", file=out)
     print(file=out)
     print("Wall time, CPU time and page faults of the same runs, medians over rounds (seconds, faults a count).", file=out)
     print("Wall, user, sys and faults are those of the whole launch: taskset, timeout, perf stat and the", file=out)
@@ -632,12 +640,7 @@ def reduce_perf(data, out):
                 diffs = [a - b for a, b in pairs]
                 text = (f"{statistics.median(diffs):>12.{digits + 2}f} "
                         f"[{min(diffs):.{digits + 2}f}, {max(diffs):.{digits + 2}f}]")
-                if all(b > 0 for _, b in pairs):
-                    ratios = [a / b for a, b in pairs]
-                    ratio = f"{statistics.median(ratios):>9.5f} [{min(ratios):.5f}, {max(ratios):.5f}]"
-                else:
-                    ratio = "n/a: a base value is not above 0".rjust(26)
-                print(f"{workload:<9} {arm:<10} {label:<8} {text:>34} {ratio:>26}", file=out)
+                print(f"{workload:<9} {arm:<10} {label:<8} {text:>34} {ratio_range(pairs):>26}", file=out)
     return 0
 
 
@@ -980,6 +983,12 @@ def self_test():
            ["-0.019000", "[-0.019000,", "-0.019000]", "0.90000", "[0.90000,", "0.90000]"])
     expect("perf candidate faults difference", table_row("Differences to the base", "fib", "candidate", "faults"),
            ["-100.00", "[-100.00,", "-100.00]", "0.90234", "[0.90234,", "0.90234]"])
+    zero = perf_data(0.9, 1.0)
+    for run_ in zero["runs"]:
+        run_["counts"]["branch-misses:u"] = 0.0
+    zero_report = io.StringIO()
+    expect("perf zero base count", reduce_perf(zero, zero_report), 0)
+    expect("perf zero base count is not a ratio", "n/a [a base value is 0]" in zero_report.getvalue(), True)
     expect_invalid("perf run without usage", lambda: reduce_perf(
         dict(perf_data(0.9, 1.0), runs=[{k: v for k, v in r.items() if k != "usage"} for r in perf_data(0.9, 1.0)["runs"]]),
         text_out), "usage")
