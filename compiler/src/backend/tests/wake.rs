@@ -1,6 +1,6 @@
 //! [SHARE-3] The wake test a guard's watch registers and the write flag a
 //! release passes, as the backend emits them for the completion bridge's
-//! `wf_wake_test`, and the parking take of a statement's first type group,
+//! `wf_wake_test`, and the parking take of a statement's first lock unit,
 //! which a guard's reservation can refuse
 //! (compiler/waiting-contexts/state-locks).
 
@@ -531,7 +531,7 @@ fn an_and_or_an_or_of_two_atoms_is_one_postfix_program() {
 }
 
 #[test]
-fn a_first_group_parks_and_asks_again_as_an_acquire_does() {
+fn a_first_unit_parks_and_asks_again_as_an_acquire_does() {
     let llvm = compile(
         br#"struct Alpha {
   n: u64;
@@ -539,31 +539,29 @@ fn a_first_group_parks_and_asks_again_as_an_acquire_does() {
 
 fn main() -> status: std::process::ExitStatus pure waits {
   let a0 = Alpha(n: 0_u64);
-  let a1 = Alpha(n: 1_u64);
   let first = shared_new::<Alpha>(value: a0);
-  let second = shared_new::<Alpha>(value: a1);
-  atomic p = &first, q = &second {
-    set p^.n = q^.n;
+  atomic p = &first {
+    set p^.n = 1_u64;
   }
   return std::process::exit_status(code: 0_u8);
 }
 "#,
     );
     let main = emitted_function(&llvm, "main");
-    let call = call_line(main, "wf__atomic_group_acquire");
-    let Some((parked, arguments)) = call.trim().split_once(" = call i32 @wf__atomic_group_acquire(")
+    let call = call_line(main, "wf__shared_acquire");
+    let Some((parked, arguments)) = call.trim().split_once(" = call i32 @wf__shared_acquire(")
     else {
-        panic!("the take answers whether it parked: {call}");
+        panic!("the acquire answers whether it parked: {call}");
     };
     assert!(
-        arguments.contains(", i64 2, ptr %wf.coro.handle)"),
-        "the group's two targets and the frame: {call}"
+        arguments.contains(", i32 1, ptr %wf.coro.handle)"),
+        "the object's write hold and the frame: {call}"
     );
     let prefix = parked
         .strip_suffix(".parked")
         .unwrap_or_else(|| panic!("{call}"));
-    // As an acquire: a nonzero answer suspends, and the resumed frame asks
-    // again rather than continuing, since it holds nothing yet.
+    // A nonzero answer suspends, and the resumed frame asks again rather than
+    // continuing, since it holds nothing yet.
     assert!(
         main.contains(&format!("icmp ne i32 {parked}, 0")),
         "{main}"
@@ -572,49 +570,63 @@ fn main() -> status: std::process::ExitStatus pure waits {
         main.contains(&format!("[ i8 0, label {prefix}.try ")),
         "a resumed frame retries the take: {main}"
     );
-    assert!(!main.contains("@wf__atomic_group_take("), "{main}");
+    assert!(!main.contains("@wf__shared_take("), "{main}");
     assert!(
         llvm.lines().any(|line| line.starts_with("declare")
-            && line.contains("@wf__atomic_group_acquire(ptr")),
+            && line.contains("@wf__shared_acquire(ptr")),
         "the entry is declared: {llvm}"
     );
 }
 
-/// The write flag each target of `main`'s two-target group record stores, by
-/// target index, each site once.
-fn group_record_flags(llvm: &str) -> Vec<(String, String)> {
-    let main = emitted_function(llvm, "main");
-    let lines = main.lines().collect::<Vec<_>>();
-    let mut flags = lines
-        .windows(2)
-        .filter_map(|pair| {
-            let (name, gep) = pair[0]
-                .trim()
-                .split_once(" = getelementptr [2 x { ptr, ptr, i32 }], ptr ")?;
-            let index = gep.strip_suffix(", i32 2")?.rsplit_once(", i32 ")?.1;
-            let stored = pair[1].trim().strip_prefix("store i32 ")?;
-            let (value, place) = stored.split_once(", ptr ")?;
-            (place == format!("{name}, align 8")).then(|| (index.to_owned(), value.to_owned()))
-        })
-        .collect::<Vec<_>>();
-    flags.sort_unstable();
-    flags.dedup();
-    flags
+/// Only a statement's first unit can suspend the frame, since it holds nothing
+/// before it. The object's lock that follows a map's unit, taken in field
+/// order, is the non-parking take.
+#[test]
+fn a_later_unit_is_taken_without_parking() {
+    let llvm = compile(
+        br#"struct Beta {
+  table: ConcurrentHashMap<u8>;
+  n: u64;
 }
 
-fn two_alpha_group(block: &str) -> String {
+fn main() -> status: std::process::ExitStatus pure waits {
+  let table = map_new::<u8>(capacity: 1_u64);
+  let start = Beta(table: move table, n: 0_u64);
+  let state = shared_new::<Beta>(value: move start);
+  let seen = 0_u64;
+  atomic b = &state {
+    set seen = map_count::<u8>(map: &b^.table);
+    set b^.n = 1_u64;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+    );
+    let main = emitted_function(&llvm, "main");
+    let call = call_line(main, "wf__shared_take");
+    assert!(call.trim().starts_with("call void @wf__shared_take("), "{call}");
+    assert!(call.ends_with(", i32 1)"), "{call}");
+    assert!(!main.contains("@wf__shared_acquire("), "{main}");
+}
+
+/// A state with a part of its own beside a map: `names` is the one key the
+/// block selects.
+fn hold_program(block: &str) -> String {
     format!(
-        r#"struct Alpha {{
-  n: u64;
+        r#"const names: Array<u8, 1> =[97_u8];
+
+struct Hold {{
+  total: u64;
+  table: ConcurrentHashMap<u8>;
 }}
 
 fn main() -> status: std::process::ExitStatus pure waits {{
-  let a0 = Alpha(n: 0_u64);
-  let a1 = Alpha(n: 1_u64);
-  let first = shared_new::<Alpha>(value: a0);
-  let second = shared_new::<Alpha>(value: a1);
+  let table = map_new::<u8>(capacity: 1_u64);
+  let start = Hold(total: 0_u64, table: move table);
+  let state = shared_new::<Hold>(value: move start);
+  let key = &names[0_u64..1_u64];
   let seen = 0_u64;
-  atomic p = &first, q = &second {{
+  atomic h = &state {{
     {block}
   }}
   return std::process::exit_status(code: 0_u8);
@@ -624,16 +636,23 @@ fn main() -> status: std::process::ExitStatus pure waits {{
 }
 
 #[test]
-fn a_group_record_carries_each_target_s_write_flag() {
-    let flag = |index: &str, value: &str| (index.to_owned(), value.to_owned());
-    // Reading both: the record's third field is 0 for each target, so the
-    // group's release starts no sweep.
-    let llvm = compile(two_alpha_group("set seen = p^.n +wrap q^.n;").as_bytes());
-    assert_eq!(group_record_flags(&llvm), [flag("0", "0"), flag("1", "0")], "{llvm}");
-    // Writing p: two handles of one type may name one object, so a write
-    // through p may write q's object and both are released as written.
-    let llvm = compile(two_alpha_group("set p^.n = q^.n;").as_bytes());
-    assert_eq!(group_record_flags(&llvm), [flag("0", "1"), flag("1", "1")], "{llvm}");
+fn the_object_unit_s_release_follows_what_the_block_writes_of_it() {
+    // Reading `total` and writing one entry of the map: the object's own lock
+    // is released unwritten, since the write belongs to the map's unit.
+    let llvm = compile(
+        hold_program("set seen = h^.total;\n    set h^.table[key] = Some<u8>(value: 1_u8);")
+            .as_bytes(),
+    );
+    let main = emitted_function(&llvm, "main");
+    let release = call_line(main, "wf__shared_unlock_unwritten");
+    assert!(release.ends_with(", i32 1)"), "{release}");
+    assert!(!main.contains("@wf__shared_unlock("), "{main}");
+    // Writing `total`: the object's lock is released as written, which wakes
+    // the watches of the object.
+    let llvm = compile(hold_program("set h^.total = 1_u64;").as_bytes());
+    let main = emitted_function(&llvm, "main");
+    call_line(main, "wf__shared_unlock");
+    assert!(!main.contains("@wf__shared_unlock_unwritten("), "{main}");
 }
 
 #[test]

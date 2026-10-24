@@ -33,13 +33,14 @@ enters the lexical IDENT domain as a callable [TYPE-6]. -/
 def preludeFunctions : List String := [
   "append", "array_filled", "box_array_filled", "box_new", "box_paged_new",
   "box_ring_new", "box_segments_filled", "box_slots_new", "claim_killed",
-  "claim_written", "decision_cell_new", "decision_cell_read", "decision_cell_share",
-  "free_empty", "frozen_new", "frozen_share", "grow", "grow_paged", "insert_at",
-  "key_set_bytes", "key_set_insert", "key_set_new", "key_set_read_key", "map_clear",
-  "map_count", "map_scan", "map_scan_within", "paged_page_len", "place_back",
-  "place_front", "release", "remove_at", "ring_new", "shared_close", "shared_map_new",
-  "shared_new", "shared_read", "shared_read_share", "shared_share", "slots_from_array",
-  "slots_into_array", "slots_new", "split_off", "swap", "take_back", "take_front"]
+  "claim_written", "clear", "decision_cell_new", "decision_cell_read",
+  "decision_cell_share", "free_empty", "frozen_new", "frozen_share", "grow",
+  "grow_paged", "insert_at", "key_set_bytes", "key_set_insert", "key_set_new",
+  "key_set_read_key", "map_clear", "map_count", "map_new", "map_scan",
+  "map_scan_within", "paged_page_len", "place_back", "place_front", "release",
+  "remove_at", "ring_new", "shared_close", "shared_new", "shared_read",
+  "shared_read_share", "shared_share", "slots_from_array", "slots_into_array",
+  "slots_new", "split_off", "swap", "take_back", "take_front"]
 
 /-- Whether an alias names a module rather than a function or a type: such an
 alias is in both use classes of the lexical IDENT domain [TYPE-6]. -/

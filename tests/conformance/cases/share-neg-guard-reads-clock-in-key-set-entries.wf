@@ -30,15 +30,17 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
   let start = std::time::unix_nanoseconds(clock: &wall);
   let deadline = start +sat 1000000_i64;
   let stamp = Stamp(wall: move wall);
-  let store = shared_map_new::<Stamp>(capacity: 1_u64);
+  let store_map = map_new::<Stamp>(capacity: 1_u64);
+  let store = shared_new::<ConcurrentHashMap<Stamp>>(value: move store_map);
   let keys = key_set_new(capacity: 1_u64);
   key_set_insert(keys: &keys, key: &name[0_u64..1_u64]);
-  atomic e = &store[&name[0_u64..1_u64]] {
-    set e^ = Some<Stamp>(value: move stamp);
+  let first = &name[0_u64..1_u64];
+  atomic t = &store {
+    set t^[first] = Some<Stamp>(value: move stamp);
   }
   let count = 0_u64;
-  atomic slots = &store[keys] when stale(slots: slots, deadline: deadline) {
-    set count = slots^.len;
+  atomic t = &store when stale(slots: &t^[keys], deadline: deadline) {
+    set count = map_count::<Stamp>(map: t);
   }
   let code = cvt.wrap::<u64, u8>(count);
   return std::process::exit_status(code: code);

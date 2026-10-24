@@ -144,7 +144,7 @@ impl Input<'_, '_> {
             // [SHARE-2] the target and guard execute before the block, which
             // falls through to the statement's successor.
             CheckedStatement::Atomic {
-                targets,
+                target,
                 guard,
                 body,
                 ..
@@ -152,10 +152,7 @@ impl Input<'_, '_> {
                 let reaches =
                     self.collect_continuing_loop_kills(body, normal_reaches, reachability, kills);
                 if reaches {
-                    for key in targets
-                        .iter()
-                        .flat_map(crate::semantic::CheckedTarget::expressions)
-                    {
+                    for key in target.expressions() {
                         self.collect_loop_expression_kills(key, kills);
                     }
                     if let Some(guard) = guard {

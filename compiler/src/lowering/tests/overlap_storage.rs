@@ -1580,10 +1580,12 @@ fn borrow_then_clear(entries: &Entries<{value_type}>) -> result: unit writes(ent
 
 fn main() -> status: std::process::ExitStatus pure waits {{
   doc "Exercises a borrowed Entries view containing one payload.";
-  let store = shared_map_new::<{value_type}>(capacity: 1_u64);
+  let store_map = map_new::<{value_type}>(capacity: 1_u64);
+  let store = shared_new::<ConcurrentHashMap<{value_type}>>(value: move store_map);
   let keys = key_set_new(capacity: 1_u64);
   let index = key_set_insert(keys: &keys, key: &names[0_u64..1_u64]);
-  atomic entries = &store[keys] {{
+  atomic t = &store {{
+    let entries = &t^[keys];
     let value = {value};
     set entries^[0_u64] = Some<{value_type}>(value: {payload});
     borrow_then_clear(entries: entries);

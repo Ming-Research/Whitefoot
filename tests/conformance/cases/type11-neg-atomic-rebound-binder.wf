@@ -1,0 +1,21 @@
+struct Ordered {
+  low: u64;
+  high: u64;
+  invariant ordered(pair): pair.low < pair.high;
+}
+
+fn update(state: Shared<Ordered>) -> result: unit pure waits {
+  let fresh = Ordered(low: 0_u64, high: 1_u64);
+  atomic a = &state {
+    let top = a^.high;
+    set a^.low = top;
+    set a = &fresh;
+    set a^.low = 0_u64;
+    set a^.high = 1_u64;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

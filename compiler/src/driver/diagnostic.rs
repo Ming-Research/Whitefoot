@@ -949,6 +949,7 @@ impl Report for SemanticIssueKind {
             InvalidElementMove { mechanical_fix };
             MoveThroughReference { mechanical_fix };
             ReservedPseudoField { spelling, mechanical_fix };
+            CancellationFlagUse { use_kind, mechanical_fix };
             ReadonlyWriteTarget { spelling, mechanical_fix };
             FrozenForbiddenPart { part, mechanical_fix };
             SharedStateHoldsOwnHandle { part, handle, mechanical_fix };
@@ -1002,8 +1003,6 @@ impl Report for SemanticIssueKind {
             WaitInsideAtomic { construct, mechanical_fix };
             TableOffsetNotKey { mechanical_fix };
             TableEntriesNotBorrowed { mechanical_fix };
-            AtomicKeyNotBytes { found, mechanical_fix };
-            AtomicKeyReadsTheState { mechanical_fix };
             AtomicBindingUnused { binding, mechanical_fix };
             AtomicGuardWrites { mechanical_fix };
             AtomicGuardDecisionCell { mechanical_fix };

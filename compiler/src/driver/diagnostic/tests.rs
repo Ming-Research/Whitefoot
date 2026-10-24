@@ -789,8 +789,8 @@ fn need(value: &u64, limit: u64) -> result: unit reads(value) contract {
 
 fn probe(store: &Shared<ConcurrentHashMap<Word>>, limit: u64) -> result: unit reads(store) waits {
   let observed = &key[0_u64..2_u64];
-  atomic slot = &store^[observed] {
-    match slot^ {
+  atomic t = &store^ {
+    match t^[observed] {
       Some(value: word) => {
         need(value: &word^.value, limit: limit);
       }
@@ -813,7 +813,7 @@ fn main() -> status: std::process::ExitStatus pure {
         "{rendered}"
     );
     assert!(rendered.contains("\n  disposition: Unproved\n"), "{rendered}");
-    assert!(!rendered.contains("slot^[?]"), "{rendered}");
+    assert!(!rendered.contains("t^[?]"), "{rendered}");
 }
 
 #[test]

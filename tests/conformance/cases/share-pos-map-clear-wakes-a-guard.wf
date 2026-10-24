@@ -1,41 +1,46 @@
 const names: Array<u8, 2> =[97_u8, 98_u8];
 
+struct Gate {
+  table: ConcurrentHashMap<u8>;
+  done: u8;
+}
+
 fn empty(table: &ConcurrentHashMap<u8>) -> result: Bool reads(table) {
   let count = map_count::<u8>(map: table);
   return count == 0_u64;
 }
 
-fn wait_empty(store: Shared<ConcurrentHashMap<u8>>, done: Shared<u8>) -> result: unit pure waits {
-  atomic t = &store, d = &done when empty(table: t) {
-    set d^ = d^ +wrap 1_u8;
+fn wait_empty(gate: Shared<Gate>) -> result: unit pure waits {
+  atomic s = &gate when empty(table: &s^.table) {
+    set s^.done = s^.done +wrap 1_u8;
   }
   return unit;
 }
 
-fn clear_beside(store: &Shared<ConcurrentHashMap<u8>>, done: &Shared<u8>) -> result: unit reads(store), reads(done) waits {
-  let map = shared_share::<ConcurrentHashMap<u8>>(shared: store);
-  let flag = shared_share::<u8>(shared: done);
-  spawn wait_empty(store: move map, done: move flag);
-  let local = shared_share::<ConcurrentHashMap<u8>>(shared: store);
+fn clear_beside(gate: &Shared<Gate>) -> result: unit reads(gate) waits {
+  let waiter = shared_share::<Gate>(shared: gate);
+  spawn wait_empty(gate: move waiter);
+  let local = shared_share::<Gate>(shared: gate);
   atomic t = &local {
-    map_clear::<u8>(map: t);
+    map_clear::<u8>(map: &t^.table);
   }
   return unit;
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<u8>(capacity: 2_u64);
-  let done = shared_new::<u8>(value: 40_u8);
+  let table = map_new::<u8>(capacity: 2_u64);
+  let state = Gate(table: move table, done: 40_u8);
+  let gate = shared_new::<Gate>(value: move state);
   let a = &names[0_u64..1_u64];
   let b = &names[1_u64..2_u64];
-  atomic t = &store {
-    set t^[a] = Some<u8>(value: 1_u8);
-    set t^[b] = Some<u8>(value: 2_u8);
+  atomic t = &gate {
+    set t^.table[a] = Some<u8>(value: 1_u8);
+    set t^.table[b] = Some<u8>(value: 2_u8);
   }
-  clear_beside(store: &store, done: &done);
+  clear_beside(gate: &gate);
   let code = 0_u8;
-  atomic d = &done {
-    set code = d^ +wrap 1_u8;
+  atomic s = &gate {
+    set code = s^.done +wrap 1_u8;
   }
   return std::process::exit_status(code: code);
 }

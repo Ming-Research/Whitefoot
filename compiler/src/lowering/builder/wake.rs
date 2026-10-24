@@ -1,7 +1,7 @@
-//! [SHARE-3] The wake test a guard's watch registers for one object target
-//! (compiler/waiting-contexts/state-locks): a condition over that object's
-//! state which the guard implies, so a write that leaves it false cannot
-//! have made the guard true and need not wake the watch.
+//! [SHARE-3] The wake test a guard's watch registers on its object's own
+//! lock (compiler/waiting-contexts/state-locks): a condition over that
+//! object's state which the guard implies, so a write that leaves it false
+//! cannot have made the guard true and need not wake the watch.
 //!
 //! The derivation splits the guard over `and`, `or` and `not`, pushing each
 //! `not` down to the comparisons, and keeps a comparison of a scalar field of
@@ -9,7 +9,7 @@
 //! fields alone) against a constant, a local the registration captures, or
 //! another such field of the same object. A helper whose checked body is a
 //! single return is expanded into that derivation with scoped arguments.
-//! Every other part, including a comparison over another target, becomes
+//! Every other part, a map's entry or a cancellation flag included, becomes
 //! `true`, which only weakens the atom test. If that leaves a helper guard
 //! without a test, `callback` audits its complete call closure and lowers the
 //! original guard over the live state and scalar captures. A guard reads no
@@ -100,7 +100,8 @@ fn argument<'scope, 'guard>(
 }
 
 /// Resolve only a forwarded reference or a field-only borrow. In particular,
-/// another target's referent must not become a captured registration value.
+/// the referent of a reference other than the statement's binding must not
+/// become a captured registration value.
 fn reference_path(
     expression: ScopedExpression<'_>,
     binding: BindingId,
@@ -314,7 +315,6 @@ impl<'program> IrBuilder<'program> {
         &self,
         expression: ScopedExpression<'guard>,
         binding: BindingId,
-        targets: &[BindingId],
         scopes: &[Scope<'guard>],
     ) -> Result<Side<'guard>, LoweringFailure> {
         if expression.scope != 0
@@ -328,7 +328,7 @@ impl<'program> IrBuilder<'program> {
                 return Ok(Side::Other);
             };
             return if argument.mode == CheckedMode::Own {
-                self.wake_side(argument.actual, binding, targets, scopes)
+                self.wake_side(argument.actual, binding, scopes)
             } else {
                 Ok(Side::Other)
             };
@@ -351,7 +351,7 @@ impl<'program> IrBuilder<'program> {
                 binding: local,
                 consume_root: false,
                 ..
-            } if expression.scope == 0 && !targets.contains(local) => {
+            } if expression.scope == 0 && *local != binding => {
                 self.captured_scalar(*local, ty)?
             }
             _ => false,
@@ -370,7 +370,6 @@ impl<'program> IrBuilder<'program> {
         sides: [ScopedExpression<'guard>; 2],
         positive: bool,
         binding: BindingId,
-        targets: &[BindingId],
         scopes: &[Scope<'guard>],
     ) -> Result<Condition<'guard>, LoweringFailure> {
         let compared = if positive {
@@ -379,8 +378,8 @@ impl<'program> IrBuilder<'program> {
             negated(compared)
         };
         let [left, right] = sides;
-        let left = self.wake_side(left, binding, targets, scopes)?;
-        let right = self.wake_side(right, binding, targets, scopes)?;
+        let left = self.wake_side(left, binding, scopes)?;
+        let right = self.wake_side(right, binding, scopes)?;
         Ok(match (left, right) {
             (Side::Field(field, ty), Side::Value(value, operand)) if ty == operand => {
                 Condition::Atom(Atom {
@@ -414,7 +413,6 @@ impl<'program> IrBuilder<'program> {
         guard: ScopedExpression<'guard>,
         positive: bool,
         binding: BindingId,
-        targets: &[BindingId],
         scopes: &mut Vec<Scope<'guard>>,
         active: &mut Vec<FunctionId>,
     ) -> Result<Condition<'guard>, LoweringFailure>
@@ -433,7 +431,7 @@ impl<'program> IrBuilder<'program> {
                 if argument.mode != CheckedMode::Own {
                     return Ok(Condition::True);
                 }
-                self.wake_condition(argument.actual, positive, binding, targets, scopes, active)
+                self.wake_condition(argument.actual, positive, binding, scopes, active)
             }
             CheckedExpression::UserCall {
                 function,
@@ -484,7 +482,6 @@ impl<'program> IrBuilder<'program> {
                     },
                     positive,
                     binding,
-                    targets,
                     scopes,
                     active,
                 );
@@ -504,7 +501,6 @@ impl<'program> IrBuilder<'program> {
                     },
                     !positive,
                     binding,
-                    targets,
                     scopes,
                     active,
                 ),
@@ -526,7 +522,6 @@ impl<'program> IrBuilder<'program> {
                             },
                             positive,
                             binding,
-                            targets,
                             scopes,
                             active,
                         )
@@ -558,7 +553,6 @@ impl<'program> IrBuilder<'program> {
                     ],
                     positive,
                     binding,
-                    targets,
                     scopes,
                 ),
                 _ => Ok(Condition::True),
@@ -586,13 +580,12 @@ impl<'program> IrBuilder<'program> {
                         ],
                         positive,
                         binding,
-                        targets,
                         scopes,
                     )
                 }
                 _ => Ok(Condition::True),
             },
-            _ => Ok(match self.wake_side(guard, binding, targets, scopes)? {
+            _ => Ok(match self.wake_side(guard, binding, scopes)? {
                 Side::Field(field, IrType::Bool) => Condition::Atom(Atom {
                     field,
                     comparison: if positive {
@@ -607,15 +600,14 @@ impl<'program> IrBuilder<'program> {
         }
     }
 
-    /// The wake test of `guard` for the object target `binding`, whose state
-    /// is at `state`, among the statement's `targets`; `None` when the guard
-    /// implies no condition the runtime can check on that state.
+    /// The wake test of `guard` for the object's own lock of the statement
+    /// whose binding is `binding` and whose state is at `state`; `None` when
+    /// the guard implies no condition the runtime can check on that state.
     pub(super) fn wake_test(
         &mut self,
         guard: &CheckedExpression,
         binding: BindingId,
         state: IrValueId,
-        targets: &[BindingId],
     ) -> Result<Option<IrWakeTest>, LoweringFailure> {
         let condition = self.wake_condition(
             ScopedExpression {
@@ -624,7 +616,6 @@ impl<'program> IrBuilder<'program> {
             },
             true,
             binding,
-            targets,
             &mut vec![Scope {
                 arguments: Vec::new(),
             }],
@@ -632,7 +623,7 @@ impl<'program> IrBuilder<'program> {
         )?;
         let condition = weakened(simplified(condition), ATOMS);
         if matches!(condition, Condition::True) {
-            return self.wake_callback(guard, binding, state, targets);
+            return self.wake_callback(guard, binding, state);
         }
         let mut test = IrWakeTest {
             values: vec![state],

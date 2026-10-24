@@ -6,11 +6,12 @@ fn replace(slot: &Option<u8>) -> result: unit writes(slot) {
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let owner = shared_map_new::<u8>(capacity: 1_u64);
+  let owner_map = map_new::<u8>(capacity: 1_u64);
+  let owner = shared_new::<ConcurrentHashMap<u8>>(value: move owner_map);
   let view = shared_read::<ConcurrentHashMap<u8>>(shared: &owner);
   let key = &names[0_u64..1_u64];
-  atomic observed = &view[key] {
-    replace(slot: observed);
+  atomic t = &view {
+    replace(slot: &t^[key]);
   }
   return std::process::exit_status(code: 0_u8);
 }

@@ -1,10 +1,10 @@
 fn probe<T: copy>(value: T) -> result: u8 pure waits {
-  let store = shared_map_new::<u8>(capacity: 1_u64);
   let keys = key_set_new(capacity: 1_u64);
-  atomic es = &store[keys] {
+  let store = shared_new::<KeySet>(value: move keys);
+  atomic t = &store {
     for (
       i in 0_u64..1_u64,
-      invariant forall reflexive(q in 0_u64..es^.len): value <= value
+      invariant forall reflexive(q in 0_u64..t^.len): value <= value
     ) {
       let count = i;
     }

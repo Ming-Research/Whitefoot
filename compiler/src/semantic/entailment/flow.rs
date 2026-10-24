@@ -124,7 +124,7 @@ use super::{
     LoopInvariantProof, MeasureKillNote, ObligationFamily, ObligationOutcome,
     PostconditionAggregate, PostconditionDisposition, PostconditionEntryImage,
     PostconditionEntryImageOutcome, PostconditionExit, RangeEndpointReading, RangeLengthReading,
-    SourceProofCertificateFailure, SourceProofCheck, SourceProofOutcome,
+    ReboundBinding, SourceProofCertificateFailure, SourceProofCheck, SourceProofOutcome,
     VerifiedPostconditionSummaryRef, fragment_type, overflow_conjuncts_for_values,
 };
 
@@ -268,12 +268,15 @@ struct ArmFacts {
 }
 
 /// [TYPE-11] an atomic block's type invariants, owed at each edge leaving
-/// the block: its end, a `return`, a `break` of a loop around it, a `give` to
-/// a value initializer around it, and an error propagation.
+/// the block: its end, a `return`, a `break` or `continue` of a loop around
+/// it, a `give` to a value initializer around it, and an error propagation.
 struct AtomicFrame {
     loop_depth: usize,
     give_depth: usize,
     invariants: Vec<crate::semantic::goal::CheckedCallRequirement>,
+    /// The first `set` of the block that rebinds the statement's binding;
+    /// in such a block each invariant is unproved at every leaving edge.
+    rebound: Option<ReboundBinding>,
 }
 
 /// A value initializer collecting give-edge states for its continuation.

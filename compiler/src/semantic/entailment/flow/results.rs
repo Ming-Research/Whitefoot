@@ -133,11 +133,9 @@ impl ResultDemand {
                 self.expression(lower);
                 self.expression(upper);
             }
-            CheckedStatement::Atomic { targets, guard, .. } => {
-                for target in targets {
-                    for expression in target.expressions() {
-                        self.expression(expression);
-                    }
+            CheckedStatement::Atomic { target, guard, .. } => {
+                for expression in target.expressions() {
+                    self.expression(expression);
                 }
                 if let Some(guard) = guard {
                     self.expression(guard);

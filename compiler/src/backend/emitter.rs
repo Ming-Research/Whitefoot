@@ -2913,6 +2913,7 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::SharedCountOut { object } => {
                 self.emit_shared_count_out(result, ty, *object)
             }
+            IrOperation::CancelFlag { object } => self.emit_cancel_flag(result, ty, *object),
             IrOperation::SharedFree { object } => self.emit_shared_free(result, *object),
             IrOperation::SnapshotAtomicBegin => self.emit_snapshot_atomic(result, true),
             IrOperation::SnapshotAtomicEnd => self.emit_snapshot_atomic(result, false),
@@ -2928,22 +2929,6 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             }
             IrOperation::ConcurrentHashMapNew { nominal, capacity } => {
                 self.emit_keyed_table_new(result, ty, *nominal, *capacity)
-            }
-            IrOperation::AtomicGroupTarget {
-                record,
-                index,
-                object,
-                hold,
-                wrote,
-            } => self.emit_atomic_group_target(result, *record, *index, *object, *hold, *wrote),
-            IrOperation::AtomicGroupTake { record } => {
-                self.emit_atomic_group_call(result, *record, None, true)
-            }
-            IrOperation::AtomicGroupAcquire { record } => {
-                self.emit_atomic_group_acquire(result, *record)
-            }
-            IrOperation::AtomicGroupRelease { record, nominal } => {
-                self.emit_atomic_group_call(result, *record, *nominal, false)
             }
             IrOperation::TableHoldRead { record } => {
                 self.emit_table_hold_call(result, *record, "wf__table_hold_read")
@@ -2969,6 +2954,9 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             } => self.emit_keyed_table_scan_within(result, [*table, *cursor, *count, *limit, *set]),
             IrOperation::ConcurrentHashMapClear { table } => {
                 self.emit_keyed_table_clear(result, *table)
+            }
+            IrOperation::ConcurrentHashMapSettle { table } => {
+                self.emit_keyed_table_settle(result, *table)
             }
             IrOperation::TableLockEntry {
                 record,
@@ -3008,35 +2996,15 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::TableHoldBegin { record, table } => {
                 self.emit_table_hold_begin(result, *record, *table)
             }
-            IrOperation::TableHoldKey { record, key } => {
-                self.emit_table_hold_key(result, *record, *key)
-            }
-            IrOperation::TableHoldKeys { record, set } => {
-                self.emit_table_hold_keys(result, *record, *set)
-            }
             IrOperation::TableHoldWhole { record } => {
                 self.emit_table_hold_call(result, *record, "wf__table_hold_whole")
             }
             IrOperation::TableHoldTake { record } => {
                 self.emit_table_hold_call(result, *record, "wf__table_hold_take")
             }
-            IrOperation::TableHoldSlot {
-                nominal,
-                record,
-                position,
-            } => self.emit_table_hold_slot(result, *nominal, *record, *position),
             IrOperation::TableHoldRelease { nominal, record } => {
                 self.emit_table_hold_release(result, *nominal, *record)
             }
-            IrOperation::EntriesRecord { record, .. } => {
-                self.emit_keyed_entries_record(result, *record)
-            }
-            IrOperation::EntriesFill {
-                entries,
-                hold,
-                position,
-                set,
-            } => self.emit_keyed_entries_fill(result, *entries, *hold, *position, *set),
             IrOperation::KeySetNew { capacity } => self.emit_key_set_new(result, ty, *capacity),
             IrOperation::KeySetInsert { set, key } => self.emit_key_set_insert(result, *set, *key),
             IrOperation::KeySetBytes { set } => self.emit_key_set_bytes(result, *set),
@@ -3054,6 +3022,11 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             IrOperation::WatchTable { record, table } => {
                 self.emit_watch_call(result, *record, Some(*table), "wf__watch_table")
             }
+            IrOperation::WatchCancel {
+                record,
+                object,
+                seen,
+            } => self.emit_watch_cancel(result, *record, *object, *seen),
             IrOperation::WatchPark { record, .. } => self.emit_watch_park(result, *record),
             IrOperation::BoxTake { nominal, value } => {
                 self.emit_box_take(result, ty, *nominal, *value)
@@ -3620,9 +3593,9 @@ pub(super) fn llvm_type_with_references(
         IrType::Range { .. } => Ok("{ ptr, i64 }".to_owned()),
         IrType::Run { .. } => Ok("{ ptr, i64, i64 }".to_owned()),
         // [SHARE-1] a key set is its count, its one measure, and a pointer to
-        // the runtime's store; the entries an entry binding names are the
-        // statement's record of its hold, the set's first position in it and
-        // the set's count [SHARE-2].
+        // the runtime's store; the entries a key-set subscript selects are a
+        // pointer to what selects them, the set's first position there and
+        // the set's count [OP-4].
         IrType::KeySet => Ok("{ i64, ptr }".to_owned()),
         IrType::Entries { .. } => Ok("{ ptr, i64, i64 }".to_owned()),
         // compiler/storage-representation: a runtime-capacity `Array<T>` is

@@ -107,7 +107,7 @@ pub enum IrAddressed {
     },
     /// One `KeySet` place [SHARE-1].
     KeySet,
-    /// The entries an entry binding over a key set names [SHARE-2].
+    /// The entries a key-set subscript selects [OP-4, SHARE-1].
     Entries {
         element: IrElement,
     },
@@ -242,10 +242,11 @@ pub enum IrType {
     /// One `KeySet` [SHARE-1]: its key count, the type's one measure, then a
     /// pointer to the runtime's store of its keys and payloads, `{ i64, ptr }`.
     KeySet,
-    /// The entries an entry binding over a key set names [SHARE-2]: the
-    /// statement's record of its hold, the position of the set's first key in
-    /// that hold and the set's count, `{ ptr, i64, i64 }`. It is only ever
-    /// reached through its address, which the binding names.
+    /// The entries a key-set subscript selects [OP-4, SHARE-1]: a pointer to
+    /// what selects them, the map's hold for a write or a private read
+    /// selection, the position of the set's first key there and the set's
+    /// count, `{ ptr, i64, i64 }`. It is only ever reached through its
+    /// address, the reference the subscript forms.
     Entries {
         element: IrElement,
     },
@@ -409,11 +410,11 @@ pub enum IrShared {
     Map { entry: IrType },
 }
 
-/// A record a statement keeps in its frame for the runtime
+/// A record a function keeps in its frame for the runtime
 /// (compiler/waiting-contexts/state-locks): the lock of one entry, a hold of
-/// a table's entries, the entries an entry binding over a key set names, or
-/// a guard's watch. A function numbers its records; the backend reserves
-/// each once in the frame, so a statement inside a loop reuses its own.
+/// a table's entries, the entries a key-set subscript selects, or a guard's
+/// watch. It numbers its records; the backend reserves each once in the
+/// frame, so a statement inside a loop reuses its own.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct IrRecord {
     pub(crate) index: u32,
@@ -435,7 +436,6 @@ impl IrRecord {
 /// What an [`IrRecord`] holds, which fixes its size.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum IrRecordKind {
-    AtomicGroup { count: u32 },
     TableEntry,
     TableHold,
     Entries,
@@ -1316,6 +1316,13 @@ pub enum IrOperation {
     SharedCountOut {
         object: IrValueId,
     },
+    /// [PRE-2] the cancellation flag of the state the shared object `object`
+    /// names, read without holding that object: the acquire read of the
+    /// flag's atomic mirror, which the held false-to-true transition
+    /// publishes. Defines a `Bool`.
+    CancelFlag {
+        object: IrValueId,
+    },
     /// [SHARE-1] returns the object `object` names, whose last handle was
     /// counted out and whose state was moved out, to the runtime. Defines
     /// `Unit`.
@@ -1325,7 +1332,8 @@ pub enum IrOperation {
     /// Native snapshot signal preparation before any atomic acquisition.
     /// Erased when the composition uses no snapshot export.
     SnapshotAtomicBegin,
-    /// Activates prepared captures after all atomic targets are released.
+    /// Activates prepared captures after the statement has released every
+    /// lock unit it holds.
     SnapshotAtomicEnd,
     /// [SHARE-2, SHARE-3] waits until this context holds the object alone.
     /// Defines `Unit`.
@@ -1355,40 +1363,12 @@ pub enum IrOperation {
         object: IrValueId,
         wrote: bool,
     },
-    /// [SHARE-1] a new shared map object of `nominal`, whose entries are
-    /// `Option<V>`, sized for `capacity` keys and holding none. Defines its
-    /// owned `Shared<ConcurrentHashMap<V>>` handle.
+    /// [SHARE-1] a new map of the map nominal `nominal`, whose entries are
+    /// `Option<V>`, sized for `capacity` keys and holding none. Defines the
+    /// owned `ConcurrentHashMap<V>`.
     ConcurrentHashMapNew {
         nominal: IrNominalId,
         capacity: IrValueId,
-    },
-    /// Fills target `index` of a type group's record: its object, its
-    /// table hold when it is a map, and, for an ordinary object, whether the
-    /// statement's block or guard may write it, so that the group's release
-    /// gives it up as written only then [SHARE-3]. Defines `Unit`.
-    AtomicGroupTarget {
-        record: IrRecord,
-        index: u32,
-        object: IrValueId,
-        hold: Option<IrRecord>,
-        wrote: bool,
-    },
-    /// [SHARE-2, SHARE-3] takes every target of a type group, as
-    /// `SharedTake` does, for a statement already holding an earlier group.
-    /// Defines `Unit`.
-    AtomicGroupTake {
-        record: IrRecord,
-    },
-    /// [SHARE-2, SHARE-3] takes every target of the statement's first type
-    /// group: waits, as `SharedAcquire` does, until this context holds the
-    /// group's first object, suspending with nothing held, and then takes
-    /// the others. Defines `Unit`.
-    AtomicGroupAcquire {
-        record: IrRecord,
-    },
-    AtomicGroupRelease {
-        record: IrRecord,
-        nominal: Option<IrNominalId>,
     },
     TableHoldRead {
         record: IrRecord,
@@ -1427,8 +1407,16 @@ pub enum IrOperation {
     },
     /// [SHARE-1] makes every entry of the table `table` `None`; the values
     /// they held are released once the statement holding the table gives
-    /// its hold up. Defines `Unit`.
+    /// its hold up, or at once under the hold the table keeps for writes no
+    /// statement holds it for. Defines `Unit`.
     ConcurrentHashMapClear {
+        table: IrValueId,
+    },
+    /// [SHARE-1] gives up the hold the table `table` keeps for writes no
+    /// statement holds it for, counting the entries it wrote, as the table
+    /// enters a shared state at a path a statement locks it by
+    /// (compiler/waiting-contexts/state-locks). Defines `Unit`.
+    ConcurrentHashMapSettle {
         table: IrValueId,
     },
     /// [SHARE-3] locks the entry under the bytes the range `key` names in the
@@ -1479,19 +1467,6 @@ pub enum IrOperation {
         record: IrRecord,
         table: IrValueId,
     },
-    /// Adds the key the range `key` names to a hold. Defines its position in
-    /// the hold, a `u64`.
-    TableHoldKey {
-        record: IrRecord,
-        key: IrValueId,
-    },
-    /// Adds every key of the key set `set` addresses to a hold, in the set's
-    /// order. Defines the position of the set's first key, a `u64`; key i is
-    /// at that position plus i.
-    TableHoldKeys {
-        record: IrRecord,
-        set: IrValueId,
-    },
     /// Makes a hold's take hold the table whole. Defines `Unit`.
     TableHoldWhole {
         record: IrRecord,
@@ -1501,34 +1476,11 @@ pub enum IrOperation {
     TableHoldTake {
         record: IrRecord,
     },
-    /// The address of the entry added at `position` to the taken hold
-    /// `record`, an `Option<V>` of the table nominal `nominal`.
-    TableHoldSlot {
-        nominal: IrNominalId,
-        record: IrRecord,
-        position: IrValueId,
-    },
     /// [SHARE-3] gives up a hold, each entry kept when it holds `Some` and
     /// removed when it holds `None`. Defines `Unit`.
     TableHoldRelease {
         nominal: IrNominalId,
         record: IrRecord,
-    },
-    /// The entries an entry binding over a key set names [SHARE-2], kept in
-    /// `record`, which [`Self::EntriesFill`] fills when the hold is
-    /// taken. Defines their address, an [`IrAddressed::Entries`].
-    EntriesRecord {
-        record: IrRecord,
-        element: IrElement,
-    },
-    /// Records in the entries `entries` addresses the hold `hold`, the
-    /// position `position` of the first key of the set `set` addresses in
-    /// it, and the set's count. Defines `Unit`.
-    EntriesFill {
-        entries: IrValueId,
-        hold: IrRecord,
-        position: IrValueId,
-        set: IrValueId,
     },
     /// [SHARE-1] an empty key set with room for `capacity` keys. Defines the
     /// set.
@@ -1573,6 +1525,15 @@ pub enum IrOperation {
     WatchTable {
         record: IrRecord,
         table: IrValueId,
+    },
+    /// [PRE-2] watches the cancellation state the shared object `object`
+    /// names for its firing, for a guard that read its flag: `seen` is the
+    /// `Bool` the guard read, and a flag read true has no change left to
+    /// wait for. Defines `Unit`.
+    WatchCancel {
+        record: IrRecord,
+        object: IrValueId,
+        seen: IrValueId,
     },
     /// With everything the statement held given up: waits until a watched
     /// unit has been written since the watch began, which may suspend the

@@ -962,3 +962,203 @@ lexical ordering: it failed with the required 2-before-10 assertion, and the
 correct implementation was restored. The old compiler's contradictory
 results above were observed before changing it; the new cases retain those
 distinguishing observations.
+
+## One object per statement
+
+The specification amendment of 2026-10-23 (`spec/log.md`, "an atomic statement
+holds one shared object") replaces the independent targets above (board item
+`one-object-statement`). The independent-targets design kept a statement sound
+with facts only the runtime had: two handles of one state type may name one
+object, so the checker compared the paths of every two targets whose state
+types unify as paths from one root, and lowering sorted objects by identity
+and merged duplicate holds. Under one object a statement names one handle
+place and binds a reference to the object's whole state. State that changes
+together is one state, its parts reached by ordinary paths from one root and
+told apart by OWN-7 as the parts of any value are, and two objects are never
+held together, so neither comparison nor merge remains.
+
+### What the specification changes
+
+- GRAM-4 and SHARE-2: one target, `atomic s = &h when g { ... }`; entry and
+  key-set targets, possibly equal handles, unified-type roots and the lock
+  order across objects are retired with their uses in REF-1, OWN-7, EFF-2,
+  HOLD-1, FN-1, TYPE-11, RANGE-2 and RANGE-3.
+- SHARE-3 states the equivalence the lowering relies on: an implementation
+  may hold less of the state, or hold it together with other statements, only
+  where every outcome equals exclusive access to the whole state, and a part
+  that a fact of the statement's checking names counts as accessed.
+- SHARE-1, TYPE-9 and PRE-1: a `ConcurrentHashMap<V>` is an ordinary affine
+  value made by `map_new`; `shared_map_new` is retired; `m[k]` and `&m[ks]`
+  select entries on any map place; `release_map_reserve` takes the map.
+- PRE-2: a watch's `fired` reads the cancellation flag without holding the
+  state, only as a place atom of a guard or block; each read takes effect at
+  its own point before the statement's point and names no fact.
+
+### Lock units
+
+The lowering divides the state into units: one per map reached from the root
+through struct fields only, and one object unit for every other part, maps
+inside arrays, `Option`s, `Box`es and other maps' entries included. Units are
+ordered by field path and taken at first use together with every earlier
+unit, guard units before the guard, so no two statements take two units in
+opposite orders. A map unit is an entry lock when every reach of that map in
+the guard and block is `s^.m[k]` with one key binding declared outside the
+statement that the statement neither rebinds nor writes, at the binding or at
+any byte the key names, through the key or another reference to those bytes;
+any other reach takes the map whole. An
+invariant the checking uses, a type invariant of the state, affine or with a
+range, or a local or loop invariant in the block, takes every unit whole,
+since its facts may name parts the block never reaches (SHARE-3).
+
+Field order is now a writer's lever: a state declares its map fields first
+so that statements on different keys run their blocks side by side and meet
+only at the other fields. A statement that selects entries by a key set takes
+its map whole, where a key-set target took only the set's entries; finer units
+for that case belong to the lock-unit work (`one-object-lock-units`). An
+entry lock inserts its entry only when a write of the guard or block may
+change the entry's variant: the checker keeps, for each written path, whether
+its place has an enum payload step before a dynamic selector truncates it, as
+it kept a flag per entry target before, so a statement that writes only
+inside the entry's payload takes no cell for a missing key.
+
+### A map as a value
+
+A statement waiting on a map unit keeps the map's address, so a write or a
+`swap` of a value holding maps exchanges the maps' contents rather than their
+addresses. A map that no statement holds, written outside any statement or
+under its object's own lock, takes a local hold when it is first written;
+`shared_new` and the map's release settle it, and a `map_clear` under it
+releases the entries it takes out at once rather than when the hold is
+settled. The design tree had refused a local map whose access rules differed
+by position and whose hidden hold had to be settled at publication; access
+is now one rule in every position (an ordinary path and OP-4), and the hold
+is settled at those two points only.
+
+### Cancellation flags
+
+A guard or block reads a watch's flag through the watch's one field, the
+handle of its cancellation state: an acquire read of the state's atomic
+mirror, which the firing sets in its held transition, so a read of true also
+sees every update completed before the firing. A guard that reads a flag
+false cannot use the object watches' buckets and sweep, since it never holds
+the cancellation state and so cannot pass a notification on; it links its
+watch on a plain list in the cancellation state and then reads the flag
+again, and the first firing, after setting the flag, wakes the whole list
+under the watch lock, so a watch linked before the firing is woken by it and
+one linked after it sees the flag set. A guard that read the flag true does
+not link. A statement whose guard reads a flag waits through the general
+watch path even when its object has one unit, where a guard on one object
+alone uses the fused object wait.
+
+### Conformance transitions
+
+Cases whose rule that amendment retires are removed: two targets whose handle places
+may overlap or are proved apart, an index step on a target or a handle place
+reached through another target, state types of two targets compared by
+unification, one object held once through two handles, locks over several
+objects in one order, entry-target keys read when the statement begins, and
+alias partitions of two targets of one invariant-bearing type (one target's
+leaving edges stay pinned by the `type11-neg-atomic-*` cases). The partition
+case that rebound one of two targets also pinned that a rebound binding still
+owes the state's invariant on leaving, which one binding keeps: it is
+rewritten for one binding as `type11-neg-range-atomic-rebound-binder`, with
+an affine counterpart, `type11-neg-atomic-rebound-binder`. The TYPE-9 map
+placement cases reverse their verdicts and are replaced by positive cases
+under new ids. Every other case that used several targets, entry or key-set
+targets or `shared_map_new` is rewritten for one object with its verdict
+kept: two objects a statement held together become two fields of one state,
+and an entry target becomes a subscript or a borrow inside the block.
+
+### A rebound binding at a leaving edge
+
+The affine counterpart of the rebound-binding case found a soundness defect
+in TYPE-11, older than one object per statement. TYPE-11 owed each type
+invariant at an edge leaving the block over the binding's referent, as an
+invariant stated at that edge, and a place written through a rebound binding
+names its current target [ENT-2]. So the block of
+`type11-neg-atomic-rebound-binder`
+
+```wf
+atomic a = &state {
+  let top = a^.high;
+  // The state's low now equals its high: the invariant is broken.
+  set a^.low = top;
+  // From here a names the local value, and no term names the state.
+  set a = &fresh;
+  set a^.low = 0_u64;
+  set a^.high = 1_u64;
+}
+```
+
+had its invariant judged over `fresh`, which is in order, and was accepted,
+while the statement left the shared state with `low == high`. main's compiler
+at cb5be3621, run in CI on both cases, accepted it too and already refused
+the range form, `type11-neg-range-atomic-rebound-binder`: the range walk
+judges the invariant over the binding's value at the block's entry, which is
+the state.
+
+Three rules were weighed:
+
+- Each affine type invariant is unproved at every edge leaving a block in
+  which some `set` rebinds the binding, reachable or not. FN-9 already treats
+  a reference parameter the body rebinds this way: no term of the body names
+  the storage it received, so a relation over its exit state is unproved at
+  every return. It refuses a block that rebinds its binding and leaves the
+  state in order, which can name its other value through a reference
+  variable of its own.
+- Refusing every `set` that rebinds an atomic statement's binding. It also
+  refuses statements whose state has no invariant, such as the guard read
+  through an alias of a rebound binding that
+  `fn8-pos-guard-through-alias-of-rebound-atomic-binder` accepts, and makes
+  the binding the one reference variable that cannot be rebound [REF-1].
+- A proof root for the statement's state, which a rebinding leaves naming
+  the state, so the leaving edge proves the state's last value and a block
+  that rebinds and keeps the state in order is accepted. The state's storage
+  then has two identities in the proof, and the binding is treated apart
+  from a rebound reference parameter, as the entry referents that
+  `language/checks-and-proofs/proof-identity` refuses would treat it.
+
+The first is chosen, following the design card one-object-rebound-binder on
+the board item one-object-core: it reuses the rule that already covers the
+other reference variable whose rebinding leaves its storage unnamed, and
+adds no identity to the proof. TYPE-11 states it, RANGE-3 now names the
+statement's state where it named the binding's referent, the checker records
+each affine invariant of such a block unproved at every leaving edge without
+judging it, and the repair names the rebinding `set`, asks for the binding to
+stay on the state and for the other value to be named through a reference
+variable of its own. The Lean model under `proof/` leaves atomic statements
+outside its fragment, so the model has no case for this rule.
+
+### Firn under one object
+
+A keyspace holds `data: Shared<Data>`, `Data` being the keys' map followed by
+the metadata, and keeps `server` as its own object. A statement that held a
+key's entry and the metadata as two targets now holds `data` and reaches
+`d^.keys[key]` and `d^.meta` by paths; the flush makes an empty map before
+the statement, swaps it with `d^.keys` inside and releases the old entries
+after it. No helper's parameter type changed: helpers still take
+`&Option<Entry>`, `&Entries<Entry>` and `&Meta`, now formed from the state's
+paths. Two costs of the rewrite: every statement spells the state path where
+a target binder stood, and the multi-key commands (`DEL`, `MSET`, `MGET` and
+the other key-set statements) take the keys' map whole.
+
+`set_key` in `commands/strings.wf` shows the first cost. Its statement names
+the key's entry at four places, each now `&d^.keys[key]` where it was
+`slot`. Two of its lines before, with the entry and the metadata as two
+targets:
+
+```wf
+atomic slot = &store^.keys[key], m = &store^.meta {
+  let kind = entry_kind(slot: slot, client: client);
+  log_removal(log: &m^.log, key: key);
+}
+```
+
+and after, every part reached by its path from the one binding:
+
+```wf
+atomic d = &store^.data {
+  let kind = entry_kind(slot: &d^.keys[key], client: client);
+  log_removal(log: &d^.meta.log, key: key);
+}
+```

@@ -21,7 +21,6 @@ fn contains_call(expression: &CheckedExpression) -> bool {
 struct Audit<'builder, 'program> {
     builder: &'builder IrBuilder<'program>,
     target: BindingId,
-    targets: &'builder [BindingId],
     captures: Vec<(BindingId, IrType)>,
     reads_target: bool,
     active: HashSet<FunctionId>,
@@ -39,7 +38,7 @@ impl Audit<'_, '_> {
             self.reads_target = true;
             return true;
         }
-        if reference || self.targets.contains(&binding) {
+        if reference {
             return false;
         }
         let Some(value) = self.builder.bindings.get(&binding).copied() else {
@@ -203,7 +202,6 @@ impl IrBuilder<'_> {
         expression: &CheckedExpression,
         binding: BindingId,
         state: IrValueId,
-        targets: &[BindingId],
     ) -> Result<Option<IrWakeTest>, LoweringFailure> {
         // Keep the original inline lowering (including its conservative
         // no-filter cases) unchanged. This path supplies full evaluation for
@@ -214,7 +212,6 @@ impl IrBuilder<'_> {
         let mut audit = Audit {
             builder: self,
             target: binding,
-            targets,
             captures: Vec::new(),
             reads_target: false,
             active: HashSet::new(),

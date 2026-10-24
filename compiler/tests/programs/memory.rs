@@ -106,7 +106,8 @@ fn concurrent_contexts_return_to_their_initial_heap_reading() {
     }
 }
 
-/// A steady map's reserve goes on request: the release answers the bytes
+/// A steady map's reserve goes on request, made in a statement that holds
+/// the map: the release answers the bytes
 /// the heap reading falls by, exactly, for a small map whose reserve is a
 /// pool block larger than its cells, for a larger pooled one, and for one
 /// whose cells are mapped from the host; a second release answers nothing,

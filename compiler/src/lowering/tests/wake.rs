@@ -1,7 +1,9 @@
 //! [SHARE-3] Wake tests (compiler/waiting-contexts/state-locks): the
-//! condition a guard's watch registers for one object, derived from the
-//! guard, and the write flag each release passes. A guard is one comparison
-//! of two atoms, one Bool atom, or one call over atoms [GRAM-5, GRAM-6].
+//! condition a guard's watch registers for the object's own lock, derived
+//! from the guard, the entry a statement that holds several lock units
+//! registers for each unit its guard reads, and the write flag each release
+//! passes. A guard is one comparison of two atoms, one Bool atom, or one call
+//! over atoms [GRAM-5, GRAM-6].
 
 use super::*;
 use crate::{IrConstant, IrPlaceStep, IrWakeCode, IrWakeComparison, IrWakeOperand, IrWakeTest};
@@ -787,10 +789,55 @@ fn main() -> status: std::process::ExitStatus pure waits {
     });
 }
 
+/// One object whose state holds a `Left` part and a `Right` part, so a guard
+/// over both parts is a condition over one state, and the statement, whose
+/// state holds no map, waits on the object's own lock alone.
+fn two_parts(guard: &str) -> String {
+    format!(
+        r#"struct Left {{
+  n: u64;
+  ready: Bool;
+}}
+
+struct Right {{
+  m: u64;
+  ready: Bool;
+}}
+
+struct Pair {{
+  left: Left;
+  right: Right;
+}}
+
+fn main() -> status: std::process::ExitStatus pure waits {{
+  let no = False();
+  let first = Left(n: 0_u64, ready: no);
+  let second = Right(m: 0_u64, ready: no);
+  let pair = Pair(left: first, right: second);
+  let state = shared_new::<Pair>(value: pair);
+  atomic p = &state when {guard} {{
+    set p^.left.n = p^.right.m;
+  }}
+  return std::process::exit_status(code: 0_u8);
+}}
+"#
+    )
+}
+
+/// The part of [`two_parts`]'s state, `left` (0) or `right` (1), that holds
+/// the scalar at `position` of `test`'s values.
+fn part(program: &IrProgram, test: &IrWakeTest, position: usize) -> u32 {
+    let IrOperation::ProjectAddress { address, .. } = definition(program, test.values[position])
+    else {
+        panic!("a part's scalar has a projected address: {test:?}");
+    };
+    field_index(program, address)
+}
+
 #[test]
-fn a_full_guard_reading_another_target_stays_unfiltered_for_both_objects() {
-    const HELPER: &str = r#"fn matching_states(left: &Left, right: &Right) -> ready: Bool reads(left.n), reads(right.m) {
-  let matching = left^.n == right^.m;
+fn a_full_guard_over_two_parts_of_the_state_registers_one_callback() {
+    const HELPER: &str = r#"fn matching_parts(pair: &Pair) -> ready: Bool reads(pair.left), reads(pair.right) {
+  let matching = pair^.left.n == pair^.right.m;
   if matching {
     return True();
   }
@@ -798,14 +845,16 @@ fn a_full_guard_reading_another_target_stays_unfiltered_for_both_objects() {
 }
 
 "#;
-    let source = two_targets("matching_states(left: p, right: q)")
-        .replace("fn main()", &format!("{HELPER}fn main()"));
+    let source =
+        two_parts("matching_parts(pair: p)").replace("fn main()", &format!("{HELPER}fn main()"));
     with_ir(source.as_bytes(), |program| {
         let tests = watch_tests(program);
-        assert_eq!(tests.len(), 2);
+        let [Some(test)] = tests.as_slice() else {
+            panic!("the object's one watch has a test: {tests:?}");
+        };
         assert!(
-            tests.iter().all(Option::is_none),
-            "a wake scan has only the written object's state: {tests:?}"
+            test.callback.is_some() && test.atoms.is_empty() && test.values.len() == 1,
+            "the callback reads both parts from the one live state: {test:?}"
         );
     });
 }
@@ -905,28 +954,36 @@ fn and_or_and_not_combine_atoms_and_dropped_parts_become_true() {
     });
 }
 
-/// Two targets of different types, so each is its own group and watched as
-/// an object of a watch of several units.
-fn two_targets(guard: &str) -> String {
+/// A program whose one guarded statement waits on `guard` over the state `g`
+/// of a `Gate` that holds a map beside its scalars, and writes the scalar
+/// `n` and the map's entry under `k`: the statement holds two lock units, the
+/// map's and then the object's own, and a false guard waits on the units it
+/// reads with `WatchBegin`, one entry each and `WatchPark`.
+fn map_gate(guard: &str) -> String {
     format!(
-        r#"struct Left {{
+        r#"struct Gate {{
+  index: ConcurrentHashMap<u8>;
   n: u64;
   ready: Bool;
 }}
 
-struct Right {{
-  m: u64;
-  ready: Bool;
+const key: Array<u8, 1> =[97_u8];
+
+fn has_entries(gate: &Gate) -> result: Bool reads(gate) {{
+  let count = map_count::<u8>(map: &gate^.index);
+  return count != 0_u64;
 }}
 
 fn main() -> status: std::process::ExitStatus pure waits {{
   let no = False();
-  let first = Left(n: 0_u64, ready: no);
-  let second = Right(m: 0_u64, ready: no);
-  let left = shared_new::<Left>(value: first);
-  let right = shared_new::<Right>(value: second);
-  atomic p = &left, q = &right when {guard} {{
-    set p^.n = q^.m;
+  let table = map_new::<u8>(capacity: 1_u64);
+  let start = Gate(index: move table, n: 0_u64, ready: no);
+  let state = shared_new::<Gate>(value: move start);
+  let mine = 1_u64;
+  let k = &key[0_u64..1_u64];
+  atomic g = &state when {guard} {{
+    set g^.n = mine;
+    set g^.index[k] = Some<u8>(value: 1_u8);
   }}
   return std::process::exit_status(code: 0_u8);
 }}
@@ -934,42 +991,65 @@ fn main() -> status: std::process::ExitStatus pure waits {{
     )
 }
 
+/// The watch operations `main` registers, in block order: `SharedWatch` for
+/// a statement that holds only the object's own lock, otherwise `WatchBegin`,
+/// an entry per unit the guard reads and `WatchPark`.
+fn watch_steps(program: &IrProgram) -> Vec<&'static str> {
+    function(program, "main")
+        .blocks()
+        .iter()
+        .flat_map(|block| block.instructions())
+        .filter_map(|instruction| match instruction {
+            IrInstruction::Define { operation, .. } => match operation {
+                IrOperation::SharedWatch { .. } => Some("single"),
+                IrOperation::WatchBegin { .. } => Some("begin"),
+                IrOperation::WatchObject { .. } => Some("object"),
+                IrOperation::WatchTable { .. } => Some("table"),
+                IrOperation::WatchPark { .. } => Some("park"),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+/// The field of `ready` in the state of [`map_gate`], after the map and `n`.
+const MAP_GATE_READY: u32 = 2;
+
 #[test]
-fn each_object_of_several_gets_the_condition_on_its_own_state() {
+fn each_guard_unit_of_one_state_gets_its_own_watch_entry() {
     use IrWakeComparison::NotEqual;
-    with_ir(two_targets("band(p^.ready, q^.ready)").as_bytes(), |program| {
+    // A guard that reads the object's own scalar and not the map waits on
+    // the object's lock alone, with the condition on `ready`; the map's unit,
+    // which the block holds, has no entry.
+    with_ir(map_gate("g^.ready").as_bytes(), |program| {
+        assert_eq!(watch_steps(program), ["begin", "object", "park"]);
         let tests = watch_tests(program);
-        assert_eq!(tests.len(), 2, "{tests:?}");
-        for test in &tests {
-            let test = test.as_ref().expect("each object has a test");
-            assert_eq!(atoms(program, test), [(1, NotEqual, Read::False)]);
-            assert_eq!(test.program, [IrWakeCode::Atom(0)]);
-        }
-        // Each test reads its own object's state, not the other's.
-        let states = tests
-            .iter()
-            .map(|test| test.as_ref().map(|test| test.values[0]))
-            .collect::<Vec<_>>();
-        assert_ne!(states[0], states[1], "{tests:?}");
+        let [Some(test)] = tests.as_slice() else {
+            panic!("the object's entry has a test: {tests:?}");
+        };
+        assert_eq!(
+            atoms(program, test),
+            [(MAP_GATE_READY, NotEqual, Read::False)]
+        );
+        assert_eq!(test.program, [IrWakeCode::Atom(0)]);
     });
-    // A disjunction across the two objects can become true by a write to
-    // either, so neither object's writes are filtered.
-    with_ir(two_targets("bor(p^.ready, q^.ready)").as_bytes(), |program| {
+    // A call over the whole state reads the map too: an entry for the map
+    // first, in field order, then the object's, which has no condition to
+    // check because the call's result relates to no field.
+    with_ir(map_gate("has_entries(gate: g)").as_bytes(), |program| {
+        assert_eq!(watch_steps(program), ["begin", "table", "object", "park"]);
         let tests = watch_tests(program);
-        assert_eq!(tests.len(), 2, "{tests:?}");
-        assert!(tests.iter().all(Option::is_none), "{tests:?}");
-    });
-    // A comparison of one object's field with the other's is checkable on
-    // neither state alone.
-    with_ir(two_targets("p^.n == q^.m").as_bytes(), |program| {
-        let tests = watch_tests(program);
-        assert_eq!(tests.len(), 2, "{tests:?}");
-        assert!(tests.iter().all(Option::is_none), "{tests:?}");
+        assert!(
+            tests.len() == 1 && tests.iter().all(Option::is_none),
+            "{tests:?}"
+        );
     });
 }
 
 #[test]
-fn helpers_over_several_targets_preserve_conjuncts_and_weaken_disjuncts() {
+fn helpers_over_two_parts_of_one_state_keep_conjuncts_and_disjuncts() {
+    use IrWakeComparison::{Equal, NotEqual};
     const HELPERS: &str = r#"fn both(left: &Left, right: &Right) -> ready: Bool reads(left.ready), reads(right.ready) {
   return band(left^.ready, right^.ready);
 }
@@ -983,42 +1063,60 @@ fn matching(left: &Left, right: &Right) -> ready: Bool reads(left.n), reads(righ
 }
 
 "#;
-    for (guard, kept) in [
-        ("band(p^.ready, q^.ready)", true),
-        ("both(left: p, right: q)", true),
-        ("bor(p^.ready, q^.ready)", false),
-        ("either(left: p, right: q)", false),
-        ("p^.n == q^.m", false),
-        ("matching(left: p, right: q)", false),
+    // Each part's `ready` is its second field; the two atoms read it under
+    // `left` and under `right`, joined as the guard joins them.
+    for (guard, joined) in [
+        ("band(p^.left.ready, p^.right.ready)", IrWakeCode::And),
+        ("both(left: &p^.left, right: &p^.right)", IrWakeCode::And),
+        ("bor(p^.left.ready, p^.right.ready)", IrWakeCode::Or),
+        ("either(left: &p^.left, right: &p^.right)", IrWakeCode::Or),
     ] {
-        let source = two_targets(guard).replace("fn main()", &format!("{HELPERS}fn main()"));
+        let source = two_parts(guard).replace("fn main()", &format!("{HELPERS}fn main()"));
         with_ir(source.as_bytes(), |program| {
             let tests = watch_tests(program);
-            assert_eq!(tests.len(), 2, "{guard}: {tests:?}");
-            for test in &tests {
-                if kept {
-                    let test = test
-                        .as_ref()
-                        .expect("each conjunct belongs to its own object");
-                    assert_eq!(
-                        atoms(program, test),
-                        [(1, IrWakeComparison::NotEqual, Read::False)]
-                    );
-                    assert_eq!(test.program, [IrWakeCode::Atom(0)]);
-                } else {
-                    assert!(
-                        test.is_none(),
-                        "a write to either target may satisfy {guard}: {test:?}"
-                    );
-                }
-            }
-            if kept {
-                assert_ne!(
-                    tests[0].as_ref().expect("left filter").values[0],
-                    tests[1].as_ref().expect("right filter").values[0],
-                    "the two helpers' atoms must stay rooted in separate target states"
-                );
-            }
+            let [Some(test)] = tests.as_slice() else {
+                panic!("the object's one watch has a test for {guard}: {tests:?}");
+            };
+            assert_eq!(
+                atoms(program, test),
+                [(1, NotEqual, Read::False), (1, NotEqual, Read::False)],
+                "{guard}"
+            );
+            assert_eq!(
+                test.program,
+                [IrWakeCode::Atom(0), IrWakeCode::Atom(1), joined],
+                "{guard}"
+            );
+            let parts = test
+                .atoms
+                .iter()
+                .map(|atom| part(program, test, atom.field))
+                .collect::<Vec<_>>();
+            assert_eq!(parts, [0, 1], "{guard}");
+        });
+    }
+    // A comparison of one part's field with the other's is one atom whose
+    // scalar and operand are both fields of the state.
+    for guard in [
+        "p^.left.n == p^.right.m",
+        "matching(left: &p^.left, right: &p^.right)",
+    ] {
+        let source = two_parts(guard).replace("fn main()", &format!("{HELPERS}fn main()"));
+        with_ir(source.as_bytes(), |program| {
+            let tests = watch_tests(program);
+            let [Some(test)] = tests.as_slice() else {
+                panic!("the object's one watch has a test for {guard}: {tests:?}");
+            };
+            assert_eq!(atoms(program, test), [(0, Equal, Read::Field(0))], "{guard}");
+            assert_eq!(test.program, [IrWakeCode::Atom(0)], "{guard}");
+            let IrWakeOperand::Field(operand) = test.atoms[0].operand else {
+                panic!("the operand is a field: {test:?}");
+            };
+            assert_eq!(
+                [part(program, test, test.atoms[0].field), part(program, test, operand)],
+                [0, 1],
+                "{guard}"
+            );
         });
     }
 }
@@ -1061,13 +1159,14 @@ fn main() -> status: std::process::ExitStatus pure waits {
     with_ir(source, |program| {
         assert_eq!(unlock_flags(program), [false, true]);
     });
-    // A false guard over two objects releases both unwritten although the
-    // block writes one; leaving the block releases the written one as
-    // written and the read one as unwritten: one written release of four.
-    with_ir(two_targets("band(p^.ready, q^.ready)").as_bytes(), |program| {
+    // A false guard over a state of two units releases the object's lock
+    // unwritten although the block writes it; leaving the block releases it
+    // as written: one written release of two. The map's unit is released by
+    // its own operation and passes no flag.
+    with_ir(map_gate("g^.ready").as_bytes(), |program| {
         let mut flags = unlock_flags(program);
         flags.sort_unstable();
-        assert_eq!(flags, [false, false, false, true]);
+        assert_eq!(flags, [false, true]);
     });
 }
 

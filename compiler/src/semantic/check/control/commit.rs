@@ -500,6 +500,9 @@ impl<'unit> Checker<'_, 'unit> {
             .get(&declaration)
             .ok_or(SemanticCompilerFailure::InvalidResolution)?
             .binding;
+        if self.body.atomic_depth > 0 {
+            self.body.held_rebindings.push(binding);
+        }
         // [REF-1, ENT-5] the RHS captures before the holder is replaced.
         // Include its new path alongside existing references when ending
         // offset spellings that read the old holder, without invalidating

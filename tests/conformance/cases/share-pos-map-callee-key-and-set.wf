@@ -1,7 +1,7 @@
 const names: Array<u8, 2> =[97_u8, 98_u8];
 
 fn fill(m: &ConcurrentHashMap<u8>, ks: &KeySet, k: &[u8]) -> result: u8 reads(ks), reads(k), writes(m) {
-  doc "SHARE-2: a callee's map reference admits key and key-set selections; the entries length equals the set length without a guard.";
+  doc "SHARE-1: a callee's map reference admits key and key-set selections; the entries length equals the set length without a guard [ENT-3].";
   let es = &m^[ks^];
   for @each (i in 0_u64..ks^.len) {
     set es^[i] = Some<u8>(value: 4_u8);
@@ -18,7 +18,8 @@ fn fill(m: &ConcurrentHashMap<u8>, ks: &KeySet, k: &[u8]) -> result: u8 reads(ks
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<u8>(capacity: 2_u64);
+  let store_map = map_new::<u8>(capacity: 2_u64);
+  let store = shared_new::<ConcurrentHashMap<u8>>(value: move store_map);
   let ks = key_set_new(capacity: 2_u64);
   let first = &names[0_u64..1_u64];
   let second = &names[1_u64..2_u64];

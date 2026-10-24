@@ -77,7 +77,7 @@ impl IrBuilder<'_> {
             "shared_share" | "shared_read" | "shared_read_share" | "frozen_share" => {
                 self.row_shared_share()
             }
-            "shared_map_new" => self.row_shared_map_new(),
+            "map_new" => self.row_map_new(),
             "map_count" => self.row_map_count(),
             "map_scan" => self.row_map_scan(),
             "map_scan_within" => self.row_map_scan_within(),
@@ -178,6 +178,19 @@ impl IrBuilder<'_> {
         };
         let referent = IrAddressed::of(self.value_type(value)?)
             .ok_or(LoweringFailure::InvalidCheckedProgram)?;
+        // A map the state holds through struct fields is locked through
+        // itself, so the hold it kept for writes before is given up first.
+        for path in self.map_paths(referent.ty())? {
+            let table = if path.is_empty() {
+                value
+            } else {
+                self.project_struct_path(value, &path, false)?
+            };
+            self.define(
+                IrType::Unit,
+                IrOperation::ConcurrentHashMapSettle { table },
+            )?;
+        }
         let object = self.define(self.result, IrOperation::SharedNew { nominal })?;
         let state = self.define(
             IrType::Address(referent),
@@ -277,9 +290,9 @@ impl IrBuilder<'_> {
         self.return_value(verdict)
     }
 
-    /// `shared_map_new<V>(capacity: u64) -> Shared<ConcurrentHashMap<V>>`: a table holding
+    /// `map_new<V>(capacity: u64) -> ConcurrentHashMap<V>`: a table holding
     /// no entry, sized for `capacity` keys [SHARE-1].
-    fn row_shared_map_new(&mut self) -> Result<(), LoweringFailure> {
+    fn row_map_new(&mut self) -> Result<(), LoweringFailure> {
         let [capacity] = self.row_parameters()?;
         let IrType::Nominal(nominal) = self.result else {
             return Err(LoweringFailure::InvalidCheckedProgram);
@@ -826,22 +839,30 @@ impl IrBuilder<'_> {
                 referent,
             },
         )?;
-        // [SHARE-1] a table stays where it is and its entries are exchanged
-        // instead, since a statement on another unit of a shared state reads
-        // a table's address without a lock
-        // (compiler/waiting-contexts/state-locks).
-        if self.table_nominal(referent.ty()).is_some() {
+        // [SHARE-1] every map either value holds through struct fields stays
+        // where it is and its entries are exchanged instead, since a
+        // statement on another unit of a shared state reads a map's handle
+        // without a lock (compiler/waiting-contexts/state-locks).
+        let ty = referent.ty();
+        for path in self.map_paths(ty)? {
+            let (first_map, second_map) = if path.is_empty() {
+                (held_first, held_second)
+            } else {
+                (
+                    self.project_struct_path(held_first, &path, false)?,
+                    self.project_struct_path(held_second, &path, false)?,
+                )
+            };
             self.define(
                 IrType::Unit,
                 IrOperation::ConcurrentHashMapSwap {
-                    first: held_first,
-                    second: held_second,
+                    first: first_map,
+                    second: second_map,
                 },
             )?;
-        } else {
-            self.store_addressed(first, held_second, referent)?;
-            self.store_addressed(second, held_first, referent)?;
         }
+        self.store_around_maps(first, held_second, ty)?;
+        self.store_around_maps(second, held_first, ty)?;
         self.return_unit()
     }
 
@@ -923,8 +944,8 @@ fn ceiling_pair(
         // `Array<T>` is a pointer and a length.
         IrType::Run { .. } => (Finite(24), 8),
         IrType::Buffer { .. } | IrType::Segments { .. } | IrType::Range { .. } => (Finite(16), 8),
-        // A key set is its count and its store's pointer; the entries an
-        // entry binding names are the statement's record [SHARE-1, SHARE-2].
+        // A key set is its count and its store's pointer; the entries a
+        // key-set subscript selects are a record in the frame [OP-4, SHARE-1].
         IrType::KeySet => (Finite(16), 8),
         IrType::Entries { .. } => (Finite(24), 8),
         IrType::Address(_) => (Finite(8), 8),

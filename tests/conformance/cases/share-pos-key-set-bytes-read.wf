@@ -6,10 +6,12 @@ fn retained(keys: &KeySet) -> bytes: u64 reads(keys) {
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<u8>(capacity: 1_u64);
+  let store_map = map_new::<u8>(capacity: 1_u64);
+  let store = shared_new::<ConcurrentHashMap<u8>>(value: move store_map);
   let keys = key_set_new(capacity: 1_u64);
   let index = key_set_insert(keys: &keys, key: &byte_key[0_u64..1_u64]);
-  atomic entries = &store[keys] {
+  atomic t = &store {
+    let entries = &t^[keys];
     let bytes = retained(keys: &keys);
     if bytes == 0_u64 {
       return std::process::exit_status(code: 1_u8);

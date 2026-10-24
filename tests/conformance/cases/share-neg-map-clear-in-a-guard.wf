@@ -4,7 +4,8 @@ fn cleared(table: &ConcurrentHashMap<u8>) -> result: Bool writes(table) {
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<u8>(capacity: 1_u64);
+  let store_map = map_new::<u8>(capacity: 1_u64);
+  let store = shared_new::<ConcurrentHashMap<u8>>(value: move store_map);
   let count = 0_u64;
   atomic t = &store when cleared(table: t) {
     set count = map_count::<u8>(map: t);

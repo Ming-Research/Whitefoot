@@ -1350,7 +1350,8 @@ fn work(t: &ConcurrentHashMap<Pair>, keys: &KeySet, i: u64, j: u64) -> result: u
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<Pair>(capacity: 3_u64);
+  let store_map = map_new::<Pair>(capacity: 3_u64);
+  let store = shared_new::<ConcurrentHashMap<Pair>>(value: move store_map);
   let keys = key_set_new(capacity: 3_u64);
   for @each (i in 0_u64..3_u64) {
     let end = i + 1_u64;
@@ -1407,7 +1408,8 @@ fn work(t: &ConcurrentHashMap<Pair>, keys: &KeySet, i: u64, j: u64) -> result: u
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<Pair>(capacity: 3_u64);
+  let store_map = map_new::<Pair>(capacity: 3_u64);
+  let store = shared_new::<ConcurrentHashMap<Pair>>(value: move store_map);
   let keys = key_set_new(capacity: 3_u64);
   for @each (i in 0_u64..3_u64) {
     let end = i + 1_u64;
@@ -1422,8 +1424,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
         ],
     },
     RepairPair {
-        // [EFF-5, SHARE-2] an atomic binder over a key set's entries is written `es`, so its own subscript is not part of the spelling a writer reads back.
-        name: "call-separation-atomic-entries-binder.wf",
+        // [EFF-5, SHARE-2] entries borrowed inside an atomic statement are reached through the statement's binding, so the captured key-set subscript prints as `?` as it does in a callee.
+        name: "call-separation-atomic-entries-borrow.wf",
         rejected: br#"const names: Array<u8, 3> =[97_u8, 98_u8, 99_u8];
 
 struct Pair {
@@ -1441,7 +1443,8 @@ fn run(store: &Shared<ConcurrentHashMap<Pair>>, keys: &KeySet, i: u64, j: u64) -
   if i == 7_u64 {
     return unit;
   }
-  atomic es = &store^[keys^] {
+  atomic t = &store^ {
+    let es = &t^[keys^];
     if i < es^.len {
       if j < es^.len {
         match &es^[i] {
@@ -1464,7 +1467,8 @@ fn run(store: &Shared<ConcurrentHashMap<Pair>>, keys: &KeySet, i: u64, j: u64) -
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<Pair>(capacity: 3_u64);
+  let store_map = map_new::<Pair>(capacity: 3_u64);
+  let store = shared_new::<ConcurrentHashMap<Pair>>(value: move store_map);
   let keys = key_set_new(capacity: 3_u64);
   for @each (i in 0_u64..3_u64) {
     let end = i + 1_u64;
@@ -1476,7 +1480,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
 "#,
         rule: "EFF-5",
         sentences: &[
-            "\n  residual: es^[i].Some.value.a and es^[j].Some.value.a require their captured indices to be distinct\n",
+            "\n  residual: t^[?][i].Some.value.a and t^[?][j].Some.value.a require their captured indices to be distinct\n",
             "\n  mechanical_fix: when the two positions can differ here, prove them distinct before this call; otherwise pass places this call proves do not overlap\n",
         ],
         repaired: &[
@@ -1497,7 +1501,8 @@ fn run(store: &Shared<ConcurrentHashMap<Pair>>, keys: &KeySet, i: u64, j: u64) -
   if i == j {
     return unit;
   }
-  atomic es = &store^[keys^] {
+  atomic t = &store^ {
+    let es = &t^[keys^];
     if i < es^.len {
       if j < es^.len {
         match &es^[i] {
@@ -1520,92 +1525,14 @@ fn run(store: &Shared<ConcurrentHashMap<Pair>>, keys: &KeySet, i: u64, j: u64) -
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<Pair>(capacity: 3_u64);
+  let store_map = map_new::<Pair>(capacity: 3_u64);
+  let store = shared_new::<ConcurrentHashMap<Pair>>(value: move store_map);
   let keys = key_set_new(capacity: 3_u64);
   for @each (i in 0_u64..3_u64) {
     let end = i + 1_u64;
     let at = key_set_insert(keys: &keys, key: &names[i..end]);
   }
   run(store: &store, keys: &keys, i: 0_u64, j: 1_u64);
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        ],
-    },
-    RepairPair {
-        // [EFF-5, SHARE-2] two atomic binders over map entries differ only at each binder's own key subscript, a position no fact names, so no position separates the pair and the call is refused at once; each binder is spelled as written, without that subscript.
-        name: "call-separation-atomic-entry-binders.wf",
-        rejected: br#"const names: Array<u8, 2> =[97_u8, 98_u8];
-
-struct Pair {
-  a: u64;
-  b: u64;
-}
-
-fn copy_across(source: &u64, destination: &u64) -> result: unit reads(source), writes(destination) {
-  let v = source^;
-  set destination^ = v;
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<Pair>(capacity: 2_u64);
-  let k = &names[0_u64..1_u64];
-  atomic e = &store[k], f = &store[k] {
-    match &e^ {
-      Some(value: x) => {
-        match &f^ {
-          Some(value: y) => {
-            copy_across(source: &x^.a, destination: &y^.a);
-          }
-          None() => {
-          }
-        }
-      }
-      None() => {
-      }
-    }
-  }
-  return std::process::exit_status(code: 0_u8);
-}
-"#,
-        rule: "EFF-5",
-        sentences: &[
-            "\n  first: e^.Some.value.a\n  second: f^.Some.value.a\n",
-            "\n  mechanical_fix: pass places that do not overlap, or pass the shared place through one argument only\n",
-        ],
-        repaired: &[
-            br#"const names: Array<u8, 2> =[97_u8, 98_u8];
-
-struct Pair {
-  a: u64;
-  b: u64;
-}
-
-fn copy_across(source: &u64, destination: &u64) -> result: unit reads(source), writes(destination) {
-  let v = source^;
-  set destination^ = v;
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<Pair>(capacity: 2_u64);
-  let k = &names[0_u64..1_u64];
-  atomic e = &store[k], f = &store[k] {
-    match &e^ {
-      Some(value: x) => {
-        match &f^ {
-          Some(value: y) => {
-            copy_across(source: &x^.a, destination: &y^.b);
-          }
-          None() => {
-          }
-        }
-      }
-      None() => {
-      }
-    }
-  }
   return std::process::exit_status(code: 0_u8);
 }
 "#,

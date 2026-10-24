@@ -211,18 +211,30 @@ impl Judging<'_, '_, '_> {
 impl Analyzer<'_, '_> {
     /// [TYPE-11] the type invariants of the atomic block being walked, owed
     /// at `site`, an edge that leaves it; judged as a requirement the body
-    /// owes itself there.
+    /// owes itself there. In a block that rebinds its binding each is
+    /// unproved, as a rebound reference parameter's exit relation is at every
+    /// return [FN-9], since no term names the state.
     fn judge_atomic_exit(&mut self, site: &crate::NodePath, state: &ProofFlowState) {
-        let Some(invariants) = self
+        let Some((invariants, rebound)) = self
             .frames
             .atomic
             .as_ref()
-            .map(|frame| frame.invariants.clone())
+            .map(|frame| (frame.invariants.clone(), frame.rebound.clone()))
         else {
             return;
         };
         let function = self.input.function.id;
         for invariant in invariants {
+            if let Some(rebound) = &rebound {
+                self.judging().record_rebound_atomic_goal(
+                    site,
+                    (invariant.requires_clause.clone(), invariant.subject),
+                    invariant.goal.clone(),
+                    rebound.clone(),
+                    state,
+                );
+                continue;
+            }
             self.judging().judge_call_goal(
                 function,
                 site,
@@ -1520,74 +1532,17 @@ impl Analyzer<'_, '_> {
             // leaves with it.
             CheckedStatement::Atomic {
                 node_path,
-                targets,
+                target,
                 guard,
                 body,
                 ..
             } => {
-                let invariants = targets
-                    .iter()
-                    .flat_map(|t| t.invariants.iter().cloned())
-                    .collect::<Vec<_>>();
-                for key in targets
-                    .iter()
-                    .flat_map(crate::semantic::CheckedTarget::expressions)
-                {
+                let invariants = target.invariants.clone();
+                for key in target.expressions() {
                     let _ = self.expression_effects(key, state);
                 }
-                let _ = self
-                    .judging()
-                    .judge_atomic_target_separations(node_path, state);
                 let outer_scope_depth = self.frames.scopes.len();
-                self.frames
-                    .scopes
-                    .push(targets.iter().map(|t| t.binding).collect());
-                // [SHARE-2] an entry binding over a key set names one entry
-                // for each of the set's keys, so `e^.len == k.len` holds
-                // where the block begins.
-                for entry in targets {
-                    let (
-                        crate::semantic::CheckedTargetKind::MapSet(set),
-                        CheckedType::Entries { .. },
-                    ) = (&entry.kind, entry.referent)
-                    else {
-                        continue;
-                    };
-                    let CheckedExpression::BorrowAddressed { root: set_root, .. } = set.as_ref()
-                    else {
-                        continue;
-                    };
-                    let targets_root = CheckedContainerRoot {
-                        root: PlaceRoot::Binding(entry.binding),
-                        path: Vec::new(),
-                        ty: entry.referent,
-                        proof_base: None,
-                    };
-                    let left = self.reasoning().place_measure_term(
-                        CheckedMeasure::Length,
-                        container_root_path(&targets_root),
-                        MeasuredKind::Entries,
-                        None,
-                    );
-                    let right = self.reasoning().place_measure_term(
-                        CheckedMeasure::Length,
-                        container_root_path(set_root),
-                        MeasuredKind::KeySet,
-                        None,
-                    );
-                    let event = self
-                        .vocabulary
-                        .proof_event(FlowEventKind::S1, Some(&entry.node_path));
-                    state.facts.establish(
-                        &Relation::Equal {
-                            left,
-                            right,
-                            difference: 0,
-                        },
-                        &mut self.vocabulary.derivations,
-                        event,
-                    );
-                }
+                self.frames.scopes.push(vec![target.binding]);
                 if let Some(guard) = guard {
                     let judgment = self.expression_effects(guard, state);
                     if judgment.reached {
@@ -1626,10 +1581,19 @@ impl Analyzer<'_, '_> {
                         event,
                     );
                 }
+                // [TYPE-11, ENT-2] once a `set` of the block, reachable or
+                // not, rebinds the binding, a place written through it names
+                // its new target and no term of the block names the state.
+                let rebound = super::postconditions::first_rebinding(body, target.binding)
+                    .map(|rebinding| ReboundBinding {
+                        name: self.input.binding_name(target.binding),
+                        rebinding: rebinding.clone(),
+                    });
                 let enclosing = self.frames.atomic.replace(AtomicFrame {
                     loop_depth: self.frames.loops.len(),
                     give_depth: self.frames.gives.len(),
                     invariants: invariants.clone(),
+                    rebound,
                 });
                 let mut continues = true;
                 for statement in body {

@@ -2,8 +2,13 @@ alias Reserve = std::snapshot::Reserve;
 alias Job = std::snapshot::Job;
 alias CreateError = std::snapshot::CreateError;
 
-fn capture(reserve: Reserve, table: &Shared<ConcurrentHashMap<u8>>, sequence: &Shared<u64>) -> result: Result<Job, CreateError> reads(table), reads(sequence) waits {
-  atomic held_map = &table^, held_cut = &sequence^ {
-    return std::snapshot::capture_export::<u8>(reserve: move reserve, map: held_map, cut: held_cut);
+struct Store {
+  table: ConcurrentHashMap<u8>;
+  sequence: u64;
+}
+
+fn capture(reserve: Reserve, store: &Shared<Store>) -> result: Result<Job, CreateError> reads(store) waits {
+  atomic current = &store^ {
+    return std::snapshot::capture_export::<u8>(reserve: move reserve, map: &current^.table, cut: &current^.sequence);
   }
 }

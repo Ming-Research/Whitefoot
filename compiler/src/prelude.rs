@@ -110,9 +110,9 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 }
 "#,
     ),
-    // A keyed table [SHARE-1]: its entries are reached only through the entry
-    // bindings of an atomic statement, so it declares no field; `V: drop`
-    // because releasing a table drops every value its entries hold.
+    // A keyed table [SHARE-1]: its entries are reached only through its
+    // subscripts [OP-4], so it declares no field; `V: drop` because releasing
+    // a table drops every value its entries hold.
     (
         "prelude/ConcurrentHashMap.wf",
         PreludeSource::Opaque,
@@ -120,8 +120,8 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 }
 "#,
     ),
-    // A key set [SHARE-1] and the entries an entry binding names over one
-    // [SHARE-2]: their readonly fields declare the measures [MSR-1].
+    // A key set [SHARE-1] and the entries a key-set subscript selects over one
+    // [OP-4]: their readonly fields declare the measures [MSR-1].
     (
         "prelude/KeySet.wf",
         PreludeSource::Opaque,
@@ -378,12 +378,6 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
 "#,
     ),
     (
-        "prelude/shared_map_new.wf",
-        PreludeSource::Function,
-        r#"fn shared_map_new<V: drop>(capacity: u64) -> result: Shared<ConcurrentHashMap<V>> pure;
-"#,
-    ),
-    (
         "prelude/shared_share.wf",
         PreludeSource::Function,
         r#"fn shared_share<T>(shared: &Shared<T>) -> result: Shared<T> reads(shared);
@@ -411,6 +405,12 @@ pub(crate) const DECLARATIONS: &[(&str, PreludeSource, &str)] = &[
         "prelude/frozen_share.wf",
         PreludeSource::Function,
         r#"fn frozen_share<T: drop>(frozen: &Frozen<T>) -> result: Frozen<T> reads(frozen);
+"#,
+    ),
+    (
+        "prelude/map_new.wf",
+        PreludeSource::Function,
+        r#"fn map_new<V: drop>(capacity: u64) -> result: ConcurrentHashMap<V> pure;
 "#,
     ),
     (

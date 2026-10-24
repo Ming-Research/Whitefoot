@@ -104,6 +104,13 @@ void *wf__cancel_never(void);
 /* A retained never state maps to the no-watch host-wait sentinel. */
 void *wf__cancel_wait_state(void *state);
 void wf__cancel_fire_held(void *source);
+uint8_t wf__cancel_flag(const void *state);
+/* [PRE-2] Joins a guard's watch to the flag watchers of the cancellation
+ * state whose flag the guard read, `seen` being the value it read: a flag
+ * read set has no change left to wait for.  One read clear is read again
+ * once the watch is linked, so a firing between the guard's read and this
+ * call wakes the watch here; the first firing wakes every flag watcher. */
+void wf__watch_cancel(void *watch, void *state, uint32_t seen);
 /* Start returns 3: retry context_wait on resume until it acquires the unit. */
 int wf__shared_start(void *object, void *operation);
 /* Non-null fireable states only; pending watched submissions return 2,
@@ -430,9 +437,9 @@ void wf__shared_unlock(void *object, uint32_t write);
 void wf__shared_unlock_unwritten(void *object, uint32_t write);
 int wf__shared_watch(void *object, uint32_t write, void *frame, const void *test,
                      const char *site);
-/* The acquire of a statement that already holds a keyed table's entries,
- * which keeps its driver and never suspends: it returns once the running
- * context holds the object. */
+/* The acquire of a statement that already holds an earlier unit of its
+ * state, a map's entry or a map whole, which keeps its driver and never
+ * suspends: it returns once the running context holds the object. */
 void wf__shared_take(void *object, uint32_t write);
 /* The moments the shared-object runtime's test observes, which it defines
  * this function to see (shared_object_test.c): an unlock hands a parked
@@ -446,14 +453,14 @@ void wf__shared_seen(unsigned moment);
  * over the runtime's concurrent map.  A table value is one pointer, and a
  * key set a `wf_key_set` (concurrent_map.h): its count of keys, then its
  * memory, 16 bytes aligned to 8.  An atomic statement reserves in its frame
- * a `wf_table_entry` for a table it names one key of, and a hold for one it
- * names several keys of, or takes whole; each stays in the frame from its
- * take to its release, so one statement may hold entries of several
- * bindings and several tables at once.  A key, or a key set, a hold is
- * given stays as it is until the hold is taken. */
+ * a `wf_table_entry` for a map of its state it locks by one entry, and a
+ * hold for one it holds whole; each stays in the frame from its take to its
+ * release, so one statement may hold several maps of its state at once.  A
+ * key, or a key set, a hold is given stays as it is until the hold is
+ * taken. */
 #define WF_TABLE_ENTRY_SIZE 40u
 #define WF_TABLE_ENTRY_ALIGN 8u
-#define WF_TABLE_HOLD_SIZE 304u
+#define WF_TABLE_HOLD_SIZE 288u
 #define WF_TABLE_HOLD_ALIGN 8u
 struct wf_key_set;
 struct wf_table_entry;
@@ -488,8 +495,10 @@ uint64_t wf__key_set_read_key(const struct wf_key_set *set, uint64_t index, unsi
  * its tag in *needs (Next = 0, Needs = 1). `wf__keyed_table_clear`
  * empties a table its caller's hold holds whole; the entries go to a table
  * of their own, which `release`, the table's drop helper, drains and frees
- * when that hold is given up (`wf__table_hold_release`). */
-void *wf__shared_map_new(uint64_t slot_size, uint64_t slot_align, uint64_t capacity);
+ * when a statement's hold is given up (`wf__table_hold_release`), or at
+ * once under the hold the table keeps for writes no statement holds it
+ * for. */
+void *wf__map_new(uint64_t slot_size, uint64_t slot_align, uint64_t capacity);
 uint64_t wf__keyed_table_count(void *table, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag);
 uint64_t *wf__keyed_table_drain(void *table);
 void wf__keyed_table_free(void *table);
@@ -502,6 +511,9 @@ uint64_t wf__keyed_table_scan(void *table, uint64_t cursor, uint64_t count, stru
                               uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag);
 void wf__keyed_table_clear(void *table, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag,
                            void (*release)(void *));
+/* Gives up the whole hold a map keeps for writes no statement holds it for,
+ * counting the entries it wrote by the slot tag the arguments locate. */
+void wf__keyed_table_settle(void *table, uint64_t tag_offset, uint32_t tag_width, uint64_t none_tag);
 /* Releases spare cells and retired tables protected by neither an active
  * user's publication nor the whole-map gate, returning their counted heap
  * bytes including table headers, or 0 when nothing is reclaimable or the
@@ -532,19 +544,6 @@ void wf__table_unlock_entry(struct wf_table_entry *entry, uint32_t present);
  * waits out every statement holding its entries and keeps new ones out
  * until the release.  A released hold is empty; one begun and never taken
  * is released too, which gives back its memory. */
-void wf__atomic_group_take(void *record, uint64_t count);
-/* The same take for a statement's first group, which holds nothing yet: it
- * acquires the group's first object as `wf__shared_acquire` does, answering
- * nonzero, with nothing held, when the frame must suspend and call again,
- * and zero once it holds every target. */
-int wf__atomic_group_acquire(void *record, uint64_t count, void *frame);
-/* Each group has one entry layout; object-only groups consume no metadata.
- * A record's target is its object, its table hold or null, and a 32-bit
- * flag saying whether the statement may write that ordinary object; the
- * release gives up an object no target may write as
- * `wf__shared_unlock_unwritten` does. */
-void wf__atomic_group_release(void *record, uint64_t count, uint64_t tag_offset,
-                              uint32_t tag_width, uint64_t none_tag);
 void wf__table_hold_read(void *hold);
 void *wf__table_held_entry(void *table, const unsigned char *key, uint64_t length, uint32_t write);
 void wf__table_held_entries(void *table, const struct wf_key_set *set, uint64_t *entries, void *read_record);
@@ -631,7 +630,7 @@ typedef struct wf_wake_test {
 } wf_wake_test;
 
 /* A generated full-guard filter. The first byte tags this 24-byte descriptor
- * rather than an atom program. The callback reads the held target state and
+ * rather than an atom program. The callback reads the held object's state and
  * immutable captures only: it never re-enters the runtime, waits, locks or
  * allocates. Descriptor and capture block live in the waiting frame and stay
  * unchanged until its watch is detached. Distinct descriptors are not grouped,

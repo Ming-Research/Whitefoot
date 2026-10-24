@@ -210,8 +210,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return Err(BackendFailure::InvalidIr);
         }
         // [MSR-1] a key set's count is its first word, held in a value or in
-        // its place; the entries an entry binding names keep the set's count
-        // in their record's third word [SHARE-2].
+        // its place; the entries a key-set subscript selects keep the set's
+        // count in their record's third word [SHARE-1].
         match self.value_type(container) {
             Some(IrType::Address(IrAddressed::KeySet)) if measure == IrMeasure::Bytes => {
                 return self.emit_key_set_bytes(result, container);

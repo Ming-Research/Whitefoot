@@ -954,13 +954,13 @@ impl<'program> Walker<'program> {
                 None
             }
             CheckedStatement::Atomic {
-                targets,
+                target,
                 node_path,
                 guard,
                 body,
                 continues,
                 ..
-            } => self.atomic_statement(state, targets, node_path, guard.as_deref(), body, *continues),
+            } => self.atomic_statement(state, target, node_path, guard.as_deref(), body, *continues),
         }
     }
 
@@ -2834,6 +2834,9 @@ impl<'program> Walker<'program> {
                     fields: values,
                 }
             }
+            // [PRE-2, SHARE-3] each flag read is a fresh unknown: it has no
+            // proof path, and two reads may differ.
+            CheckedExpression::CancelFlag { .. } => self.opaque_of(CheckedType::Bool),
             CheckedExpression::BoxDeref {
                 value, referent, ..
             } => match self.eval(state, value) {

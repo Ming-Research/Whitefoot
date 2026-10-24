@@ -6,10 +6,16 @@ struct Sequence {
   seq: u64;
 }
 
-fn capture(reserve: Reserve, table: &SharedRead<ConcurrentHashMap<u8>>, sequence: &SharedRead<Sequence>) -> result: Result<Job, CreateError> reads(table), reads(sequence) waits {
-  atomic held_map = &table^, held_sequence = &sequence^ {
-    let map_alias = held_map;
-    let cut_alias = &held_sequence^.seq;
+struct Store {
+  table: ConcurrentHashMap<u8>;
+  sequence: Sequence;
+}
+
+fn capture(reserve: Reserve, store: &SharedRead<Store>) -> result: Result<Job, CreateError> reads(store) waits {
+  atomic current = &store^ {
+    let state_alias = current;
+    let map_alias = &state_alias^.table;
+    let cut_alias = &current^.sequence.seq;
     let local_count = 0_u64;
     set local_count = map_count::<u8>(map: map_alias);
     return std::snapshot::capture_export::<u8>(reserve: move reserve, map: map_alias, cut: cut_alias);

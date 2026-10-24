@@ -6,7 +6,8 @@ fn flush(map: &ConcurrentHashMap<Box<u64>>) -> result: unit writes(map) {
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<Box<u64>>(capacity: 1_u64);
+  let store_map = map_new::<Box<u64>>(capacity: 1_u64);
+  let store = shared_new::<ConcurrentHashMap<Box<u64>>>(value: move store_map);
   let code = 42_u8;
   let a = &names[0_u64..1_u64];
   let b = &names[1_u64..2_u64];

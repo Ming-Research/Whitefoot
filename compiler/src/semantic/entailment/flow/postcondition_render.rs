@@ -161,7 +161,6 @@ impl Input<'_, '_> {
             base,
             Some(parameter.ty),
             parameter.mode.is_range(),
-            0,
             projections,
         )
     }

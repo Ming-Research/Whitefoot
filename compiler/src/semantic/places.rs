@@ -1381,8 +1381,6 @@ pub(crate) struct BindingSummary {
     /// Diagnostic selectors need the range kind whose type is its element.
     /// No proof or acceptance judgment reads this presentation flag.
     pub(crate) range: bool,
-    /// Diagnostic spelling omits an indexed atomic binder's own selector.
-    pub(crate) indexed_atomic: bool,
     /// Every target established for this holder during the final structural
     /// walk. This function-wide inventory is not its target at a particular use.
     pub(crate) reference_paths: Vec<ResolvedPlace>,
@@ -1525,6 +1523,8 @@ pub(crate) fn named_place(expression: &CheckedExpression) -> Option<NamedPlace> 
         | CheckedExpression::ReadStorage { .. }
         | CheckedExpression::BufferIndex { .. }
         | CheckedExpression::BoxDeref { .. }
+        // [PRE-2] a watch's flag has no proof path.
+        | CheckedExpression::CancelFlag { .. }
         | CheckedExpression::ConstructStruct { .. }
         | CheckedExpression::ConstructEnum { .. }
         | CheckedExpression::ProjectValue { .. } => None,
@@ -1719,22 +1719,13 @@ impl PlaceMap {
                 }
                 // [SHARE-2] the binding is a reference anchored at the
                 // object's state, as a reference parameter is at itself.
-                CheckedStatement::Atomic { targets, body, .. } => {
-                    for target in targets {
-                        let binding = &target.binding;
-                        let state = &target.referent;
-
-                        let summary = self.summary_mut(*binding);
-                        summary.ty = Some(*state);
-                        summary.reference = true;
-                        summary.indexed_atomic = matches!(
-                            target.kind,
-                            super::model::CheckedTargetKind::MapEntry(_)
-                                | super::model::CheckedTargetKind::MapSet(_)
-                        );
-                        if summary.reference_paths.is_empty() {
-                            summary.reference_paths = vec![ResolvedPlace::binding(*binding)];
-                        }
+                CheckedStatement::Atomic { target, body, .. } => {
+                    let binding = target.binding;
+                    let summary = self.summary_mut(binding);
+                    summary.ty = Some(target.state);
+                    summary.reference = true;
+                    if summary.reference_paths.is_empty() {
+                        summary.reference_paths = vec![ResolvedPlace::binding(binding)];
                     }
                     self.collect_block_bindings(body, receiver, observe);
                 }

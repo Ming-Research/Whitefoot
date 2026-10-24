@@ -160,11 +160,11 @@ fn names_binding(statement: &CheckedStatement, binding: BindingId) -> bool {
                 || block(body)
         }
         CheckedStatement::Atomic {
-            targets, guard, body, ..
+            target, guard, body, ..
         } => {
-            targets
-                .iter()
-                .flat_map(crate::semantic::CheckedTarget::expressions)
+            target
+                .expressions()
+                .into_iter()
                 .any(|value| expression_names(value, binding))
                 || guard
                     .as_deref()

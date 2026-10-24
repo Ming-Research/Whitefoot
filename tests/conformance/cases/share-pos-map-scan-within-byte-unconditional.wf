@@ -9,7 +9,8 @@ fn account_any_outcome(map: &ConcurrentHashMap<u8>, keys: &KeySet, cursor: u64, 
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<u8>(capacity: 0_u64);
+  let store_map = map_new::<u8>(capacity: 0_u64);
+  let store = shared_new::<ConcurrentHashMap<u8>>(value: move store_map);
   let keys = key_set_new(capacity: 0_u64);
   let remaining = 1_u64;
   atomic map = &store {

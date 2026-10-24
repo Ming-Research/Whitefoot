@@ -76,15 +76,12 @@ fn collect_statements(statements: &[CheckedStatement], bindings: &mut HashSet<Bi
                 collect_statements(body, bindings);
             }
             CheckedStatement::Atomic {
-                targets,
+                target,
                 guard,
                 body,
                 ..
             } => {
-                for key in targets
-                    .iter()
-                    .flat_map(crate::semantic::CheckedTarget::expressions)
-                {
+                for key in target.expressions() {
                     collect_expression(key, bindings);
                 }
                 if let Some(guard) = guard {
@@ -162,6 +159,7 @@ fn collect_expression(expression: &CheckedExpression, bindings: &mut HashSet<Bin
         CheckedExpression::NumericConversion { value, .. }
         | CheckedExpression::Reinterpret { value, .. }
         | CheckedExpression::BoxDeref { value, .. }
+        | CheckedExpression::CancelFlag { watch: value, .. }
         | CheckedExpression::ProjectValue { value, .. } => collect_expression(value, bindings),
         CheckedExpression::BoxTake {
             binding,
@@ -606,12 +604,21 @@ impl IrBuilder<'_> {
         path: &[crate::semantic::CheckedPlaceStep],
         write: bool,
     ) -> Result<IrValueId, LoweringFailure> {
+        // The struct fields below the state an atomic statement holds, while
+        // the path selects nothing else: a map subscript there selects the
+        // entry the statement locks alone, if it does [SHARE-3].
+        let mut held = self.is_held_state(address).then(Vec::new);
         for step in path {
             let IrType::Address(base) = self.value_type(address)? else {
                 return Err(LoweringFailure::InvalidCheckedProgram);
             };
+            let fields = held.take();
             let (projection, ty) = match step {
                 crate::semantic::CheckedPlaceStep::Field(field) => {
+                    held = fields.map(|mut fields| {
+                        fields.push(*field);
+                        fields
+                    });
                     let IrType::Nominal(nominal) = base.ty() else {
                         return Err(LoweringFailure::InvalidCheckedProgram);
                     };
@@ -685,6 +692,12 @@ impl IrBuilder<'_> {
                     (IrPlaceStep::BoxReferent { nominal }, *referent)
                 }
                 crate::semantic::CheckedPlaceStep::Subscript(subscript) => {
+                    if let Some(fields) = fields
+                        && let Some(slot) = self.atomic_entry_slot(&fields, &subscript.offset)?
+                    {
+                        address = slot;
+                        continue;
+                    }
                     let offset = self.expression(&subscript.offset)?;
                     let base_type = lower_type(self.erasure, subscript.base_type)?;
                     if let IrType::Nominal(nominal) = base_type {

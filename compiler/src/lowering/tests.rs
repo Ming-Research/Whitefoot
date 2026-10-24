@@ -2,7 +2,6 @@
 
 #![allow(clippy::panic)]
 
-mod atomic_groups;
 mod contexts;
 mod held_placement;
 mod overlap_storage;
@@ -1990,11 +1989,11 @@ fn missing_lock_ledger_locations_preserve_lowering() {
 "#;
     let mut expected = with_ir(source, |program| {
         let ledger = &function(program, "main").lock_ledger;
-        assert_eq!(ledger.len(), 1, "one lazy target group");
+        assert_eq!(ledger.len(), 1, "one lazy lock unit");
         assert!(
             ledger[0]
                 .to_string()
-                .contains("targets(cell): u64  on every path; first use test.wf:"),
+                .contains("unit(cell^): u64  on every path; first use test.wf:"),
             "the witness reaches its lazy acquisition: {ledger:?}"
         );
         program.functions().to_vec()
@@ -2051,7 +2050,7 @@ fn missing_lock_ledger_locations_preserve_lowering() {
                     .map(ToString::to_string)
                     .collect::<Vec<_>>(),
                 [format!(
-                    "LOCK main  {atomic_site}  targets(cell): u64  on every path; first use {first_use_site}"
+                    "LOCK main  {atomic_site}  unit(cell^): u64  on every path; first use {first_use_site}"
                 )]
             );
             for function in &mut lowered.functions {
@@ -2062,15 +2061,26 @@ fn missing_lock_ledger_locations_preserve_lowering() {
     }
 }
 
-/// Payload writes preserve None; whole writes (including aliases and call
-/// rows) must retain the inserting path. A row naming only a payload field of
-/// the whole entry, passed on through a second helper, is a payload write:
-/// firn's GET reaches its access stamp that way. The dynamic key prefix must not
-/// erase the payload evidence, and unioning a whole write must not lose it.
+/// A map unit locked by one entry inserts that entry when the statement may
+/// change the entry's variant or waits on a guard, and is shared with other
+/// readers only when it neither writes nor waits. The writes are the resolved
+/// ones: a write of the whole entry, through an alias of it or through a
+/// helper's row naming it, may change its variant, while a write below its
+/// payload, directly, through an alias, through a row naming a payload field
+/// or through such a row passed on by a second helper, writes the entry
+/// without inserting it. A state of two maps gives each its own entry flags,
+/// in field order [SHARE-3]. Each function holds one statement, and every
+/// lock request of a statement carries its flags however many of its body
+/// statements reach the map.
 #[test]
 fn keyed_atomic_insertion_flags_follow_resolved_writes() {
     let source = br#"struct Counter {
   stamp: u64;
+}
+
+struct Stores {
+  counters: ConcurrentHashMap<Counter>;
+  wrappers: ConcurrentHashMap<Option<Counter>>;
 }
 
 const key: Array<u8, 1> =[97_u8];
@@ -2112,11 +2122,10 @@ fn present(slot: &Option<Counter>) -> result: Bool reads(slot) {
   }
 }
 
-fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<Counter>(capacity: 1_u64);
+fn by_payload(store: &Shared<ConcurrentHashMap<Counter>>) -> result: unit reads(store) waits {
   let k = &key[0_u64..1_u64];
-  atomic t = &store[k] {
-    match t^ {
+  atomic s = &store^ {
+    match s^[k] {
       Some(value: v) => {
         set v^.stamp = v^.stamp +wrap 1_u64;
       }
@@ -2124,22 +2133,47 @@ fn main() -> status: std::process::ExitStatus pure waits {
       }
     }
   }
-  atomic t = &store[k] {
+  return unit;
+}
+
+fn by_insert(store: &Shared<ConcurrentHashMap<Counter>>) -> result: unit reads(store) waits {
+  let k = &key[0_u64..1_u64];
+  atomic s = &store^ {
     let value = Counter(stamp: 0_u64);
-    set t^ = Some<Counter>(value: value);
+    set s^[k] = Some<Counter>(value: value);
   }
-  atomic t = &store[k] {
-    set t^ = None<Counter>();
+  return unit;
+}
+
+fn by_remove(store: &Shared<ConcurrentHashMap<Counter>>) -> result: unit reads(store) waits {
+  let k = &key[0_u64..1_u64];
+  atomic s = &store^ {
+    set s^[k] = None<Counter>();
   }
-  atomic t = &store[k] {
-    replace(slot: t);
+  return unit;
+}
+
+fn by_whole_row(store: &Shared<ConcurrentHashMap<Counter>>) -> result: unit reads(store) waits {
+  let k = &key[0_u64..1_u64];
+  atomic s = &store^ {
+    replace(slot: &s^[k]);
   }
-  atomic t = &store[k] {
-    let ref_value = &t^;
+  return unit;
+}
+
+fn by_alias(store: &Shared<ConcurrentHashMap<Counter>>) -> result: unit reads(store) waits {
+  let k = &key[0_u64..1_u64];
+  atomic s = &store^ {
+    let ref_value = &s^[k];
     set ref_value^ = None<Counter>();
   }
-  atomic t = &store[k] {
-    match t^ {
+  return unit;
+}
+
+fn by_read(store: &Shared<ConcurrentHashMap<Counter>>) -> result: unit reads(store) waits {
+  let k = &key[0_u64..1_u64];
+  atomic s = &store^ {
+    match s^[k] {
       Some(value: v) => {
         let stamp = v^.stamp;
       }
@@ -2147,20 +2181,30 @@ fn main() -> status: std::process::ExitStatus pure waits {
       }
     }
   }
-  atomic t = &store[k] {
-    match t^ {
+  return unit;
+}
+
+fn by_payload_or_insert(store: &Shared<ConcurrentHashMap<Counter>>) -> result: unit reads(store) waits {
+  let k = &key[0_u64..1_u64];
+  atomic s = &store^ {
+    match s^[k] {
       Some(value: v) => {
         let ref_value = &v^.stamp;
         set ref_value^ = 2_u64;
       }
       None() => {
         let value = Counter(stamp: 0_u64);
-        set t^ = Some<Counter>(value: value);
+        set s^[k] = Some<Counter>(value: value);
       }
     }
   }
-  atomic t = &store[k] {
-    match t^ {
+  return unit;
+}
+
+fn by_payload_alias(store: &Shared<ConcurrentHashMap<Counter>>) -> result: unit reads(store) waits {
+  let k = &key[0_u64..1_u64];
+  atomic s = &store^ {
+    match s^[k] {
       Some(value: v) => {
         let ref_value = &v^.stamp;
         set ref_value^ = 2_u64;
@@ -2169,8 +2213,13 @@ fn main() -> status: std::process::ExitStatus pure waits {
       }
     }
   }
-  atomic t = &store[k] {
-    match t^ {
+  return unit;
+}
+
+fn by_payload_row(store: &Shared<ConcurrentHashMap<Counter>>) -> result: unit reads(store) waits {
+  let k = &key[0_u64..1_u64];
+  atomic s = &store^ {
+    match s^[k] {
       Some(value: v) => {
         payload(value: v);
       }
@@ -2178,67 +2227,99 @@ fn main() -> status: std::process::ExitStatus pure waits {
       }
     }
   }
-  atomic t = &store[k] {
-    bump_through(slot: t);
+  return unit;
+}
+
+fn by_second_helper(store: &Shared<ConcurrentHashMap<Counter>>) -> result: unit reads(store) waits {
+  let k = &key[0_u64..1_u64];
+  atomic s = &store^ {
+    bump_through(slot: &s^[k]);
   }
-  atomic t = &store[k] when present(slot: t) {
-    let ref_value = &t^;
+  return unit;
+}
+
+fn by_guard(store: &Shared<ConcurrentHashMap<Counter>>) -> result: unit reads(store) waits {
+  let k = &key[0_u64..1_u64];
+  atomic s = &store^ when present(slot: &s^[k]) {
+    let ref_value = &s^[k];
   }
-  let wrappers = shared_map_new::<Option<Counter>>(capacity: 1_u64);
-  atomic t = &store[k], u = &wrappers[k] {
+  return unit;
+}
+
+fn by_two_maps(stores: &Shared<Stores>) -> result: unit reads(stores) waits {
+  let k = &key[0_u64..1_u64];
+  atomic s = &stores^ {
     let value = Counter(stamp: 1_u64);
-    set t^ = Some<Counter>(value: value);
-    match u^ {
-      Some(value: v) => {
-        set t = &v^;
-        set t^ = None<Counter>();
+    set s^.counters[k] = Some<Counter>(value: value);
+    match s^.wrappers[k] {
+      Some(value: unused) => {
       }
       None() => {
-        return std::process::exit_status(code: 0_u8);
       }
     }
   }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
     with_ir(source, |program| {
-        let flags = function(program, "main")
-            .blocks()
-            .iter()
-            .flat_map(|block| block.instructions())
-            .filter_map(|instruction| match instruction {
-                IrInstruction::Define {
-                    operation: IrOperation::TableLockEntry { read, inserts, .. },
-                    ..
-                } => Some((*read, *inserts)),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        let (single, rebound) = flags.split_at(11);
-        assert_eq!(
-            single,
-            [
-                (false, false),
-                (false, true),
-                (false, true),
-                (false, true),
-                (false, true),
-                (true, false),
-                (false, true),
-                (false, false),
-                (false, false),
-                (false, false),
-                (false, true),
-            ]
+        // The (read, inserts) of each entry lock a function requests.
+        let flags = |name: &str| {
+            function(program, name)
+                .blocks()
+                .iter()
+                .flat_map(|block| block.instructions())
+                .filter_map(|instruction| match instruction {
+                    IrInstruction::Define {
+                        operation: IrOperation::TableLockEntry { read, inserts, .. },
+                        ..
+                    } => Some((*read, *inserts)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        for (name, expected) in [
+            ("by_payload", (false, false)),
+            ("by_insert", (false, true)),
+            ("by_remove", (false, true)),
+            ("by_whole_row", (false, true)),
+            ("by_alias", (false, true)),
+            ("by_read", (true, false)),
+            ("by_payload_or_insert", (false, true)),
+            ("by_payload_alias", (false, false)),
+            ("by_payload_row", (false, false)),
+            ("by_second_helper", (false, false)),
+            ("by_guard", (false, true)),
+        ] {
+            let requests = flags(name);
+            assert!(!requests.is_empty(), "{name}: the entry is locked");
+            assert!(
+                requests.iter().all(|request| *request == expected),
+                "{name}: {requests:?}, expected only {expected:?}"
+            );
+        }
+        // The first map is written whole and the second only read: each unit
+        // locks its own entry in field order, so the last request is the
+        // second map's.
+        let requests = flags("by_two_maps");
+        assert_eq!(requests.first(), Some(&(false, true)), "{requests:?}");
+        assert_eq!(requests.last(), Some(&(true, false)), "{requests:?}");
+        assert!(
+            requests
+                .iter()
+                .all(|request| *request == (false, true) || *request == (true, false)),
+            "{requests:?}"
         );
-        // A target whose reference the body rebinds keeps the whole-entry
-        // write it made before; the other target's write stays in its payload.
-        let mut rebound = rebound.to_vec();
-        rebound.sort_unstable();
-        assert_eq!(rebound, [(false, false), (false, true)]);
     });
 }
 
+/// The writer in `main` names two keys, so its statement holds the whole map
+/// and selects each entry through a materializing selector; with one key
+/// declared outside the statement it would lock that entry alone and select
+/// it through its lock instead, with no selector at all [SHARE-3].
 #[test]
 fn table_reads_and_borrows_materialize_only_writable_roots() {
     let source = br#"const names: Array<u8, 2> =[97_u8, 98_u8];
@@ -2258,13 +2339,16 @@ fn read(store: &Shared<ConcurrentHashMap<u8>>, keys: &KeySet) -> result: unit re
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  doc "A whole-entry write retains its materializing selector before the read-only helper.";
-  let store = shared_map_new::<u8>(capacity: 2_u64);
+  doc "A whole-entry write under a whole-map hold retains its materializing selector before the read-only helper.";
+  let table = map_new::<u8>(capacity: 2_u64);
+  let store = shared_new::<ConcurrentHashMap<u8>>(value: move table);
   let keys = key_set_new(capacity: 2_u64);
   let first = &names[0_u64..1_u64];
+  let second = &names[1_u64..2_u64];
   key_set_insert(keys: &keys, key: first);
   atomic t = &store {
     set t^[first] = Some<u8>(value: 8_u8);
+    set t^[second] = Some<u8>(value: 9_u8);
   }
   read(store: &store, keys: &keys);
   return std::process::exit_status(code: 0_u8);
@@ -2363,7 +2447,8 @@ fn rebound(table: &ConcurrentHashMap<u8>, replacement: &ConcurrentHashMap<u8>, k
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<u8>(capacity: 1_u64);
+  let table = map_new::<u8>(capacity: 1_u64);
+  let store = shared_new::<ConcurrentHashMap<u8>>(value: move table);
   let count = 0_u8;
   let key = &names[0_u64..1_u64];
   atomic t = &store {
