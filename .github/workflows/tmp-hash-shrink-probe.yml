@@ -125,7 +125,7 @@ jobs:
         run: |
           out="$RUNNER_TEMP/out"
           dump() {
-            awk -v f="$2" '$0 ~ "^<" f ">:$"{p=1} p&&/^$/{p=0} p' "$out/dis-$1.txt" | sed -E 's/0x[0-9a-f]+/ADDR/g; s/<([^>+]+)\+0x[0-9a-f]+>/<\1+OFF>/g; s/\$instance\$[0-9a-f]+/$I/g'
+            F="$2" awk '$0 ~ ("^<" ENVIRON["F"] ">:$"){p=1} p&&/^$/{p=0} p' "$out/dis-$1.txt" | sed -E 's/0x[0-9a-f]+/ADDR/g; s/<([^>+]+)\+0x[0-9a-f]+>/<\1+OFF>/g; s/\$instance\$[0-9a-f]+/$I/g'
           }
           rb='wf_std\.collections\.hash_map\.hash_map_rebuild\$instance\$[0-9a-f]+'
           mg='wf_std\.collections\.hash_map\.hash_map_migrate\$instance\$[0-9a-f]+'
