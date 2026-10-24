@@ -1,0 +1,36 @@
+struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+
+struct Holder {
+  index: Index;
+  count: u64;
+  invariant small(holder): holder.count < 16_u64;
+}
+
+fn fresh() -> made: Index pure {
+  let index = Index(value: 4_u64);
+  return index;
+}
+
+fn lookup(holder: &Holder, table: &Array<u64, 16>) -> result: u64 reads(holder), reads(table) {
+  let at = holder^.count;
+  let got = table^[at];
+  return got;
+}
+
+fn pick(flag: Bool, table: &Array<u64, 16>) -> result: u64 reads(table) {
+  let first = Index(value: 1_u64);
+  let left = Holder(index: first, count: 1_u64);
+  let second = Index(value: 2_u64);
+  let right = Holder(index: second, count: 2_u64);
+  let target = &left;
+  if flag {
+    set target = &right;
+  }
+  set target^.count = 31_u64;
+  set target^.index = fresh();
+  let got = lookup(holder: &left, table: table);
+  return got;
+}

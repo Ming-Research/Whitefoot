@@ -148,6 +148,29 @@ impl Debts {
     fn remove_proved_at_or_below(&mut self, place: &ResolvedPlace) {
         self.0.retain(|debt| !proved_at_or_below(debt, place));
     }
+
+    /// [TYPE-11.S3] a sealed store at `place`, one member of a place spelled
+    /// through `holder` that resolves to several, whose first `referent`
+    /// steps are the reference's referent at that member: removes each debt
+    /// proved at or below it that records `holder` and is anchored at that
+    /// referent followed by the recorded projection. Its instance reads
+    /// `holder^` followed by that projection [TYPE-11.S5], a place within the
+    /// stored value; any other debt there may lie at a member the store did
+    /// not write.
+    fn remove_recorded_at_or_below(
+        &mut self,
+        place: &ResolvedPlace,
+        holder: BindingId,
+        referent: usize,
+    ) {
+        self.0.retain(|debt| {
+            !(proved_at_or_below(debt, place)
+                && debt.through.as_ref().is_some_and(|through| {
+                    through.holder == holder
+                        && debt.anchor.path.get(referent..) == Some(through.steps.as_slice())
+                }))
+        });
+    }
 }
 
 /// The position of the cover step `**` of `place` [REF-1]; a summary has at
@@ -2505,7 +2528,12 @@ impl Analyzer<'_, '_> {
                     }
                     _ => None,
                 };
-                for written in self.input.resolve_sealed(&place) {
+                let members = self.input.resolve_sealed(&place);
+                // A store at a place that resolves to several members is
+                // proved at none of them, so it removes only the debts its
+                // reference recorded [TYPE-11.S3].
+                let several = members.len() > 1;
+                for written in members {
                     let through = holder.map(|binding| {
                         (
                             binding,
@@ -2520,8 +2548,15 @@ impl Analyzer<'_, '_> {
                         through,
                         node_path,
                     );
-                    if sealed {
+                    if !sealed {
+                        continue;
+                    }
+                    if !several {
                         state.debts.remove_proved_at_or_below(&written);
+                    } else if let Some((binding, referent)) = through {
+                        state
+                            .debts
+                            .remove_recorded_at_or_below(&written, binding, referent);
                     }
                 }
             }

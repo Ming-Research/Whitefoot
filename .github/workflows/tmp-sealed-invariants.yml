@@ -6,14 +6,14 @@
 # programs, the window clear program, the contexts taking turns with a
 # parked file, the context, traversal, host path and file replacement
 # programs), the trial compile of the downstream programs with the branch's
-# compiler and main's at the branch's latest merge of it, the probes of the
-# instance a read of a measure binder datum establishes and the conformance
-# cases of that read, each checked with main's compiler, the branch's at its
-# previous head, which established no instance at such a read, the branch's
-# head, the head without the measure read in the read rule, and the head
-# without the read rule's debt premise, and the repository-level static
-# checks and the change-log check against the branch's fork point. Removed
-# before the branch is ready.
+# compiler and main's at the branch's latest merge of it, the cases of a
+# whole store of a sealed value through a reference that may name several
+# places, each checked with main's compiler, the branch's at its previous
+# head, which removed every debt proved at or below each member of such a
+# store, the branch's head, the head that removes no debt at such a store,
+# and the head that removes every debt the reference recorded wherever it
+# lies, and the repository-level static checks and the change-log check
+# against the branch's fork point. Removed before the branch is ready.
 name: tmp-sealed-invariants
 
 on:
@@ -291,26 +291,25 @@ jobs:
               | sed "s/^/$side tasks by rule: /"
           done
 
-  # The probes the review asked for and the conformance cases of the
-  # instance a read of a measure binder datum establishes: each program
-  # below and each case checked with main's compiler at the branch's latest
-  # merge of it, the branch's at its previous head, which established no
-  # instance at such a read and compared a write with the whole measured
-  # place, the branch's head, the head whose read rule takes a measure read
-  # as no read of a place, which must reject each accepted read below, and
-  # the head whose read rule establishes the instance whatever the debts,
-  # which must accept the case that rejects a debt the read keeps; each
-  # verdict is printed with its first error and the opening of each
-  # rejection. Each probe shares the stack struct, a helper that takes and
-  # replaces its last value through a reference, and a constructor; the
-  # name says what follows.
+  # The cases of a whole store of a sealed value through a reference that
+  # may name several places, and the cases of such references that predate
+  # this change, each checked with main's compiler at the branch's latest
+  # merge of it, the branch's at its previous head, which removed the debts
+  # proved at or below every member and so accepts the case that keeps a
+  # debt a straight write left, the branch's head, the head that removes no
+  # debt at such a store, which must reject the case that restores through
+  # the store, and the head that removes every debt the reference recorded
+  # wherever it lies, which must accept the case whose debt lies above the
+  # stored field; each verdict is printed with its first error and the
+  # opening of each rejection. One probe stores below a recorded debt's
+  # anchor's field instead of at the reference's referent.
   probe:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        compiler: [main, previous-head, head, without-measure-read, without-read-debt-premise]
+        compiler: [main, previous-head, head, without-recorded-removal, recorded-anywhere]
     steps:
       - uses: actions/checkout@v4
       - name: Install the host toolchain
@@ -326,7 +325,7 @@ jobs:
           tree="$GITHUB_WORKSPACE"
           case "${{ matrix.compiler }}" in
             main) revision=6d220b46e212495b259fd2d119c36f5b626b90ef ;;
-            previous-head) revision=a53c656c67e3724e1699121b03517a68c84692fd ;;
+            previous-head) revision=689e01718551c14d447e70dd144663450d897d9a ;;
             *) revision= ;;
           esac
           if [ -n "$revision" ]; then
@@ -335,13 +334,13 @@ jobs:
             tree="$RUNNER_TEMP/compiler"
           fi
           case "${{ matrix.compiler }}" in
-            without-measure-read)
-              perl -0777 -pi -e 's/let Some\(read\) = measure_read\(expression\) else \{\n(\s*)return self\.sealed_places\(expression\);/let Some(read) = None::<MeasureRead> else {\n$1return self.sealed_places(expression);/ or die "the measure read places are gone\n"' \
+            without-recorded-removal)
+              perl -0777 -pi -e 's/\} else if let Some\(\(binding, referent\)\) = through \{/} else if let Some((binding, referent)) = through.filter(|_| false) {/ or die "the recorded removal is gone\n"' \
                 compiler/src/semantic/entailment/flow/sealing.rs
               git diff
               ;;
-            without-read-debt-premise)
-              perl -0777 -pi -e 's/(fn seal_read\(.*?for read in self\.input\.read_anchors\(expression\) \{\n)\s*if !self\.sealed_members\(&read, state\) \{\s*continue;\s*\}\n/$1/s or die "the read debt premise is gone\n"' \
+            recorded-anywhere)
+              perl -0777 -pi -e 's/!\(proved_at_or_below\(debt, place\)\n\s*&& debt\.through/!(debt.through/ or die "the recorded removal is gone\n"' \
                 compiler/src/semantic/entailment/flow/sealing.rs
               git diff
               ;;
@@ -352,182 +351,64 @@ jobs:
             --manifest-path "$tree/compiler/Cargo.toml" \
             --profile gate --locked --offline --bin whitefootc
           echo "WHITEFOOTC=$tree/compiler/target/gate/whitefootc" >> "$GITHUB_ENV"
-      - name: Check each probe
+      - name: Check each probe and case
         run: |
           mkdir -p "$RUNNER_TEMP/probes"
           cd "$RUNNER_TEMP/probes"
-          cat > stack.wf <<'EOF'
-          struct Stack {
-            slots: Slots<u64, 8>;
-            invariant nonempty(stack): stack.slots.len >= 1_u64;
-          }
-
-          fn replace_last(stack: &Stack, value: u64) -> result: unit writes(stack.slots.last), writes(stack.slots.next), writes(stack.slots.len) {
-            let old = take_back(window: &stack^.slots);
-            place_back(window: &stack^.slots, value: value);
-            return unit;
-          }
-
-          fn fresh(first: u64) -> made: Stack pure {
-            let slots = slots_new::<u64, 8>();
-            place_back(window: &slots, value: first);
-            let stack = Stack(slots: move slots);
-            return move stack;
-          }
-
-          fn first_slot(window: &Slots<u64, 8>) -> result: u64 reads(window) contract {
-            requires window^.len > 0_u64;
-          } {
-            let got = window^[0_u64];
-            return got;
-          }
-
-          EOF
-          probe() {
-            cat stack.wf - > "$1.wf"
-            if "$WHITEFOOTC" --check "$1.wf" > "$1.log" 2>&1; then
+          check() {
+            if "$WHITEFOOTC" --check "$2" > "$1.log" 2>&1; then
               verdict=accept
             else
               verdict="reject: $(grep -m1 -E 'error\[' "$1.log" || head -1 "$1.log")"
               { echo "::group::$1"; head -30 "$1.log"; echo "::endgroup::"; } >> rejections.txt
             fi
-            printf '%-44s %s\n' "$1" "$verdict" >> verdicts.txt
+            printf '%-58s %s\n' "$1" "$verdict" >> verdicts.txt
           }
-          probe p04-control-length-read-then-index <<'EOF'
-          fn probe(stack: &Stack) -> result: u64 writes(stack) {
-            replace_last(stack: stack, value: 9_u64);
-            let n = stack^.slots.len;
-            let got = stack^.slots[0_u64];
+          cat > p01-two-target-field-store-restores.wf <<'EOF'
+          struct Index {
+            value: u64;
+            invariant bounded(index): index.value < 16_u64;
+          }
+
+          struct Holder {
+            index: Index;
+            count: u64;
+          }
+
+          fn fresh() -> made: Index pure {
+            let index = Index(value: 4_u64);
+            return index;
+          }
+
+          fn lookup(index: &Index, table: &Array<u64, 16>) -> result: u64 reads(index), reads(table) {
+            let at = index^.value;
+            let got = table^[at];
             return got;
           }
-          EOF
-          probe p16-reference-match-then-index <<'EOF'
-          fn probe(maybe: &Option<Stack>) -> result: u64 reads(maybe) {
-            match &maybe^ {
-              Some(value: stack) => {
-                let got = stack^.slots[0_u64];
-                return got;
-              }
-              None() => {
-                return 0_u64;
-              }
+
+          fn pick(flag: Bool, table: &Array<u64, 16>) -> result: u64 reads(table) {
+            let first = Index(value: 1_u64);
+            let left = Holder(index: first, count: 1_u64);
+            let second = Index(value: 2_u64);
+            let right = Holder(index: second, count: 2_u64);
+            let target = &left;
+            if flag {
+              set target = &right;
             }
-          }
-          EOF
-          probe p19-field-length-read-then-index <<'EOF'
-          struct Holder {
-            stack: Stack;
-          }
-
-          fn probe(holder: &Holder) -> result: u64 reads(holder) {
-            let n = holder^.stack.slots.len;
-            let got = holder^.stack.slots[0_u64];
+            set target^.index.value = 31_u64;
+            set target^.index = fresh();
+            let got = lookup(index: &right.index, table: table);
             return got;
           }
           EOF
-          probe p20-control-field-index-without-read <<'EOF'
-          struct Holder {
-            stack: Stack;
-          }
-
-          fn probe(holder: &Holder) -> result: u64 reads(holder) {
-            let got = holder^.stack.slots[0_u64];
-            return got;
-          }
-          EOF
-          probe p21-field-borrow-to-requirement-without-read <<'EOF'
-          struct Holder {
-            stack: Stack;
-          }
-
-          fn probe(holder: &Holder) -> result: u64 reads(holder) {
-            let got = first_slot(window: &holder^.stack.slots);
-            return got;
-          }
-          EOF
-          probe p22-field-length-read-then-requirement <<'EOF'
-          struct Holder {
-            stack: Stack;
-          }
-
-          fn probe(holder: &Holder) -> result: u64 reads(holder) {
-            let n = holder^.stack.slots.len;
-            let got = first_slot(window: &holder^.stack.slots);
-            return got;
-          }
-          EOF
-          probe p23-field-length-test-redundant <<'EOF'
-          struct Holder {
-            stack: Stack;
-          }
-
-          fn probe(holder: &Holder) -> result: u64 reads(holder) {
-            if holder^.stack.slots.len > 0_u64 {
-              let got = holder^.stack.slots[0_u64];
-              return got;
-            }
-            return 0_u64;
-          }
-          EOF
-          probe p24-payload-length-read-then-index <<'EOF'
-          fn probe(maybe: &Option<Stack>) -> result: u64 reads(maybe) {
-            match &maybe^ {
-              Some(value: stack) => {
-                let n = stack^.slots.len;
-                let got = stack^.slots[0_u64];
-                return got;
-              }
-              None() => {
-                return 0_u64;
-              }
-            }
-          }
-          EOF
-          probe p25-element-length-read-then-index <<'EOF'
-          fn probe(stacks: &Slots<Stack, 4>) -> result: u64 reads(stacks) contract {
-            requires stacks^.len > 0_u64;
-          } {
-            let n = stacks^[0_u64].slots.len;
-            let got = stacks^[0_u64].slots[0_u64];
-            return got;
-          }
-          EOF
-          probe p26-element-offset-length-let <<'EOF'
-          fn probe(stacks: &Slots<Stack, 4>, order: &Slots<u64, 4>) -> result: u64 reads(stacks), reads(order) contract {
-            requires stacks^.len == 4_u64;
-            requires order^.len > 0_u64;
-            requires forall small(k in 0_u64..order^.len): order^[k] < 4_u64;
-          } {
-            let n = stacks^[order^[0_u64]].slots.len;
-            let share = 64_u64 / n;
-            return share;
-          }
-          EOF
-          probe p27-element-variable-offset-length-read <<'EOF'
-          fn probe(stacks: &Slots<Stack, 4>, i: u64) -> result: u64 reads(stacks) contract {
-            requires i < 3_u64;
-            requires stacks^.len == 4_u64;
-          } {
-            let j = i + 1_u64;
-            let n = stacks^[j].slots.len;
-            let share = 64_u64 / n;
-            return share;
-          }
-          EOF
-          # The conformance cases of the read, and the cases that already
-          # reject a debt a received value keeps, each checked as it stands
-          # in the head's corpus.
+          check p01-two-target-field-store-restores p01-two-target-field-store-restores.wf
           cases="$GITHUB_WORKSPACE/tests/conformance/cases"
-          for case in type11-pos-measure-read-sealed type11-neg-measure-read-keeps-debt \
-            type11-pos-element-write-keeps-measure-sealed type11-neg-received-value-keeps-debt \
-            type11-neg-payload-binder-keeps-debt; do
-            if "$WHITEFOOTC" --check "$cases/$case.wf" > "case-$case.log" 2>&1; then
-              verdict=accept
-            else
-              verdict="reject: $(grep -m1 -E 'error\[' "case-$case.log" || head -1 "case-$case.log")"
-              { echo "::group::case $case"; head -30 "case-$case.log"; echo "::endgroup::"; } >> rejections.txt
-            fi
-            printf '%-44s %s\n' "case $case" "$verdict" >> verdicts.txt
+          for case in type11-neg-joined-reference-store-keeps-debt \
+            type11-pos-joined-reference-store-restores \
+            type11-neg-joined-reference-field-store-keeps-debt \
+            type11-pos-reference-two-targets-restored type11-neg-reference-rebound-before-restored \
+            type11-neg-swap-joined-reference-keeps-debt type11-pos-call-result-sealed-at-receiver; do
+            check "case $case" "$cases/$case.wf"
           done
           echo "compiler ${{ matrix.compiler }}:"
           cat verdicts.txt

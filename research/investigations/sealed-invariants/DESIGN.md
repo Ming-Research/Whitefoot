@@ -17,7 +17,9 @@ generated requirements before; the mentions of range invariants in T8, T13,
 result 3 and the specification table below describe the proposal. The
 cursor refinement, point 4 of the points for the owner, is in: a debt
 written through a reference that resolves to several members is restored
-over that reference's own terms while it is not rebound [TYPE-11.S5]. A
+over that reference's own terms while it is not rebound [TYPE-11.S5], and a
+whole store of a sealed value through that reference removes the debts it
+recorded at or below the stored place, and no other [TYPE-11.S3]. A
 debt at an unknown position is satisfied at a hand-off that fixes its
 position by the instance there, and stays for the other positions
 [TYPE-11.S5], so an element checked before it is handed on needs no
@@ -315,7 +317,16 @@ binding, and every OP-12 update), a call result (T6) or a construction.
 Every debt whose anchor is *proved* at or below w — equal steps, equal
 captured offsets — is removed; a debt whose anchor only may overlap w (an
 index not proved equal) stays, because the store may have reached a
-different element. T2 still adds debts for the anchors above w. A commit
+different element. A store at a place spelled through a reference r whose
+place resolves to several members reached only the member r names, so no
+debt is proved at or below any member w: there T3 removes exactly each
+debt proved at or below w that records r and is anchored at r's referent
+in w followed by the projection it records. T8 restores such a debt by
+its instance over `r^` followed by that projection [TYPE-11.S5], and after
+the store that place lies within the sealed value stored, so the removal
+is a restoration the store proves; a debt that records nothing or another
+reference, such as the one a write straight to one member leaves, stays.
+T2 still adds debts for the anchors above w. A commit
 into a complete own local binding whose right-hand side is a place read or
 a `move` is not a T3 store; T4 governs it.
 
@@ -542,7 +553,9 @@ a reference parameter to it is established (T1), the fact the caller's
 hand-off proved. Once the kills of a statement that makes a call have run,
 the instance is established at each referent of the struct the call
 received at a reference parameter whose row writes it, the fact the
-callee's return proved (T7), provided no debt may denote it and no kill of
+callee's return proved (T7), or for a supplied definition the fact its
+parametricity gives ([below](#prelude-host-and-module-boundaries)),
+provided no debt may denote it and no kill of
 the same statement consumed the anchor's root, rebound a reference whose
 target identity the anchor carries, replaced what one of its offsets reads
 or wrote, at or above its level, an enum one of its payload steps selects
@@ -560,7 +573,10 @@ destructuring `let`, a by-value `match` binder and the `Ok` binder of
 can leave such a value unsealed, and the premise checks them: a call result
 carries none (T6), a construction proved its invariants, a `give` and a
 store into anything but a complete own local binding handed the value off
-(T5), and T3 removes the debts proved at the stored place. Before this
+(T5), and T3 removes the debts proved at the stored place, or, through a
+reference that resolves to several members, those that reference recorded,
+so a debt at a member the store may not have reached stays and withholds
+the instance. Before this
 design the caller took the same fact from the generated result
 postcondition, and a `match` arm or a `propagate` binder from the routed
 requirement or postcondition of the enum parameter or result it unpacks;
@@ -651,6 +667,16 @@ program, every activation's abstract state paired with its runtime state.
   T3 removes a debt only when the store is proved to have replaced that very
   anchor's value with a value already sealed: a hand-off, a call result or a
   construction, never a place read or move, whose debts T4 carries instead.
+  A store through a reference r that resolves to several members is proved
+  at none of them, so there T3 removes only a debt that records r and is
+  anchored at r's referent followed by the projection p it records. T8
+  restores such a debt by the instance over `r^` followed by p, on the
+  ground [TYPE-11.S5] states: each of its breaking events wrote through r
+  to the member r still names. After the store that place lies within the
+  sealed value stored there, so the instance holds and the removal is that
+  restoration. A debt that records nothing or another reference may lie at
+  a member the store did not reach, and stays (case
+  `type11-neg-joined-reference-store-keeps-debt`).
   T4 takes the source's debts first, then drops only the destination's
   debts proved at or below it (its old value is gone), then adds the taken
   set, so a source below the destination keeps its debts. Every removal or
@@ -1261,6 +1287,9 @@ other verdicts accept.
 | `type11-pos-public-unread-field` | the study's module program writing `state.count` from another module | accept (with the field rule) |
 | `type11-neg-swap-possible-alias-keeps-debt` | `let r = &c[j]; set r^.value = 31_u64; let x = Index(value: 1_u64); swap(first: &c[i], second: &x);` with i not proved equal to j, then `pass(xs: &c)` | reject FN-8 |
 | `type11-neg-swap-joined-reference-keeps-debt` | the same with the first target a reference `value_if` choosing `&a` or `&b`, a debt on only one of them | reject FN-8 |
+| `type11-neg-joined-reference-store-keeps-debt` | a reference chooses `&left` or `&right`; `set right.value = 31_u64;` then a sealed store `set target^ = Index(value: 4_u64);` and the hand-off of `&right` | reject FN-8 |
+| `type11-pos-joined-reference-store-restores` | the same reference writes 31 through `target^.value`, then `set target^ = fresh();`; hand-offs of `&left` and `&right` | accept |
+| `type11-neg-joined-reference-field-store-keeps-debt` | a reference chooses between two `Holder`s; a write through it breaks the holder's own invariant, then a sealed store replaces only its `index` field; the hand-off of one holder | reject FN-8 |
 | `type11-neg-map-clear-other-target` | `atomic m1 = &h1, m2 = &h2 { ... break the payload of an entry through m2 ...; map_clear(map: m1); }` with h1, h2 handles of one map type | reject TYPE-11 at the atomic statement |
 | `type11-neg-move-up-list-keeps-debt` | `struct L { v: u64; next: Option<Box<L>>; invariant ok(l): l.v < 16_u64; }`; break the second node's v through y, then `set y = move y.Some.value.inner.next;` and hand off y | reject FN-8 |
 | `type11-neg-local-set-move-carries-debt` | `set a.value = 31_u64; let b = Index(value: 4_u64); set b = move a;` then `table[b.value]` (T3/T4 order) | reject OP-4 |
