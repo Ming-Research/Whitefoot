@@ -1541,58 +1541,76 @@ pub(crate) enum TermRead {
     /// a named constant.
     Constant,
     /// A place, or a measure of one, rooted at this binding and reached by
-    /// field and Box-content selections alone, so a clause can spell it.
+    /// field and Box-content selections and subscripts whose offsets are
+    /// literals, consts or bindings, so a clause can spell it [ENT-2]; or a
+    /// binding such an offset reads.
     Binding(BindingId),
-    /// An operand that is no term at all [ENT-2], such as an element read:
-    /// no fact names its value until a `let` binds it.
+    /// An operand that is no term at all [ENT-2], such as an element read
+    /// at a computed offset: no fact names its value until a `let` binds it.
     Unnamed,
-    /// A captured, computed, subscripted or compiler-owned value.
+    /// A captured, computed or compiler-owned value, or a place a clause
+    /// cannot spell.
     Computed,
 }
 
 impl FunctionEntailment {
     /// What each term of one obligation's normalized relations reads, in
-    /// component order. A component without a left term relates an operand
+    /// component order, a place's offsets before its root. A component without a left term relates an operand
     /// that is no term [ENT-2], which reads as [`TermRead::Unnamed`].
     pub(crate) fn obligation_term_reads(&self, outcome: &ObligationOutcome) -> Vec<TermRead> {
-        outcome
-            .components
-            .iter()
-            .flat_map(|component| {
-                [
-                    component
-                        .left
-                        .map_or(TermRead::Unnamed, |term| self.term_read(term)),
-                    self.term_read(component.right),
-                ]
-            })
-            .collect()
+        let mut reads = Vec::new();
+        for component in &outcome.components {
+            match component.left {
+                Some(term) => self.term_reads(term, &mut reads),
+                None => reads.push(TermRead::Unnamed),
+            }
+            self.term_reads(component.right, &mut reads);
+        }
+        reads
     }
 
-    fn term_read(&self, term: TermId) -> TermRead {
-        let spelled = |place: &super::places::ResolvedPlace| {
-            let steps = place.path.iter().all(|step| {
-                matches!(
-                    step,
-                    super::places::PlaceStep::Field(_) | super::places::PlaceStep::Deref
-                )
+    /// What one term reads: a place's root, and for a clause (b) place
+    /// [ENT-2] each offset its subscripts read as well, since a `requires`
+    /// that names the element names its offsets too.
+    fn term_reads(&self, term: TermId, reads: &mut Vec<TermRead>) {
+        let spelled = |place: &super::places::ResolvedPlace, reads: &mut Vec<TermRead>| {
+            let mut offsets = Vec::new();
+            let steps = place.path.iter().all(|step| match step {
+                super::places::PlaceStep::Field(_) | super::places::PlaceStep::Deref => true,
+                super::places::PlaceStep::Index(offset) | super::places::PlaceStep::Page(offset) => {
+                    match offset.term {
+                        super::places::CapturedTerm::Literal(_)
+                        | super::places::CapturedTerm::Const(_) => true,
+                        super::places::CapturedTerm::Binding(binding) => {
+                            offsets.push(TermRead::Binding(binding));
+                            true
+                        }
+                        _ => false,
+                    }
+                }
+                _ => false,
             });
-            match place.root {
+            // The offsets come first, so a term reads as a constant first
+            // only when it is one.
+            if steps {
+                reads.extend(offsets);
+            }
+            reads.push(match place.root {
                 term::PlaceRoot::Binding(binding) if steps => TermRead::Binding(binding),
                 term::PlaceRoot::Constant(_) if steps => TermRead::Constant,
                 _ => TermRead::Computed,
-            }
+            });
         };
         match self.inventory.terms.get(term.0 as usize) {
             Some(
                 term::TermKind::Zero
                 | term::TermKind::Constant(_)
                 | term::TermKind::ConstParameter(..),
-            ) => TermRead::Constant,
+            ) => reads.push(TermRead::Constant),
             Some(term::TermKind::Place(place, _) | term::TermKind::Measure(_, place)) => {
-                spelled(place)
+                spelled(place, reads);
             }
-            _ => TermRead::Computed,
+            _ => reads.push(TermRead::Computed),
         }
     }
 }

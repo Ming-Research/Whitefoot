@@ -1716,8 +1716,9 @@ fn main() -> status: std::process::ExitStatus pure {
 "#],
     },
     RepairPair {
-        // An offset that is itself an element is no term [ENT-2], and a
-        // bound names terms alone, so no condition over it establishes one.
+        // [ENT-2] an offset that is itself an element of a parameter at a
+        // parameter offset is a clause (b) term, so a requirement names the
+        // bound over it, as a guard does.
         name: "bounds-over-an-element-offset.wf",
         rejected: br#"fn pick(order: &[u64], lens: &[u8], j: u64) -> result: u8 reads(order), reads(lens) contract {
   requires j < order^.len;
@@ -1732,14 +1733,25 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "OP-4",
         sentences: &[
             "\n  disposition: Unproved\n",
-            "\n  mechanical_fix: `order^[j] < lens^.len` reads a value no fact can name until a `let` binds it: bind that value with one preceding `let`, use the binding in the access, and establish the relation over the binding\n",
+            "\n  mechanical_fix: add `requires order^[j] < lens^.len;` to the `contract` of `pick`, which each caller then establishes; or guard the access with `if order^[j] < lens^.len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare\n",
         ],
-        repaired: &[br#"fn pick(order: &[u64], lens: &[u8], j: u64) -> result: u8 reads(order), reads(lens) contract {
+        repaired: &[
+            br#"fn pick(order: &[u64], lens: &[u8], j: u64) -> result: u8 reads(order), reads(lens) contract {
+  requires j < order^.len;
+  requires order^[j] < lens^.len;
+} {
+  return lens^[order^[j]];
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn pick(order: &[u64], lens: &[u8], j: u64) -> result: u8 reads(order), reads(lens) contract {
   requires j < order^.len;
 } {
-  let k = order^[j];
-  if k < lens^.len {
-    return lens^[k];
+  if order^[j] < lens^.len {
+    return lens^[order^[j]];
   }
   return 0_u8;
 }
@@ -1747,7 +1759,8 @@ fn main() -> status: std::process::ExitStatus pure {
 fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
-"#],
+"#,
+        ],
     },
     RepairPair {
         // [ENT-2, FN-8] a requirement forms its places at body entry, in the
