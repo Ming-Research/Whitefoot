@@ -1,0 +1,25 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn drop_last(window: &Paged<u64>) -> result: unit writes(window.last), writes(window.len) contract {
+  requires window^.len > 0_u64;
+  ensures window^.len + 1_u64 == entry(window)^.len;
+} {
+  doc "Takes the last value and publishes the window one shorter.";
+  let old = take_back(window: window);
+  return unit;
+}
+
+fn probe(window: &Paged<u64>) -> result: u64 writes(window) contract {
+  requires window^.len >= 1_u64;
+  requires window^.pages.len > 0_u64;
+} {
+  doc "The helper's postcondition refutes the page's formation length, so the page's extent is no longer all filled.";
+  let page = &window^.pages[0_u64];
+  drop_last(window: window);
+  return page^.len;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
