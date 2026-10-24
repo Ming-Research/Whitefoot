@@ -10,4 +10,6 @@ import WhitefootProof.Affine
 import WhitefootProof.AffineSound
 import WhitefootProof.Checker
 import WhitefootProof.Walk
+import WhitefootProof.GenGrows
 import WhitefootProof.Points
+import WhitefootProof.Typing
