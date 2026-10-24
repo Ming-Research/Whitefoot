@@ -18,5 +18,8 @@ fn probe(values: &Array<u8, 2>, cursor: &Cursor) -> result: u8 writes(values), w
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
+  let values = array_filled::<u8, 2>(value: 0_u8);
+  let cursor = Cursor(index: 0_u64);
+  let digit = probe(values: &values, cursor: &cursor);
+  return std::process::exit_status(code: digit);
 }

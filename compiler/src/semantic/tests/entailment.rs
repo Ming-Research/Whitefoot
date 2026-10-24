@@ -12939,7 +12939,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
-fn indexed_writable_defined_guard_proves_exact_domain_without_integer_place() {
+fn indexed_writable_defined_guard_proves_exact_domain_with_integer_place() {
     let source = br#"struct Cell {
   len: u8;
 }
@@ -12988,7 +12988,8 @@ fn main() -> status: std::process::ExitStatus pure {
             ..
         }
     ));
-    assert!(!summary.inventory.terms.iter().any(|term| matches!(term,
+    // [ENT-2] clause (b): the integer field below the element is a term.
+    assert!(summary.inventory.terms.iter().any(|term| matches!(term,
         TermKind::Place(place, IntegerType::U8)
             if place.path.iter().any(|step| matches!(step, PlaceStep::Index(_)))
                 && matches!(place.path.last(), Some(PlaceStep::Field(_))))));

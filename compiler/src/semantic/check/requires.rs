@@ -124,25 +124,72 @@ fn definition_offset(
 }
 
 /// One subscript offset of a clause place, read through a definition, is the
-/// definition's own offset after expansion [FN-8].
+/// definition's own offset after expansion [FN-8]. A field read below a
+/// definition that names a place, `selected.index` under `define selected =
+/// cursor`, is the same field below that place.
 fn expand_definition_offset(
     offset: &mut CheckedExpression,
     captured: &mut CapturedValue,
     offsets: &DefinitionOffsets,
+    places: &super::super::places::CapturedPlaceTable,
 ) {
-    if let CheckedExpression::Binding { binding, .. } = offset
-        && let Some((value, term)) = offsets.get(binding)
-    {
-        *offset = value.clone();
-        captured.term = *term;
+    match offset {
+        CheckedExpression::Binding { binding, .. } => {
+            if let Some((value, term)) = offsets.get(binding) {
+                *offset = value.clone();
+                captured.term = *term;
+            }
+        }
+        CheckedExpression::Project {
+            binding,
+            fields,
+            consume_root: false,
+            ..
+        } => {
+            let Some((value, _)) = offsets.get(binding) else {
+                return;
+            };
+            let (root, mut path) = match value {
+                CheckedExpression::Binding {
+                    binding: root,
+                    consume_root: false,
+                    ..
+                } => (*root, Vec::new()),
+                CheckedExpression::Project {
+                    binding: root,
+                    fields: prefix,
+                    consume_root: false,
+                    ..
+                } => (*root, prefix.clone()),
+                _ => return,
+            };
+            path.extend(fields.iter().copied());
+            let mut place = super::super::places::ResolvedPlace::binding(root);
+            place
+                .path
+                .extend(path.iter().copied().map(super::super::places::PlaceStep::Field));
+            captured.term = CapturedTerm::Place(places.intern(place));
+            *binding = root;
+            *fields = path;
+        }
+        _ => {}
     }
 }
 
-fn expand_definition_path_offsets(path: &mut [CheckedPlaceStep], offsets: &DefinitionOffsets) {
+fn expand_definition_path_offsets(
+    path: &mut [CheckedPlaceStep],
+    offsets: &DefinitionOffsets,
+    places: &super::super::places::CapturedPlaceTable,
+) {
     for step in path {
         if let CheckedPlaceStep::Subscript(subscript) = step {
             let subscript = subscript.as_mut();
-            expand_definition_offset(&mut subscript.offset, &mut subscript.captured, offsets);
+            expand_definition_offset(
+                &mut subscript.offset,
+                &mut subscript.captured,
+                offsets,
+                places,
+            );
         }
     }
 }
@@ -151,43 +198,47 @@ fn expand_definition_path_offsets(path: &mut [CheckedPlaceStep], offsets: &Defin
 /// with every offset it reads through a definition replaced by the offset
 /// that definition expands to; its subscripts then owe [OP-4] over the same
 /// terms the expanded requirement establishes.
-fn expand_definition_offsets(place: &mut CheckedExpression, offsets: &DefinitionOffsets) {
+fn expand_definition_offsets(
+    place: &mut CheckedExpression,
+    offsets: &DefinitionOffsets,
+    places: &super::super::places::CapturedPlaceTable,
+) {
     match place {
         CheckedExpression::ContainerMeasure { root, .. }
         | CheckedExpression::ReadStorage { root, .. } => {
-            expand_definition_path_offsets(&mut root.path, offsets);
+            expand_definition_path_offsets(&mut root.path, offsets, places);
         }
         CheckedExpression::RangeMeasure { root, .. } => {
             if let Some(formation) = root.formation.as_deref_mut() {
-                expand_definition_offsets(formation, offsets);
+                expand_definition_offsets(formation, offsets, places);
             }
         }
         CheckedExpression::BorrowSegment { root, segment, .. } => {
             match root {
                 super::super::model::CheckedSegmentSource::Storage(root) => {
-                    expand_definition_path_offsets(&mut root.path, offsets)
+                    expand_definition_path_offsets(&mut root.path, offsets, places)
                 }
                 super::super::model::CheckedSegmentSource::Element(place) => {
                     if let Some(formation) = place.root.formation.as_deref_mut() {
-                        expand_definition_offsets(formation, offsets);
+                        expand_definition_offsets(formation, offsets, places);
                     }
-                    expand_definition_offset(&mut place.offset, &mut place.captured, offsets);
-                    expand_definition_path_offsets(&mut place.path, offsets);
+                    expand_definition_offset(&mut place.offset, &mut place.captured, offsets, places);
+                    expand_definition_path_offsets(&mut place.path, offsets, places);
                 }
             }
             if let super::super::model::CheckedSegmentSelect::One(index)
             | super::super::model::CheckedSegmentSelect::Page(index) = segment
             {
-                expand_definition_offset(&mut index.offset, &mut index.captured, offsets);
+                expand_definition_offset(&mut index.offset, &mut index.captured, offsets, places);
             }
         }
         CheckedExpression::RangeElementMeasure { place, .. }
         | CheckedExpression::RangeIndex { place, .. } => {
             if let Some(formation) = place.root.formation.as_deref_mut() {
-                expand_definition_offsets(formation, offsets);
+                expand_definition_offsets(formation, offsets, places);
             }
-            expand_definition_offset(&mut place.offset, &mut place.captured, offsets);
-            expand_definition_path_offsets(&mut place.path, offsets);
+            expand_definition_offset(&mut place.offset, &mut place.captured, offsets, places);
+            expand_definition_path_offsets(&mut place.path, offsets, places);
         }
         _ => {}
     }
@@ -275,7 +326,7 @@ impl ClausePlaces {
         let mut places = Vec::new();
         collect_clause_places(value, &mut places);
         for place in &mut places {
-            expand_definition_offsets(place, &self.offsets);
+            expand_definition_offsets(place, &self.offsets, captured_places);
         }
         if let Some(offset) =
             definition_offset(value, &self.definitions, &self.offsets, captured_places)
@@ -320,6 +371,7 @@ impl ClausePlaces {
         &self,
         condition: &CheckedExpression,
         formed: &mut HashSet<BindingId>,
+        captured_places: &super::super::places::CapturedPlaceTable,
     ) -> Vec<CheckedExpression> {
         let mut reached = HashSet::new();
         let mut pending = Vec::new();
@@ -343,7 +395,7 @@ impl ClausePlaces {
         let own = places.len();
         collect_clause_places(condition, &mut places);
         for place in &mut places[own..] {
-            expand_definition_offsets(place, &self.offsets);
+            expand_definition_offsets(place, &self.offsets, captured_places);
         }
         places
     }
@@ -588,6 +640,44 @@ impl ExpandedClauseExpression {
         }
     }
 
+    /// [FN-2, MSR-6] a const generic subscript offset is this concrete
+    /// instance's constant, exactly as an ordinary checked offset is, so a
+    /// clause place and the body's read of it are one term. A const the
+    /// instance's caller supplied from its own const parameter is that
+    /// parameter; the symbolic instance keeps the declaration.
+    pub(super) fn instantiate_const_offsets(&mut self, function: &super::FunctionSignature) {
+        match self {
+            Self::Datum(
+                ExpandedClauseDatum::Parameter { projections, .. }
+                | ExpandedClauseDatum::NamedConst { projections, .. }
+                | ExpandedClauseDatum::Result { projections, .. },
+            ) => {
+                for projection in projections {
+                    if let GoalProjection::Subscript(offset) | GoalProjection::Page(offset) =
+                        projection
+                        && let CapturedTerm::Const(declaration) = offset.term
+                    {
+                        match function.substitution.const_argument(declaration) {
+                            Some(CheckedConst::Value(value)) => {
+                                offset.term = CapturedTerm::Literal(value);
+                            }
+                            Some(CheckedConst::Parameter(supplied)) => {
+                                offset.term = CapturedTerm::Const(supplied);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            Self::Operation { arguments, .. } => {
+                for argument in arguments {
+                    argument.instantiate_const_offsets(function);
+                }
+            }
+            Self::Datum(ExpandedClauseDatum::Literal { .. }) | Self::InvalidSelectorUse { .. } => {}
+        }
+    }
+
     fn with_projection(self, projection: GoalProjection, ty: CheckedType) -> Option<Self> {
         let Self::Datum(datum) = self else {
             return None;
@@ -806,15 +896,15 @@ impl<'unit> Checker<'_, 'unit> {
                     SemanticIssueKind::InvalidPredicateCondition,
                 );
             }
-            let root = self
-                .types
-                .build_clause_expression(
-                    check_context,
-                    expression,
-                    &condition.expression,
-                    bindings,
-                    &expanded_bindings,
-                )?
+            let mut expanded = self.types.build_clause_expression(
+                check_context,
+                expression,
+                &condition.expression,
+                bindings,
+                &expanded_bindings,
+            )?;
+            expanded.instantiate_const_offsets(function);
+            let root = expanded
                 .into_goal_expression()
                 .ok_or(SemanticCompilerFailure::InvalidResolution)?;
             requirements.push(CheckedRequirement {
@@ -823,7 +913,11 @@ impl<'unit> Checker<'_, 'unit> {
                 subject: None,
             });
             requirement_places
-                .push(clause_places.clause(&condition.expression, &mut expanded_definitions));
+                .push(clause_places.clause(
+                    &condition.expression,
+                    &mut expanded_definitions,
+                    &self.types.captured_places,
+                ));
         }
         let definitions = clause_places
             .bindings()

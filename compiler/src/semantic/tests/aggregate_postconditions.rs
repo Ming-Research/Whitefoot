@@ -388,17 +388,10 @@ fn main() -> status: std::process::ExitStatus pure {{
         )
     };
     // [ENT-2, MSR-3] the constructor's `.cell` step precedes the carried
-    // `.value` suffix. Only the unsubscripted written destination admits it,
-    // even though both reference reads resolve to the same indexed storage.
-    let indexed = source(
-        "set cells^[0_u64] = Envelope(cell: cell);\n  let ref = &cells^[0_u64];",
-    );
-    assert_rule_kind(indexed.as_bytes(), SemanticRule::Op2, |kind| {
-        matches!(
-            kind,
-            SemanticIssueKind::UndischargedIntegerDomainObligation { .. }
-        )
-    });
+    // `.value` suffix. Both complete destinations select an admitted integer
+    // place, and both reference reads name the same indexed storage.
+    let indexed = source("set cells^[0_u64] = Envelope(cell: cell);\n  let ref = &cells^[0_u64];");
+    assert_complete(indexed.as_bytes());
     let reference = source("let ref = &cells^[0_u64];\n  set ref^ = Envelope(cell: cell);");
     assert_complete(reference.as_bytes());
 }
@@ -493,7 +486,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
-fn indexed_and_consumed_destinations_keep_no_result_field_relation() {
+fn indexed_destinations_receive_result_field_relations() {
     let indexed = format!(
         "{RESULT_FIELD_CALLER}fn main() -> status: std::process::ExitStatus pure {{
   let table = box_array_filled::<u8>(count: 4_u64, value: 5_u8);
@@ -506,8 +499,13 @@ fn indexed_and_consumed_destinations_keep_no_result_field_relation() {
 }}
 "
     );
-    assert_rule_kind(indexed.as_bytes(), SemanticRule::Op4, |_| true);
+    // ENT-2(b) admits atoms[0].index, so CALL-4 can publish the result
+    // field there and MSR-3 carries the bound into the copied Atom.
+    assert_complete(indexed.as_bytes());
+}
 
+#[test]
+fn a_call_without_a_summary_does_not_forward_result_field_relations() {
     let consumed = format!(
         "{RESULT_FIELD_CALLER}fn pass(atom: Atom) -> result: Atom pure {{
   return atom;

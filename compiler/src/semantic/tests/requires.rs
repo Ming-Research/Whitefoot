@@ -287,8 +287,8 @@ fn main() -> status: std::process::ExitStatus pure {
 /// The infix shape is the one that hides operands: an `expr`'s own atom is the
 /// left operand and the tail carries the operator and the right, so a pass
 /// that stops at the first `atom` child validates a third of the expression
-/// and admits a proof-required row, a `move`, a borrow, or a subscript in the
-/// rest.
+/// and admits a proof-required row, a `move`, a borrow, or an inadmissible
+/// subscript offset in the rest.
 #[test]
 fn requires_holds_an_infix_row_to_the_same_subset_as_its_named_spelling() {
     with_semantics(
@@ -334,9 +334,10 @@ fn requires_holds_an_infix_row_to_the_same_subset_as_its_named_spelling() {
         SemanticIssueKind::InvalidRequires,
     );
     // Reached only through the infix tail's own atom, never the expr's.
+    // The element itself is admitted, but using one as an offset is not.
     assert_rule(
-        b"fn f(xs: Slots<u64, 4>, a: u64) -> result: u64 pure contract {\n  \
-          define sum = a +wrap xs[1_u64];\n  \
+        b"fn f(xs: Array<u64, 4>, slots: Array<u64, 1>, a: u64) -> result: u64 pure contract {\n  \
+          define sum = a +wrap xs[slots[0_u64]];\n  \
           requires sum <= 8_u64;\n} {\n  \
           return a;\n}\n\n\
           fn main() -> status: std::process::ExitStatus pure {\n  \

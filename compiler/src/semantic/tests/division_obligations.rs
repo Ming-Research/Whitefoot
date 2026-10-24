@@ -11,8 +11,8 @@ use crate::{
 use super::super::entailment::{
     DerivationNode, FunctionEntailment, ObligationFamily, Relation, TermKind,
 };
-use super::super::goal::{GoalExpression, GoalOperation};
-use super::super::model::{CheckedFunction, CheckedIntegerOperation, MeasuredKind};
+use super::super::goal::{GoalDatum, GoalExpression, GoalOperation, GoalProjection};
+use super::super::model::{CheckedFunction, CheckedIntegerOperation};
 use super::entailment::validate_derivations;
 use super::with_semantics;
 
@@ -800,7 +800,8 @@ fn a_fixed_run_indexed_defined_guard_discharges_the_same_structural_exact_operat
     // rather than a fact of its type [WIN-1], so the subscript's [OP-4] domain
     // is stated as a requirement; the subject, one canonical index goal reused
     // by the `+defined` guard and the exact addition, is unchanged, and the
-    // goal row is still `RunIndex`. An `own` parameter carries no effect entry
+    // admitted element is an [ENT-2] clause (b) place datum. An `own`
+    // parameter carries no effect entry
     // [EFF-1], so the row is `pure` where it declared a read.
     let source = br#"fn increment(values: Slots<u8, 1>) -> result: u8 pure contract {
   requires values.len >= 1_u64;
@@ -838,12 +839,9 @@ fn main() -> status: std::process::ExitStatus pure {
         assert!(matches!(
             arguments.as_slice(),
             [
-                GoalExpression::Operation {
-                    row: GoalOperation::RunIndex { .. },
-                    ..
-                },
+                GoalExpression::Datum(GoalDatum::Place { projections, .. }),
                 GoalExpression::Datum(_)
-            ]
+            ] if matches!(projections.last(), Some(GoalProjection::Subscript(_)))
         ));
     });
 }
@@ -887,9 +885,9 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_referenced_run_indexed_defined_guard_discharges_the_same_structural_exact_operation() {
     // The run reached through a reference parameter replaces the retiring
-    // store-resident `&Vector<'heap, u8>`. A constant `Array` takes the
-    // `ArrayIndex` row where the window above takes `RunIndex` [MSR-1], so
-    // the two cases still pin two distinct index rows.
+    // store-resident `&Vector<'heap, u8>`. Its admitted integer element is
+    // an [ENT-2] clause (b) place datum, sharing identity with the exact
+    // operation.
     let source = br#"fn increment(values: &Array<u8, 2>) -> result: u8 reads(values) {
   let spare = values^.len;
   if values^[0_u64] +defined 1_u8 {
@@ -924,12 +922,9 @@ fn main() -> status: std::process::ExitStatus pure {
         assert!(matches!(
             arguments.as_slice(),
             [
-                GoalExpression::Operation {
-                    row: GoalOperation::ArrayIndex { .. },
-                    ..
-                },
+                GoalExpression::Datum(GoalDatum::Place { projections, .. }),
                 GoalExpression::Datum(_)
-            ]
+            ] if matches!(projections.last(), Some(GoalProjection::Subscript(_)))
         ));
     });
 }
@@ -939,8 +934,8 @@ fn a_range_reference_indexed_defined_guard_discharges_the_same_structural_exact_
     // The [REF-4] range reference `&[T]` replaces the retiring `Slice<T>`
     // view: the parameter kind is a reference kind and not a type, its one
     // measure is `len`, and its element is reached through `^` [REF-1].
-    // Its measured kind is `Range`, which is the third index row this file
-    // pins beside the constant window and the constant array.
+    // Its admitted integer element is an [ENT-2] clause (b) place datum, like
+    // the window's and the array's, while its proof path stays range-rooted.
     let source = br#"fn increment(values: &[u8]) -> result: u8 reads(values) {
   let spare = values^.len;
   if 0_u64 < spare {
@@ -979,15 +974,9 @@ fn main() -> status: std::process::ExitStatus pure {
         assert!(matches!(
             arguments.as_slice(),
             [
-                GoalExpression::Operation {
-                    row: GoalOperation::RunIndex {
-                        measured: MeasuredKind::Range,
-                        ..
-                    },
-                    ..
-                },
+                GoalExpression::Datum(GoalDatum::Place { projections, .. }),
                 GoalExpression::Datum(_)
-            ]
+            ] if matches!(projections.last(), Some(GoalProjection::Subscript(_)))
         ));
     });
 }

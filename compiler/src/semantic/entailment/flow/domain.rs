@@ -99,8 +99,57 @@ impl Input<'_, '_> {
             {
                 Some(place.proof_place())
             }
+            // The same clause (b) term over a direct array element and a run
+            // element, whose one offset is checked as an expression.
+            CheckedExpression::ArrayIndex {
+                root,
+                element_type: CheckedType::Integer(_),
+                offset,
+                ..
+            } => {
+                let mut place = super::judge::array_root_place(root);
+                place.path.push(PlaceStep::Index(self.read_offset_capture(offset)?));
+                Some(place)
+            }
+            CheckedExpression::BufferIndex { root, offset, .. }
+                if matches!(root.element_type, CheckedType::Integer(_))
+                    && root.subscripted_term() == Some(SubscriptedTerm::Represented) =>
+            {
+                let mut place = root.proof_place();
+                place.path.push(PlaceStep::Index(self.read_offset_capture(offset)?));
+                Some(place)
+            }
             _ => None,
         }
+    }
+
+    /// [ENT-2] the identity one checked subscript offset gives the place it
+    /// selects: a clause (c) constant, or a clause (a) binding or tracked
+    /// place read by its spelling. Any other offset names no term.
+    pub(super) fn read_offset_capture(&self, offset: &CheckedExpression) -> Option<CapturedValue> {
+        let value = self.constant_storage_scalar(offset).or(match offset {
+            CheckedExpression::Constant(value) | CheckedExpression::NamedConstant { value, .. } => {
+                Some(value)
+            }
+            _ => None,
+        });
+        let term = match value {
+            Some(CheckedValue::Integer { bits, .. }) => CapturedTerm::Literal(*bits),
+            Some(CheckedValue::ConstGeneric { declaration, .. }) => {
+                CapturedTerm::Const(*declaration)
+            }
+            Some(_) => return None,
+            None => {
+                let place = super::super::super::places::tracked_offset_place(offset)?;
+                match place.root {
+                    PlaceRoot::Binding(binding) if place.path.is_empty() => {
+                        CapturedTerm::Binding(binding)
+                    }
+                    _ => CapturedTerm::Place(self.context.captured_places.intern(place)),
+                }
+            }
+        };
+        Some(CapturedValue::new(CaptureId::SpellingDetermined, term).goal_identity())
     }
 
     /// Integer data must be terms at the written destination followed by

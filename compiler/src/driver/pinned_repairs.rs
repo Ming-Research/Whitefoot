@@ -562,9 +562,9 @@ fn main() -> status: std::process::ExitStatus pure {
         ],
     },
     RepairPair {
-        // A field of an element read through a range reference is no admitted
-        // value [ENT-3], so the goal keeps the argument's occurrence-local
-        // value, which DIAG-1 spells for the payload.
+        // A field of an element selected by a computed offset is no [ENT-2]
+        // term, so the goal keeps the argument's occurrence-local value,
+        // which DIAG-1 spells for the payload.
         name: "call-requirement-over-an-argument-evaluated-in-the-call.wf",
         rejected: br#"struct Stats {
   count: u64;
@@ -579,7 +579,7 @@ fn small(x: u64) -> result: u64 pure contract {
 fn first(view: &[Stats]) -> result: u64 reads(view) contract {
   requires 1_u64 <= view^.len;
 } {
-  let r = small(x: view^[0_u64].count);
+  let r = small(x: view^[view^.len - 1_u64].count);
   return r;
 }
 
@@ -605,7 +605,7 @@ fn small(x: u64) -> result: u64 pure contract {
 fn first(view: &[Stats]) -> result: u64 reads(view) contract {
   requires 1_u64 <= view^.len;
 } {
-  let c = view^[0_u64].count;
+  let c = view^[view^.len - 1_u64].count;
   if c < 10_u64 {
     let r = small(x: c);
     return r;

@@ -1089,19 +1089,24 @@ impl<'unit> Checker<'_, 'unit> {
                     SemanticIssueKind::InvalidPredicateCondition,
                 );
             }
-            let expanded = self.types.build_clause_expression(
+            let mut expanded = self.types.build_clause_expression(
                 check_context,
                 expression,
                 &condition.expression,
                 bindings,
                 &expanded_bindings,
             )?;
+            expanded.instantiate_const_offsets(function);
             // [ENT-2, FN-9] each clause forms every place its expansion
             // reaches, at every return that selects it, each over the state
             // it denotes [MSR-3].
             let entry_suffixes = self.types.declarations.entry_former_suffixes(contract)?;
             let places = clause_places
-                .clause(&condition.expression, &mut HashSet::new())
+                .clause(
+                    &condition.expression,
+                    &mut HashSet::new(),
+                    &self.types.captured_places,
+                )
                 .into_iter()
                 .map(|expression| PostconditionFormedPlace {
                     denotation: place_denotation(function, bindings, &expression, &entry_suffixes),
@@ -1269,15 +1274,12 @@ impl<'unit> Checker<'_, 'unit> {
                     ty: *ty,
                 })
             }
-            // [FN-9] a parameter or named-const datum carries field and
-            // Box-content projections only: a subscripted readonly field is an
-            // [ENT-2] clause (b) term a requirement may name, but no relation
-            // datum in this version, and only a measure member of a formal
-            // place reaches a relation through a subscript (the arm below).
-            ExpandedClauseExpression::Datum(
-                ExpandedClauseDatum::Parameter { projections, .. }
-                | ExpandedClauseDatum::NamedConst { projections, .. },
-            ) if projections.iter().any(|projection| {
+            // [FN-9] a named-const datum carries field and Box-content
+            // projections only; a parameter datum may also carry the
+            // subscripts of an [ENT-2] clause (b) place.
+            ExpandedClauseExpression::Datum(ExpandedClauseDatum::NamedConst {
+                projections, ..
+            }) if projections.iter().any(|projection| {
                 matches!(
                     projection,
                     GoalProjection::Subscript(_)
@@ -1799,7 +1801,28 @@ impl<'unit> DeclarationInventory<'unit> {
             // entry names only a declaration-boundary place: projection
             // reads are checked by the ordinary FN-9 fragment judgment, and
             // indexed selections are not part of its projection language.
-            for suffix in self.tree.children_with(base, Production::Psuffix)? {
+            // The former's projection comprises the steps inside it followed
+            // by those outside it, so an [ENT-2] clause (b) element term does
+            // not widen this boundary; a range postcondition keeps its own
+            // [RANGE-1] places.
+            let mut in_range_clause = false;
+            let mut ancestor = self.tree.parent(base)?;
+            while let Some(node) = ancestor {
+                if self.tree.production(node)? == Production::RangeClause {
+                    in_range_clause = true;
+                    break;
+                }
+                ancestor = self.tree.parent(node)?;
+            }
+            let mut suffixes = self.tree.children_with(base, Production::Psuffix)?;
+            if !in_range_clause {
+                let place = self
+                    .tree
+                    .parent(base)?
+                    .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
+                suffixes.extend(self.tree.children_with(place, Production::Psuffix)?);
+            }
+            for suffix in suffixes {
                 if matches!(
                     self.tree.place_suffix(suffix)?,
                     crate::syntax::views::PlaceSuffix::Index { .. }

@@ -186,14 +186,26 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
+    assert_checks(subscript);
+    let nested_offset =
+        br#"fn probe(bounds: Array<u64, 2>, slots: Array<u64, 1>) -> result: unit pure {
+  for @items (i in bounds[slots[0_u64]]..0_u64) {
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
     assert_rule(
-        subscript,
+        nested_offset,
         SemanticRule::Ent2,
         SemanticIssueKind::InvalidCountedEndpoint {
             mechanical_fix: ENDPOINT_TERM_FIX,
         },
     );
-    super::assert_rule_at(subscript, SemanticRule::Ent2, "bounds[0_u64]");
+    super::assert_rule_at(nested_offset, SemanticRule::Ent2, "bounds[slots[0_u64]]");
 
     // [EFF-1] a by-value parameter has no effect entry at all, so the row
     // names only the reference endpoint. The v0.59 spelling declared
