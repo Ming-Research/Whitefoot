@@ -26,8 +26,14 @@ def callArgs (E : Env) (as : List (String × Atom)) : Eval (List (String × Valu
 `F` gives the facts; the discharge group says a proved obligation holds at run
 time; the transfer group says each statement's new snapshot holds of the frame
 the step leaves; the freshness group says each new state's identities lie
-below the counter the walk ends with. That the walk only grows the generator
-is proved (`Checker.Gen.Grows`). -/
+below the counter the walk ends with; the last group is a loop's head and a
+function's entry. That the walk only grows the generator is proved
+(`Checker.Gen.Grows`).
+
+A loop's head holds on a frame `E` that some snapshot over the same bindings
+holds on (so its values fit the bindings) and that differs from the frame `E1`
+the loop was entered with only at the newest binding of a name the head
+kills. -/
 structure Laws (F : Model) : Prop where
   names : ∀ {s : Snapshot} {E E0 : Env}, F.Holds s (E, E0) → E.map (·.1) = s.vars.map (·.name)
   not_contra : ∀ {s : Snapshot} {fr : Env × Env}, F.Holds s fr → s.state.contra = false
@@ -87,13 +93,14 @@ structure Laws (F : Model) : Prop where
     (Checker.evalAtom env st (.index b off)).run g = .ok (val, g1) →
     (∃ sc t, Static.atomTy sc (.index b off) = .ok t) →
     ∀ k, evalAtom E (.index b off) ≠ .error (.stuck k)
-  return_ensures : ∀ {env : Checker.Env} {st : Checker.State} {g g1 g2 : Checker.Gen}
-    {e : Expr} {r : Checker.Rhs} {E E0 : Env} {v : Value},
+  return_ensures : ∀ {env : Checker.Env} {st st2 : Checker.State} {g g1 g2 g3 : Checker.Gen}
+    {e : Expr} {r : Checker.Rhs} {ret : Checker.Val} {E E0 : Env} {v : Value},
     F.Holds ⟨env.vars, st, g.atoms⟩ (E, E0) → F.Fresh ⟨env.vars, st, g.atoms⟩ g.next →
     (Checker.evalRhs env st e).run g = .ok (r, g1) →
     (∃ sc t, Static.exprTy env.prog sc e = .ok t) → env.prog.accepts = true →
     env.prog.fn? env.fn.name = some env.fn → r.call = none →
-    (Checker.checkReturn env st r.val).run g1 = .ok ((), g2) → evalExpr env.prog E e = .ok v →
+    (Checker.returnedValue env st e r).run g1 = .ok ((st2, ret), g2) →
+    (Checker.checkReturn env st2 ret).run g2 = .ok ((), g3) → evalExpr env.prog E e = .ok v →
     F.InRange v ∧ allHold ((env.fn.result, v) :: E0) env.fn.ensures = .ok true
   relHolds_sound : ∀ {env : Checker.Env} {st : Checker.State} {g : Checker.Gen}
     {rel : Relation} {E E0 : Env},
@@ -238,6 +245,33 @@ structure Laws (F : Model) : Prop where
   merge_fresh : ∀ {env : Checker.Env} {ss : List Checker.State} {st' : Checker.State}
     {g g' : Checker.Gen}, (∀ s ∈ ss, F.Fresh ⟨env.vars, s, g.atoms⟩ g.next) →
     (Checker.merge env ss).run g = .ok (some st', g') → F.Fresh ⟨env.vars, st', g'.atoms⟩ g'.next
+  loopHead_sound : ∀ {env : Checker.Env} {st head s : Checker.State} {g g' : Checker.Gen}
+    {killed : List String} {invs : List (String × Relation)} {A : List (Nat × Int × Int)}
+    {E1 E E0 : Env},
+    F.Holds ⟨env.vars, st, g.atoms⟩ (E1, E0) → F.Fresh ⟨env.vars, st, g.atoms⟩ g.next →
+    (Checker.loopHead env st killed invs).run g = .ok (head, g') →
+    F.Holds ⟨env.vars, s, A⟩ (E, E0) →
+    (∀ j (h : j < E.length) (h1 : j < E1.length), (E[j]'h).2 = (E1[j]'h1).2 ∨
+      ∃ x ∈ killed, env.vars.findIdx? (·.name == x) = some j) →
+    (∀ ir ∈ invs, Relation.holds E ir.2 = .ok true ∧
+      ∃ sc, Static.invariantOk sc ir.2 = .ok ()) →
+    F.Holds ⟨env.vars, head, g'.atoms⟩ (E, E0)
+  loopHead_fresh : ∀ {env : Checker.Env} {st head : Checker.State} {g g' : Checker.Gen}
+    {killed : List String} {invs : List (String × Relation)},
+    F.Fresh ⟨env.vars, st, g.atoms⟩ g.next →
+    (Checker.loopHead env st killed invs).run g = .ok (head, g') →
+    F.Fresh ⟨env.vars, head, g'.atoms⟩ g'.next
+  entry_sound : ∀ {p : Program} {f : FnDecl} {env : Checker.Env} {st : Checker.State}
+    {g : Checker.Gen} {args : List (String × Value)},
+    p.accepts = true → p.fn? f.name = some f →
+    (Checker.entryState p f).run {} = .ok ((env, st), g) →
+    args.map (·.1) = f.params.map (·.name) →
+    (∀ x ∈ args.zip f.params, x.1.2.hasTy p x.2.ty = true) →
+    (∀ a ∈ args, F.InRange a.2) → allHold args.reverse f.requires = .ok true →
+    F.Holds ⟨env.vars, st, g.atoms⟩ (args.reverse, args.reverse)
+  entry_fresh : ∀ {p : Program} {f : FnDecl} {env : Checker.Env} {st : Checker.State}
+    {g : Checker.Gen}, (Checker.entryState p f).run {} = .ok ((env, st), g) →
+    F.Fresh ⟨env.vars, st, g.atoms⟩ g.next ∧ env.prog = p ∧ env.fn = f ∧ env.loops = []
 
 /-- A snapshot that holds still holds once more atoms are minted. -/
 theorem Laws.lift {F : Model} (L : Laws F) {vars : List Checker.Var} {st : Checker.State}
@@ -905,7 +939,8 @@ theorem stmt_call {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) (e : Expr
 theorem stmt_ret {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) (e : Expr) :
     StmtOK F p fn (.ret e) := by
   intro env st pos g g' env' o n W E E0 k0 k D callers henv _ hw hs _ hH hF _ _ _ _ hR hFn
-  obtain ⟨r, g1, st1, g2, hr, hpub, hret, henv', ho⟩ := Checker.walkStmt_ret_ok hw
+  obtain ⟨r, g1, st1, g2, st2, ret, g3, hr, hpub, hrv, hret, henv', ho⟩ :=
+    Checker.walkStmt_ret_ok hw
   subst env'
   subst o
   obtain ⟨hprog, hfneq, hacc, hfnof, _⟩ := henv
@@ -916,11 +951,13 @@ theorem stmt_ret {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) (e : Expr)
     obtain ⟨t, ht⟩ := Static.stmt_ret_ok hc
     exact ⟨c.scope, t, ht⟩
   rw [stepStmt_ret]
-  refine stepOK_evalRhs (fun path targs as g3 hg hc => ?_) (fun hnc => ?_)
+  refine stepOK_evalRhs (fun path targs as g4 hg hc => ?_) (fun hnc => ?_)
   · obtain ⟨vs, hrc, hterm⟩ := L.evalRhs_call_some hr hg hc
-    have hens0 : env.fn.ensures = [] := checkReturn_ensures_nil hret hterm
+    rw [hg] at hrv
+    obtain ⟨-, hret'⟩ := Checker.returnedValue_call hrv
+    have hens0 : env.fn.ensures = [] := checkReturn_ensures_nil hret (by rw [hret']; exact hterm)
     refine ⟨L.callArgs_progress hH hF hr ht hg hrc, fun args hargs => ?_⟩
-    refine hFn.now g3 args .ret _ (callee_fn hc) (L.callArgs_inRange hH hF hr ht hg hrc hargs)
+    refine hFn.now g4 args .ret _ (callee_fn hc) (L.callArgs_inRange hH hF hr ht hg hrc hargs)
       (L.call_requires hH hF hr ht hacc hg hrc hargs) ?_
     intro E' k' w hw hens
     refine stepOK_doReturn_ret rfl hens fun _ => ?_
@@ -932,7 +969,7 @@ theorem stmt_ret {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) (e : Expr)
     subst st1
     subst g2
     refine ⟨L.evalRhs_progress hH hF hr ht hrc, fun v hv => ?_⟩
-    obtain ⟨hin, hens⟩ := L.return_ensures hH hF hr ht hacc hfnof hrc hret hv
+    obtain ⟨hin, hens⟩ := L.return_ensures hH hF hr ht hacc hfnof hrc hrv hret hv
     exact hR E k0 v hin hens
 
 theorem stmt_invariant {F : Model} {p : Program} {fn : FnDecl} (L : Laws F) (nm : String)

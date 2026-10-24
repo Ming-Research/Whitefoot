@@ -337,7 +337,7 @@ theorem env_call (e : Expr) : StmtEnv (.call e) := by
 
 theorem env_ret (e : Expr) : StmtEnv (.ret e) := by
   intro env st pos g g' env' o hw
-  obtain ⟨_, _, _, _, _, _, _, henv', _⟩ := Checker.walkStmt_ret_ok hw
+  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, henv', _⟩ := Checker.walkStmt_ret_ok hw
   exact env_same henv'
 
 theorem env_invariant (nm : String) (rel : Relation) : StmtEnv (.invariant nm rel) := by
@@ -401,7 +401,7 @@ theorem fresh_call {F : Model} (L : Laws F) (e : Expr) : StmtFresh F (.call e) :
 
 theorem fresh_ret {F : Model} (e : Expr) : StmtFresh F (.ret e) := by
   intro env st pos g g' env' o hw _
-  obtain ⟨_, _, _, _, _, _, _, _, ho⟩ := Checker.walkStmt_ret_ok hw
+  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, ho⟩ := Checker.walkStmt_ret_ok hw
   subst o
   exact ⟨(fun s hs => by cases hs), (fun b hb => by cases hb), fun b hb => by cases hb⟩
 

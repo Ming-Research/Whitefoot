@@ -474,8 +474,9 @@ theorem walkStmt_call_ok {env : Env} {st : State} {pos : Pos} {e : Expr} {g g' :
 
 theorem walkStmt_ret_ok {env : Env} {st : State} {pos : Pos} {e : Expr} {g g' : Gen}
     {env' : Env} {o : Out} (h : (walkStmt env st pos (.ret e)).run g = .ok ((env', o), g')) :
-    ∃ r g1 st1 g2, (evalRhs env st e).run g = .ok (r, g1) ∧ Published env st r g1 st1 g2 ∧
-      (checkReturn env st1 r.val).run g2 = .ok ((), g') ∧ env' = env ∧ o = {} := by
+    ∃ r g1 st1 g2 st2 v g3, (evalRhs env st e).run g = .ok (r, g1) ∧
+      Published env st r g1 st1 g2 ∧ (returnedValue env st1 e r).run g2 = .ok ((st2, v), g3) ∧
+      (checkReturn env st2 v).run g3 = .ok ((), g') ∧ env' = env ∧ o = {} := by
   rw [walkStmt] at h
   obtain ⟨r, g1, hr, h1⟩ := run_bind_ok h
   cases hc : r.call with
@@ -483,18 +484,33 @@ theorem walkStmt_ret_ok {env : Env} {st : State} {pos : Pos} {e : Expr} {g g' : 
     rw [hc] at h1
     obtain ⟨st1, g2, hp, h2⟩ := run_bind_ok h1
     obtain ⟨hst, hg⟩ := run_pure_ok hp
-    obtain ⟨⟨⟩, g3, hcr, h3⟩ := run_bind_ok h2
-    obtain ⟨h4, rfl⟩ := run_pure_ok h3
-    exact ⟨r, g1, st1, g2, hr, Or.inl ⟨hc, hst, hg⟩, hcr, congrArg Prod.fst h4,
-      congrArg Prod.snd h4⟩
+    obtain ⟨⟨st2, v⟩, g3, hrv, h3⟩ := run_bind_ok h2
+    obtain ⟨⟨⟩, g4, hcr, h4⟩ := run_bind_ok h3
+    obtain ⟨h5, rfl⟩ := run_pure_ok h4
+    exact ⟨r, g1, st1, g2, st2, v, g3, hr, Or.inl ⟨hc, hst, hg⟩, hrv, hcr, congrArg Prod.fst h5,
+      congrArg Prod.snd h5⟩
   | some fa =>
     obtain ⟨f, args⟩ := fa
     rw [hc] at h1
     obtain ⟨st1, g2, hp, h2⟩ := run_bind_ok h1
-    obtain ⟨⟨⟩, g3, hcr, h3⟩ := run_bind_ok h2
-    obtain ⟨h4, rfl⟩ := run_pure_ok h3
-    exact ⟨r, g1, st1, g2, hr, Or.inr ⟨f, args, hc, hp⟩, hcr, congrArg Prod.fst h4,
-      congrArg Prod.snd h4⟩
+    obtain ⟨⟨st2, v⟩, g3, hrv, h3⟩ := run_bind_ok h2
+    obtain ⟨⟨⟩, g4, hcr, h4⟩ := run_bind_ok h3
+    obtain ⟨h5, rfl⟩ := run_pure_ok h4
+    exact ⟨r, g1, st1, g2, st2, v, g3, hr, Or.inr ⟨f, args, hc, hp⟩, hrv, hcr,
+      congrArg Prod.fst h5, congrArg Prod.snd h5⟩
+
+/-- A call's result is no computed expression: the return passes the state and
+the right-hand side's value on as they are. -/
+theorem returnedValue_call {env : Env} {st st' : State} {path : List String}
+    {targs : List TArg} {as : List (String × Atom)} {r : Rhs} {v : Val} {g g' : Gen}
+    (h : (returnedValue env st (.call path targs as) r).run g = .ok ((st', v), g')) :
+    st' = st ∧ v = r.val := by
+  have he : returnedValue env st (.call path targs as) r = pure (st, r.val) := by
+    unfold returnedValue
+    cases r.val.ty <;> rfl
+  rw [he] at h
+  obtain ⟨h1, -⟩ := run_pure_ok h
+  exact ⟨congrArg Prod.fst h1, congrArg Prod.snd h1⟩
 
 theorem walkStmt_brk_ok {env : Env} {st : State} {pos : Pos} {label : Option String}
     {g g' : Gen} {env' : Env} {o : Out}
