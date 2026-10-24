@@ -13,6 +13,10 @@ import WhitefootProof.Walk
 import WhitefootProof.GenGrows
 import WhitefootProof.Points
 import WhitefootProof.Typing
+import WhitefootProof.Holds
+import WhitefootProof.DischargeSound
+import WhitefootProof.ObligationSound
+import WhitefootProof.ValueSound
 import WhitefootProof.Safety
 import WhitefootProof.Simulation
 import WhitefootProof.Blocks

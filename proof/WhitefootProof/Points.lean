@@ -11,7 +11,7 @@ the atoms minted so far (`Snapshot`); `Program.factsAt` reads that record. The
 interpreter's frame names the statement it is about to run through the
 position its continuation carries; `Program.Reaches` says a run from `main`
 gets there with given bindings. What a snapshot's facts mean of a frame is
-defined beside the proofs that read it.
+defined in `Holds.lean`.
 -/
 
 namespace Whitefoot

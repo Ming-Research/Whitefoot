@@ -2215,6 +2215,32 @@ impl Reasoning<'_, '_, '_> {
         )
     }
 
+    /// [OP-10] the length a page formation read still bounds the window after
+    /// a call. The page's captured extent ends at or below that length, so
+    /// every slot the extent held is still filled when the length read at
+    /// formation is at or below the window's length now.
+    pub(super) fn page_bound_proof(
+        &mut self,
+        window: &ResolvedPlace,
+        extent: CapturedValue,
+        state: &ProofFlowState,
+    ) -> Option<ProofResult> {
+        let formed = state.affine.indices.get(&extent.capture)?.clone();
+        let length = self
+            .vocabulary
+            .terms
+            .interned(&TermKind::Measure(CheckedMeasure::Length, window.clone()))?;
+        let length = self.vocabulary.measure_atom(length, &state.affine);
+        self.prove_first_affine(
+            [AffineInequality::from_forms(
+                &formed,
+                &length,
+                &mut AffineCheckState::new(),
+            )],
+            state,
+        )
+    }
+
     /// [WIN-2] the proof `state` gives that a range of `window` ends at or
     /// below the window's length, `end <= len(window)`, or is empty.
     pub(super) fn range_within_length_proof(
