@@ -369,4 +369,25 @@ def selfIndexed : Option (St Term) :=
 
 #guard selfIndexed.isNone
 
+/-! ## A swap through a reference that may name either of two bindings -/
+
+/-- Two `Index` bindings and a third. -/
+def trio : Ctx Term Facts :=
+  ctx [index] [("left", .strct "Index"), ("right", .strct "Index"), ("x", .strct "Index")]
+
+/-- From `type11-neg-swap-joined-reference-keeps-debt`: after `set right.value =
+31_u64;` breaks `right`, `swap(first: target, second: &x);` may exchange `left`
+instead, so the debt at `right` stays where it is and is copied onto `x`. -/
+def joinedSwapped : Option (St Term) := do
+  let s ← picked trio
+  run trio s [
+    (noFacts, .store (var "right" [.field 0]) .fresh (writing ["right"])),
+    (noFacts, .bind "x" .fresh quiet),
+    (noFacts, .swap (deref "target") (var "x") (writing ["right", "left", "x"]))]
+
+-- Handing `right` off is rejected, and the value swapped onto `x`, which may
+-- be the broken one, gets no instance.
+#guard (joinedSwapped.bind fun s => run trio s [(noFacts, .call [var "right"] [] quiet)]).isNone
+#guard (joinedSwapped.map fun s => trio.instance? noFacts s (var "x") bounded) == some false
+
 end Whitefoot.Seal.Cases

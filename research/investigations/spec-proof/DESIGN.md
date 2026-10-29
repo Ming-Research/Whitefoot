@@ -984,12 +984,12 @@ strictly above the written place whose read set the write reaches. Every other
 place keeps its value, and the debt that covered it, if any, survives the
 event's rows. A `let` from a place read takes each debt that may be at or
 below that place, rebased onto the new binding. The axiom check accepts every
-declaration of the model: 6,037 on the last run, `Sealing*.lean` among them.
+declaration of the model, those of `Sealing*.lean` among them.
 
 ### Readings
 
 Where the text admits more than one reading, the component takes the one
-below. Reading 1 is also the fix for the gap in the next section.
+below. Reading 1 is also the fix for the first gap in the next section.
 
 1. One statement's rows are judged in the state before its kill batch, with
    the members its places resolve to there (TYPE-11.S3 line 3, "in the walk's
@@ -1002,33 +1002,34 @@ below. Reading 1 is also the fix for the gap in the next section.
    lies within the stored value, which is valid; widening it first would keep
    a debt the store has paid. The write row's debts lie strictly above the
    written place, so they are never removed by the store row, before or after.
-3. A `swap` target with several members moves no debt. A debt proved at or
-   below one member may lie where the swap did not write, so it stays and is
-   copied, exchanged, onto the other target, as a debt that may be at or below
-   a target is (TYPE-11.S3 line 11).
-4. The death row removes a cover rooted at the dead binding with the anchors
+3. The death row removes a cover rooted at the dead binding with the anchors
    rooted there (TYPE-11.S3 line 12).
-5. The kill row drops the recorded reference of every debt it widens. For a
+4. The kill row drops the recorded reference of every debt it widens. For a
    debt whose anchor gained a `[?]` this changes nothing: such a debt forms no
    instance (TYPE-11.S5 line 3), and the store row for several members, the
    only row that reads a record, cannot remove it (TYPE-11.S3 line 9).
-6. A write reaches an invariant's read set at an anchor when the written place
+5. A write reaches an invariant's read set at an anchor when the written place
    may overlap the place of one of the invariant's binder data read from the
    anchor (`Ctx.reaches`, TYPE-11.S3 line 6).
-7. Satisfaction at a handed place needs no `[?]` of the anchor below the
+6. Satisfaction at a handed place needs no `[?]` of the anchor below the
    handed place; the text implies it, since the handed place must have a
    captured offset at each step where the anchor has `[?]` (TYPE-11.S5
    line 3).
 
-### A gap in the rules
+### Gaps in the rules
 
-TYPE-11.S3 does not say whether the debts a statement's write row adds are
-among those its kill row offers for restoration. They are on the literal
-reading, and the kill row restores with the facts before the batch, which can
-still prove the instance the write breaks: a write whose place has an offset
-that reads the written storage kills that offset itself. Inferred from the
-rules, not run on the compiler; the case `selfIndexed` in `SealingCases.lean`
-is this example, which the component rejects:
+Read literally, two places of TYPE-11.S3 accept a program that hands off a
+broken value. Both are inferred from the rules, not run on the compiler; the
+component takes the fix of each, and the changes to TYPE-11.S3 belong to the
+amendment's work.
+
+The first: TYPE-11.S3 does not say whether the debts a statement's write row
+adds are among those its kill row offers for restoration. They are on the
+literal reading, and the kill row restores with the facts before the batch,
+which can still prove the instance the write breaks: a write whose place has
+an offset that reads the written storage kills that offset itself. The case
+`selfIndexed` in `SealingCases.lean` is this example, which the component
+rejects:
 
 ```wf
 struct Node {
@@ -1050,14 +1051,53 @@ Restoring the new debts with the facts before the batch is the gap; not
 widening them leaves a debt naming another element; restoring every debt with
 the facts after the batch would reject
 `type11-pos-field-offset-restored-before-moved`, whose restoration needs the
-facts before the cursor moves (inferred from the definitions, not run). The
-change to TYPE-11.S3 belongs to the amendment's work.
+facts before the cursor moves (inferred from the definitions, not run).
+
+The second: the swap row (TYPE-11.S3 line 11) does not tell a target that
+resolves to one member from one that resolves to several, as the two store
+rows above it do (lines 8 and 9). Applied to each member of the target
+(line 3), it moves each debt proved at or below a member onto the other
+target, though the swap exchanges only one of the members, and perhaps not the
+one where the debt lies. Whitefoot#484's case
+`type11-neg-swap-joined-reference-keeps-debt` is this program and requires its
+rejection; `joinedSwapped` in `SealingCases.lean` takes its events, and the
+component rejects them:
+
+```wf
+nocopy struct Index {
+  value: u64;
+  invariant bounded(index): index.value < 16_u64;
+}
+// In a body with a, b: Index and a flag, p may name a or b.
+let p = if flag {
+  give &a;
+} else {
+  give &b;
+}
+set a.value = 31_u64;
+let x = Index(value: 1_u64);
+// Member by member, the debt at a moves onto x. When flag is false the swap
+// exchanges b, and a still holds 31 with no debt.
+swap(first: p, second: &x);
+// lookup indexes a table of 16 entries with index^.value.
+let got = lookup(index: &a, table: table);
+```
+
+The fix: a target that resolves to several members moves no debt. A debt
+proved at or below one of its members stays where it is and is copied,
+exchanged, onto the other target, as a debt that may be at or below a target
+is; `provedOne` in `Ctx.swapStay` is this fix. It is the only sound form that
+accepts what Whitefoot#484's cases accept: moving the debt is the gap; keeping
+it without the copy lets the value swapped onto `x`, which may be the broken
+one, form an instance; and rejecting a swap through such a target rejects
+`type11-pos-joined-reference-swap-write-restored`, whose target resolves to
+two members (inferred from the definitions and the case, not run).
 
 ### Cases
 
 `SealingCases.lean` writes conformance cases of Whitefoot#484 as event
 sequences with a small fact core, and the build checks each verdict with
-`#guard`, 25 checks in all:
+`#guard`, 27 checks in all:
 
 - `type11-neg-joined-reference-store-keeps-debt`, the fifteenth round's
   example: rejected. `type11-pos-joined-reference-store-restores`, a value
@@ -1079,7 +1119,9 @@ sequences with a small fact core, and the build checks each verdict with
 - `type11-neg-field-offset-moved-before-restored` and
   `type11-pos-field-offset-restored-before-moved` with the cursor a local:
   five checks of a debt widened when its offset moves.
-- The gap's example above: rejected.
+- The first gap's example: rejected.
+- `type11-neg-swap-joined-reference-keeps-debt`, the second gap's example:
+  rejected, and the value swapped onto `x` gets no instance.
 
 A temporary workflow put back, one per job, the rule each of three of these
 cases protects, and required the cases to fail and the proofs not to check.
@@ -1090,7 +1132,7 @@ of `type11-neg-joined-reference-store-keeps-debt` and
 `storeRemove_keep` did not check. With the sixteenth round's recorded swap, an
 exchanged debt keeping its recorded reference, the checks of the two
 `type11-neg-swap-after-joined-write-…` cases failed and `Debt.exchange_covers`
-did not check. With the literal reading of the gap, the gap's case failed and
+did not check. With the first gap's literal reading, its case failed and
 `Ctx.writeDebts_cover` and `Ctx.store_holds` did not check. No other check
 failed.
 
@@ -1129,17 +1171,17 @@ and 33 are outside: 17 rule headings, 4 table heading rows and 12 sentences.
 | TYPE-11.S2 6 | `fadae449d7141111` |  | unfoldings, which serve only the entries of maps and `Entries`, atomic statements' targets and `shared_close` results (shared objects and maps) |
 | TYPE-11.S3 1 | `c90dd7afcc39ed54` |  | heading of the rule; its sentences are marked or listed |
 | TYPE-11.S3 2 | `ebda1d0d657236a8` |  | heading of the rule; its sentences are marked or listed |
-| TYPE-11.S3 3 | `d45c8a55493e6d99` | `Ctx.step`, each row for each member `St.resolve` and `St.resolveRec` give; the order is reading 1 |  |
+| TYPE-11.S3 3 | `d45c8a55493e6d99` | `Ctx.step`, each row for each member `St.resolve` and `St.resolveRec` give, except that the swap row moves debts only at a target with one member (the second gap); the order is reading 1 |  |
 | TYPE-11.S3 4 | `d0f728660df5427f` |  | the table's heading rows |
 | TYPE-11.S3 5 | `5ff9cb7afb3a4ac3` |  | the table's heading rows |
-| TYPE-11.S3 6 | `26ffbdde631ed078` | `Ctx.writeDebts`, `Ctx.writeRows`, `Ctx.reaches` and `writeRec`, for a commit or update (`Event.store`) and each target of a `swap` (`Event.swap`); `Ctx.reaches` is reading 6 | anchors named through a cover's current target identity, and the cover a write adds through such a description (REF-1's loop rule, as TYPE-11.S2 line 4) |
+| TYPE-11.S3 6 | `26ffbdde631ed078` | `Ctx.writeDebts`, `Ctx.writeRows`, `Ctx.reaches` and `writeRec`, for a commit or update (`Event.store`) and each target of a `swap` (`Event.swap`); `Ctx.reaches` is reading 5 | anchors named through a cover's current target identity, and the cover a write adds through such a description (REF-1's loop rule, as TYPE-11.S2 line 4) |
 | TYPE-11.S3 7 | `772f30565627d034` | the projected writes of `Event.call` through `Ctx.writeRows`, bounded to the anchors strictly above the argument's referent; that the callee leaves the referent sealed is a premise of `Ctx.RunStep` | `map_clear` (maps); `swap` is its own event, `Event.swap` |
 | TYPE-11.S3 8 | `fcbf00d2a9fe6af6` | `storeRemove` for a place resolving to one member, in `Ctx.storeRows`; a right-hand side that is a hand-off is `Rhs.read`, a call result or construction `Rhs.fresh`; the order is reading 2 |  |
 | TYPE-11.S3 9 | `c84dfe7989a5017d` | `storeRemove` for a place resolving to several members, with `Debt.recordsAt` |  |
 | TYPE-11.S3 10 | `c889a2ac2a29907e` | `Ctx.continueRow` in `Event.bind` with `Rhs.read`: a `let`, a `let` with `move`, a `set` of a complete own local binding, and a by-value `match` or destructuring binder as a read of the payload or field place it binds | the `Ok` binder of `propagate` (error propagation, not in the fragment) |
-| TYPE-11.S3 11 | `c682fdad3739e1b6` | `Ctx.swapRow` with `Ctx.swapStay`, `Ctx.across` and `Debt.exchange`, after the write rows in the swap case of `Ctx.step`; a target with several members is reading 3 |  |
-| TYPE-11.S3 12 | `dc8504bf6ab1792f` | `deathRow` in `Event.death`; a move of a part runs the continuation row (`Event.bind`) before the death; a cover counts by its place, reading 4 |  |
-| TYPE-11.S3 13 | `5684a5abeb57f254` | `Ctx.killRow` with `Ctx.untouched`, `Ctx.widen` and `Ctx.widenSteps`; `Kills` and `Core.killed` give what a batch writes, ends or rebinds, `Core.tracked` which offsets read a tracked place; a counted loop's backedge is a kill batch for its binder (`Event.kill`); the debts of the statement's own rows are reading 1 and the gap below, a dropped record reading 5 | an anchor carrying a reference's current target identity, and widening to a cover (REF-1's loop rule) |
+| TYPE-11.S3 11 | `c682fdad3739e1b6` | `Ctx.swapRow` with `Ctx.swapStay`, `Ctx.across` and `Debt.exchange`, after the write rows in the swap case of `Ctx.step`; a target with several members is the second gap's fix (`provedOne`) |  |
+| TYPE-11.S3 12 | `dc8504bf6ab1792f` | `deathRow` in `Event.death`; a move of a part runs the continuation row (`Event.bind`) before the death; a cover counts by its place, reading 3 |  |
+| TYPE-11.S3 13 | `5684a5abeb57f254` | `Ctx.killRow` with `Ctx.untouched`, `Ctx.widen` and `Ctx.widenSteps`; `Kills` and `Core.killed` give what a batch writes, ends or rebinds, `Core.tracked` which offsets read a tracked place; a counted loop's backedge is a kill batch for its binder (`Event.kill`); the debts of the statement's own rows are reading 1 and the first gap, a dropped record reading 4 | an anchor carrying a reference's current target identity, and widening to a cover (REF-1's loop rule) |
 | TYPE-11.S3 14 | `2af3fb7da35e525b` | `Rhs.fresh`: `Event.bind` and `Event.store` take no debt from it, so none lies at or below the place it fills; the swap case of `Ctx.step` hands neither target off | `shared_close` results (shared objects); `release` and `map_clear` (supplied definitions, maps) |
 | TYPE-11.S4 1 | `c91117afcc3c8feb` |  | heading of the rule; its sentences are marked or listed |
 | TYPE-11.S4 2 | `5bdbbbc180826764` |  | heading of the rule; its sentences are marked or listed |
@@ -1156,7 +1198,7 @@ and 33 are outside: 17 rule headings, 4 table heading rows and 12 sentences.
 | TYPE-11.S4 13 | `0e8b01bdc7f1cd94` | `Rhs.fresh` (a call's results carry no debt); the premise of `Ctx.RunStep` that each written referent is valid when the call returns | supplied definitions (TYPE-11.S8); `shared_close` results (shared objects) |
 | TYPE-11.S5 1 | `c9141bafcc3ecc8e` |  | heading of the rule; its sentences are marked or listed |
 | TYPE-11.S5 2 | `40ba9644ff978d6b` |  | heading of the rule; its sentences are marked or listed |
-| TYPE-11.S5 3 | `e7582cffe4d98455` | `Ctx.restored` with `Debt.instancePlace?` (the instance over `r^` followed by p for a debt that records r and p, otherwise over the anchor's place, and none at `[?]` or for a cover); `Ctx.satisfied` with `agrees`, reading 7; `Core.proves`, the fact core's MSR-4 disposition with its certificates, is a premise (`Sem.proves_sound`) | an anchor carrying a reference's current target identity (REF-1's loop rule) |
+| TYPE-11.S5 3 | `e7582cffe4d98455` | `Ctx.restored` with `Debt.instancePlace?` (the instance over `r^` followed by p for a debt that records r and p, otherwise over the anchor's place, and none at `[?]` or for a cover); `Ctx.satisfied` with `agrees`, reading 6; `Core.proves`, the fact core's MSR-4 disposition with its certificates, is a premise (`Sem.proves_sound`) | an anchor carrying a reference's current target identity (REF-1's loop rule) |
 | TYPE-11.S5 4 | `106687ed51495edf` | `Ctx.handoff` (hand-offs); the swap case of `Ctx.step` (before its events); `Ctx.killRow` (kill batches); `Ctx.absorb` with `Ctx.restoreAll`, in `Ctx.header` (backedges and `continue`) and `Ctx.join` (merges) |  |
 | TYPE-11.S6 1 | `c917dbafcc4248a5` |  | heading of the rule; its sentences are marked or listed |
 | TYPE-11.S6 2 | `35b30c78112e6ce2` |  | heading of the rule; its sentences are marked or listed |
@@ -1172,7 +1214,7 @@ and 33 are outside: 17 rule headings, 4 table heading rows and 12 sentences.
 
 ### Size and cost
 
-The component is 1,106 lines of Lean with 127 definitions, its cases 372 lines
+The component is 1,106 lines of Lean with 127 definitions, its cases 393 lines
 and its proofs 2,472 lines with 157 theorems; it changes no earlier module
 apart from the package root's imports, and adds no coverage mark. Before the
 main line's discharge lemmas were merged in, the build of the model and

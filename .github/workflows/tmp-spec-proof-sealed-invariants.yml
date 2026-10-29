@@ -1,6 +1,6 @@
 # Temporary (spec-proof-sealed-invariants): puts back, one per job, the two
 # rules the fifteenth and sixteenth review rounds of #484 found unsound and the
-# literal reading of the gap the proof found, and watches the cases that
+# literal readings of the two gaps the proof found, and watches the cases that
 # protect each fail and the soundness proofs fail to check; proof.yml checks the
 # component as it is. Removed before the full check.
 name: tmp-spec-proof-sealed-invariants
@@ -30,14 +30,20 @@ jobs:
             old: "  | .inv a I _ => if a.steps.length = o.steps.length then .inv t I none else .cover t"
             new: "  | .inv a I rc => if a.steps.length = o.steps.length then .inv t I rc else .cover t"
             guards: "197 209"
-          # The gap: a store's own write-row debts are offered for restoration
-          # by its kill row, with the facts before the batch.
-          - defect: the literal reading
+          # The first gap: a store's own write-row debts are offered for
+          # restoration by its kill row, with the facts before the batch.
+          - defect: the first gap's literal reading
             old: "        some (X.settle f kb (.inv ⟨w.root, w.steps.take k⟩ I (writeRec w k through)))"
             new: "        some (.inv ⟨w.root, w.steps.take k⟩ I (writeRec w k through))"
             old2: "  ⟨addDebts (X.killRow f kb (storeRemove s w s.debts)) (X.writeRows f kb s w []),"
             new2: "  ⟨X.killRow f kb (addDebts (storeRemove s w s.debts) (X.writeRows f kb s w [])),"
             guards: "370"
+          # The second gap: a swap target with several members moves the debts
+          # proved at or below each member.
+          - defect: the second gap's literal reading
+            old: "  | [m], d => d.provedAtOrBelow m"
+            new: "  | m :: ms, d => (m :: ms).any fun n => d.provedAtOrBelow n"
+            guards: "390"
     steps:
       - uses: actions/checkout@v4
       - name: Install the pinned Lean toolchain
