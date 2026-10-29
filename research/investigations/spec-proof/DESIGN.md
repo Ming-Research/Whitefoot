@@ -301,21 +301,28 @@ The fragment, from the section 15 reading:
   generics; recursion; atomic and shared state.
 
 The theorems, stated over the model's checker `accepts` and its interpreter
-`run`, which takes a step budget and ends `done`, `stuck` (a state the
-specification gives no meaning: an exact operation whose domain query is
-false, a subscript out of bounds, a read of a binding with no value, a call
-whose requirement is false, a return whose `ensures` is false) or
-`outOfSteps`:
+`run`, which runs the entry `main` for at most a given number of steps and
+ends `done`, `stuck` (a state the specification gives no meaning: an exact
+operation whose domain query is false, a subscript out of bounds, a read of a
+binding with no value, a call whose requirement is false, a return whose
+`ensures` is false), `illFormed` (a type or name judgment that fails, such as
+a `u8` added to a `u64`) or `outOfSteps`:
 
 ```lean
 theorem accepted_never_stuck (p : Program) (hp : p.accepts = true)
-    (args : List Int) (hreq : p.entryRequires args) (steps : Nat) :
-    p.run args steps ≠ .stuck
+    (hentry : p.EntryHolds) (steps : Nat) :
+    (∃ v, p.run steps = .done v) ∨ p.run steps = .outOfSteps
 
 theorem facts_hold (p : Program) (hp : p.accepts = true)
-    (args : List Int) (hreq : p.entryRequires args) :
-    ∀ point state, p.Reaches args point state → (p.factsAt point).Holds state
+    (hentry : p.EntryHolds) :
+    ∀ point state, p.Reaches point state → (p.factsAt point).Holds state
 ```
+
+`EntryHolds` says that the program has a `main`, that `main` takes no
+parameter and that its requirements hold. [PROG-3] lets the entry take
+arguments its caller establishes; an entry with parameters is left outside
+phase 1. The first theorem excludes `illFormed` as well as `stuck`: excluding
+only `stuck`, it would also hold of a checker that let a type error through.
 
 The first is the safety claim for the fragment; the second gives the facts
 the meaning the specification leaves unstated and is the invariant the first
@@ -376,7 +383,7 @@ Four choices shape the tree and the machine for the proofs that follow.
 |---|---|---|---|
 | Tree | one plain inductive per syntactic class, statements nested as `List Stmt`, names as strings, no source positions | a tree carrying source spans; a control-flow graph; de Bruijn indices | the theorems reason by structural induction over statements, as the rules state them; [TYPE-6] forbids shadowing, so a name denotes one binding in scope and indices would add renaming lemmas without removing a case; source spans serve diagnostics, which no theorem mentions, and a statement's place in a run is its path through the nesting ([Model defects and the points of a run](#model-defects-and-the-points-of-a-run)) |
 | Semantics | a small-step machine: call frames, each a continuation of statement lists, block scopes and loop markers | a big-step evaluator with fuel; a step relation with no executable function | `facts_hold` quantifies over reachable points, which is the reflexive-transitive closure of `step`; a big-step evaluator would need a second, separate reachability relation; an executable `step` is what the conformance cases run |
-| Outcomes | `done`, `stuck` in the five meaningless states, `illFormed`, `outOfSteps` | folding type and name failures into `stuck` | a type mismatch or an unresolved name is excluded by typing and resolution, judgments the checker decides without facts; keeping it apart lets `accepted_never_stuck` say exactly that no proof obligation is left undischarged; the fragment reaches no binding without a value, since every `let` has its value and `move` is outside it, so that state waits for a later fragment |
+| Outcomes | `done`, `stuck` in the five meaningless states, `illFormed`, `outOfSteps` | folding type and name failures into `stuck` | a type mismatch or an unresolved name is excluded by typing and resolution, judgments the checker decides without facts; keeping it apart lets `accepted_never_stuck` exclude type and name errors as well as an undischarged proof obligation, each by its own part of the checker, the static judgments for the first and the facts for the second; the fragment reaches no binding without a value, since every `let` has its value and `move` is outside it, so that state waits for a later fragment |
 | Contracts | read over the mathematical integers [FN-8] at the call and at the return | erased, as the specification erases them | a false requirement or postcondition is a state the rules give no meaning; the machine must reach it as `stuck` for the theorem to exclude it |
 
 The interpreter takes one step per statement and one per administrative move
@@ -856,6 +863,81 @@ workflow: seven of its nine runs failed to compile, at between 1 and 28 places
 each. Moved into the package, the proofs checked on every `proof.yml` run; one
 earlier run failed only on the build's budget of the time, 25.6 s against
 25 s, on package content another run had passed with.
+
+### The simulation and the two theorems
+
+Both theorems follow from one property of a machine configuration, counted
+in steps: `Safe p H n c` says that the next `n` steps from `c` never stop
+stuck and that every configuration they pass through satisfies `H` at the
+point it is about to run (`Safety.lean`). An `illFormed` halt counts as safe
+there, since `Program.never_illFormed` excludes it on its own. When the start
+of an accepted program is safe for every `n` under the meaning of the facts
+the checker recorded, those facts hold at every point a run reaches, and a run
+of any length ends `done` or `outOfSteps`.
+
+Four ways to prove the start safe were compared.
+
+| Approach | How | Against it |
+|---|---|---|
+| A. Safety by steps (selected) | a triple per statement: from a frame on which the snapshot the walk recorded on entering it holds, its step is safe for `n` steps when every way of leaving it is; loops and calls by induction on `n` | none found: it states the wanted property directly; its lemmas follow the walk, one per statement form, so a later phase adds a lemma per new form; it describes no continuation the machine can build and needs no premise that calls do not recurse |
+| B. Progress and preservation | an invariant of whole configurations, every frame and continuation, matched with the walk's states and kept by each step | relating every continuation stack the machine can build to the walk's states is about as large as the proof itself, and the continuation that restarts a loop body needs a case of its own |
+| C. Certificates | the checker emits each point's state and the entailments at joins and loop heads, and a small verifier of them is proved sound | the smallest proof, but of the checker and the verifier together, not of the checker the model states |
+| D. An inductive derivation relation | the checker rewritten as an inductively defined judgment, proved sound, and the executable checker proved to implement it | the checker exists twice, and every specification change edits both |
+
+A statement's triple (`Sim.StmtOK`) takes each way of leaving the statement
+as a premise at the same step count `n`: off its end, from every normal state
+the walk ends with that holds on the frame (`NormalOK`); by a `break` or
+`continue` to an enclosing loop (`BreakOK`, `ContOK`); by returning a value in
+range whose postconditions hold (`RetOKT`); and by entering a function of the
+program with arguments in range whose requirements hold (`FnSafeTo`). A
+statement list composes its statements' triples, and an `if` enters a block
+and leaves it with the block's bindings dropped. A call needs no premise on
+the call graph: entering a function is safe for `m + 1` steps once entering
+any function is safe for every count up to `m` (`fnSafe_succ`), since the call
+itself takes a step, so the induction is on steps and a recursive call, outside
+the fragment, would need no new argument.
+
+A loop's head needs an argument of its own. The walk visits a loop's body
+once, from the head's state: the state before the loop with each binding the
+body sets on a way back to the head written, which removes the facts it
+supports, each such integer binding given a fresh atom as its image, and the
+header invariants established. The first arrival
+at the head holds by the head lemma on the frame the loop was entered with. A
+later arrival comes by the body's end or a `continue`, where the back edge's
+check has proved the invariants; the facts kept from the state before the
+loop still hold because every binding written on a way from the head back to
+it is one the head killed, which is what [ENT-5]'s continuing kill events
+collect: a kill event is continuing exactly when an execution taking it can
+reach a later iteration head of the same loop. A `Watch` per enclosing loop
+carries the loop's entry frame and its killed names, and every statement's
+triple shows that the frame still agrees with the entry frame on each binding
+the head did not kill. The other way, showing that the back edge's state still
+entails every fact of the state before the loop, needs every transfer to keep
+entailment, down to the L0 closure only growing, and was not taken.
+
+The discharge lemmas for a call's requirements and for an invariant take the
+static judgment in the scope of the walk's binding table, and the return lemma
+takes the parameters' bindings and the types of their entry values. The
+simulation carries these along the walk:
+the static judgment's context and the walk's binding table agree (`CtxOK`:
+the context's scope is the table's, every parameter name is taken, and each
+parameter's binding is the one the walk's entry recorded) at a function's
+entry, and each statement's walk and judgment keep them in line
+(`Align.lean`, and `align_stmt` in `Loops.lean`). For a `let`, the bound
+variable takes the type of the checker's value of the right-hand side, which
+must be the static judgment's type. That lemma reads the type off every value
+the checker's computation can return (`Checker.Yields`), without following
+the discharge queries the computation runs on its way: the proof that
+followed them built in 65 s of a 97.5 s build, the one that reads the returns
+in 11 s of a 67.6 s build, on two `proof.yml` runs.
+
+Until the transfer lemmas merge, the simulation takes the lemmas of the other
+parts as premises, gathered in one structure (`Sim.Laws`): the meaning of a
+snapshot, the discharge lemmas in the form they merged with, the transfer and
+freshness lemmas, a loop's head and a function's entry. The generator lemmas
+are used as proved. The two theorems are proved from those premises
+(`facts_hold_of_laws`, `accepted_never_stuck_of_laws`) and become the
+theorems above once every premise is a proved lemma.
 
 ## Cost
 
