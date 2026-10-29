@@ -777,6 +777,86 @@ on the slower host. Four earlier runs failed to compile: a tactic macro could
 not resolve lemma names defined after it, then, once it could, a lemma's
 proof referred to itself, and two proofs needed steps the tactic did not take.
 
+### The discharge lemmas
+
+`Holds.lean` gives a snapshot of the checker's facts its meaning on an
+interpreter frame, the frame's bindings and its parameters' entry values: the
+frame fits the binding table, and some valuation of the atoms and of the terms
+makes every part of the fact state hold of it, the L0 relations, each integer
+binding's image, the images of call data and returned values, the automatic
+premises, the signed goals, the origin links, the stable parameters and the
+captured quotients. The valuations are existential because the checker cannot
+name the runtime value an atom stands for: the delta atom a join registers
+stands for a different input's value on each path. One valuation serves every
+part because the L0 images and the bridges tie terms to atoms, so an image is
+shown to hold under the valuation that satisfies the L0 relations, the step
+the affine lemmas left to this part. A contradictory state holds on no frame.
+A snapshot is also fresh below the generator's counter, every identity it
+names lying below it, so an atom minted later may take any value in its
+interval without disturbing what already holds.
+
+`DischargeSound.lean` reduces the disposition [MSR-4] to what a query means:
+each of its forms, the signed goal, an L0 normalization whose facts hold,
+every affine target holding (a target with a bridge holds once its left side
+is at most the bridge's term), an affine alternative and the interval
+product, implies the obligation. Each obligation class then proves what its
+queries mean once, instead of each class unfolding the disposition: relation
+queries for requirements, postconditions and invariants [ENT-2, ENT-6],
+subscript queries [OP-4], and exact operations' domain queries [OP-2], where
+the operands' intervals and the interval product give a multiplication's
+range. `ObligationSound.lean` and `ValueSound.lean` state the obligations in
+the form the interface of `spec-proof-theorems` fixes: an accepted right-hand
+side that calls no function of the program, and a subscript target, never
+stick; a proved invariant holds; a published call's arguments never stick,
+lie in their types' ranges and satisfy the callee's requirements [FN-8]; a
+return's check gives the postconditions of the returned value [FN-9]; and the
+checker's value of each right-hand side describes its runtime value, which
+the transfer lemmas use.
+
+Reading the model for the proof found a defect: a disequality relation has no
+affine normalization, yet `relQuery` gave it an empty list of affine
+components, and the disposition counts a list whose every component holds as
+proved, so the checker proved every `requires x != y` at a call and every
+`ensures r != v` at a return. The model's checker accepted a call
+`divide(n: 84_u64, d: 0_u64)` of a function that `requires d != 0_u64`, and a
+return of the parameter `v` under `ensures r != v`; with the fix both are
+rejected, citing [FN-8] and [FN-9], and two checker examples in the
+conformance harness keep them so, watched failing on the main line's checker
+by a temporary workflow. The fix gives a disequality no affine component, so
+its L0 facts alone prove it, as [ENT-6] normalizes only order relations and
+equalities. With the empty list put back, the proofs no longer check: a
+temporary workflow watched the build fail at the disequality case of
+`bridges_spec`, the lemma that a relation's affine components give the
+relation. The disposition's two other lists that count as proved when every member holds,
+an L0 normalization's components and the affine alternatives, are never
+empty, read from the source.
+
+The statements follow the interface with four adjustments: the lemmas that
+mint atoms take the snapshot's freshness; the call-requirement and invariant
+lemmas take the static judgment in the binding table's scope; the return
+lemma takes the state its check reads and a checker value that describes the
+returned value, since a return gives a computed integer expression a returned
+value before the check, a step whose lemma belongs with the transfer lemmas
+beside `set`'s, which uses the same parts; and a value-level lemma for
+right-hand sides is added.
+
+The part adds 5,015 lines of Lean in four modules, changes the model's
+`bridges` and its one use, and adds no coverage mark. The build of the model
+and harness took 56.5 s and 55.5 s on the first two `proof.yml` runs after the
+main line was merged in, the new modules taking 1.6 to 1.8 s, 4.9 s, 20 s and
+5.2 s beside the generator lemmas' 29 s, and 41.9 s on the third, on a faster
+host: there the parser built in 2.3 s against 3.1 s and 3.2 s, and the new
+modules in 1.4 s, 3.6 s, 14 s and 3.0 s beside 20 s. The build's provisional
+budget rises from 65 s to 85 s, 1.5 times the 55.5 s of the final content's
+first run, rounded up to 5 s. Writing the part to the commit handed to review
+took nine engineer turns, two of them ending on network errors and one stopped
+by a pause. The draft was
+written without a local Lean and compiled outside the package by a temporary
+workflow: seven of its nine runs failed to compile, at between 1 and 28 places
+each. Moved into the package, the proofs checked on every `proof.yml` run; one
+earlier run failed only on the build's budget of the time, 25.6 s against
+25 s, on package content another run had passed with.
+
 ## Cost
 
 Precedents with measured sizes:
