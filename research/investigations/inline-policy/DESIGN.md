@@ -483,8 +483,9 @@ the merge base `05e4c58eb`.
 
 ## Round 5: the timing acceptance (i9-14900K)
 
-Written before measuring. Every side is built from the commit to merge (or
-one whose compiler sources equal it), against its merge base with `main`.
+Written before measuring. The hash-map sides are built from the commit to
+merge (or one whose compiler sources equal it), against its merge base with
+`main`.
 
 - **Hash-map cells.** `compiler-compare.yml` on the 14900K, group
   `hash_map` only, CPU 2, `floor` set to the hash-map floor recorded for the
@@ -504,9 +505,37 @@ one whose compiler sources equal it), against its merge base with `main`.
   run of this workflow there took five). The interpreters group is left out:
   its wall timer resolves only 0.1 s (compare-perf-wall-time), so its floor
   does not count until compare-timer-resolution fixes it.
-- **Firn.** `redis-bench.yml` compare mode on the 14900K, Firn built by the
-  candidate's compiler and by the merge base's, everything else the same:
+- **Firn.** `redis-bench.yml` compare mode on the 14900K, Firn built by
+  two compilers that differ only in this change: the release Firn pins
+  after firn-pin-wf-main, `wf-63b7cbb03820`, and an experiment release of
+  that commit with this change's compiler files applied (Firn compiles with
+  the first, and a newer main would add its own changes to the
+  comparison). Everything else is the same:
   redis-benchmark's default tests at depths 1 and 16, 16 passes each, the
   Firn floor recorded for that mode. Accepted when no test's interval lies
   wholly above 1 with the twin's interval holding 1. It runs once Firn
   compiles with a compiler of `main` (firn-pin-wf-main).
+
+### Results
+
+Hash-map cells, i9-14900K, CPU 2, with the recorded floor, instrument `main`
+at `55b6fd7a7`; the candidate is `9f365b213` (`cc94a0086` with the shrinking
+library):
+
+- Pair 1, [run 40853499423](https://github.com/Ming-Research/Whitefoot/actions/runs/40853499423),
+  base `f1e457950` (`55b6fd7a7` with the shrinking library): remove-insert
+  0.9583 [0.9541, 0.9612], 0.9670 [0.9640, 0.9696] and 0.9215
+  [0.9044, 0.9307] at 1,000, 10,000 and 1,000,000, all improvements. No cell
+  is judged slower: 14 improvements, 6 no change, and insert-presized at
+  10,000 not counted (spread above its floor). Iterate at 1,000,000, which
+  round 4's hosted runs flagged, is 0.9254 [0.9231, 0.9287]; iterate at
+  1,000 and 10,000 is 0.752 and 0.762. No memory cell changed. Criterion 1
+  holds.
+- Pair 2, [run 40854411188](https://github.com/Ming-Research/Whitefoot/actions/runs/40854411188),
+  base `55b6fd7a7` (the library before shrinking): remove-insert 0.9701
+  [0.9673, 0.9752], 0.9739 [0.9725, 0.9797] and 0.9993 [0.9918, 1.0026], none
+  wholly above 1, so criterion 2 holds. As written before measuring, the
+  other cells report shrinking's own changes: draining (remove) is 1.65 and
+  1.69 times slower at 10,000 and 1,000,000 (2.06 at 1,000, not counted), as
+  in round 3, and lookup-hit at 1,000,000 is 1.0045 [1.0025, 1.0323]; pair 1
+  judges that cell no change, so the hint does not carry it.
