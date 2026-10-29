@@ -1224,20 +1224,21 @@ harness took 25.4 s, 32.5 s and 48.7 s on the three green `proof.yml` runs,
 within the build's budget of the time, 65 s, against 39.9 s to 42.2 s on the
 main line's three runs of the same day; on the last run the three modules
 built in 3.4 s, 1.8 s and 5.4 s, with 5.8 s, 2.6 s and 0.9 s more for their
-object code. With those lemmas merged in, the build took 61.5 s, 66.1 s and
-64.5 s on the next three runs, the three modules 3.3 to 3.6 s, 1.5 to 2.1 s and
-5.1 to 5.7 s, and the build's provisional budget rises from 85 s to 100 s,
-1.5 times 66.1 s rounded up to 5 s. The study's estimate was about 1,200 lines
-of definitions and 4,000 of proof. The part took three engineer turns to its
-review, the first of which also made the study and the last of which only
-handed it on, with ten `proof.yml` runs and three runs of the temporary
-workflow. Three runs failed to compile: the meaning of a cover named a place it
-had not bound, three steps of the first lemmas did not type-check, and a
-lemma's proof referred to itself. The review found the second gap, which the
-draft had listed as a reading, and a declaration count the merge had made
-stale. The fixes, with the second gap's case and the workflow's fourth job,
-took one more engineer turn, two more `proof.yml` runs, the first of which
-built in 63.1 s, and two more runs of the temporary workflow.
+object code. With those lemmas merged in, the build took 61.5 s to 66.1 s on
+the next four runs, the three modules 3.3 to 3.6 s, 1.5 to 2.1 s and 5.1 to
+5.7 s, and 63.1 s and 68.0 s once the second gap's case was added: all within
+the build's budget of 85 s, which the part leaves as it is. The study's
+estimate was about 1,200 lines of definitions and 4,000 of proof. The part
+took three engineer turns to its review, the first of which also made the
+study and the last of which only handed it on, with ten `proof.yml` runs and
+three runs of the temporary workflow. Three runs failed to compile: the
+meaning of a cover named a place it had not bound, three steps of the first
+lemmas did not type-check, and a lemma's proof referred to itself. The review
+found the second gap, which the draft had listed as a reading, a declaration
+count the merge had made stale, and a raise of the build's budget that the
+owner had not decided, which the part withdrew. The fixes, with the second
+gap's case and the workflow's fourth job, took two more engineer turns, three
+more `proof.yml` runs and three more runs of the temporary workflow.
 
 ## Cost
 
