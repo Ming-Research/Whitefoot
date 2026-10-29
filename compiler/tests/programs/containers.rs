@@ -337,6 +337,54 @@ fn ordered_map_mutations_match_sorted_oracle_and_preserve_every_owner_in_both_lo
 }
 
 #[test]
+fn ordered_map_cursors_match_the_sorted_oracle_in_both_lowering_modes() {
+    let sources: [(&str, &[u8]); 1] = [(
+        "containers/ordered-map-cursor-program.wf",
+        include_bytes!("../../../tests/programs/containers/ordered-map-cursor-program.wf"),
+    )];
+    // Status 1 reports a cursor that disagrees with the arithmetic oracle,
+    // 2 a pair count consumed at release other than the 256 left in the maps.
+    for (mode, llvm) in [
+        ("sequential", compile_sources(&sources)),
+        (
+            "parallel",
+            compile_sources_with_cli_parallel_defaults(&sources),
+        ),
+    ] {
+        let output = build_program(&llvm).run_with_workers(None);
+        assert_eq!(output.status.code(), Some(0), "{mode}: {output:?}");
+        assert!(output.stdout.is_empty(), "{mode}: {output:?}");
+        assert!(output.stderr.is_empty(), "{mode}: {output:?}");
+    }
+}
+
+/// The ordered map's tree is private to `std::collections::ordered_map`
+/// [MOD-5, MOD-6]: a client that reads the map's root link is refused, while
+/// the same client reading the public length is accepted, so the refusal
+/// names the representation and not the program around it.
+#[test]
+fn a_client_cannot_read_the_ordered_maps_tree() {
+    let program = |read: &str| {
+        format!(
+            "fn main() -> status: std::process::ExitStatus pure {{\n  let map = std::collections::ordered_map::ordered_map_new::<u64, u64, 4>();\n  let observed = {read};\n  std::collections::ordered_map::ordered_map_free::<u64, u64, u64, fn drop_pair, 4>(map: move map, env: &observed);\n  return std::process::exit_status(code: 0_u8);\n}}\n\nfn drop_pair(env: &u64, key: u64, value: u64) -> result: unit pure {{\n  return unit;\n}}\n"
+        )
+    };
+    let public = program("map.length");
+    whitefoot::check(
+        &[whitefoot::SourceInput::new("ordered-length.wf", public.as_bytes())],
+        whitefoot::CompilerLimits::default(),
+    )
+    .expect("the public length is readable");
+    let private = program("map.root.len");
+    let failure = whitefoot::check(
+        &[whitefoot::SourceInput::new("ordered-root.wf", private.as_bytes())],
+        whitefoot::CompilerLimits::default(),
+    )
+    .expect_err("the root link is private to the library");
+    assert_eq!(failure.rule_id(), Some("MOD-5"), "{failure:?}");
+}
+
+#[test]
 fn clear_reuses_storage_and_releases_every_element_in_both_lowering_modes() {
     let sources: [(&str, &[u8]); 1] = [(
         "containers/clear-program.wf",
