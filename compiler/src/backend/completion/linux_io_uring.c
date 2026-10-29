@@ -1410,6 +1410,24 @@ size_t wf_linux_io_uring_in_flight(
     return atomic_load_explicit(&adapter->in_flight, memory_order_acquire);
 }
 
+int wf_linux_io_uring_pending(
+    const wf_linux_io_uring_adapter *adapter
+) {
+    if (adapter == NULL || adapter->initialized == 0) {
+        return 0;
+    }
+    if (wf_linux_load_acquire(adapter->completion_head)
+        != wf_linux_load_acquire(adapter->completion_tail)) {
+        return 1;
+    }
+    if ((wf_linux_load_acquire(adapter->submission_flags)
+            & IORING_SQ_CQ_OVERFLOW) != 0) {
+        return 1;
+    }
+    return wf_linux_load_acquire(adapter->submission_head)
+        != wf_linux_load_acquire(adapter->submission_tail);
+}
+
 size_t wf_linux_io_uring_capacity(
     const wf_linux_io_uring_adapter *adapter
 ) {

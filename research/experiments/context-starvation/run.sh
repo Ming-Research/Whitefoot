@@ -92,7 +92,8 @@ def sample(phase, repetition, drivers, count, cpus="0"):
     driver_lines = [line for line in counters.splitlines() if line.startswith("driver:")]
     driver_pattern = (r"driver: index=(\d+) borrow_attempts=\d+ borrows=\d+ "
                       r"borrowed_sleeps=\d+ borrowed_terminals=\d+ stolen_contexts=\d+ "
-                      r"reassignments=(\d+) ingress_commits=(\d+) reserve_misses=(\d+)")
+                      r"reassignments=(\d+) ingress_commits=(\d+) reserve_misses=(\d+)"
+                      r"(?: ring_reassignments=\d+)?")
     matches = [re.fullmatch(driver_pattern, line) for line in driver_lines]
     # Driver lines appear when a second driver started or a role was handed
     # over, so reported_drivers counts lines, not started drivers: zero for a

@@ -5,6 +5,11 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-13 Ring work belongs to whichever thread holds a driver's service, and a computing driver with ring backlog is handed over
+
+Nodes: compiler/waiting-contexts/bounded-waits
+
+Summary: A context computing without waiting left its driver's ring unserved, because an idle driver's borrow completes only sleeps and published terminals; on main a connection's echo beside a two-second computation took 1,846 to 1,938 ms in ten of ten runs. Ring work (reaping, kicking staged submissions, cancelling) now belongs to whichever thread holds the driver's service, its owner or a monitor-installed replacement, and the monitor also hands a driver's whole role to a spare when one context run lasts a monitor period while the ring holds completions, an overflow or staged submissions, whether or not a driver is idle; the check takes no lock and makes no host call. The trigger is provisional until the registered 14900K comparison of Firn's ordinary I/O (GET, SET, MSET at one and two cores, pipeline 16 and 1, each cell at least 0.97 times main) reports, and is reopened if any cell falls below. Rejected: an idle driver reaping the busy ring while borrowing, a shared reaper thread for every ring, and judging a driver stale by the time since its last reap (research/investigations/ring-assist/DESIGN.md).
 ## 2026-10-23 A returned computed integer expression proves a postcondition as a `let` of it would
 
 Nodes: language/checks-and-proofs/automatic-facts

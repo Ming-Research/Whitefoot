@@ -1,0 +1,280 @@
+alias AcceptedConnection = std::net::AcceptedConnection;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias Inputs = std::process::Inputs;
+alias IoError = std::io::IoError;
+alias TcpConnection = std::net::TcpConnection;
+alias TcpSend = std::net::TcpSend;
+alias arg_get = std::text::arg_get;
+alias args_count = std::text::args_count;
+alias close_directory = std::fs::close_directory;
+alias close_listener = std::net::close_listener;
+alias close_receive = std::net::close_receive;
+alias close_send = std::net::close_send;
+alias exit_status = std::process::exit_status;
+alias factory_share = std::io::factory_share;
+alias host_copy_utf8 = std::text::host_copy_utf8;
+alias receive_next = std::net::receive_next;
+alias send_once = std::net::send_once;
+alias socket_address_v4 = std::net::socket_address_v4;
+alias tcp_accept = std::net::tcp_accept;
+alias tcp_listen = std::net::tcp_listen;
+
+fn byte_at(store: &[u8], index: u64) -> result: u8 reads(store) {
+  doc "Reads one stored byte, delivering zero for a position the range reference does not hold.";
+  let room = store^.len;
+  let inside = index < room;
+  if inside {
+    let value = store^[index];
+    return value;
+  }
+  return 0_u8;
+}
+
+fn parse_decimal(digits: &[u8], length: u64) -> result: u64 reads(digits) {
+  doc "Reads one decimal number out of the argument bytes the invocation supplied; a byte that is not a digit ends the number.";
+  let number = 0_u64;
+  let ended = 0_u8;
+  let index = 0_u64;
+  loop @scan {
+    let more = index < length;
+    if more {
+    } else {
+      break @scan;
+    }
+    let byte = byte_at(store: digits, index: index);
+    let low = byte >= 48_u8;
+    let high = byte <= 57_u8;
+    let digit = band(low, high);
+    if digit {
+      let value = byte -wrap 48_u8;
+      let widened = cvt::<u8, u64>(value);
+      let scaled = number *wrap 10_u64;
+      set number = scaled +wrap widened;
+    } else {
+      set ended = 1_u8;
+    }
+    if ended == 0_u8 {
+      set index = index +wrap 1_u64;
+    } else {
+      break @scan;
+    }
+  }
+  return number;
+}
+
+fn mix(seed: u64, steps: u64) -> result: u64 pure {
+  doc "Advances a 64-bit linear congruential recurrence by the given number of steps without waiting, each step a wrapping multiply and add on the previous value, so no step can start before the one before it ends.";
+  let state = seed;
+  let step = 0_u64;
+  loop @advance {
+    if step >= steps {
+      break @advance;
+    }
+    let scaled = state *wrap 6364136223846793005_u64;
+    set state = scaled +wrap 1442695040888963407_u64;
+    set step = step +wrap 1_u64;
+  }
+  return state;
+}
+
+fn send_all(send: &TcpSend, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(send) waits contract {
+  define source_length = source^.len;
+  requires length <= source_length;
+} {
+  doc "Sends one prefix of the source range, reattempting until the connection has accepted every byte or refused it.";
+  let sent = 0_u64;
+  loop @sending {
+    let pending = sent < length;
+    if pending {
+    } else {
+      break @sending;
+    }
+    let no_deadline = None<std::time::Instant>();
+    let wait_cancel_1 = std::time::cancel_never();
+    let wait_outcome_1 = send_once(send: send, source: source, start: sent, end: length, deadline: no_deadline, cancel: &wait_cancel_1);
+    std::time::close_cancel_watch(watch: move wait_cancel_1);
+    match wait_outcome_1 {
+      Ok(value: next) => {
+        set sent = next;
+      }
+      Err(error: send_problem) => {
+        return Err<unit, IoError>(error: send_problem);
+      }
+    }
+  }
+  return Ok<unit, IoError>(value: unit);
+}
+
+fn send_value(send: &TcpSend, value: u64) -> result: Result<unit, IoError> writes(send) waits {
+  doc "Sends one 64-bit value as its eight bytes, least significant first.";
+  let encoded = slots_new::<u8, 8>();
+  let rest = value;
+  for @encode (
+    at in 0_u64..8_u64,
+    invariant grown_encoded: encoded.len == at
+  ) {
+    let low = iand(rest, 255_u64);
+    let byte = cvt::<u64, u8>(low);
+    place_back(window: &encoded, value: byte);
+    set rest = rest / 256_u64;
+  }
+  let source = &encoded[0_u64..8_u64];
+  let outcome = send_all(send: send, source: source, length: 8_u64);
+  return outcome;
+}
+
+fn serve(connection: TcpConnection, factory: HandleFactory, steps: u64) -> result: unit pure waits {
+  doc "Serves one peer in a context of its own [WAIT-3]. A peer whose first byte is g gets the recurrence advanced by steps, computed without waiting and sent as eight bytes, and the connection then closes; any other peer gets every byte it sends back until it stops sending.";
+  let chunk = slots_new::<u8, 64>();
+  for @fill_chunk (
+    at in 0_u64..64_u64,
+    invariant grown_chunk: chunk.len == at
+  ) {
+    place_back(window: &chunk, value: 0_u8);
+  }
+  let expected_bytes = 64_u64;
+  let sink = &chunk[0_u64..64_u64];
+  let first = 1_u8;
+  loop @chunks {
+    let available = 0_u64;
+    let ended = 0_u8;
+    let no_deadline = None<std::time::Instant>();
+    let wait_cancel_2 = std::time::cancel_never();
+    let wait_outcome_2 = receive_next(receive: &connection.receive, destination: sink, start: 0_u64, end: expected_bytes, deadline: no_deadline, cancel: &wait_cancel_2);
+    std::time::close_cancel_watch(watch: move wait_cancel_2);
+    match wait_outcome_2 {
+      Ok(value: endpoint) => {
+        set available = endpoint;
+      }
+      Err(error: receive_stop) => {
+        set ended = 1_u8;
+      }
+    }
+    if ended == 0_u8 {
+      if first == 1_u8 {
+        set first = 0_u8;
+        let lead = byte_at(store: sink, index: 0_u64);
+        if lead == 103_u8 {
+          let computed = mix(seed: 1_u64, steps: steps);
+          match send_value(send: &connection.send, value: computed) {
+            Ok(value: replied) => {
+            }
+            Err(error: reply_problem) => {
+            }
+          }
+          set ended = 1_u8;
+        }
+      }
+    }
+    if ended == 0_u8 {
+      match send_all(send: &connection.send, source: sink, length: available) {
+        Ok(value: delivered) => {
+        }
+        Err(error: echo_problem) => {
+          set ended = 1_u8;
+        }
+      }
+    }
+    if ended == 0_u8 {
+    } else {
+      break @chunks;
+    }
+  }
+  let TcpConnection(receive: closing_receive, send: closing_send) = move connection;
+  close_receive(factory: &factory, receive: move closing_receive);
+  close_send(factory: &factory, send: move closing_send);
+  return unit;
+}
+
+fn argument(args: &std::text::Args, position: u64, window: &[u8]) -> result: u64 reads(args), writes(window) contract {
+  requires 16_u64 <= window^.len;
+} {
+  doc "Copies one invocation argument into the window and returns its length, or zero when it is absent or does not fit.";
+  let carried = 0_u64;
+  match arg_get(args: args, position: position) {
+    Ok(value: text) => {
+      match host_copy_utf8(value: &text, destination: window, start: 0_u64, end: 16_u64) {
+        Ok(value: written) => {
+          set carried = written;
+        }
+        Err(error: copy_problem) => {
+          set carried = 0_u64;
+        }
+      }
+    }
+    Err(error: absent_problem) => {
+      set carried = 0_u64;
+    }
+  }
+  return carried;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "Listens on the loopback port the first argument names, accepts exactly two connections and serves each in a context of its own [WAIT-3]; the second argument is the steps a computing peer asks for. With a nonzero third argument the entry advances the recurrence by that many steps right after starting the first connection's context and before it accepts again, so that context stays ready long enough for an idle driver to take it. Every started context completes before main returns.";
+  let Inputs(args: args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &handles, directory: move unused_cwd_write);
+  close_directory(factory: &handles, directory: move unused_cwd);
+  let digits = slots_new::<u8, 16>();
+  for @fill_digits (
+    at in 0_u64..16_u64,
+    invariant grown_digits: digits.len == at
+  ) {
+    place_back(window: &digits, value: 0_u8);
+  }
+  let window = &digits[0_u64..16_u64];
+  let arguments = args_count(args: &args);
+  if arguments < 4_u64 {
+    return exit_status(code: 1_u8);
+  }
+  let port_length = argument(args: &args, position: 1_u64, window: window);
+  if port_length == 0_u64 {
+    return exit_status(code: 2_u8);
+  }
+  let written_port = parse_decimal(digits: window, length: port_length);
+  let masked_port = iand(written_port, 65535_u64);
+  let port = cvt::<u64, u16>(masked_port);
+  let steps_length = argument(args: &args, position: 2_u64, window: window);
+  let steps = parse_decimal(digits: window, length: steps_length);
+  let spin_length = argument(args: &args, position: 3_u64, window: window);
+  let spin = parse_decimal(digits: window, length: spin_length);
+  let spun = 1_u64;
+  let address = socket_address_v4(a: 127_u8, b: 0_u8, c: 0_u8, d: 1_u8, port: port);
+  match tcp_listen(factory: &handles, address: &address) {
+    Ok(value: listener) => {
+      let accepted = 0_u64;
+      loop @accepting {
+        if accepted >= 2_u64 {
+          break @accepting;
+        }
+        let no_deadline = None<std::time::Instant>();
+        let wait_cancel_3 = std::time::cancel_never();
+        let wait_outcome_3 = tcp_accept(factory: &handles, listener: &listener, deadline: no_deadline, cancel: &wait_cancel_3);
+        std::time::close_cancel_watch(watch: move wait_cancel_3);
+        match move wait_outcome_3 {
+          Ok(value: next) => {
+            let AcceptedConnection(connection: connection, peer: unused_peer) = move next;
+            let factory = factory_share(factory: &handles);
+            spawn serve(connection: move connection, factory: move factory, steps: steps);
+            if accepted == 0_u64 {
+              set spun = mix(seed: 7_u64, steps: spin);
+            }
+          }
+          Err(error: accept_problem) => {
+            break @accepting;
+          }
+        }
+        set accepted = accepted +wrap 1_u64;
+      }
+      close_listener(factory: &handles, listener: move listener);
+    }
+    Err(error: listen_problem) => {
+      return exit_status(code: 3_u8);
+    }
+  }
+  if spun == 0_u64 {
+    return exit_status(code: 4_u8);
+  }
+  return exit_status(code: 0_u8);
+}
