@@ -357,9 +357,8 @@ fn main() -> status: std::process::ExitStatus pure {
     let first = emitted_function(&llvm, "_env_count_first");
     // The extent is the forwarded `p`: a literal 64-iteration call-free loop
     // is a compile-time small site and keeps no driver. The indexed loop keeps its range driver; the site itself allocates
-    // nothing and asks the runtime for no split budget.
+    // nothing.
     assert!(first.contains("@wf__par_split_count_first."), "{first}");
-    assert!(!first.contains("@wf__par_split_budget("), "{first}");
     assert!(!first.contains("@wf__heap_take("), "{first}");
     assert!(
         llvm.contains(".allocation = call ptr @wf__heap_take("),
@@ -863,11 +862,10 @@ fn main() -> status: std::process::ExitStatus pure {
     }
 
     // The driver's operands taken from the function body exist before its
-    // call. The site prepares no private storage and asks for no budget. Its
+    // call. The site prepares no private storage. Its
     // extent is a parameter, since a literal 64-iteration call-free loop is a
     // compile-time small site with no driver.
     let count = emitted_function(&llvm, "count_words");
-    assert!(!count.contains("@wf__par_split_budget("), "{count}");
     assert!(!count.contains("@wf__heap_take("), "{count}");
     let call = count
         .lines()

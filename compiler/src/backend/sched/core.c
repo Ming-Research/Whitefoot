@@ -548,6 +548,20 @@ static void wf__par_trace_chunk(struct wf__par_lane *lane, uint64_t elapsed_ns) 
     }
 }
 
+/* The head of one top-level call: its first publication from the offering
+ * lane, with the idle mask as it stood at that moment so a call where no lane
+ * had parked is visible as such. */
+static void wf__par_trace_call_head(struct wf__par_lane *lane) {
+    struct wf__par_trace_ring *ring = &wf__par_trace_rings[lane - wf__par_lanes];
+    ring->in_call = 1;
+    wf__par_trace_arm_all();
+    wf__par_trace_put(lane, WF_PAR_TRACE_CALL_HEAD,
+                      (int64_t)__atomic_load_n(&wf__par_idle, __ATOMIC_RELAXED));
+    /* The offering lane's own reading at the head, the reference every helper's
+     * post-wake probe is read against. */
+    wf__par_trace_probe(lane, 0);
+}
+
 /* Every publish reaches this, so the ordinary mid-call publish -- no lane
  * parked, the flag already clear -- must be a LOAD of a shared clean line and
  * nothing else. A store here would invalidate that line on every frame offered
@@ -1309,6 +1323,14 @@ void wf__par_publish(void *frame, void (*fn)(void *)) {
     __atomic_store_n(&wf__par_demand_word, (uint64_t)0, __ATOMIC_RELAXED);
 #if defined(WF_SCHED_REQUEST_TEST)
     wf_sched_request_test_cleared();
+#endif
+#if defined(WF_PAR_TRACE)
+    /* A publish from a lane with no frame outstanding opens a top-level call:
+     * no runtime query precedes a demand split, so the first publication is
+     * the call's head. */
+    if (wf__par_trace_rings[slot->home - wf__par_lanes].depth == 0) {
+        wf__par_trace_call_head(slot->home);
+    }
 #endif
     wf__par_push(slot->home, slot);
 #if defined(WF_PAR_TRACE)

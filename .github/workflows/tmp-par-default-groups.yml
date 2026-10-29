@@ -63,3 +63,20 @@ jobs:
         env:
           WHITEFOOT_CHECK_TIMEOUT: 1500
         run: make check-group GROUP="${{ matrix.stage }}"
+
+  # The scheduler's research trace (WF_PAR_TRACE) is built by no gate group;
+  # this compiles it with the completion harness's warnings so the restored
+  # call-head hook is at least type-checked.
+  trace-build:
+    name: trace build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile the traced scheduler
+        run: |
+          set -euo pipefail
+          clang --version
+          clang -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic -pthread \
+            -DWF_PAR_TRACE=1 -Icompiler/src/backend -Icompiler/src/backend/completion \
+            -c compiler/src/backend/sched/core.c -o "$RUNNER_TEMP/core-trace.o"

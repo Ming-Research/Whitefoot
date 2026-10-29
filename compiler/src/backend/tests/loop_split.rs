@@ -56,7 +56,7 @@ use super::{
 /// anything the iteration did not introduce, and no edge leaving the loop.
 ///
 /// The body is an iterated integer mix rather than two operations, because the
-/// split allowance refuses a range that is not worth splitting and a
+/// range driver refuses a range that is not worth splitting and a
 /// two-operation body over this span would be refused — correctly, and then
 /// this module would be measuring nothing. Its result is written to standard
 /// output as eight bytes, so a difference anywhere in the fold is a difference
@@ -811,7 +811,6 @@ fn a_permitted_loop_is_outlined_split_and_joined() {
         module.contains("define i64 @wf__par_split_"),
         "a split loop must synthesize a range splitter:\n{module}"
     );
-    assert!(!module.contains("call i64 @wf__par_split_budget("));
     let splitter_symbol = synthesized(&module, "@wf__par_split_");
     let chunk_symbol = synthesized(&module, "@wf__par_chunk_");
     let splitter = function_body(&module, &splitter_symbol);
@@ -844,8 +843,7 @@ fn a_permitted_loop_is_outlined_split_and_joined() {
         "the chunk is the loop and must reach no runtime entry point:\n{chunk}"
     );
 
-    // Range scheduling happens inside the splitter, never at loop entry.
-    assert!(!function_body(&module, "@wf_folded").contains("@wf__par_split_budget("));
+    // Range scheduling happens inside the splitter.
     assert!(splitter.contains("@wf__par_demand_word"), "{splitter}");
     assert!(splitter.contains("load atomic i64"), "{splitter}");
     assert!(splitter.contains("udiv i64"), "{splitter}");
@@ -886,7 +884,6 @@ fn the_sequential_world_of_a_split_loop_is_the_ordinary_loop() {
         "@wf__par_acquire_lane",
         "@wf__par_publish",
         "@wf__par_join",
-        "@wf__par_split_budget",
         "@wf__par_seq__par_chunk_",
         "@wf__par_chunk_",
     ] {
@@ -1040,7 +1037,6 @@ fn control_range_transport(module: &str) -> String {
 /// requests. With no outer request, ordinary slices must retain inner offers;
 /// the real request arm still proves a nonowner publication and completion.
 fn observe_outer_loop_budget(module: &str, caller: &str, splitter: &str, chunk: &str) -> String {
-    assert!(!function_body(module, caller).contains("call i64 @wf__par_split_budget("));
     let mut observed = control_range_transport(module);
     for (symbol, observer) in [
         (splitter, "wf_test_outer_splitter"),
@@ -2480,13 +2476,11 @@ fn main() -> status: std::process::ExitStatus pure {
 "#;
     let module = emit_with_overlap(source);
     let body = function_body(&module, "@wf_composed");
-    assert!(!body.contains("call i64 @wf__par_split_budget("));
     assert_eq!(body.matches("call i64 @wf__par_split_composed.").count(), 1);
     assert_eq!(body.matches("call i8 @wf__par_split_composed.").count(), 1);
     assert!(body.contains("call void @wf__par_publish("));
     assert!(body.contains(" = phi i64 "));
     let sequential = function_body(&module, "@wf__par_seq_composed");
-    assert!(!sequential.contains("@wf__par_split_budget("));
     assert!(!sequential.contains("@wf__par_publish("));
 
     let splitters = synthesized_symbols(&module, "@wf__par_split_");
@@ -2589,7 +2583,6 @@ fn a_degenerate_range_folds_to_the_accumulator_it_arrived_with() {
     let directory = test_directory();
     let splitter = synthesized(&module, "@wf__par_split_");
     let body = function_body(&module, &splitter);
-    assert!(!body.contains("@wf__par_split_budget("));
     let entry = body.lines().find(|line| line.ends_with(':')).unwrap();
     let changed = body.replacen(
         entry,
@@ -3059,7 +3052,6 @@ fn main() -> status: std::process::ExitStatus pure {
     for absent in [
         "@wf__par_split_",
         "@wf__par_chunk_",
-        "@wf__par_split_budget",
         "@wf__par_demand_word",
         "@wf__par_acquire_lane",
     ] {
@@ -3071,6 +3063,23 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_eq!(
         function_body(&parallel, "@wf_small"),
         function_body(&emit(source), "@wf_small")
+    );
+    // With no offer left, the whole program, bootstrap included, selects no
+    // pool (compiler/parallel-lowering): the entry body calls `main` directly.
+    let program = crate::compile_with_overlap(
+        &[crate::SourceInput::new("test.wf", source)],
+        crate::CompilerLimits::default(),
+        crate::OverlapLowering::On,
+    )
+    .expect("compile-time-small program emits");
+    assert!(
+        !program.contains("call i32 @wf__par_pool_active("),
+        "a program with no remaining offer must not query the pool:\n{program}"
+    );
+    let bootstrap = function_body(&program, "@wf__main_body");
+    assert!(
+        bootstrap.contains("@\"wf_main\"(") && !bootstrap.contains("@\"wf__par_seq_main\"("),
+        "the bootstrap must enter the one remaining world:\n{bootstrap}"
     );
 }
 

@@ -399,10 +399,6 @@ fn main() -> status: std::process::ExitStatus pure {
         write.contains("call i64 @llvm.umax.i64("),
         "runtime price must be positive even for zero extents: {write}"
     );
-    assert!(
-        !write.contains("@wf__par_split_budget("),
-        "runtime price must reach the driver without a query: {write}"
-    );
     // The written run is a frame-resident `Array<u64, 2>` [TYPE-9] and the
     // worker returns the two slots it filled as one scalar, so the probe reads
     // what the loop produced without a hand-written descriptor ABI. The old

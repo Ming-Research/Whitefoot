@@ -82,9 +82,8 @@ fn position(body: &str, needle: &str) -> usize {
 }
 
 #[test]
-fn indexed_sites_query_no_budget_and_drivers_privatize_only_granted_far_halves() {
+fn indexed_drivers_privatize_only_granted_far_halves() {
     let module = emit_with_overlap(PROGRAM);
-    assert!(!module.contains("wf__par_split_budget"), "{module}");
     for (name, identities) in [
         ("histogram", &["store i64 0, ptr %indexed.far."][..]),
         (
@@ -821,8 +820,6 @@ fn operations_source() -> String {
     source.push_str("  return std::process::exit_status(code: 0_u8);\n}\n");
     source
 }
-
-/// Instrument `source` with the forced-allowance observer and link it.
 
 #[test]
 fn indexed_bitwise_and_boolean_combines_match_an_independent_oracle_across_forced_splits() {

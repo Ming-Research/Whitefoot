@@ -650,7 +650,7 @@ impl<'program> IrBuilder<'program> {
                     .chain(captures.iter().map(|capture| capture.ty))
                     .chain([U64]),
                 result_type,
-                // The splitter's allowance is already its final parameter.
+                // The splitter's runtime price is already its final parameter.
                 false,
             )?
             .is_none()

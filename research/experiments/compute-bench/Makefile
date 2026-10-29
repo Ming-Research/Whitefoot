@@ -182,8 +182,8 @@ FORCE:
 # with this variable empty whatever it is set to -- so a run can measure what one
 # runtime constant is worth on this block of kernels, against the shipped
 # runtime in the same passes, without editing the constant per run: for example
-# `make compare WF_RUNTIME_CONTROL_FLAGS=-DWF_PAR_SPLIT_WORK_UNIT=300000`,
-# which builds the twin's splitter work unit at a quarter of its default. It is
+# `make compare WF_RUNTIME_CONTROL_FLAGS=-DWF_PAR_SPIN_ROUNDS=0`,
+# which builds the twin's idle lanes to park without spinning first. It is
 # EMPTY BY DEFAULT and must stay empty for any table that is recorded: the `wf`
 # row of a recorded table is the program plain `--par` produces linked with the
 # runtime this tree ships, and a runtime built to make a row nicer would be

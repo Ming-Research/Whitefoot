@@ -519,7 +519,7 @@ fn a_fitting_loop_retains_its_interface_and_one_extra_field_triggers_rescue() {
 }
 
 /// A live array capture must be measured after pruning. The u64 seed, two
-/// bounds, allowance and result occupy 40 bytes; a 216-byte payload fills the
+/// bounds, price and result occupy 40 bytes; a 216-byte payload fills the
 /// lane exactly. One more byte needs alignment padding and makes 264 bytes.
 #[test]
 fn aggregate_loop_frames_fit_the_selected_target_before_outlining() {
