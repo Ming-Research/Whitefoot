@@ -455,3 +455,28 @@ compiler and round 3's hint arm.
 - The HashMap, fib and CoreMark cells repeat round 3's hint arm as a hosted
   screen; the timing acceptance is the i9-14900K's.
 
+
+### Results
+
+Two runs on AMD EPYC 7763 hosted runners measured the same compiler change:
+[run 40115068629](https://github.com/Ming-Research/Whitefoot/actions/runs/40115068629)
+on commit `9a5ba9455` and
+[run 40833295931](https://github.com/Ming-Research/Whitefoot/actions/runs/40833295931)
+on commit `f356a7c59`, which changed only `design/log.md`. Both compare with
+the merge base `05e4c58eb`.
+
+- The emitted bench module is the merge base's with `inlinehint` added to
+  group #0, byte for byte, so the implementation is the design round 3
+  measured. The linked code differs from the merge base's, and is as large as
+  the hint arm's (197,474 bytes of text) with different bytes.
+- Text: bench 1.0075, Halo 1.0526, v2h 1.0156, corpus 1.0003 (97 programs),
+  the same as round 3's hint arm. Median compile time over five interleaved
+  pairs: Halo 1.027 and 1.014, v2h 1.007 and 1.018, bench 1.011 and 0.998.
+  Every acceptance bound holds.
+- Cells, both runs: remove-insert 0.925, 0.922, 0.864 and 0.923, 0.924, 0.844,
+  every interval wholly below 1; fib 0.880 and 0.880; CoreMark unresolved and
+  then 0.964. One cell is judged slower in both runs: iterate at 1,000,000,
+  1.0038 [1.0003, 1.0073] and 1.0046 [1.0014, 1.0087], with twin intervals
+  holding 1, where round 3's hint arm made it 0.944 on a Xeon 8573C. No floor
+  was given, so the verdicts decide nothing; the i9-14900K run compares that
+  cell with its floor, and a regression there needs the owner's card.
