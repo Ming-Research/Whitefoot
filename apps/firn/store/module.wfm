@@ -60,10 +60,15 @@ public struct ServerState {
   public started: u64;
 }
 
+public struct Data {
+  doc "The keyspace's keys and what it keeps beside them, held together by one atomic statement. The keys come first, so a statement that uses one key holds that entry alone until it reaches the metadata.";
+  public keys: ConcurrentHashMap<Entry>;
+  public meta: Meta;
+}
+
 public struct Keyspace {
-  doc "One context's handles to the keyspace's keys, to its metadata and to the server's state, and whether changes are appended to the append-only file's pending bytes, fixed before any client is served.";
-  public keys: Shared<ConcurrentHashMap<Entry>>;
-  public meta: Shared<Meta>;
+  doc "One context's handles to the keyspace's data, its keys and its metadata, and to the server's state, and whether changes are appended to the append-only file's pending bytes, fixed before any client is served.";
+  public data: Shared<Data>;
   public server: Shared<ServerState>;
   public logging: Bool;
 }
@@ -89,7 +94,7 @@ public binding DueOrder : PriorityOrder<Due, KeyEnv> {
 
 public const keyspace_capacity: u64 = 262144_u64;
 
-public fn keyspace_new(seed: u64, logging: Bool, password: Bytes, timeout: u64, started: u64) -> made: Keyspace pure doc "An empty keyspace, its keys a shared map sized for keyspace_capacity keys, appending changes to the append-only file's pending bytes when logging is true, whose SPOP draws start from the seed, beside a server's state that requires the password, none when it is empty, keeps a silent client timeout seconds, none when it is zero, holds Redis 7.0.15's defaults for the encoding parameters, and records started, the calendar time in milliseconds at which the server started.";
+public fn keyspace_new(seed: u64, logging: Bool, password: Bytes, timeout: u64, started: u64) -> made: Keyspace pure doc "An empty keyspace, its keys a map sized for keyspace_capacity keys, held in one shared object with the metadata, appending changes to the append-only file's pending bytes when logging is true, whose SPOP draws start from the seed, beside a server's state that requires the password, none when it is empty, keeps a silent client timeout seconds, none when it is zero, holds Redis 7.0.15's defaults for the encoding parameters, and records started, the calendar time in milliseconds at which the server started.";
 
 public fn keyspace_share(store: &Keyspace) -> made: Keyspace reads(store) doc "Another context's handle to the same keyspace.";
 
@@ -99,7 +104,7 @@ public fn expired(expires: u64, now: u64) -> reached: Bool pure doc "Whether an 
 
 public fn remove_expired(store: &Keyspace, key: &[u8], now: u64) -> result: unit reads(store), reads(key) waits doc "Removes the key when its expiry has passed at now, for a command that found it expired in a statement that only read it, recording the removal as log_removal does; a key set again since keeps its value.";
 
-public fn expire_batch(store: &Keyspace, now: u64, env: &KeyEnv, batch: &Box<Slots<Due>>) -> more: Bool reads(store), reads(env), writes(batch) waits doc "Takes up to 256 queued expiries that have passed, the earliest first, in one atomic statement, then removes each key whose expiry is still the one queued in a statement on that key, recording the removal as log_removal does, and returns whether more may be due. A queued expiry that no longer matches its key's, because the key was set, given another expiry or removed since, is dropped. The batch is scratch space the caller keeps.";
+public fn expire_batch(store: &Keyspace, now: u64, env: &KeyEnv, batch: &Box<Slots<Due>>) -> more: Bool reads(store), reads(env), writes(batch) waits doc "Takes up to 256 queued expiries that have passed, the earliest first, in one atomic statement, then removes each key whose expiry is still the one queued in a statement that holds that key's entry, recording the removal as log_removal does, and returns whether more may be due. A queued expiry that no longer matches its key's, because the key was set, given another expiry or removed since, is dropped. The batch is scratch space the caller keeps.";
 
 public fn queue_expiry(meta: &Meta, key: &[u8], at: u64, env: &KeyEnv) -> result: unit reads(key), reads(env), writes(meta) doc "Queues a key's new expiry for active removal; one past the queue's ceiling is left to lazy removal.";
 

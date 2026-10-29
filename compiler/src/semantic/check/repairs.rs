@@ -538,12 +538,8 @@ fn collect_definitions(
                 definitions.push(Definition::of(*binder, &[lower, upper], editable));
                 collect_definitions(body, give, editable, definitions);
             }
-            CheckedStatement::Atomic { targets, body, .. } => {
-                // The key is read when the statement begins and defines
-                // nothing the binder holds.
-                for target in targets {
-                    definitions.push(Definition::of(target.binding, &[&target.handle], editable));
-                }
+            CheckedStatement::Atomic { target, body, .. } => {
+                definitions.push(Definition::of(target.binding, &[&target.handle], editable));
                 collect_definitions(body, give, editable, definitions);
             }
             CheckedStatement::Evaluate { .. }
@@ -1029,6 +1025,20 @@ pub(super) fn atomic_exit_invariant(case: &GoalCase<'_>) -> String {
             case.text
         ),
     }
+}
+
+/// [TYPE-11] a type invariant of an object's state at an edge that leaves an
+/// atomic block whose `set` on `line` rebinds the binding: after it no place
+/// names the state [ENT-2], so no write and no `invariant` proves it there.
+pub(super) fn atomic_exit_rebound_invariant(
+    case: &GoalCase<'_>,
+    binding: &str,
+    line: u64,
+) -> String {
+    format!(
+        "`{}` is not proved where the block leaves the object's state, because the `set` on line {line} rebinds `{binding}` and no place names the state after it: keep `{binding}` bound to the state, and name the other value through a reference variable of its own",
+        case.text
+    )
 }
 
 /// [FN-9] a normal-result relation at one selected return; `called` says
@@ -1658,7 +1668,7 @@ pub(super) fn opaque_struct_constructed(opaque: OpaqueStruct) -> &'static str {
             "replace this construction with `shared_read::<T>(shared: &h)` for an existing Shared<T> handle [SHARE-1]"
         }
         OpaqueStruct::ConcurrentHashMap => {
-            "replace this construction with `shared_map_new::<V>(capacity: n)` and reach the map through an atomic target in a function marked `waits` [SHARE-1, SHARE-2]"
+            "replace this construction with `map_new::<V>(capacity: n)` [SHARE-1]"
         }
         OpaqueStruct::HostHandle { .. } => {
             "a host handle is formed only by a host function [PRE-2]: replace this construction with a handle that a function of its module returns or that the program's entry receives"
@@ -1682,13 +1692,13 @@ pub(super) fn opaque_struct_taken_apart(opaque: OpaqueStruct, owned: bool) -> &'
             "keep the handle formed by `frozen_new` intact; replace this destructuring with reads of copy-typed parts through `h.inner` or borrows into `&h.inner`, adapting uses of the destructured bindings to those reads or references [SHARE-1]"
         }
         OpaqueStruct::Shared => {
-            "keep the handle formed by `shared_new` intact; replace this destructuring with an atomic target to read the state, adapting uses of the destructured bindings to those reads and marking the enclosing function `waits` [SHARE-1, SHARE-2]"
+            "keep the handle formed by `shared_new` intact; replace this destructuring with an atomic statement that reads the state, adapting uses of the destructured bindings to those reads and marking the enclosing function `waits` [SHARE-1, SHARE-2]"
         }
         OpaqueStruct::SharedRead => {
-            "keep the readonly handle formed by `shared_read` intact; replace this destructuring with a readonly atomic target to read the state, adapting uses of the destructured bindings to those reads and marking the enclosing function `waits` [SHARE-1, SHARE-2]"
+            "keep the readonly handle formed by `shared_read` intact; replace this destructuring with an atomic statement on it that reads the state, adapting uses of the destructured bindings to those reads and marking the enclosing function `waits` [SHARE-1, SHARE-2]"
         }
         OpaqueStruct::ConcurrentHashMap => {
-            "remove this destructuring statement and reach the map through an atomic target over a handle formed by `shared_map_new` [SHARE-1, SHARE-2]"
+            "a map has no fields to take apart: remove this destructuring statement and reach the map's entries through its subscripts `t[k]` [SHARE-1, OP-4]"
         }
         OpaqueStruct::HostHandle { linear: true } if owned => {
             "a host handle has no fields to take apart [PRE-2], and a `nodrop` one leaves its scope only by moving out [PROV-6]: replace this statement with a call to the function of its module that closes the handle, which also takes a `HandleFactory` reference"

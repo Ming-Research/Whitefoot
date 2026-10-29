@@ -9,11 +9,13 @@ fn refresh(slots: &Entries<u8>, access_keys: &KeySet, index: u64) -> result: uni
 
 fn main() -> status: std::process::ExitStatus pure waits {
   let names = array_filled::<u8, 2>(value: 97_u8);
-  let store = shared_map_new::<u8>(capacity: 2_u64);
+  let store_map = map_new::<u8>(capacity: 2_u64);
+  let store = shared_new::<ConcurrentHashMap<u8>>(value: move store_map);
   let keys = key_set_new(capacity: 2_u64);
   key_set_insert(keys: &keys, key: &names[0_u64..1_u64]);
   key_set_insert(keys: &keys, key: &names[0_u64..2_u64]);
-  atomic slots = &store[keys] {
+  atomic t = &store {
+    let slots = &t^[keys];
     for @each (
       i in 0_u64..keys.len,
       invariant aligned: slots^.len == keys.len

@@ -1395,6 +1395,16 @@ fn validate_located_allocation(
 }
 
 fn allocation_payload(program: &IrProgram, operation: &IrOperation) -> Option<IrType> {
+    // A map's nodes keep a slot of its entry type [SHARE-1].
+    if let IrOperation::ConcurrentHashMapNew { nominal, .. } = operation {
+        return match program.nominal(*nominal)?.kind() {
+            IrNominalKind::Shared {
+                shape: IrShared::Map { entry },
+                ..
+            } => Some(*entry),
+            _ => None,
+        };
+    }
     let nominal = match operation {
         IrOperation::BoxNew { nominal, .. }
         | IrOperation::SegmentsFill { nominal, .. }
@@ -1402,8 +1412,7 @@ fn allocation_payload(program: &IrProgram, operation: &IrOperation) -> Option<Ir
         | IrOperation::WindowBlockNew { nominal, .. }
         | IrOperation::WindowGrow { nominal, .. }
         | IrOperation::SharedNew { nominal }
-        | IrOperation::DecisionCellNew { nominal }
-        | IrOperation::ConcurrentHashMapNew { nominal, .. } => *nominal,
+        | IrOperation::DecisionCellNew { nominal } => *nominal,
         _ => return None,
     };
     let payload = match program.nominal(nominal)?.kind() {
@@ -1419,13 +1428,6 @@ fn allocation_payload(program: &IrProgram, operation: &IrOperation) -> Option<Ir
             capacity: None,
             ..
         } => program.element(element),
-        IrType::Nominal(id) => match program.nominal(id)?.kind() {
-            IrNominalKind::Shared {
-                shape: IrShared::Map { entry },
-                ..
-            } => Some(*entry),
-            _ => Some(payload),
-        },
         _ => Some(payload),
     }
 }
@@ -1619,20 +1621,10 @@ fn validate_target_obligation(
                 return Err(TargetLayoutFailure::InvalidIr);
             }
             let IrNominalKind::Shared {
-                state: IrType::Nominal(map),
-                shape: IrShared::Object,
-            } = program
-                .nominal(*nominal)
-                .ok_or(TargetLayoutFailure::InvalidIr)?
-                .kind()
-            else {
-                return Err(TargetLayoutFailure::InvalidIr);
-            };
-            let IrNominalKind::Shared {
                 shape: IrShared::Map { entry },
                 ..
             } = program
-                .nominal(*map)
+                .nominal(*nominal)
                 .ok_or(TargetLayoutFailure::InvalidIr)?
                 .kind()
             else {
@@ -1904,9 +1896,9 @@ impl<'types> LayoutComputer<'types> {
             }
             // [SHARE-1] a key set is its count and its store's pointer.
             IrType::KeySet => Ok(Layout { size: 16, align: 8 }),
-            // [SHARE-2] the statement's record of the entries an entry binding
-            // over a key set names: its hold, the set's first position and
-            // its count.
+            // [SHARE-1] the record of the entries a key-set subscript selects:
+            // a pointer to what selects them, the set's first position there
+            // and its count.
             IrType::Entries { element } => {
                 self.element(element)?;
                 Ok(Layout { size: 24, align: 8 })

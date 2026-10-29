@@ -3217,8 +3217,8 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     // construction functions [OP-13], then the window operations in written
     // order, `grow_paged` and `paged_page_len` among them [OP-10, OP-13], then
     // `swap` [OP-11],
-    // `shared_new`, `shared_map_new`, `shared_share`, `shared_read`,
-    // `shared_read_share`, `frozen_new`, `frozen_share`, `map_count`,
+    // `shared_new`, `shared_share`, `shared_read`, `shared_read_share`,
+    // `frozen_new`, `frozen_share`, `map_new`, `map_count`,
     // `map_scan`, `map_scan_within`, `map_clear`, `key_set_new`,
     // `key_set_insert`, `key_set_bytes` and `key_set_read_key` [SHARE-1] and
     // `free_empty` [OP-14], `release` and the five decision-cell functions
@@ -3268,19 +3268,21 @@ fn ordinary_prelude_inventory_is_independent_of_writer_names_and_declaration_cou
     assert_eq!(first[189].1, "window");
     assert_eq!(first[190].1, "swap");
     assert_eq!(first[194].1, "shared_new");
-    assert_eq!(first[197].1, "shared_map_new");
-    assert_eq!(first[200].1, "shared_share");
-    assert_eq!(first[203].1, "shared_read");
-    assert_eq!(first[206].1, "shared_read_share");
+    assert_eq!(first[197].1, "shared_share");
+    assert_eq!(first[200].1, "shared_read");
+    assert_eq!(first[203].1, "shared_read_share");
     // Each frozen function contributes its function, T and value parameter:
     // three records each. Frozen adds four opaque records, and ScanStep adds
     // five enum records before these functions.
-    assert_eq!(first[209].1, "frozen_new");
+    assert_eq!(first[206].1, "frozen_new");
+    assert_eq!(first[207].1, "T");
+    assert_eq!(first[208].1, "value");
+    assert_eq!(first[209].1, "frozen_share");
     assert_eq!(first[210].1, "T");
-    assert_eq!(first[211].1, "value");
-    assert_eq!(first[212].1, "frozen_share");
-    assert_eq!(first[213].1, "T");
-    assert_eq!(first[214].1, "frozen");
+    assert_eq!(first[211].1, "frozen");
+    assert_eq!(first[212].1, "map_new");
+    assert_eq!(first[213].1, "V");
+    assert_eq!(first[214].1, "capacity");
     assert_eq!(first[215].1, "map_count");
     assert_eq!(first[218].1, "map_scan");
     assert_eq!(first[224].1, "map_scan_within");

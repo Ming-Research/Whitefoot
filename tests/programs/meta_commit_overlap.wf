@@ -11,6 +11,11 @@ struct Meta {
   log: Slots<Record, 4>;
 }
 
+struct Commits {
+  table: ConcurrentHashMap<u64>;
+  meta: Meta;
+}
+
 fn spin_work(seed: u64, clock: &std::time::Clock, deadline: std::time::Instant) -> result: u64 writes(clock) {
   doc "Pure computation that runs until the monotonic clock reaches the deadline, so its length does not depend on the speed of the host. Each round mixes the state a thousand times and then reads the clock once.";
   let state = seed;
@@ -40,21 +45,21 @@ fn append_record(meta_state: &Meta, key: u64, sequence: u64, value: u64) -> resu
   return unit;
 }
 
-fn commit(table: Shared<ConcurrentHashMap<u64>>, meta: Shared<Meta>, clock: std::time::Clock, letter: u8, index: u64) -> result: unit pure waits {
-  doc "One atomic statement: it names its own key and the shared Meta, computes for the fixed time on its own entry, and only then takes the next sequence number from Meta and appends its log record. The statement reaches Meta last, so the statement holds Meta only for that tail.";
+fn commit(state: Shared<Commits>, clock: std::time::Clock, letter: u8, index: u64) -> result: unit pure waits {
+  doc "One atomic statement on the state: it names its own key of the state's table, computes for the fixed time before it uses any part of the state, and only then stores its entry, takes the next sequence number from the metadata part and appends its log record. The table is the state's first field and the metadata part is reached last, so the statement takes its entry and then the metadata part, and holds the metadata part only for that tail.";
   let bytes = slots_new::<u8, 1>();
   place_back(window: &bytes, value: letter);
   let key = &bytes[0_u64..1_u64];
   let seed = index +wrap 12345_u64;
-  atomic slot = &table[key], m = &meta {
+  atomic s = &state {
     let started = std::time::now(clock: &clock);
     let deadline = std::time::instant_after(instant: started, nanoseconds: computation_nanoseconds);
-    let state = spin_work(seed: seed, clock: &clock, deadline: deadline);
-    let value = ior(state, 1_u64);
-    set slot^ = Some<u64>(value: value);
-    let sequence = m^.next;
-    set m^.next = sequence +wrap 1_u64;
-    append_record(meta_state: m, key: index, sequence: sequence, value: value);
+    let mixed = spin_work(seed: seed, clock: &clock, deadline: deadline);
+    let value = ior(mixed, 1_u64);
+    set s^.table[key] = Some<u64>(value: value);
+    let sequence = s^.meta.next;
+    set s^.meta.next = sequence +wrap 1_u64;
+    append_record(meta_state: &s^.meta, key: index, sequence: sequence, value: value);
   }
   return unit;
 }
@@ -111,24 +116,23 @@ fn publish_number(factory: &std::io::HandleFactory, output: &std::io::OutputStre
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  doc "Two contexts each run one atomic statement on their own key of a shared map, which computes for two hundred milliseconds and then takes a sequence number from a shared Meta and logs its record. The status is 0 when the log holds two records with sequence numbers 0 and 1 in log order, replaying the log gives the final table, and the whole run took at least one computation. Statuses 1 to 3 name the first failed state check and status 5 a run shorter than one computation, which means the computation did not run. The run's nanoseconds are printed and then the runtime's driver count, and the caller judges the nanoseconds against the control that holds Meta through the computation, because how long the run took beyond the computation depends on the host's load, and only when the count is two, because one driver runs the two statements one after the other whatever their locks.";
+  doc "Two contexts each run one atomic statement on one shared state, naming their own key of its map, which computes for two hundred milliseconds and then takes a sequence number from the state's metadata part and logs its record. The status is 0 when the log holds two records with sequence numbers 0 and 1 in log order, replaying the log gives the final table, and the whole run took at least one computation. Statuses 1 to 3 name the first failed state check and status 5 a run shorter than one computation, which means the computation did not run. The run's nanoseconds are printed and then the runtime's driver count, and the caller judges the nanoseconds against the control that holds the metadata part through the computation, because how long the run took beyond the computation depends on the host's load, and only when the count is two, because one driver runs the two statements one after the other whatever their locks.";
   let std::process::Inputs(drivers: driver_count, cwd: directory, stdout: output, handles: factory, clock: clock, ..) = move inputs;
   let std::fs::Directory(read: read_directory, write: write_directory) = move directory;
   std::fs::close_directory_write(factory: &factory, directory: move write_directory);
   std::fs::close_directory(factory: &factory, directory: move read_directory);
-  let table = shared_map_new::<u64>(capacity: 0_u64);
+  let table = map_new::<u64>(capacity: 0_u64);
   let log = slots_new::<Record, 4>();
-  let initial = Meta(next: 0_u64, log: move log);
-  let meta = shared_new::<Meta>(value: move initial);
-  let first_table = shared_share::<ConcurrentHashMap<u64>>(shared: &table);
-  let first_meta = shared_share::<Meta>(shared: &meta);
+  let meta = Meta(next: 0_u64, log: move log);
+  let initial = Commits(table: move table, meta: move meta);
+  let state = shared_new::<Commits>(value: move initial);
+  let first_state = shared_share::<Commits>(shared: &state);
   let first_clock = std::time::clock_share(clock: &clock);
-  let second_table = shared_share::<ConcurrentHashMap<u64>>(shared: &table);
-  let second_meta = shared_share::<Meta>(shared: &meta);
+  let second_state = shared_share::<Commits>(shared: &state);
   let second_clock = std::time::clock_share(clock: &clock);
   let started = std::time::now(clock: &clock);
-  let first_run = spawn commit(table: move first_table, meta: move first_meta, clock: move first_clock, letter: 97_u8, index: 0_u64);
-  let second_run = spawn commit(table: move second_table, meta: move second_meta, clock: move second_clock, letter: 98_u8, index: 1_u64);
+  let first_run = spawn commit(state: move first_state, clock: move first_clock, letter: 97_u8, index: 0_u64);
+  let second_run = spawn commit(state: move second_state, clock: move second_clock, letter: 98_u8, index: 1_u64);
   let first_done = first_run;
   let second_done = second_run;
   let finished = std::time::now(clock: &clock);
@@ -140,8 +144,8 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
   let key_b = &letters[1_u64..2_u64];
   let table_a = 0_u64;
   let table_b = 0_u64;
-  atomic slot = &table[key_a] {
-    match slot^ {
+  atomic s = &state {
+    match s^.table[key_a] {
       Some(value: seen) => {
         set table_a = seen^;
       }
@@ -149,8 +153,8 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
       }
     }
   }
-  atomic slot = &table[key_b] {
-    match slot^ {
+  atomic s = &state {
+    match s^.table[key_b] {
       Some(value: seen) => {
         set table_b = seen^;
       }
@@ -163,19 +167,19 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
   let ordered = 0_u64;
   let replay_a = 0_u64;
   let replay_b = 0_u64;
-  atomic m = &meta {
-    set logged = m^.log.len;
-    set issued = m^.next;
-    for @replay (at in 0_u64..m^.log.len) {
-      let position_ok = m^.log[at].sequence == at;
+  atomic s = &state {
+    set logged = s^.meta.log.len;
+    set issued = s^.meta.next;
+    for @replay (at in 0_u64..s^.meta.log.len) {
+      let position_ok = s^.meta.log[at].sequence == at;
       if position_ok {
         set ordered = ordered +wrap 1_u64;
       }
-      let for_a = m^.log[at].key == 0_u64;
+      let for_a = s^.meta.log[at].key == 0_u64;
       if for_a {
-        set replay_a = m^.log[at].value;
+        set replay_a = s^.meta.log[at].value;
       } else {
-        set replay_b = m^.log[at].value;
+        set replay_b = s^.meta.log[at].value;
       }
     }
   }

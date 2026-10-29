@@ -38,6 +38,9 @@ pub(in crate::semantic::check) enum PlaceUseContext {
     Ordinary,
     /// The caller judges a referent without taking its owned value.
     InspectReferent,
+    /// [PRE-2] the watch whose flag a trailing `fired` reads, read in place
+    /// for its state's handle.
+    CancellationFlag,
 }
 
 #[derive(Clone, Copy)]

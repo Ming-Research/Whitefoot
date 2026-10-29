@@ -12,12 +12,18 @@ fn main() -> status: std::process::ExitStatus pure waits {
   std::time::close_cancel_watch(watch: move other_watch);
   std::time::close_cancel_watch(watch: move watch);
   std::time::close_cancel_source(source: move source);
-  atomic first_state = &stop, second_state = &second, third_state = &third {
-    let pair = band(first_state^.fired, second_state^.fired);
-    let all = band(pair, third_state^.fired);
-    if all {
-      return std::process::exit_status(code: 0_u8);
-    }
+  let all = True();
+  atomic first_state = &stop {
+    set all = band(all, first_state^.fired);
+  }
+  atomic second_state = &second {
+    set all = band(all, second_state^.fired);
+  }
+  atomic third_state = &third {
+    set all = band(all, third_state^.fired);
+  }
+  if all {
+    return std::process::exit_status(code: 0_u8);
   }
   return std::process::exit_status(code: 1_u8);
 }

@@ -112,7 +112,8 @@ fn capture_retains_the_cut_image_and_live_export_fails_the_replay_oracle() {
     assert_eq!(decode(&captured.stdout), replay(7));
 
     // This ordinary second capture reads the live table after a->99/seq8,
-    // using a separate held cut of seven so metadata alone cannot detect it.
+    // with the state's cut written back to seven, so metadata alone cannot
+    // detect it.
     // Its valid export must fail the exact same independent replay-7 oracle.
     // Comparing only keys or the repeated cut would miss the defect.
     let live = program.run_with_workers_and_arguments(Some("1"), &[b"live"]);

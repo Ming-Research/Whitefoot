@@ -1304,7 +1304,7 @@ typedef struct wf_shared {
      * is the reservation: the one context the object's current notification
      * went to, which refuses newcomers only while that context's
      * guard_reserved is set; that owner remains live and retains this object
-     * until its saved-target retry releases the hold. With the low bit set
+     * until its retry releases the hold. With the low bit set
      * it is the tail of the circular queue of claims (tail->next is the
      * head), and the tail keeps the reservation. One slot leaves the header
      * within WF_SHARED_STATE_OFFSET. No relaxed hint reads it outside the
@@ -1368,7 +1368,13 @@ typedef struct wf_cancel {
     };
     uint8_t visible_fired;
     _Atomic unsigned fired;
+    /* [PRE-2] The watches of guards that read the flag false without
+     * holding the state, which the first firing wakes all at once: none of
+     * them takes this state, so none can pass a notification on as the
+     * watches of the state's own statements do. */
+    wf_watch_list flag_watchers;
 } wf_cancel;
+static void wf_cancel_wake_flag_watchers(wf_cancel *source);
 _Static_assert(offsetof(wf_cancel, visible_fired) == WF_SHARED_STATE_OFFSET,
                "CancelState.fired uses the ordinary shared-state address");
 /* A never watch and each of its views retain this private unfired unit.
@@ -2522,6 +2528,8 @@ void *wf__cancel_new(void) {
     wf_cancel *source = wf__shared_new(sizeof(*source) - WF_SHARED_STATE_OFFSET);
     source->visible_fired = 0u;
     atomic_init(&source->fired, 0u);
+    source->flag_watchers.count = 0u;
+    source->flag_watchers.links = NULL;
     return source;
 }
 
@@ -2544,6 +2552,7 @@ void wf__cancel_fire_held(void *opaque) {
     unsigned fired = atomic_exchange_explicit(&source->fired, 1u, memory_order_acq_rel);
     wf__shared_unlock(source, 1u);
     if (fired) return;
+    wf_cancel_wake_flag_watchers(source);
     atomic_fetch_add_explicit(&wf_drivers_notifying, 1u, memory_order_seq_cst);
     unsigned count = atomic_load_explicit(&wf_driver_count, memory_order_seq_cst);
     for (unsigned index = 0; index < count; ++index) {
@@ -2559,6 +2568,15 @@ void wf__cancel_fire_held(void *opaque) {
         }
     }
     atomic_fetch_sub_explicit(&wf_drivers_notifying, 1u, memory_order_seq_cst);
+}
+
+/* [PRE-2] A watch's `fired`, read without holding the state: the atomic
+ * mirror that the held false-to-true transition publishes. The acquire pairs
+ * with that transition's release, so a reader that sees the flag set also
+ * sees every update completed before the firing [SHARE-3]. */
+uint8_t wf__cancel_flag(const void *state) {
+    const wf_cancel *source = state;
+    return atomic_load_explicit(&source->fired, memory_order_acquire) != 0u;
 }
 
 /* Wakes the context parked on a record this thread just published: at once
@@ -3657,38 +3675,27 @@ static unsigned wf_wake_reserves(const wf_shared *shared, const wf_context *owne
 }
 
 /* Gives the object's notification to `link`'s watch: its context owns it
- * until its retry releases the object. A context that already owns another
- * object's notification is woken without it, and the next watch after it
- * is given this one, so a multi-object retry keeps its first release
- * obligation and no watch whose test holds loses this write. Both locks
- * are held; answers the contexts to make ready. */
+ * until its retry releases the object. A statement holds one object
+ * [SHARE-2], and its retry passes the notification on before its watch can
+ * be selected again, so a context that already owns one is a runtime fault.
+ * Both locks are held; answers the context to make ready. */
 static wf_context *wf_wake_notify_locked(wf_shared *shared, wf_watch_link *link, uint64_t cutoff,
                                          unsigned rescan, wf_watch_chunk **dead, uint32_t *woken) {
-    wf_context *ready = NULL;
-    while (link != NULL) {
-        wf_watch *watch = link->watch;
-        wf_context *owner = watch->context;
-        int install = owner->shared_turn == NULL;
-        if (install) {
-            wf_shared_set_reservation(shared, owner);
-            owner->shared_turn = shared;
-            owner->guard_rescan = rescan;
-            owner->guard_cutoff = cutoff;
-            owner->guard_reserved = wf_wake_reserves(shared, owner, cutoff);
+    wf_watch *watch = link->watch;
+    wf_context *owner = watch->context;
+    if (owner->shared_turn != NULL) wf_bridge_fail("a context was given a second notification");
+    wf_shared_set_reservation(shared, owner);
+    owner->shared_turn = shared;
+    owner->guard_rescan = rescan;
+    owner->guard_cutoff = cutoff;
+    owner->guard_reserved = wf_wake_reserves(shared, owner, cutoff);
 #if WF_GUARD_COUNTERS
-            wf_guard_installed(owner);
+    wf_guard_installed(owner);
 #endif
-        }
-        wf_context *parked = wf_watch_wake_one_locked(watch, dead);
-        if (woken != NULL) *woken += 1u;
-        if (parked != NULL) {
-            parked->next = ready;
-            ready = parked;
-        }
-        if (install) break;
-        link = wf_wake_select(shared, owner, cutoff);
-    }
-    return ready;
+    wf_context *parked = wf_watch_wake_one_locked(watch, dead);
+    if (woken != NULL) *woken += 1u;
+    if (parked != NULL) parked->next = NULL;
+    return parked;
 }
 
 /* A sweep of `shared` after a write: the oldest watch whose test holds gets
@@ -3782,6 +3789,35 @@ void wf__watch_unit(void *watch, wf_watch_list *list) {
     wf_watch_on((wf_watch *)watch, &list->count, &list->links, NULL, NULL);
 }
 
+/* [PRE-2] Wakes every guard that read the flag false, once the flag is set:
+ * a watch linked before this takes wf_watch_lock is woken here, and one
+ * linked after it reads the flag set in wf__watch_cancel. */
+static void wf_cancel_wake_flag_watchers(wf_cancel *source) {
+    wf_watch_chunk *dead = NULL;
+    wf_context *ready;
+    wf_spin_lock(&wf_watch_lock);
+    ready = wf_watch_wake_locked(&source->flag_watchers.links, &dead);
+    wf_spin_unlock(&wf_watch_lock);
+    wf_watch_give_back(dead);
+    wf_ready_all(ready);
+}
+
+void wf__watch_cancel(void *watch, void *state, uint32_t seen) {
+    wf_cancel *source = state;
+    wf_watch *own = watch;
+    if (seen != 0u) return;
+    wf_watch_on(own, &source->flag_watchers.count, &source->flag_watchers.links, NULL, NULL);
+    /* The link is in place under wf_watch_lock, which the firing takes after
+     * it sets the flag: a flag still clear here is woken by that firing. */
+    if (atomic_load_explicit(&source->fired, memory_order_acquire) != 0u) {
+        wf_watch_chunk *dead = NULL;
+        wf_spin_lock(&wf_watch_lock);
+        (void)wf_watch_wake_one_locked(own, &dead);
+        wf_spin_unlock(&wf_watch_lock);
+        wf_watch_give_back(dead);
+    }
+}
+
 int wf__watch_park(void *watch_frame, void *frame, const char *site) {
     wf_watch *watch = (wf_watch *)watch_frame;
     wf_context *self = wf_context_current;
@@ -3832,8 +3868,8 @@ int wf__watch_park(void *watch_frame, void *frame, const char *site) {
  * back to the head of the queue, and once WF_SHARED_HANDOFF unlocks have
  * woken it in vain the next one hands it the object, so a parked statement
  * is overtaken a bounded number of times [WAIT-2].  A statement that holds a
- * keyed table's entries, or an earlier object, when it takes the object
- * cannot park, and may run on the driver whose queue holds the context an
+ * map's entry or a map whole, an earlier unit of its object's state, when it
+ * takes the object cannot park, and may run on the driver whose queue holds the context an
  * unlock handed the object to, so it borrows that hold and gives it back
  * when it ends (wf__shared_take); the context keeps the object, and once it
  * runs again it waits only for the borrower under way.  Such a statement
@@ -4035,9 +4071,10 @@ static int wf_shared_admits(wf_shared *shared, uint32_t write) {
 }
 
 /* A new statement waits for the aged guards this object woke to attempt it.
- * Statements already holding objects are exempt, as is shared_take for
- * table entries: a retry may need their earlier locks first. The common
- * case adds only the protected fairness-slot read to ordinary admission. */
+ * A context that already holds a unit is exempt, as is wf__shared_take for a
+ * statement holding a map's entry or a map whole: a retry may need that
+ * earlier unit first. The common case adds only the protected fairness-slot
+ * read to ordinary admission. */
 static int wf_shared_has_turn(wf_shared *shared) {
     wf_context *owner = wf_shared_reservation(shared);
     return owner != NULL && owner->guard_reserved;
@@ -4048,8 +4085,8 @@ static int wf_shared_turn_refuses(wf_shared *shared, wf_context *self, int exemp
 }
 /* A waiting claim refuses every statement that parks, readers, the
  * reservation's owner and the cancellation update included: each holds
- * nothing a claim's owner needs, which already holds every earlier target,
- * and parking leaves its driver unblocked (wf__shared_take). The claim check
+ * nothing a claim's owner needs, which already holds every earlier unit of
+ * its statement, and parking leaves its driver unblocked (wf__shared_take). The claim check
  * reads the same slot as the turn's. */
 static int wf_shared_admits_context(wf_shared *shared, uint32_t write, wf_context *self, int exempt) {
     if (wf_shared_claims(shared) != NULL) {
@@ -4062,7 +4099,7 @@ static int wf_shared_admits_context(wf_shared *shared, uint32_t write, wf_contex
 
 /* Actual acquisition, including handed/borrowed holds. A reservation
  * survives until false repark or block exit.
- * Saved guard targets are always reacquired before evaluation. Host timeout
+ * A guard's units are always taken again before its evaluation. Host timeout
  * or cancellation returns a host-call outcome, never abandons an atomic
  * retry. A cancellation guard that succeeds releases its reservation on all
  * block-exit edges. There is no asynchronous guard-abort API; adding one
@@ -4368,9 +4405,9 @@ static void wf_shared_take_witness_missed(void *object, wf_shared_take_claim *cl
  * larger count. */
 #define WF_SHARED_TAKE_ESCALATE 1u
 
-/* [SHARE-2] The object of a statement that already holds a keyed table's
- * entries or an earlier object, which keeps its driver until it ends, so
- * the statement spins rather than parks.  Every holder of an object is a
+/* [SHARE-2] The object of a statement that already holds an earlier unit of
+ * its state, a map's entry or a map whole, which keeps its driver until it
+ * ends, so the statement spins rather than parks.  Every holder of an object is a
  * running context whose block waits for nothing, but for a parked context
  * an unlock handed the object to, which may wait in this very driver's
  * queue: this statement borrows such a hold, alone, and its unlock gives it
@@ -4393,8 +4430,8 @@ static void wf_shared_take_witness_missed(void *object, wf_shared_take_claim *cl
  * q + 1 claims.  This assumes, as every hold does, that holders and handed
  * contexts get to run; no count bounds how long the host takes to run this
  * statement up to its first look under the lock.  A claim's owner already
- * holds every target before the object in the lock order, so claims form no
- * cycle with the holds a later target waits for. */
+ * holds every unit before the object's own lock in its state's field order,
+ * so claims form no cycle with the holds a later unit waits for. */
 void wf__shared_take(void *object, uint32_t write) {
     wf_shared *shared = (wf_shared *)object;
     wf_shared_take_claim claim = { .next = NULL, .reservation = NULL, .write = write, .granted = 0u };

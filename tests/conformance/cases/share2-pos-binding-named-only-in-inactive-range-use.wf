@@ -4,14 +4,14 @@ fn certify<T: copy>(value: T, first: u64, second: u64, third: u64, first_limit: 
   requires third <= 2_u64 * third_limit;
   requires forall reflexive(q in 0_u64..1_u64): value <= value;
 } {
-  let store = shared_map_new::<u8>(capacity: 1_u64);
   let keys = key_set_new(capacity: 1_u64);
-  atomic es = &store[keys] {
+  let store = shared_new::<KeySet>(value: move keys);
+  atomic t = &store {
     invariant combined: first + second + third <= 2_u64 * first_limit + 2_u64 * second_limit + 2_u64 * third_limit {
       use (first <= 2_u64 * first_limit);
       use (second <= 2_u64 * second_limit);
       use (third <= 2_u64 * third_limit);
-      use reflexive(es^.len);
+      use reflexive(t^.len);
     }
   }
   return 0_u8;

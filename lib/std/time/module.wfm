@@ -35,6 +35,7 @@ public opaque struct CancelSource {
 
 public opaque struct CancelWatch {
   state: SharedRead<CancelState>;
+  public readonly fired: Bool;
 }
 
 public opaque struct CancelState {

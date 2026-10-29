@@ -102,16 +102,13 @@ impl<'unit> TypeContext<'unit> {
                 // [SHARE-1] the statement's end may release the state, as the
                 // release of a handle does.
                 CheckedStatement::Atomic {
-                    targets,
+                    target,
                     guard,
                     body,
                     fallthrough_drops,
                     ..
                 } => {
-                    for key in targets
-                        .iter()
-                        .flat_map(crate::semantic::CheckedTarget::expressions)
-                    {
+                    for key in target.expressions() {
                         self.validate_expression_release_graphs(key)?;
                     }
                     if let Some(guard) = guard {
@@ -165,6 +162,7 @@ impl<'unit> TypeContext<'unit> {
             CheckedExpression::NumericConversion { value, .. }
             | CheckedExpression::Reinterpret { value, .. }
             | CheckedExpression::BoxDeref { value, .. }
+            | CheckedExpression::CancelFlag { watch: value, .. }
             | CheckedExpression::ProjectValue { value, .. } => {
                 self.validate_expression_release_graphs(value)?;
             }

@@ -133,6 +133,14 @@ static void hold_seen(struct wf_cmap_user *u, int closed);
 
 #include "keyed_table.c"
 
+/* A shared object whose state is a map, as `shared_new(map_new(capacity))`
+ * makes one. */
+static void *map_test_shared_map(uint64_t slot_size, uint64_t slot_align, uint64_t capacity) {
+    void *object = wf__shared_new(sizeof(void *));
+    *(void **)((unsigned char *)object + WF_SHARED_STATE_OFFSET) = wf__map_new(slot_size, slot_align, capacity);
+    return object;
+}
+
 /* The completion pool grants powers of two from 512 through 2 MiB, then
  * 64 KiB multiples (completion/bridge.c). Count grants on take/give, plus
  * the direct-map/entry deltas, exactly the two counters heap_in_use sums. */
@@ -3368,12 +3376,13 @@ static void tables_read_selection(void) {
         fail("read selections leaked blocks", atomic_load(&blocks_out), before);
 }
 
-/* Independent observations of merge, read mode, and stable missing keys. */
-static void shared_map_groups(void) {
-    void *object = wf__shared_map_new(16, 8, 2);
+/* One read hold of one key: it selects the key's cell or the shared None,
+ * allocates no cell for an absent key, keeps the absence stable under a
+ * whole read hold and takes no exclusive whole hold for a present key. */
+static void shared_map_holds(void) {
+    void *object = map_test_shared_map(16, 8, 2);
     wf_cmap *map = *(wf_cmap **)((char *)object + WF_SHARED_STATE_OFFSET);
-    wf_cmap_holding first, second;
-    wf_atomic_target group[2] = {{object, &first, 0}, {object, &second, 0}};
+    wf_cmap_holding hold;
     for (unsigned present = 0; present < 2; ++present) {
         if (present) {
             wf_table_entry entry;
@@ -3381,46 +3390,40 @@ static void shared_map_groups(void) {
             slot[0] = 1; slot[1] = 41;
             wf__table_unlock_entry(&entry, 1);
         }
-        wf__table_hold_begin(&first, map); wf__table_hold_begin(&second, map);
-        wf__table_hold_key(&first, (const unsigned char *)"k", 1);
-        wf__table_hold_key(&second, (const unsigned char *)"k", 1);
-        wf__table_hold_read(&first); wf__table_hold_read(&second);
+        wf__table_hold_begin(&hold, map);
+        wf__table_hold_key(&hold, (const unsigned char *)"k", 1);
+        wf__table_hold_read(&hold);
         uint64_t allocations_before = atomic_load(&allocations);
-        wf__atomic_group_take(group, 2);
-        uint64_t *a = wf__table_hold_slot(&first, 0), *b = wf__table_hold_slot(&second, 0);
-        if (a != b || a[0] != present || (present && a[1] != 41))
-            fail("merged read targets did not share the expected slot", a == b, a[0]);
+        wf__table_hold_take(&hold);
+        uint64_t *a = wf__table_hold_slot(&hold, 0);
+        if (a[0] != present || (present && a[1] != 41))
+            fail("a read hold did not select the expected slot", present, a[0]);
         if (atomic_load(&allocations) != allocations_before)
-            fail("a read group allocated a missing cell", atomic_load(&allocations), allocations_before);
+            fail("a read hold allocated a missing cell", atomic_load(&allocations), allocations_before);
         if (!present && (a != map->none || map->whole_hold == NULL))
-            fail("an absent read group did not stabilize shared None", a != map->none, map->whole_hold == NULL);
+            fail("an absent read hold did not stabilize shared None", a != map->none, map->whole_hold == NULL);
         if (present && atomic_load(&map->gate) != 0)
-            fail("a present read group took an exclusive whole hold", atomic_load(&map->gate), 0);
-        wf__atomic_group_release(group, 2, 0, sizeof *a, 0);
+            fail("a present read hold took an exclusive whole hold", atomic_load(&map->gate), 0);
+        wf__table_hold_release(&hold, 0, sizeof *a, 0);
         if (wf_cmap_count_held(map, 0, sizeof *a, 0) != present || wf_cmap_holds_whole(wf_cmap_user_at(map, test_driver)))
-            fail("a merged group retained a hold or an absent cell", wf_cmap_count_held(map, 0, sizeof *a, 0), present);
+            fail("a read hold retained a hold or an absent cell", wf_cmap_count_held(map, 0, sizeof *a, 0), present);
     }
     wf__keyed_table_drain(map); wf__keyed_table_free(map); test_give(object, WF_SHARED_STATE_OFFSET + sizeof(void *));
 
     /* Only the first byte is the tag; dirty following bytes must not turn
-     * None into Some. A fixed four-byte release read fails the first round.
-     * The group is a statement's first, which a map group takes without
-     * parking, so its acquire needs no frame and answers 0. */
-    object = wf__shared_map_new(4, 1, 2);
+     * None into Some. A fixed four-byte release read fails the first round. */
+    object = map_test_shared_map(4, 1, 2);
     map = *(wf_cmap **)((char *)object + WF_SHARED_STATE_OFFSET);
-    group[0].object = object; group[1].object = object;
     for (unsigned present = 0; present < 2; ++present) {
-        wf__table_hold_begin(&first, map); wf__table_hold_begin(&second, map);
-        wf__table_hold_key(&first, (const unsigned char *)"k", 1);
-        wf__table_hold_key(&second, (const unsigned char *)"k", 1);
-        if (wf__atomic_group_acquire(group, 2, NULL) != 0)
-            fail("a first map group parked", present, 0);
-        unsigned char *slot = wf__table_hold_slot(&first, 0);
+        wf__table_hold_begin(&hold, map);
+        wf__table_hold_key(&hold, (const unsigned char *)"k", 1);
+        wf__table_hold_take(&hold);
+        unsigned char *slot = wf__table_hold_slot(&hold, 0);
         memset(slot, 0xa5, 4);
         slot[0] = (unsigned char)present;
-        wf__atomic_group_release(group, 2, 0, sizeof slot[0], 0);
+        wf__table_hold_release(&hold, 0, sizeof slot[0], 0);
         if (wf_cmap_count(map) != present || wf_cmap_holds_whole(wf_cmap_user_at(map, test_driver)))
-            fail("a byte-tag group read padding or retained its hold", wf_cmap_count(map), present);
+            fail("a byte-tag hold read padding or retained its hold", wf_cmap_count(map), present);
     }
     wf__keyed_table_drain(map); wf__keyed_table_free(map); test_give(object, WF_SHARED_STATE_OFFSET + sizeof(void *));
 }
@@ -4439,10 +4442,11 @@ static void entries_noninserting(void) {
     if (!race.upgraded) fail("non-inserting writer did not upgrade after impatience", 0, 0);
     set_patience(PATIENCE, PATIENCE);
 
-    /* A miss beside another target holds absence until release. */
+    /* A miss beside another unit of its statement holds absence until
+     * release. */
     slot = wf__table_lock_entry(map, (const unsigned char *)"absent", 6, 6, &entry);
     if (slot != map->none || !entry.inner.upgraded || !wf_cmap_holds_whole(u))
-        fail("non-inserting multi-target miss did not stabilize absence", 0, 0);
+        fail("non-inserting miss beside another unit did not stabilize absence", 0, 0);
     race.flags = 0;
     atomic_store(&race.done, 0);
     if (pthread_create(&thread, NULL, present_race, &race) != 0) abort();
@@ -4574,7 +4578,7 @@ int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "selection") == 0) {
         tables_held_selection();
         tables_read_selection();
-        shared_map_groups();
+        shared_map_holds();
         if (atomic_load(&mapped_bytes_out) != 0)
             fail("selection checks leaked counted map storage", atomic_load(&mapped_bytes_out), 0);
         puts("concurrent-map-test: selection checks passed");
@@ -4632,7 +4636,7 @@ int main(int argc, char **argv) {
         tables_wake_writers();
         tables_held_selection();
         tables_read_selection();
-        shared_map_groups();
+        shared_map_holds();
         holds_move_amounts(0, PATIENCE);
         holds_move_amounts(1, PATIENCE);
         holds_move_amounts(1, 0);

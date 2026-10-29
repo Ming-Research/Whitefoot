@@ -1,0 +1,12 @@
+fn view(cancel: &std::time::CancelWatch) -> result: unit reads(cancel.fired) {
+  doc "Takes a view of the watch's cancellation state, which reads the watch itself, while the row names only its flag.";
+  let state = std::time::cancel_state(watch: cancel);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let source = std::time::cancel_source();
+  let watch = std::time::cancel_watch(source: &source);
+  view(cancel: &watch);
+  return std::process::exit_status(code: 0_u8);
+}

@@ -170,15 +170,12 @@ pub(crate) fn for_each_call(
                 for_each_call(body, visit);
             }
             CheckedStatement::Atomic {
-                targets,
+                target,
                 guard,
                 body,
                 ..
             } => {
-                for target in targets
-                    .iter()
-                    .flat_map(crate::semantic::CheckedTarget::expressions)
-                {
+                for target in target.expressions() {
                     expression(target, visit);
                 }
                 if let Some(guard) = guard {

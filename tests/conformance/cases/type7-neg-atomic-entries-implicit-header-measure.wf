@@ -1,7 +1,9 @@
 fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<u8>(capacity: 1_u64);
+  let store_map = map_new::<u8>(capacity: 1_u64);
+  let store = shared_new::<ConcurrentHashMap<u8>>(value: move store_map);
   let keys = key_set_new(capacity: 1_u64);
-  atomic es = &store[keys] {
+  atomic t = &store {
+    let es = &t^[keys];
     for (
       i in 0_u64..1_u64,
       invariant nonnegative: 0_u64 <= es.len

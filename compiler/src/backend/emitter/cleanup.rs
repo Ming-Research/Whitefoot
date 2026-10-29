@@ -216,7 +216,7 @@ pub(super) fn program_uses_shared(program: &IrProgram) -> Result<bool, BackendFa
 /// The runtime's shared-object entries (`completion/bridge.h`).
 pub(super) fn shared_runtime_declarations() -> Module {
     let mut module = Module::default();
-    let declarations: [(&str, &str, &[&str]); 51] = [
+    let declarations: [(&str, &str, &[&str]); 49] = [
         ("wf__frozen_new", "ptr", &["i64"]),
         ("wf__frozen_share", "void", &["ptr"]),
         ("wf__frozen_release", "i32", &["ptr"]),
@@ -228,6 +228,7 @@ pub(super) fn shared_runtime_declarations() -> Module {
         ("wf__claim_killed", "i32", &["ptr"]),
         ("wf__shared_share", "void", &["ptr"]),
         ("wf__shared_release", "i32", &["ptr"]),
+        ("wf__cancel_flag", "i8", &["ptr"]),
         ("wf__shared_free", "void", &["ptr"]),
         ("wf__shared_acquire", "i32", &["ptr", "i32", "ptr"]),
         ("wf_snapshot_atomic_begin", "void", &[]),
@@ -236,7 +237,7 @@ pub(super) fn shared_runtime_declarations() -> Module {
         ("wf__shared_unlock_unwritten", "void", &["ptr", "i32"]),
         ("wf__shared_take", "void", &["ptr", "i32"]),
         ("wf__shared_watch", "i32", &["ptr", "i32", "ptr", "ptr", "ptr"]),
-        ("wf__shared_map_new", "ptr", &["i64", "i64", "i64"]),
+        ("wf__map_new", "ptr", &["i64", "i64", "i64"]),
         (
             "wf__keyed_table_count",
             "i64",
@@ -265,18 +266,16 @@ pub(super) fn shared_runtime_declarations() -> Module {
             &["ptr", "i64", "i32", "i64", "ptr"],
         ),
         (
+            "wf__keyed_table_settle",
+            "void",
+            &["ptr", "i64", "i32", "i64"],
+        ),
+        (
             "wf__table_lock_entry",
             "ptr",
             &["ptr", "ptr", "i64", "i32", "ptr"],
         ),
         ("wf__table_unlock_entry", "void", &["ptr", "i32"]),
-        ("wf__atomic_group_take", "void", &["ptr", "i64"]),
-        ("wf__atomic_group_acquire", "i32", &["ptr", "i64", "ptr"]),
-        (
-            "wf__atomic_group_release",
-            "void",
-            &["ptr", "i64", "i64", "i32", "i64"],
-        ),
         ("wf__table_hold_read", "void", &["ptr"]),
         ("wf__table_held_entry", "ptr", &["ptr", "ptr", "i64", "i32"]),
         (
@@ -285,8 +284,6 @@ pub(super) fn shared_runtime_declarations() -> Module {
             &["ptr", "ptr", "ptr", "ptr"],
         ),
         ("wf__table_hold_begin", "void", &["ptr", "ptr"]),
-        ("wf__table_hold_key", "i64", &["ptr", "ptr", "i64"]),
-        ("wf__table_hold_keys", "i64", &["ptr", "ptr"]),
         ("wf__table_hold_whole", "void", &["ptr"]),
         ("wf__table_hold_take", "void", &["ptr"]),
         ("wf__table_hold_slot", "ptr", &["ptr", "i64"]),
@@ -302,6 +299,7 @@ pub(super) fn shared_runtime_declarations() -> Module {
         ("wf__key_set_read_key", "i64", &["ptr", "i64", "ptr", "i64"]),
         ("wf__watch_begin", "void", &["ptr"]),
         ("wf__watch_object", "void", &["ptr", "ptr", "ptr"]),
+        ("wf__watch_cancel", "void", &["ptr", "ptr", "i32"]),
         ("wf__watch_table", "void", &["ptr", "ptr"]),
         ("wf__watch_park", "i32", &["ptr", "ptr", "ptr"]),
     ];
@@ -924,8 +922,8 @@ fn emit_cleanup_jobs(
                 // cell arm below is the one route to its release, exactly as
                 // it is for a runtime-capacity window. Reaching here would
                 // mean a value of a type no storage can hold.
-                // The entries an entry binding names are its statement's
-                // record and own nothing [SHARE-2].
+                // The entries a key-set subscript selects are a record in the
+                // frame and own nothing [SHARE-1].
                 IrType::Buffer { .. } | IrType::Segments { .. } | IrType::Entries { .. } => {
                     return Err(BackendFailure::InvalidIr);
                 }

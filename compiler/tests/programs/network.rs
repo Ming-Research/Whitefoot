@@ -630,8 +630,9 @@ fn a_passed_deadline_ends_a_wait_and_loses_nothing_on_both_routes() {
 /// One source ends a guarded atomic statement and a receive without a deadline;
 /// a fired watch also ends sleep, and fired-before-wait
 /// cancels. Never watches transfer normally, and an unfired watch preserves
-/// deadline expiry. Timer/work races disarm and join promptly; two cancellation
-/// states order an ordinary Instant target acquired after the guard targets.
+/// deadline expiry. Timer/work races disarm and join promptly; a statement on
+/// an ordinary Instant whose guard waits for two watches' flags reads the
+/// Instant its publisher stored before firing both.
 /// Silent peers stay open, so EOF cannot satisfy the case.
 #[test]
 fn cancellation_ends_waits_without_losing_bytes_on_both_routes() {

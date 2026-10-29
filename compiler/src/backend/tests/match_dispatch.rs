@@ -2664,21 +2664,22 @@ fn handler_independent_run(value: &HandlerIndependent, count: u64) -> result: u6
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<HandlerMapInner>(capacity: 2_u64);
+  let store_map = map_new::<HandlerMapInner>(capacity: 2_u64);
+  let store = shared_new::<ConcurrentHashMap<HandlerMapInner>>(value: move store_map);
   let absent = 0_u64;
   let fresh = 0_u64;
   let present = 0_u64;
   let key = &handler_map_key[0_u64..1_u64];
-  atomic slot = &store[key] {
-    set absent = handler_map_run(value: slot, count: 2_u64);
+  atomic t = &store {
+    set absent = handler_map_run(value: &t^[key], count: 2_u64);
   }
-  atomic slot = &store[key] {
-    set fresh = handler_map_run(value: slot, count: 2_u64);
+  atomic t = &store {
+    set fresh = handler_map_run(value: &t^[key], count: 2_u64);
     let content = HandlerMapInner::Second(value: 7_u64);
-    set slot^ = Some<HandlerMapInner>(value: content);
+    set t^[key] = Some<HandlerMapInner>(value: content);
   }
-  atomic slot = &store[key] {
-    set present = handler_map_run(value: slot, count: 2_u64);
+  atomic t = &store {
+    set present = handler_map_run(value: &t^[key], count: 2_u64);
   }
   let unrelated = HandlerIndependent::First(value: 19_u64);
   let control = handler_independent_run(value: &unrelated, count: 2_u64);
@@ -2826,7 +2827,8 @@ fn bounded_scan_results_initialize_handler_words() {
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<u8>(capacity: 1_u64);
+  let store_map = map_new::<u8>(capacity: 1_u64);
+  let store = shared_new::<ConcurrentHashMap<u8>>(value: move store_map);
   let keys = key_set_new(capacity: 0_u64);
   let key = array_filled::<u8, 1>(value: 255_u8);
   let code = 1_u8;

@@ -1,0 +1,54 @@
+fn fire(source: std::time::CancelSource) -> result: unit pure waits {
+  doc "Fires the source and closes its handle.";
+  std::time::cancel_fire(source: &source);
+  std::time::close_cancel_source(source: move source);
+  return unit;
+}
+
+fn wait_fired(cancel: &std::time::CancelWatch, work: &Shared<u64>) -> result: unit reads(cancel.fired), reads(work) waits {
+  doc "Waits until the watch's flag is set, then marks the work. The row names only the flag below the watch.";
+  atomic w = &work^ when cancel^.fired {
+    set w^ = 1_u64;
+  }
+  return unit;
+}
+
+fn relay(watch: &std::time::CancelWatch, work: &Shared<u64>) -> result: unit reads(watch.fired), reads(work) waits {
+  doc "Passes the watch on, so the callee's flag entry lies below this function's own parameter.";
+  wait_fired(cancel: watch, work: work);
+  return unit;
+}
+
+fn wait_element(watches: &Array<std::time::CancelWatch, 2>, index: u64, work: &Shared<u64>) -> result: unit reads(watches[index].fired), reads(work) waits {
+  doc "Waits on the flag of the watch at index, a value parameter, so the row names the flag below that element.";
+  if index < 2_u64 {
+    atomic w = &work^ when watches^[index].fired {
+      set w^ = w^ +wrap 1_u64;
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  doc "Three watches view one cancellation state, which a spawned context fires. Each helper waits on a watch's flag through a reference parameter and marks the work once it wakes, so the work ends at 2 only after both helpers ran.";
+  let source = std::time::cancel_source();
+  let watch = std::time::cancel_watch(source: &source);
+  let first = std::time::cancel_watch(source: &source);
+  let second = std::time::cancel_watch(source: &source);
+  let slots = slots_new::<std::time::CancelWatch, 2>();
+  place_back(window: &slots, value: move first);
+  place_back(window: &slots, value: move second);
+  let watches = slots_into_array::<std::time::CancelWatch, 2>(values: move slots);
+  let work = shared_new::<u64>(value: 0_u64);
+  spawn fire(source: move source);
+  relay(watch: &watch, work: &work);
+  wait_element(watches: &watches, index: 1_u64, work: &work);
+  let done = 0_u64;
+  atomic w = &work {
+    set done = w^;
+  }
+  if done == 2_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}

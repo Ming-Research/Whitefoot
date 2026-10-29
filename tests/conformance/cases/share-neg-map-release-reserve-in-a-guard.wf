@@ -1,4 +1,4 @@
-fn released(store: &Shared<ConcurrentHashMap<u8>>, meter: &std::process::MemoryMeter) -> result: Bool reads(store), writes(meter) {
+fn released(store: &ConcurrentHashMap<u8>, meter: &std::process::MemoryMeter) -> result: Bool reads(store), writes(meter) {
   doc "Observe a release through a meter-writing call.";
   let freed = std::process::release_map_reserve::<u8>(map: store, meter: meter);
   if freed == 0_u64 {
@@ -13,10 +13,10 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
   let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
   std::fs::close_directory_write(factory: &factory, directory: move directory_write);
   std::fs::close_directory(factory: &factory, directory: move directory_read);
-  let store = shared_map_new::<u8>(capacity: 1_u64);
-  let other = shared_map_new::<u8>(capacity: 1_u64);
+  let store_map = map_new::<u8>(capacity: 1_u64);
+  let store = shared_new::<ConcurrentHashMap<u8>>(value: move store_map);
   let count = 0_u64;
-  atomic t = &store when released(store: &other, meter: &meter) {
+  atomic t = &store when released(store: t, meter: &meter) {
     set count = map_count::<u8>(map: t);
   }
   let code = cvt.wrap::<u64, u8>(count);

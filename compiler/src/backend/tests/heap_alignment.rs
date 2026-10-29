@@ -309,13 +309,15 @@ fn a_hash_map_stores_meters_and_preserves_them_when_rebuilt() {
 
 /// A shared object and a shared map take their blocks from the runtime pool,
 /// whose alignment target qualification already accepted for a meter; this
-/// keeps their end-to-end run with the other containers.
+/// keeps their end-to-end run with the other containers. The map is an
+/// ordinary value that `shared_new` moves into the state of a shared object.
 #[test]
 fn shared_objects_and_maps_accept_meter_state_and_entries() {
     run(
         r#"  let value = std::process::meter_share(meter: &meter);
   let object = shared_new::<MemoryMeter>(value: move value);
-  let maps = shared_map_new::<MemoryMeter>(capacity: 1_u64);
+  let table = map_new::<MemoryMeter>(capacity: 1_u64);
+  let maps = shared_new::<ConcurrentHashMap<MemoryMeter>>(value: move table);
   let key_bytes = array_filled::<u8, 1>(value: 97_u8);
   let key = &key_bytes[0_u64..1_u64];
   let payload = std::process::meter_share(meter: &meter);

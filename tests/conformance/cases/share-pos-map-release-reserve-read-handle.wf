@@ -1,5 +1,5 @@
-fn reclaim_reserve<V: drop>(store: &Shared<ConcurrentHashMap<V>>, meter: &std::process::MemoryMeter) -> freed: u64 reads(store), writes(meter) {
-  doc "A generic caller reads its handle and writes only its meter.";
+fn reclaim_reserve<V: drop>(store: &ConcurrentHashMap<V>, meter: &std::process::MemoryMeter) -> freed: u64 reads(store), writes(meter) {
+  doc "A generic caller reads its map and writes only its meter.";
   return std::process::release_map_reserve::<V>(map: store, meter: meter);
 }
 
@@ -9,8 +9,8 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
   let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
   std::fs::close_directory_write(factory: &factory, directory: move directory_write);
   std::fs::close_directory(factory: &factory, directory: move directory_read);
-  let bytes = shared_map_new::<u8>(capacity: 0_u64);
-  let words = shared_map_new::<Box<u64>>(capacity: 0_u64);
+  let bytes = map_new::<u8>(capacity: 0_u64);
+  let words = map_new::<Box<u64>>(capacity: 0_u64);
   let first = reclaim_reserve::<u8>(store: &bytes, meter: &meter);
   let second = reclaim_reserve::<Box<u64>>(store: &words, meter: &meter);
   return std::process::exit_status(code: 42_u8);

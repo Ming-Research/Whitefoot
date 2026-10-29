@@ -13,8 +13,8 @@ fn full(observed: &Option<u8>) -> result: Bool reads(observed) {
 
 fn deliver(mail: Shared<ConcurrentHashMap<u8>>) -> result: unit pure waits {
   let name = &names[0_u64..1_u64];
-  atomic slot = &mail[name] {
-    set slot^ = Some<u8>(value: 9_u8);
+  atomic t = &mail {
+    set t^[name] = Some<u8>(value: 9_u8);
   }
   return unit;
 }
@@ -24,8 +24,8 @@ fn receive(mail: &Shared<ConcurrentHashMap<u8>>) -> result: u8 reads(mail) waits
   spawn deliver(mail: move handle);
   let name = &names[0_u64..1_u64];
   let got = 0_u8;
-  atomic slot = &mail^[name] when full(observed: slot) {
-    match slot^ {
+  atomic t = &mail^ when full(observed: &t^[name]) {
+    match t^[name] {
       Some(value: observed) => {
         set got = observed^;
       }
@@ -37,7 +37,8 @@ fn receive(mail: &Shared<ConcurrentHashMap<u8>>) -> result: u8 reads(mail) waits
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let mail = shared_map_new::<u8>(capacity: 0_u64);
+  let mail_map = map_new::<u8>(capacity: 0_u64);
+  let mail = shared_new::<ConcurrentHashMap<u8>>(value: move mail_map);
   let got = receive(mail: &mail);
   return std::process::exit_status(code: got);
 }

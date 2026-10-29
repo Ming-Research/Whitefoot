@@ -187,13 +187,13 @@ fn text_value(env: &Client, value: &Entry) -> kind: u64 reads(value), writes(env
 }
 
 fn run_get(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
-  doc "GET key: answers a live string as a bulk string, written into the reply inside the statement on the key that finds it; a key whose expiry has passed is removed there instead.";
+  doc "GET key: answers a live string as a bulk string, written into the reply inside the statement that holds the key's entry and finds it; a key whose expiry has passed is removed there instead.";
   let place = key_bounds(input: input, args: args, index: 1_u64);
   let key = &input^[place.start..place.end];
   set client^.now = time^.check;
   set client^.state = state_absent;
-  atomic slot = &store^.keys[key] {
-    match slot^ {
+  atomic d = &store^.data {
+    match d^.keys[key] {
       Some(value: observed) => {
         let kind = text_value(env: client, value: observed);
       }
@@ -418,7 +418,7 @@ fn log_without_get(log: &Box<Slots<u8>>, input: &[u8], args: &Box<Slots<Span>>) 
 }
 
 fn set_key(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time, key_index: u64, value_index: u64, flags: u64, at: u64, mode: u64) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
-  doc "Stores the argument at value_index under the key at key_index as Redis 7.0.15's setGenericCommand does, in one atomic statement on the key's entry that also appends the change to the append-only file's pending bytes, an expired key counting as absent and its removal recorded as log_removal records it. With GET the string the key held is written as the reply first and a key of another kind is refused, nothing stored; with NX nothing is stored over a live key, with XX nothing in place of an absent one. The value keeps the key's expiry with KEEPTTL, takes at with an expiry option, and has none otherwise. The reply is OK, or nil when nothing was stored; 1 or 0 for SETNX (mode_setnx); with GET the old string or nil alone. The file records a store with an expiry as SET key value PXAT at, GETSET (mode_getset) as SET key value, a SET with GET as it was sent without its GET options, and any other as it was sent, as Redis propagates them.";
+  doc "Stores the argument at value_index under the key at key_index as Redis 7.0.15's setGenericCommand does, in one atomic statement that holds the key's entry and also appends the change to the append-only file's pending bytes, an expired key counting as absent and its removal recorded as log_removal records it. With GET the string the key held is written as the reply first and a key of another kind is refused, nothing stored; with NX nothing is stored over a live key, with XX nothing in place of an absent one. The value keeps the key's expiry with KEEPTTL, takes at with an expiry option, and has none otherwise. The reply is OK, or nil when nothing was stored; 1 or 0 for SETNX (mode_setnx); with GET the old string or nil alone. The file records a store with an expiry as SET key value PXAT at, GETSET (mode_getset) as SET key value, a SET with GET as it was sent without its GET options, and any other as it was sent, as Redis propagates them.";
   let key_span = arg(args: args, index: key_index);
   let value_span = arg(args: args, index: value_index);
   let place = key_bounds(input: input, args: args, index: key_index);
@@ -438,11 +438,11 @@ fn set_key(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   set client^.now = time^.check;
   let outcome = state_absent;
   let answered = False();
-  atomic slot = &store^.keys[key], m = &store^.meta {
-    let kind = entry_kind(slot: slot, client: client);
+  atomic d = &store^.data {
+    let kind = entry_kind(slot: &d^.keys[key], client: client);
     if client^.state == state_expired {
       if logged {
-        log_removal(log: &m^.log, key: key);
+        log_removal(log: &d^.meta.log, key: key);
       }
     }
     let found = kind != 0_u64;
@@ -455,7 +455,7 @@ fn set_key(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
     } else {
       if getting {
         if text {
-          reply_held_text(slot: slot, client: client);
+          reply_held_text(slot: &d^.keys[key], client: client);
           set answered = True();
         }
       }
@@ -468,24 +468,24 @@ fn set_key(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
       } else {
         let expires = 0_u64;
         if keep {
-          set expires = held_expiry(slot: slot);
+          set expires = held_expiry(slot: &d^.keys[key]);
         }
         if timed {
           set expires = at;
         }
-        put_text(slot: slot, value: move value, expires: expires);
+        put_text(slot: &d^.keys[key], value: move value, expires: expires);
         if timed {
-          queue_expiry(meta: m, key: key, at: at, env: env);
+          queue_expiry(meta: &d^.meta, key: key, at: at, env: env);
         }
         if logged {
           if timed {
-            log_set_at(log: &m^.log, input: input, key: key_span, value: value_span, at: at);
+            log_set_at(log: &d^.meta.log, input: input, key: key_span, value: value_span, at: at);
           } else if mode == mode_getset {
-            log_set(log: &m^.log, input: input, key: key_span, value: value_span);
+            log_set(log: &d^.meta.log, input: input, key: key_span, value: value_span);
           } else if getting {
-            log_without_get(log: &m^.log, input: input, args: args);
+            log_without_get(log: &d^.meta.log, input: input, args: args);
           } else {
-            log_command(log: &m^.log, input: input, args: args);
+            log_command(log: &d^.meta.log, input: input, args: args);
           }
         }
         set outcome = state_done;
@@ -588,18 +588,18 @@ fn run_getdel(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   let logged = store^.logging;
   set client^.now = time^.check;
   let kind = 0_u64;
-  atomic slot = &store^.keys[key], m = &store^.meta {
-    set kind = entry_kind(slot: slot, client: client);
+  atomic d = &store^.data {
+    set kind = entry_kind(slot: &d^.keys[key], client: client);
     if client^.state == state_expired {
       if logged {
-        log_removal(log: &m^.log, key: key);
+        log_removal(log: &d^.meta.log, key: key);
       }
     }
     if kind == 1_u64 {
-      reply_held_text(slot: slot, client: client);
-      set slot^ = None<Entry>();
+      reply_held_text(slot: &d^.keys[key], client: client);
+      set d^.keys[key] = None<Entry>();
       if logged {
-        log_key_word(log: &m^.log, word: &word_del[0_u64..3_u64], input: input, key: key_span);
+        log_key_word(log: &d^.meta.log, word: &word_del[0_u64..3_u64], input: input, key: key_span);
       }
     }
   }
@@ -614,7 +614,7 @@ fn run_getdel(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
 }
 
 fn run_getex(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(env), reads(time), writes(client) waits {
-  doc "GETEX key [EX seconds | PX milliseconds | EXAT unix-seconds | PXAT unix-milliseconds | PERSIST]: answers a live string as GET does and gives it the expiry the option names, or removes its expiry with PERSIST, in one atomic statement on the key, as Redis 7.0.15 does; an absolute expiry already past removes the key instead. The options are read before the key and their amount after it, so that an absent key answers nil, and a key of another kind is refused, whatever the amount. The file records the change as Redis propagates it: PEXPIREAT key at, DEL key, or PERSIST key when an expiry was removed, after the removal of a key found expired, as log_removal records it.";
+  doc "GETEX key [EX seconds | PX milliseconds | EXAT unix-seconds | PXAT unix-milliseconds | PERSIST]: answers a live string as GET does and gives it the expiry the option names, or removes its expiry with PERSIST, in one atomic statement that holds the key's entry, as Redis 7.0.15 does; an absolute expiry already past removes the key instead. The options are read before the key and their amount after it, so that an absent key answers nil, and a key of another kind is refused, whatever the amount. The file records the change as Redis propagates it: PEXPIREAT key at, DEL key, or PERSIST key when an expiry was removed, after the removal of a key found expired, as log_removal records it.";
   let setting = False();
   let options = string_options(input: input, args: args, first: 2_u64, setting: setting);
   if options.valid {
@@ -648,36 +648,36 @@ fn run_getex(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
   let logged = store^.logging;
   set client^.now = time^.check;
   let kind = 0_u64;
-  atomic slot = &store^.keys[key], m = &store^.meta {
-    set kind = entry_kind(slot: slot, client: client);
+  atomic d = &store^.data {
+    set kind = entry_kind(slot: &d^.keys[key], client: client);
     if client^.state == state_expired {
       if logged {
-        log_removal(log: &m^.log, key: key);
+        log_removal(log: &d^.meta.log, key: key);
       }
     }
     let text = kind == 1_u64;
     let go = band(text, readable);
     if go {
-      reply_held_text(slot: slot, client: client);
+      reply_held_text(slot: &d^.keys[key], client: client);
       if timed {
         if lapsed {
-          set slot^ = None<Entry>();
+          set d^.keys[key] = None<Entry>();
           if logged {
-            log_key_word(log: &m^.log, word: &word_del[0_u64..3_u64], input: input, key: key_span);
+            log_key_word(log: &d^.meta.log, word: &word_del[0_u64..3_u64], input: input, key: key_span);
           }
         } else {
-          hold_expiry(slot: slot, expires: at);
-          queue_expiry(meta: m, key: key, at: at, env: env);
+          hold_expiry(slot: &d^.keys[key], expires: at);
+          queue_expiry(meta: &d^.meta, key: key, at: at, env: env);
           if logged {
-            log_expire_at(log: &m^.log, input: input, key: key_span, at_ms: at);
+            log_expire_at(log: &d^.meta.log, input: input, key: key_span, at_ms: at);
           }
         }
       } else if persisting {
-        let had = held_expiry(slot: slot);
+        let had = held_expiry(slot: &d^.keys[key]);
         if had != 0_u64 {
-          hold_expiry(slot: slot, expires: 0_u64);
+          hold_expiry(slot: &d^.keys[key], expires: 0_u64);
           if logged {
-            log_key_word(log: &m^.log, word: &word_persist[0_u64..7_u64], input: input, key: key_span);
+            log_key_word(log: &d^.meta.log, word: &word_persist[0_u64..7_u64], input: input, key: key_span);
           }
         }
       }
@@ -715,7 +715,7 @@ fn held_lapsed(slot: &Option<Entry>, now: u64) -> lapsed: Bool reads(slot) {
 }
 
 fn run_mset(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
-  doc "MSET key value [key value ...]: stores every pair, removing any expiry the keys had, in one statement on the keys' entries; a key named twice keeps its last value. The file records each key found expired as log_removal does, as Redis propagates the removal when it overwrites such a key, then the command as it was sent.";
+  doc "MSET key value [key value ...]: stores every pair, removing any expiry the keys had, in one statement that borrows the keys' entries through a key set; a key named twice keeps its last value. The file records each key found expired as log_removal does, as Redis propagates the removal when it overwrites such a key, then the command as it was sent.";
   let count = args^.inner.len;
   let pairs = count / 2_u64;
   let keys = key_set_new(capacity: pairs);
@@ -732,7 +732,8 @@ fn run_mset(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     }
   }
   let logged = store^.logging;
-  atomic slots = &store^.keys[keys], m = &store^.meta {
+  atomic d = &store^.data {
+    let slots = &d^.keys[keys];
     for @stored (at in 0_u64..keys.len) {
       let position = key_position(positions: &client^.key_metadata, index: at);
       let lapsed = held_lapsed(slot: &slots^[at], now: time^.check);
@@ -741,7 +742,7 @@ fn run_mset(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
           let index = position -wrap 1_u64;
           let place = key_bounds(input: input, args: args, index: index);
           let key = &input^[place.start..place.end];
-          log_removal(log: &m^.log, key: key);
+          log_removal(log: &d^.meta.log, key: key);
         }
       }
       let value_span = arg(args: args, index: position);
@@ -749,7 +750,7 @@ fn run_mset(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
       put_text(slot: &slots^[at], value: move value, expires: 0_u64);
     }
     if logged {
-      log_command(log: &m^.log, input: input, args: args);
+      log_command(log: &d^.meta.log, input: input, args: args);
     }
   }
   reply_ok(client: client);
@@ -808,9 +809,9 @@ fn run_incr(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   let place = key_bounds(input: input, args: args, index: 1_u64);
   let key = &input^[place.start..place.end];
   let counted = Counted(value: 0_i64, delta: delta, now: time^.check, state: state_absent);
-  atomic slot = &store^.keys[key], m = &store^.meta {
+  atomic d = &store^.data {
     let fresh_needed = True();
-    match slot^ {
+    match d^.keys[key] {
       Some(value: observed) => {
         let outcome = bump_value(env: &counted, value: observed);
         set fresh_needed = False();
@@ -821,18 +822,18 @@ fn run_incr(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
     if counted.state == state_expired {
       set fresh_needed = True();
       if store^.logging {
-        log_removal(log: &m^.log, key: key);
+        log_removal(log: &d^.meta.log, key: key);
       }
     }
     if fresh_needed {
       let fresh = decimal_text(value: delta);
-      put_text(slot: slot, value: move fresh, expires: 0_u64);
+      put_text(slot: &d^.keys[key], value: move fresh, expires: 0_u64);
       set counted.value = delta;
       set counted.state = state_done;
     }
     if counted.state == state_done {
       if store^.logging {
-        log_command(log: &m^.log, input: input, args: args);
+        log_command(log: &d^.meta.log, input: input, args: args);
       }
     }
   }
@@ -1127,25 +1128,25 @@ fn run_append(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   set client^.now = time^.check;
   let outcome = state_absent;
   let length = 0_u64;
-  atomic slot = &store^.keys[key], m = &store^.meta {
-    let kind = entry_kind(slot: slot, client: client);
+  atomic d = &store^.data {
+    let kind = entry_kind(slot: &d^.keys[key], client: client);
     if client^.state == state_expired {
       if logged {
-        log_removal(log: &m^.log, key: key);
+        log_removal(log: &d^.meta.log, key: key);
       }
     }
     if kind == 0_u64 {
       let value = bytes_new(input: input, start: value_span.start, length: value_span.length);
-      put_text(slot: slot, value: move value, expires: 0_u64);
+      put_text(slot: &d^.keys[key], value: move value, expires: 0_u64);
       set length = value_span.length;
       set outcome = state_done;
     } else if kind == 1_u64 {
-      let observed = held_text_length(slot: slot);
+      let observed = held_text_length(slot: &d^.keys[key]);
       let total = observed +wrap value_span.length;
       if total > string_limit {
         set outcome = state_long;
       } else {
-        set length = held_text_write(slot: slot, input: input, span: value_span, offset: observed);
+        set length = held_text_write(slot: &d^.keys[key], input: input, span: value_span, offset: observed);
         set outcome = state_done;
       }
     } else {
@@ -1153,7 +1154,7 @@ fn run_append(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
     }
     if outcome == state_done {
       if logged {
-        log_command(log: &m^.log, input: input, args: args);
+        log_command(log: &d^.meta.log, input: input, args: args);
       }
     }
   }
@@ -1193,33 +1194,33 @@ fn run_setrange(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client:
   set client^.now = time^.check;
   let outcome = state_absent;
   let length = 0_u64;
-  atomic slot = &store^.keys[key], m = &store^.meta {
-    let kind = entry_kind(slot: slot, client: client);
+  atomic d = &store^.data {
+    let kind = entry_kind(slot: &d^.keys[key], client: client);
     if client^.state == state_expired {
       if logged {
-        log_removal(log: &m^.log, key: key);
+        log_removal(log: &d^.meta.log, key: key);
       }
     }
     if kind > 1_u64 {
       set outcome = state_wrong;
     } else if empty {
-      set length = held_text_length(slot: slot);
+      set length = held_text_length(slot: &d^.keys[key]);
     } else if beyond {
       set outcome = state_long;
     } else if kind == 0_u64 {
       let nothing = slots_new::<u8, 24>();
       let prefix = &nothing[0_u64..0_u64];
       let value = text_with(input: input, span: value_span, offset: offset, prefix: prefix);
-      put_text(slot: slot, value: move value, expires: 0_u64);
+      put_text(slot: &d^.keys[key], value: move value, expires: 0_u64);
       set length = total;
       set outcome = state_done;
     } else {
-      set length = held_text_write(slot: slot, input: input, span: value_span, offset: offset);
+      set length = held_text_write(slot: &d^.keys[key], input: input, span: value_span, offset: offset);
       set outcome = state_done;
     }
     if outcome == state_done {
       if logged {
-        log_command(log: &m^.log, input: input, args: args);
+        log_command(log: &d^.meta.log, input: input, args: args);
       }
     }
   }
@@ -1244,14 +1245,14 @@ fn run_strlen(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   set client^.now = time^.check;
   let kind = 0_u64;
   let length = 0_u64;
-  atomic slot = &store^.keys[key], m = &store^.meta {
-    set kind = entry_kind(slot: slot, client: client);
+  atomic d = &store^.data {
+    set kind = entry_kind(slot: &d^.keys[key], client: client);
     if client^.state == state_expired {
       if logged {
-        log_removal(log: &m^.log, key: key);
+        log_removal(log: &d^.meta.log, key: key);
       }
     }
-    set length = held_text_length(slot: slot);
+    set length = held_text_length(slot: &d^.keys[key]);
   }
   if kind > 1_u64 {
     reply_wrong_type(client: client);
@@ -1263,7 +1264,7 @@ fn run_strlen(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
 }
 
 fn run_getrange(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
-  doc "GETRANGE key start end and SUBSTR key start end: answers the bytes of a live string between the indices, as reply_text_range reads them, written into the reply inside the statement on the key; the empty bulk string for an absent or expired key, which is removed and its removal recorded as log_removal records it. Indices that are not integers are refused before the key is read, as is a key of another kind after.";
+  doc "GETRANGE key start end and SUBSTR key start end: answers the bytes of a live string between the indices, as reply_text_range reads them, written into the reply inside the statement that holds the key's entry; the empty bulk string for an absent or expired key, which is removed and its removal recorded as log_removal records it. Indices that are not integers are refused before the key is read, as is a key of another kind after.";
   let first = arg(args: args, index: 2_u64);
   let start = read_integer(input: input, start: first.start, length: first.length);
   if start.state != 1_u64 {
@@ -1281,14 +1282,14 @@ fn run_getrange(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client:
   let logged = store^.logging;
   set client^.now = time^.check;
   let kind = 0_u64;
-  atomic slot = &store^.keys[key], m = &store^.meta {
-    set kind = entry_kind(slot: slot, client: client);
+  atomic d = &store^.data {
+    set kind = entry_kind(slot: &d^.keys[key], client: client);
     if client^.state == state_expired {
       if logged {
-        log_removal(log: &m^.log, key: key);
+        log_removal(log: &d^.meta.log, key: key);
       }
     }
-    reply_held_range(slot: slot, client: client, start: start.value, end: end.value);
+    reply_held_range(slot: &d^.keys[key], client: client, start: start.value, end: end.value);
   }
   if kind == 0_u64 {
     reply_word(client: client, word: &reply_empty[0_u64..6_u64]);
@@ -1301,7 +1302,7 @@ fn run_getrange(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client:
 }
 
 fn run_mget(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
-  doc "MGET key [key ...]: answers each key's live string, or nil for an absent or expired key or one of another kind, in the order the keys are named, a key named twice answered twice, written into the reply inside one statement on the keys' entries, as Redis 7.0.15 does. Before the statement each argument is given its key's position in the key set, in first-insertion order; a key found expired is removed, and the file records its removal as log_removal does.";
+  doc "MGET key [key ...]: answers each key's live string, or nil for an absent or expired key or one of another kind, in the order the keys are named, a key named twice answered twice, written into the reply inside one statement that borrows the keys' entries through a key set, as Redis 7.0.15 does. Before the statement each argument is given its key's position in the key set, in first-insertion order; a key found expired is removed, and the file records its removal as log_removal does.";
   let count = args^.inner.len;
   let keys = key_set_new(capacity: count);
   let named = count -sat 1_u64;
@@ -1318,7 +1319,8 @@ fn run_mget(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   reply_array(client: client, count: named);
   set client^.now = time^.check;
   let logged = store^.logging;
-  atomic slots = &store^.keys[keys], m = &store^.meta {
+  atomic d = &store^.data {
+    let slots = &d^.keys[keys];
     for @answers (step in 0_u64..client^.key_metadata.inner.len) {
       if step < client^.key_metadata.inner.len {
         let rank = client^.key_metadata.inner[step];
@@ -1329,7 +1331,7 @@ fn run_mget(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
               let index = step +wrap 1_u64;
               let place = key_bounds(input: input, args: args, index: index);
               let key = &input^[place.start..place.end];
-              log_removal(log: &m^.log, key: key);
+              log_removal(log: &d^.meta.log, key: key);
             }
           }
           if kind == 1_u64 {
@@ -1347,7 +1349,7 @@ fn run_mget(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
 }
 
 fn run_msetnx(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Client, env: &KeyEnv, time: &Time) -> result: unit reads(store), reads(input), reads(args), reads(time), writes(client) waits {
-  doc "MSETNX key value [key value ...]: stores every pair, without expiries, when none of the keys is live, answering 1, and stores nothing otherwise, answering 0, in one statement on the keys' entries, as Redis 7.0.15 does; a key named twice keeps its last value. As Redis's msetGenericCommand does, the statement looks the keys up in the order they are named and stops at the first live one, so a key named after it is not looked up; each key it finds expired is removed, and the file records its removal as log_removal does, then the command as it was sent when it stored. The key set visits distinct keys in first-insertion order, and the metadata array keeps each key's last value argument.";
+  doc "MSETNX key value [key value ...]: stores every pair, without expiries, when none of the keys is live, answering 1, and stores nothing otherwise, answering 0, in one statement that borrows the keys' entries through a key set, as Redis 7.0.15 does; a key named twice keeps its last value. As Redis's msetGenericCommand does, the statement looks the keys up in the order they are named and stops at the first live one, so a key named after it is not looked up; each key it finds expired is removed, and the file records its removal as log_removal does, then the command as it was sent when it stored. The key set visits distinct keys in first-insertion order, and the metadata array keeps each key's last value argument.";
   let count = args^.inner.len;
   let pairs = count / 2_u64;
   let keys = key_set_new(capacity: pairs);
@@ -1366,7 +1368,8 @@ fn run_msetnx(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   set client^.now = time^.check;
   let logged = store^.logging;
   let stored = False();
-  atomic slots = &store^.keys[keys], m = &store^.meta {
+  atomic d = &store^.data {
+    let slots = &d^.keys[keys];
     let blocked = False();
     for @checked (rank in 0_u64..keys.len) {
       let kind = entry_kind(slot: &slots^[rank], client: client);
@@ -1376,7 +1379,7 @@ fn run_msetnx(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
           let index = position -wrap 1_u64;
           let place = key_bounds(input: input, args: args, index: index);
           let key = &input^[place.start..place.end];
-          log_removal(log: &m^.log, key: key);
+          log_removal(log: &d^.meta.log, key: key);
         }
       }
       if kind != 0_u64 {
@@ -1393,7 +1396,7 @@ fn run_msetnx(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
         put_text(slot: &slots^[at], value: move value, expires: 0_u64);
       }
       if logged {
-        log_command(log: &m^.log, input: input, args: args);
+        log_command(log: &d^.meta.log, input: input, args: args);
       }
       set stored = True();
     }
@@ -1493,9 +1496,9 @@ fn run_incrbyfloat(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, clie
   let nothing = slots_new::<u8, 24>();
   let empty = Bytes::Short(bytes: move nothing);
   let summed = FloatSum(increment: increment, text: move empty, now: time^.check, state: state_absent);
-  atomic slot = &store^.keys[key], m = &store^.meta {
+  atomic d = &store^.data {
     let fresh_needed = True();
-    match slot^ {
+    match d^.keys[key] {
       Some(value: observed) => {
         let outcome = float_value(env: &summed, value: observed);
         set fresh_needed = False();
@@ -1506,7 +1509,7 @@ fn run_incrbyfloat(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, clie
     if summed.state == state_expired {
       set fresh_needed = True();
       if logged {
-        log_removal(log: &m^.log, key: key);
+        log_removal(log: &d^.meta.log, key: key);
       }
     }
     if fresh_needed {
@@ -1515,7 +1518,7 @@ fn run_incrbyfloat(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, clie
       let Sum(text: made, state: outcome) = move sum;
       if outcome == 1_u64 {
         let kept = bytes_copy(bytes: &made);
-        put_text(slot: slot, value: move kept, expires: 0_u64);
+        put_text(slot: &d^.keys[key], value: move kept, expires: 0_u64);
         set summed.text = move made;
         set summed.state = state_done;
       } else {
@@ -1529,7 +1532,7 @@ fn run_incrbyfloat(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, clie
     }
     if summed.state == state_done {
       if logged {
-        log_float(log: &m^.log, input: input, key: key_span, text: &summed.text);
+        log_float(log: &d^.meta.log, input: input, key: key_span, text: &summed.text);
       }
     }
   }

@@ -14,7 +14,8 @@ fn deliver(store: Shared<ConcurrentHashMap<u8>>) -> result: unit pure waits {
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<u8>(capacity: 0_u64);
+  let store_map = map_new::<u8>(capacity: 0_u64);
+  let store = shared_new::<ConcurrentHashMap<u8>>(value: move store_map);
   let name = &names[0_u64..1_u64];
   let second = &names[1_u64..2_u64];
   let n = 0_u64;

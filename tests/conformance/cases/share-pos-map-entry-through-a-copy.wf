@@ -1,15 +1,17 @@
 const names: Array<u8, 1> =[97_u8];
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<u8>(capacity: 0_u64);
+  let store_map = map_new::<u8>(capacity: 0_u64);
+  let store = shared_new::<ConcurrentHashMap<u8>>(value: move store_map);
   let name = &names[0_u64..1_u64];
-  atomic slot = &store[name] {
+  atomic t = &store {
+    let slot = &t^[name];
     let same = slot;
     set same^ = Some<u8>(value: 6_u8);
   }
   let seen = 0_u8;
-  atomic slot = &store[name] {
-    match slot^ {
+  atomic t = &store {
+    match t^[name] {
       Some(value: observed) => {
         set seen = observed^;
       }

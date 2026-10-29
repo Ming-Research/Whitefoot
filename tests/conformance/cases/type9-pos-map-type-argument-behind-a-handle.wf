@@ -6,11 +6,12 @@ fn another<T: drop>(handle: &Shared<T>) -> result: Shared<T> reads(handle) {
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<u8>(capacity: 1_u64);
+  let store_map = map_new::<u8>(capacity: 1_u64);
+  let store = shared_new::<ConcurrentHashMap<u8>>(value: move store_map);
   let second = another::<ConcurrentHashMap<u8>>(handle: &store);
   let key = &names[0_u64..1_u64];
-  atomic e = &second[key] {
-    set e^ = Some<u8>(value: 3_u8);
+  atomic t = &second {
+    set t^[key] = Some<u8>(value: 3_u8);
   }
   let seen = 0_u8;
   atomic t = &store {

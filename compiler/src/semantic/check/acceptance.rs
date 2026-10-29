@@ -21,7 +21,6 @@ use super::super::entailment::{
 use super::super::goal::{GoalExpression, GoalOperation};
 use super::super::model::{CheckedFunction, CheckedNumericType, FunctionId};
 use super::super::obligations::{ObligationRecord, RecordAnswer};
-use super::control::SHARE2_PROVE_THE_HANDLE_PLACES_APART;
 use super::{CheckStop, references, repairs};
 
 /// One position in the causal order in which obligations are decided.
@@ -877,12 +876,6 @@ impl<'unit> TypeContext<'unit> {
                     mechanical_fix: "prove before the `swap` that the two positions are distinct, or exchange places that are equal or disjoint without an ancestor relation".to_owned(),
                 }
             }
-            (SemanticRule::Share2, ObligationFamily::AtomicTargetSeparation(_)) => {
-                SemanticIssueKind::UndischargedCallSeparation {
-                    residual,
-                    mechanical_fix: SHARE2_PROVE_THE_HANDLE_PLACES_APART.to_owned(),
-                }
-            }
             (SemanticRule::Ref2, ObligationFamily::ReferencePreservation(query)) => {
                 let use_site = function
                     .call_separations
@@ -986,6 +979,9 @@ impl<'unit> TypeContext<'unit> {
                         == Some(Production::Call)
                     {
                         repairs::construction_invariant(&case)
+                    } else if let Some(rebound) = &outcome.rebound_binding {
+                        let (_, line) = self.declarations.tree.source_line(&rebound.rebinding)?;
+                        repairs::atomic_exit_rebound_invariant(&case, &rebound.name, line)
                     } else {
                         repairs::atomic_exit_invariant(&case)
                     },

@@ -9,26 +9,29 @@ fn key_of(a: u64, b: u64) -> key: Array<u8, 2> pure {
 }
 
 fn mark(store: &Shared<ConcurrentHashMap<unit>>, a: u64, b: u64) -> result: unit reads(store) waits {
-  let key = key_of(a: a, b: b);
-  atomic slot = &store^[&key[0_u64..2_u64]] {
-    set slot^ = Some<unit>(value: unit);
+  let bytes = key_of(a: a, b: b);
+  let key = &bytes[0_u64..2_u64];
+  atomic t = &store^ {
+    set t^[key] = Some<unit>(value: unit);
   }
   return unit;
 }
 
 fn unmark(store: &Shared<ConcurrentHashMap<unit>>, a: u64, b: u64) -> result: unit reads(store) waits {
-  let key = key_of(a: a, b: b);
-  atomic slot = &store^[&key[0_u64..2_u64]] {
-    set slot^ = None<unit>();
+  let bytes = key_of(a: a, b: b);
+  let key = &bytes[0_u64..2_u64];
+  atomic t = &store^ {
+    set t^[key] = None<unit>();
   }
   return unit;
 }
 
 fn is_marked(store: &Shared<ConcurrentHashMap<unit>>, a: u64, b: u64) -> found: Bool reads(store) waits {
-  let key = key_of(a: a, b: b);
+  let bytes = key_of(a: a, b: b);
+  let key = &bytes[0_u64..2_u64];
   let seen = False();
-  atomic slot = &store^[&key[0_u64..2_u64]] {
-    match slot^ {
+  atomic t = &store^ {
+    match t^[key] {
       Some(value: flag) => {
         set seen = True();
       }
@@ -89,7 +92,8 @@ fn collect(map: &ConcurrentHashMap<unit>, keys: &KeySet) -> result: unit reads(m
 
 fn main() -> status: ExitStatus pure waits {
   doc "Four contexts share one set of two-byte keys held as a map whose values are unit: each marks the sixteen keys of its own row twice, unmarks the odd columns and checks every key of its row. The set then holds the thirty-two even-column keys, a scan reports exactly those, and clearing it empties it. Status 0 when all of that holds; each other status names the first check that failed.";
-  let store = shared_map_new::<unit>(capacity: 4_u64);
+  let table = map_new::<unit>(capacity: 4_u64);
+  let store = shared_new::<ConcurrentHashMap<unit>>(value: move table);
   let missing = shared_new::<u64>(value: 0_u64);
   run(store: &store, missing: &missing);
   let wrong = 1_u64;

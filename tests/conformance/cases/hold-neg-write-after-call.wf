@@ -9,10 +9,10 @@ fn observe(left: &u64, right: &u64) -> result: Pair reads(left), reads(right) co
   return Pair(left: left^, right: right^);
 }
 
-fn sample(left: &Shared<u64>, right: &Shared<u64>) -> result: Pair reads(right), writes(left) waits {
-  atomic current_left = &left^, current_right = &right^ {
-    let seen = observe(left: current_left, right: current_right);
-    set current_left^ = 1_u64;
+fn sample(pair: &Shared<Pair>) -> result: Pair reads(pair) waits {
+  atomic current = &pair^ {
+    let seen = observe(left: &current^.left, right: &current^.right);
+    set current^.left = 1_u64;
     return seen;
   }
 }

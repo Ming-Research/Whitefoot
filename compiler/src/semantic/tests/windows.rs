@@ -697,11 +697,11 @@ fn main() -> status: std::process::ExitStatus pure {
 #[test]
 fn a_restricted_type_argument_is_refused_at_its_argument() {
     let source = include_bytes!(
-        "../../../../tests/conformance/cases/type9-neg-map-type-argument-in-a-result.wf"
+        "../../../../tests/conformance/cases/type9-neg-runtime-capacity-type-argument-in-a-result.wf"
     );
     super::with_semantics(source, |outcome| {
         let crate::SemanticOutcome::SourceIssue { issue } = outcome else {
-            panic!("a map result must be refused: {outcome:?}");
+            panic!("a runtime-capacity result must be refused: {outcome:?}");
         };
         assert_eq!(issue.rule_id(), "TYPE-9");
         assert!(matches!(
@@ -711,7 +711,7 @@ fn a_restricted_type_argument_is_refused_at_its_argument() {
         let coordinate = issue.location().coordinate();
         let start = usize::try_from(coordinate.start().value()).expect("source offset");
         let end = usize::try_from(coordinate.end().value()).expect("source offset");
-        assert_eq!(&source[start..end], b"ConcurrentHashMap<u8>");
+        assert_eq!(&source[start..end], b"Slots<u8>");
     });
     assert_accepts(include_bytes!(
         "../../../../tests/conformance/cases/type9-pos-runtime-capacity-type-argument-reference.wf"
@@ -1009,10 +1009,11 @@ fn function_kind_swap_actuals_admit_runtime_capacity_owners() {
     ));
 }
 
-/// [TYPE-9] Box values can take the exchange place; map targets explicitly
-/// include it in their home, including through a user generic parameter.
+/// [TYPE-9, OP-11] Box values can take the exchange place; so can a
+/// concurrent hash map, as two fields of one shared state and through a user
+/// generic parameter.
 #[test]
-fn swap_admits_runtime_capacity_owners_and_map_targets() {
+fn swap_admits_runtime_capacity_owners_and_maps() {
     assert_accepts(include_bytes!(
         "../../../../tests/conformance/cases/type9-pos-runtime-box-swap.wf"
     ));

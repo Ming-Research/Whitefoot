@@ -144,7 +144,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "TYPE-2",
         sentences: &[
-            "\n  mechanical_fix: keep the handle formed by `shared_new` intact; replace this destructuring with an atomic target to read the state, adapting uses of the destructured bindings to those reads and marking the enclosing function `waits` [SHARE-1, SHARE-2]\n",
+            "\n  mechanical_fix: keep the handle formed by `shared_new` intact; replace this destructuring with an atomic statement that reads the state, adapting uses of the destructured bindings to those reads and marking the enclosing function `waits` [SHARE-1, SHARE-2]\n",
         ],
         repaired: &[br#"fn probe(h: Shared<u8>) -> result: u8 pure waits {
   let byte = 0_u8;
@@ -172,7 +172,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "TYPE-2",
         sentences: &[
-            "\n  mechanical_fix: keep the readonly handle formed by `shared_read` intact; replace this destructuring with a readonly atomic target to read the state, adapting uses of the destructured bindings to those reads and marking the enclosing function `waits` [SHARE-1, SHARE-2]\n",
+            "\n  mechanical_fix: keep the readonly handle formed by `shared_read` intact; replace this destructuring with an atomic statement on it that reads the state, adapting uses of the destructured bindings to those reads and marking the enclosing function `waits` [SHARE-1, SHARE-2]\n",
         ],
         repaired: &[br#"fn probe(h: SharedRead<u8>) -> result: u8 pure waits {
   let byte = 0_u8;
@@ -190,7 +190,8 @@ fn main() -> status: std::process::ExitStatus pure {
     RepairPair {
         name: "concurrent-map-taken-apart.wf",
         rejected: br#"fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<u8>(capacity: 0_u64);
+  let store_map = map_new::<u8>(capacity: 0_u64);
+  let store = shared_new::<ConcurrentHashMap<u8>>(value: move store_map);
   let count = 0_u64;
   atomic state = &store {
     let ConcurrentHashMap() = move state^;
@@ -201,11 +202,12 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "TYPE-2",
         sentences: &[
-            "\n  mechanical_fix: remove this destructuring statement and reach the map through an atomic target over a handle formed by `shared_map_new` [SHARE-1, SHARE-2]\n",
+            "\n  mechanical_fix: a map has no fields to take apart: remove this destructuring statement and reach the map's entries through its subscripts `t[k]` [SHARE-1, OP-4]\n",
         ],
         repaired: &[
             br#"fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<u8>(capacity: 0_u64);
+  let store_map = map_new::<u8>(capacity: 0_u64);
+  let store = shared_new::<ConcurrentHashMap<u8>>(value: move store_map);
   let count = 0_u64;
   atomic state = &store {
     set count = map_count::<u8>(map: state);

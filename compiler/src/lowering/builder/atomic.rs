@@ -1,10 +1,15 @@
-//! Atomic type groups, ordered takes, and release on every leaving edge.
+//! [SHARE-2, SHARE-3] The one object an atomic statement holds, taken in
+//! lock units: one per map the state reaches through struct fields alone,
+//! and the object's own lock for every other part. A statement takes the
+//! units its guard and block reach in field order, each at its first use
+//! together with every earlier unit it reaches, and releases them on every
+//! leaving edge (compiler/waiting-contexts/state-locks).
 use super::lock_ledger::AtomicLedger;
 use super::{GiveTarget, IrBuilder, lower_type};
 use crate::semantic::{
-    BindingId, CheckedArrayRoot, CheckedContainerRoot, CheckedDrop, CheckedEnumType,
-    CheckedExpression, CheckedPlaceStep, CheckedRangeElementPlace, CheckedRangeSource,
-    CheckedSetTarget, CheckedStatement, CheckedTarget, CheckedTargetKind, CheckedType,
+    BindingId, CheckedArrayRoot, CheckedContainerRoot, CheckedDrop, CheckedEffectStep,
+    CheckedEnumType, CheckedExpression, CheckedPlaceStep, CheckedRangeElementPlace,
+    CheckedRangeSource, CheckedSetTarget, CheckedStatement, CheckedTarget,
 };
 use crate::{
     IrAddressed, IrConstant, IrDrop, IrDropSubject, IrMatchTarget, IrNominalId, IrNominalKind,
@@ -12,7 +17,7 @@ use crate::{
     LoweringFailure, NodePath, SourceDescription,
 };
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::rc::Rc;
 const U64: IrType = IrType::Integer {
     width: 64,
@@ -20,76 +25,105 @@ const U64: IrType = IrType::Integer {
 };
 #[derive(Clone)]
 pub(super) struct AtomicRegion {
-    targets: Vec<TargetRegion>,
-    groups: Vec<Group>,
-    bindings: HashMap<BindingId, usize>,
-    target_bindings: HashMap<BindingId, usize>,
-    ledger: Rc<RefCell<AtomicLedger>>,
-    wait_site: SourceDescription,
-}
-#[derive(Clone)]
-struct TargetRegion {
     binding: BindingId,
     object: IrValueId,
     nominal: IrNominalId,
-    /// The address of the object's state.
+    /// The address of the object's state, the root of every map unit's path.
     state: IrValueId,
     owned: bool,
-    /// Whether the statement's block or guard may write the state, so that
-    /// leaving the block releases it as written [SHARE-3].
-    wrote: bool,
-    lock: Lock,
+    /// The units the guard and block reach, in take order.
+    units: Vec<Unit>,
+    /// Every map's field path below the state, whether the guard and block
+    /// reach it or not, and whether the state has a part no map covers.
+    maps: Vec<Vec<u32>>,
+    has_object: bool,
+    /// Each unit's position in `units`, maps first in `maps` order and the
+    /// object's own lock last.
+    positions: Vec<Option<usize>>,
+    ledger: Rc<RefCell<AtomicLedger>>,
+    /// Where a deadlock report says the statement's guard waits.
+    wait_site: SourceDescription,
 }
 #[derive(Clone)]
-struct Group {
-    targets: Vec<usize>,
-    record: Option<IrRecord>,
+struct Unit {
+    /// The map's field path below the state; `None` for the object's own
+    /// lock.
+    path: Option<Vec<u32>>,
+    /// Whether the guard or block may write the unit, so that leaving the
+    /// block releases it as written [SHARE-3].
+    wrote: bool,
     flag: Option<IrValueId>,
+    lock: Lock,
 }
 #[derive(Clone)]
 enum Lock {
     Object,
-    Map {
+    /// The entry under a key the guard and block do not write.
+    Entry {
         nominal: IrNominalId,
         table: IrValueId,
-        take: TableTake,
-    },
-}
-#[derive(Clone)]
-enum TableTake {
-    Entry {
         record: IrRecord,
         key: IrValueId,
+        key_binding: BindingId,
         read: bool,
         inserts: bool,
         stable_absence: bool,
     },
-    Hold {
+    /// The whole map.
+    Whole {
+        nominal: IrNominalId,
+        table: IrValueId,
         record: IrRecord,
-        whole: bool,
-        key: Option<IrValueId>,
-        set: Option<(IrValueId, IrValueId)>,
         read: bool,
     },
 }
+/// One place a guard or block reaches through a binding: the struct fields
+/// below the binding's referent, then what follows them.
 #[derive(Clone, Copy)]
-struct Root {
+struct Reach<'a> {
     binding: BindingId,
+    fields: &'a [CheckedPlaceStep],
+    tail: Tail<'a>,
 }
-impl Root {
-    fn whole(binding: BindingId) -> Self {
-        Self { binding }
+#[derive(Clone, Copy)]
+enum Tail<'a> {
+    /// The whole value the fields select.
+    Whole,
+    /// One subscript of the value the fields select, by this offset.
+    Key(&'a CheckedExpression),
+    /// Another selection below the fields.
+    Below,
+}
+impl Reach<'_> {
+    fn path(&self) -> Vec<u32> {
+        self.fields
+            .iter()
+            .filter_map(|step| match step {
+                CheckedPlaceStep::Field(field) => Some(*field),
+                _ => None,
+            })
+            .collect()
     }
-    fn path(binding: BindingId, _steps: &[CheckedPlaceStep]) -> Self {
-        Self { binding }
-    }
+}
+/// What the guard and block do with one unit.
+#[derive(Clone, Default)]
+struct UnitUse {
+    reached: bool,
+    guard: bool,
+    body: bool,
+    written: bool,
+    /// Whether a write may change an enum's variant in the unit, a map's
+    /// entry included, rather than write only below a payload step.
+    variant_written: bool,
+    whole: bool,
+    keys: Vec<(BindingId, CheckedExpression)>,
 }
 impl IrBuilder<'_> {
     #[allow(clippy::too_many_arguments)]
     pub(super) fn lower_atomic(
         &mut self,
         site: &NodePath,
-        targets: &[CheckedTarget],
+        target: &CheckedTarget,
         guard: Option<&CheckedExpression>,
         body: &[CheckedStatement],
         fallthrough_drops: &[CheckedDrop],
@@ -98,21 +132,8 @@ impl IrBuilder<'_> {
         if !self.atomics.is_empty() {
             return Err(LoweringFailure::InvalidCheckedProgram);
         }
-        let enclosing = self.bindings.keys().copied().collect::<Vec<_>>();
-        let mut grouped = std::collections::BTreeMap::new();
-        for (index, target) in targets.iter().enumerate() {
-            grouped
-                .entry(target.lock_order.clone())
-                .or_insert_with(Vec::new)
-                .push(index);
-        }
-        let mut guard_roots = Vec::new();
+        let enclosing = self.bindings.keys().copied().collect::<HashSet<_>>();
         self.define(IrType::Unit, IrOperation::SnapshotAtomicBegin)?;
-        if let Some(guard) = guard {
-            expression_bindings(guard, &mut guard_roots);
-        }
-        let mut body_roots = Vec::new();
-        block_bindings(body, &mut body_roots);
         let ledger_site = self
             .lock_ledger_sources
             .get(site)
@@ -124,186 +145,165 @@ impl IrBuilder<'_> {
             .and_then(|path| self.lock_ledger_sources.get(path))
             .cloned()
             .unwrap_or_else(|| ledger_site.clone());
-        let target_site = |target: &CheckedTarget| {
-            self.target_ledger_sources
-                .get(&target.node_path)
-                .cloned()
-                .unwrap_or_else(|| SourceDescription::literal("<unknown site>"))
+        let address = self.expression(&target.handle)?;
+        let IrType::Address(IrAddressed::Nominal(nominal)) = self.value_type(address)? else {
+            return Err(LoweringFailure::InvalidCheckedProgram);
         };
-        let mut eager_direct = BTreeMap::new();
-        for (group_index, indexes) in grouped.values().enumerate() {
-            let source = indexes.iter().find_map(|index| {
-                let target = &targets[*index];
-                if matches!(
-                    target.kind,
-                    CheckedTargetKind::MapEntry(_) | CheckedTargetKind::MapSet(_)
-                ) {
-                    Some(target_site(target))
-                } else if guard_roots.iter().any(|root| root.binding == target.binding) {
-                    Some(guard_site.clone())
-                } else if !body_roots.iter().any(|root| root.binding == target.binding) {
-                    // Proof-only targets have no executable first use to
-                    // trigger a lazy take, but the statement still holds them.
-                    Some(target_site(target))
-                } else {
-                    None
-                }
-            });
-            if let Some(source) = source {
-                eager_direct.insert(group_index, source);
-            }
+        let loaded = self.define(
+            IrType::Nominal(nominal),
+            IrOperation::Load {
+                address,
+                referent: IrAddressed::Nominal(nominal),
+            },
+        )?;
+        let object = if target.kept_by_place {
+            loaded
+        } else {
+            self.define(
+                IrType::Nominal(nominal),
+                IrOperation::SharedRetain {
+                    nominal,
+                    object: loaded,
+                },
+            )?
+        };
+        let state_type = lower_type(self.erasure, target.state)?;
+        let referent = IrAddressed::of(state_type).ok_or(LoweringFailure::InvalidCheckedProgram)?;
+        let state = self.define(
+            IrType::Address(referent),
+            IrOperation::SharedState { nominal, object },
+        )?;
+        if target.reads {
+            self.readonly_atomic_roots.insert(target.binding);
         }
-        // The provenance map selects the eager prefix as well as describing
-        // it, so the ledger and acquisition cannot choose different groups.
-        let eager = eager_direct.keys().next_back().copied();
-        let mut region = AtomicRegion {
-            targets: Vec::new(),
-            groups: Vec::new(),
-            bindings: HashMap::new(),
-            target_bindings: HashMap::new(),
-            ledger: ledger.clone(),
-            wait_site: self
-                .wait_report_sources
-                .get(site)
-                .cloned()
-                .unwrap_or_else(|| {
-                    SourceDescription::literal(
-                        "waits for the guard of an atomic statement (source unavailable)",
-                    )
-                }),
-        };
-        for (group_index, indexes) in grouped.into_values().enumerate() {
-            ledger.borrow_mut().push_group(
-                indexes
+        self.bind_reference(target.binding, state)?;
+        let maps = self.map_paths(state_type)?;
+        let object_path = self.object_path(state_type);
+        let has_object = object_path.is_some() || maps.is_empty();
+        let uses = self.unit_uses(target, guard, body, &maps, has_object, &enclosing);
+        // Take order: each map at its path, the object's lock at the first
+        // part, in field order, that no map covers.
+        let mut order = (0..uses.len())
+            .filter(|unit| uses[*unit].reached)
+            .collect::<Vec<_>>();
+        order.sort_by_key(|unit| {
+            if *unit < maps.len() {
+                maps[*unit].clone()
+            } else {
+                object_path.clone().unwrap_or_default()
+            }
+        });
+        let several = order.len() > 1;
+        let mut positions = vec![None; uses.len()];
+        let mut units = Vec::with_capacity(order.len());
+        let mut eager = None;
+        let mut eager_direct = BTreeMap::new();
+        for unit in order {
+            let used = &uses[unit];
+            let position = units.len();
+            positions[unit] = Some(position);
+            if used.guard {
+                eager_direct.insert(position, guard_site.clone());
+            } else if !used.body {
+                // A unit only effects or facts reach has no executable first
+                // use to trigger a lazy take, but the statement still holds it.
+                eager_direct.insert(
+                    position,
+                    self.target_ledger_sources
+                        .get(&target.node_path)
+                        .cloned()
+                        .unwrap_or_else(|| SourceDescription::literal("<unknown site>")),
+                );
+            }
+            if eager_direct.contains_key(&position) {
+                eager = Some(position);
+            }
+            let (path, lock) = if unit < maps.len() {
+                let path = maps[unit].clone();
+                // One key and no whole-map use take only that key's entry.
+                let entry_key = match used.keys.as_slice() {
+                    [key] if !used.whole => Some(key),
+                    _ => None,
+                };
+                ledger.borrow_mut().push_unit(
+                    format!(
+                        "{}^{}",
+                        target.ledger_name,
+                        path.iter().map(|field| format!(".{field}")).collect::<String>()
+                    ),
+                    if entry_key.is_some() {
+                        "map entry"
+                    } else {
+                        "whole map"
+                    }
+                    .to_owned(),
+                );
+                let steps = path
                     .iter()
-                    .map(|index| targets[*index].ledger_name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                targets[indexes[0]].ledger_state.clone(),
-            );
-            let grouped = indexes.len() > 1;
-            let mut members = Vec::new();
-            for index in indexes {
-                let target = &targets[index];
-                let state = lower_type(self.erasure, target.state)?;
-                let address = self.expression(&target.handle)?;
-                let IrType::Address(IrAddressed::Nominal(nominal)) = self.value_type(address)?
-                else {
+                    .copied()
+                    .map(CheckedPlaceStep::Field)
+                    .collect::<Vec<_>>();
+                let field = self.project_address_path(state, &steps)?;
+                let IrType::Address(field_referent) = self.value_type(field)? else {
                     return Err(LoweringFailure::InvalidCheckedProgram);
                 };
-                let loaded = self.define(
-                    IrType::Nominal(nominal),
+                let table_type = field_referent.ty();
+                let map = self
+                    .table_nominal(table_type)
+                    .ok_or(LoweringFailure::InvalidCheckedProgram)?;
+                let table = self.define(
+                    table_type,
                     IrOperation::Load {
-                        address,
-                        referent: IrAddressed::Nominal(nominal),
+                        address: field,
+                        referent: field_referent,
                     },
                 )?;
-                let object = if target.kept_by_place {
-                    loaded
-                } else {
-                    self.define(
-                        IrType::Nominal(nominal),
-                        IrOperation::SharedRetain {
-                            nominal,
-                            object: loaded,
-                        },
-                    )?
-                };
-                let referent =
-                    IrAddressed::of(state).ok_or(LoweringFailure::InvalidCheckedProgram)?;
-                let field = self.define(
-                    IrType::Address(referent),
-                    IrOperation::SharedState { nominal, object },
-                )?;
-                if target.reads {
-                    self.readonly_atomic_roots.insert(target.binding);
-                }
-                let read = target.reads && !guard_roots.iter().any(|r| r.binding == target.binding);
-                let lock = match &target.kind {
-                    CheckedTargetKind::Object => {
-                        self.bind_reference(target.binding, field)?;
-                        Lock::Object
-                    }
-                    kind => {
-                        let IrType::Nominal(map_nominal) = state else {
-                            return Err(LoweringFailure::InvalidCheckedProgram);
-                        };
-                        let table = self.define(
-                            state,
-                            IrOperation::Load {
-                                address: field,
-                                referent,
-                            },
-                        )?;
-                        let take = match kind {
-                            CheckedTargetKind::MapEntry(key) if !grouped => {
-                                let key = self.expression(key)?;
-                                let record = self.record(IrRecordKind::TableEntry)?;
-                                TableTake::Entry {
-                                    record,
-                                    key,
-                                    read,
-                                    // Guards keep the existing reservation until their watch is registered.
-                                    inserts: target.inserts
-                                        || guard_roots.iter().any(|r| r.binding == target.binding),
-                                    stable_absence: targets.len() > 1,
-                                }
-                            }
-                            _ => {
-                                let record = self.record(IrRecordKind::TableHold)?;
-                                let (whole, key, set) = match kind {
-                                    CheckedTargetKind::MapWhole => {
-                                        self.bind_reference(target.binding, field)?;
-                                        (true, None, None)
-                                    }
-                                    CheckedTargetKind::MapEntry(key) => {
-                                        (false, Some(self.expression(key)?), None)
-                                    }
-                                    CheckedTargetKind::MapSet(set) => {
-                                        let set = self.expression(set)?;
-                                        let entries =
-                                            self.entries_record(target.binding, target.referent)?;
-                                        (false, None, Some((set, entries)))
-                                    }
-                                    _ => return Err(LoweringFailure::InvalidCheckedProgram),
-                                };
-                                TableTake::Hold {
-                                    record,
-                                    whole,
-                                    key,
-                                    set,
-                                    read,
-                                }
-                            }
-                        };
-                        Lock::Map {
-                            nominal: map_nominal,
+                let read = !used.written;
+                let lock = match entry_key {
+                    Some((key_binding, key)) => {
+                        let key = self.expression(key)?;
+                        Lock::Entry {
+                            nominal: map,
                             table,
-                            take,
+                            record: self.record(IrRecordKind::TableEntry)?,
+                            key,
+                            key_binding: *key_binding,
+                            read: read && !used.guard,
+                            // A write that may change the entry's variant
+                            // may insert it; one below its payload runs only
+                            // where it is present. Guards keep the existing
+                            // reservation until their watch is registered.
+                            inserts: used.variant_written || used.guard,
+                            stable_absence: several,
                         }
                     }
+                    None => Lock::Whole {
+                        nominal: map,
+                        table,
+                        record: self.record(IrRecordKind::TableHold)?,
+                        read: read && !used.guard,
+                    },
                 };
-                region.bindings.insert(target.binding, group_index);
-                region
-                    .target_bindings
-                    .insert(target.binding, region.targets.len());
-                members.push(region.targets.len());
-                region.targets.push(TargetRegion {
-                    binding: target.binding,
-                    object,
-                    nominal,
-                    state: field,
-                    owned: !target.kept_by_place,
-                    wrote: !target.reads,
-                    lock,
-                });
-            }
-            // Eager groups need no frame flag. Lazy state uses one naturally aligned word.
-            let flag = if eager.is_some_and(|last| group_index <= last) {
-                None
+                (Some(path), lock)
             } else {
+                ledger
+                    .borrow_mut()
+                    .push_unit(format!("{}^", target.ledger_name), target.ledger_state.clone());
+                (None, Lock::Object)
+            };
+            units.push(Unit {
+                path,
+                wrote: used.written,
+                flag: None,
+                lock,
+            });
+        }
+        // Eager units need no frame flag. Lazy state uses one naturally
+        // aligned word.
+        for (position, unit) in units.iter_mut().enumerate() {
+            if eager.is_none_or(|last| position > last) {
                 let zero = self.u64_constant(0)?;
-                Some(self.define(
+                unit.flag = Some(self.define(
                     IrType::Address(IrAddressed::Integer {
                         width: 64,
                         signed: false,
@@ -315,32 +315,41 @@ impl IrBuilder<'_> {
                             signed: false,
                         },
                     },
-                )?)
-            };
-            let record = if grouped {
-                Some(
-                    self.record(IrRecordKind::AtomicGroup {
-                        count: u32::try_from(members.len())
-                            .map_err(|_| LoweringFailure::CounterOverflow)?,
-                    })?,
+                )?);
+            }
+        }
+        let region = AtomicRegion {
+            binding: target.binding,
+            object,
+            nominal,
+            state,
+            owned: !target.kept_by_place,
+            units,
+            maps,
+            has_object,
+            positions,
+            ledger: ledger.clone(),
+            wait_site: self.wait_report_sources.get(site).cloned().unwrap_or_else(|| {
+                SourceDescription::literal(
+                    "waits for the guard of an atomic statement (source unavailable)",
                 )
-            } else {
-                None
-            };
-            region.groups.push(Group {
-                targets: members,
-                record,
-                flag,
-            });
-        }
-        if let Some(guard) = guard {
-            self.lower_guard(&region, guard, eager, &eager_direct, &ledger_site)?;
-        } else if let Some(last) = eager {
-            self.take_groups_through(&region, last, &eager_direct, true)?;
-        }
-        ledger.borrow_mut().body_entry = self.current;
+            }),
+        };
+        // The guard's and the block's map subscripts read the region's entry
+        // units, so it is in place before either is lowered.
         self.atomics.push(region.clone());
-        let lowered = self.lower_statements(body, give_target);
+        let lowered = (|| {
+            if let Some(guard) = guard {
+                let mut reach = Vec::new();
+                expression_reach(guard, &mut reach);
+                let read = region.positions_of(&reach);
+                self.lower_guard(&region, guard, &read, eager, &eager_direct, &ledger_site)?;
+            } else if let Some(last) = eager {
+                self.take_units_through(&region, last, &eager_direct, true)?;
+            }
+            ledger.borrow_mut().body_entry = self.current;
+            self.lower_statements(body, give_target)
+        })();
         self.atomics.pop();
         lowered?;
         if self.current.is_some() {
@@ -353,13 +362,131 @@ impl IrBuilder<'_> {
             .extend(ledger.borrow().render(self.function_name, &self.blocks));
         Ok(())
     }
+    /// What the guard and block do with each unit, maps in `maps` order
+    /// and then the object's own lock. A unit's entry is locked alone only
+    /// when every reach of the map subscripts it by one key binding declared
+    /// before the statement that the statement neither rebinds nor writes,
+    /// at the binding or at any byte the key names (`written_roots`); any
+    /// other reach takes the whole map. When the statement's checking uses
+    /// an invariant (`uses_invariants`), whose facts may name any part,
+    /// every unit counts as reached and each map as held whole [SHARE-3].
+    fn unit_uses(
+        &self,
+        target: &CheckedTarget,
+        guard: Option<&CheckedExpression>,
+        body: &[CheckedStatement],
+        maps: &[Vec<u32>],
+        has_object: bool,
+        enclosing: &HashSet<BindingId>,
+    ) -> Vec<UnitUse> {
+        let object = maps.len();
+        let mut uses = vec![UnitUse::default(); maps.len() + 1];
+        let mut guard_reach = Vec::new();
+        if let Some(guard) = guard {
+            expression_reach(guard, &mut guard_reach);
+        }
+        let mut body_reach = Vec::new();
+        block_reach(body, &mut body_reach);
+        let stable = |binding: BindingId| {
+            binding != target.binding
+                && enclosing.contains(&binding)
+                && !target.written_roots.contains(&binding)
+        };
+        for (reaches, in_guard) in [(&guard_reach, true), (&body_reach, false)] {
+            for reach in reaches.iter().filter(|reach| reach.binding == target.binding) {
+                let path = reach.path();
+                let fields_only = reach.fields.len() == path.len();
+                for unit in units_of(maps, has_object, reach) {
+                    let used = &mut uses[unit];
+                    used.reached = true;
+                    if in_guard {
+                        used.guard = true;
+                    } else {
+                        used.body = true;
+                    }
+                    if unit == object {
+                        continue;
+                    }
+                    match reach.tail {
+                        Tail::Key(offset) if fields_only && maps[unit] == path => {
+                            match key_binding_of(offset).filter(|key| stable(*key)) {
+                                Some(key) => {
+                                    if !used.keys.iter().any(|(known, _)| *known == key) {
+                                        used.keys.push((key, offset.clone()));
+                                    }
+                                }
+                                None => used.whole = true,
+                            }
+                        }
+                        _ => used.whole = true,
+                    }
+                }
+            }
+        }
+        // The units one written path reaches: the map at its fields, or else
+        // the object's own lock and every map the path covers.
+        let written_units = |write: &[CheckedEffectStep]| {
+            let fields = write
+                .iter()
+                .map_while(|step| match step {
+                    CheckedEffectStep::Field(field) => Some(*field),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let covers = fields.len() == write.len();
+            let mut written = Vec::new();
+            if let Some(unit) = maps.iter().position(|map| *map == fields) {
+                written.push(unit);
+            } else {
+                if has_object {
+                    written.push(object);
+                }
+                if covers {
+                    written.extend(
+                        maps.iter()
+                            .enumerate()
+                            .filter(|(_, map)| map.starts_with(&fields))
+                            .map(|(unit, _)| unit),
+                    );
+                }
+            }
+            written
+        };
+        for write in &target.writes {
+            for unit in written_units(write.as_slice()) {
+                let used = &mut uses[unit];
+                if !used.reached {
+                    used.reached = true;
+                    used.whole = true;
+                }
+                used.written = true;
+            }
+        }
+        // Each of these is among `target.writes`, so it reached its units
+        // above.
+        for write in &target.variant_writes {
+            for unit in written_units(write.as_slice()) {
+                uses[unit].variant_written = true;
+            }
+        }
+        if target.uses_invariants {
+            for (unit, used) in uses.iter_mut().enumerate() {
+                if unit == object && !has_object {
+                    continue;
+                }
+                used.reached = true;
+                used.whole = true;
+            }
+        }
+        uses
+    }
     fn u64_constant(&mut self, bits: u64) -> Result<IrValueId, LoweringFailure> {
         self.define(
             U64,
             IrOperation::Constant(IrConstant::Integer { ty: U64, bits }),
         )
     }
-    fn group_flag(
+    fn unit_flag(
         &mut self,
         flag: IrValueId,
         take: bool,
@@ -402,7 +529,7 @@ impl IrBuilder<'_> {
         self.current = Some(work);
         Ok(done)
     }
-    fn set_group_flag(&mut self, flag: IrValueId, bits: u64) -> Result<(), LoweringFailure> {
+    fn set_unit_flag(&mut self, flag: IrValueId, bits: u64) -> Result<(), LoweringFailure> {
         let v = self.u64_constant(bits)?;
         self.store_addressed(
             flag,
@@ -413,12 +540,6 @@ impl IrBuilder<'_> {
             },
         )
     }
-    fn reached_groups(&self, region: &AtomicRegion, roots: &[Root]) -> BTreeSet<usize> {
-        roots
-            .iter()
-            .filter_map(|r| region.bindings.get(&r.binding).copied())
-            .collect()
-    }
     pub(super) fn take_units_for(
         &mut self,
         statement: &CheckedStatement,
@@ -426,9 +547,9 @@ impl IrBuilder<'_> {
         let Some(region) = self.atomics.last().cloned() else {
             return Ok(());
         };
-        let mut roots = Vec::new();
-        statement_bindings(statement, &mut roots);
-        let reached = self.reached_groups(&region, &roots);
+        let mut reach = Vec::new();
+        statement_reach(statement, &mut reach);
+        let reached = region.positions_of(&reach);
         if let Some(last) = reached.last().copied() {
             let source = statement
                 .ledger_path()
@@ -437,58 +558,24 @@ impl IrBuilder<'_> {
                 .unwrap_or_else(|| SourceDescription::literal("<unknown site>"));
             let direct = reached
                 .into_iter()
-                .map(|group| (group, source.clone()))
+                .map(|unit| (unit, source.clone()))
                 .collect();
-            self.take_groups_through(&region, last, &direct, false)?;
-        }
-        self.bind_entries(&region, &roots)
-    }
-    fn prepare_hold(&mut self, table: IrValueId, take: &TableTake) -> Result<(), LoweringFailure> {
-        let TableTake::Hold {
-            record,
-            whole,
-            key,
-            set,
-            read,
-        } = take
-        else {
-            return Ok(());
-        };
-        let record = *record;
-        self.define(IrType::Unit, IrOperation::TableHoldBegin { record, table })?;
-        if let Some(key) = key {
-            self.define(U64, IrOperation::TableHoldKey { record, key: *key })?;
-        }
-        if let Some((set, entries)) = set {
-            let position = self.define(U64, IrOperation::TableHoldKeys { record, set: *set })?;
-            self.define(
-                IrType::Unit,
-                IrOperation::EntriesFill {
-                    entries: *entries,
-                    hold: record,
-                    position,
-                    set: *set,
-                },
-            )?;
-        }
-        if *whole {
-            self.define(IrType::Unit, IrOperation::TableHoldWhole { record })?;
-        }
-        if *read {
-            self.define(IrType::Unit, IrOperation::TableHoldRead { record })?;
+            self.take_units_through(&region, last, &direct, false)?;
         }
         Ok(())
     }
-    fn take_groups_through(
+    /// Takes every unit up to `last` not yet taken, in order. Before the
+    /// guard every unit through `last` is taken; in the block an eager
+    /// unit is already held.
+    fn take_units_through(
         &mut self,
         region: &AtomicRegion,
         last: usize,
         direct: &BTreeMap<usize, SourceDescription>,
         before_guard: bool,
     ) -> Result<(), LoweringFailure> {
-        for (index, group) in region.groups.iter().enumerate().take(last + 1) {
-            // An eager group is already held in the body. Guard acquisition runs before the region is pushed.
-            if group.flag.is_none() && !self.atomics.is_empty() {
+        for (index, unit) in region.units.iter().enumerate().take(last + 1) {
+            if unit.flag.is_none() && !before_guard {
                 continue;
             }
             // Observe this request before the taken-word branch. That branch
@@ -499,94 +586,71 @@ impl IrBuilder<'_> {
                     .borrow_mut()
                     .request(index, block, direct, before_guard);
             }
-            let done = group
+            let done = unit
                 .flag
-                .map(|flag| self.group_flag(flag, true))
+                .map(|flag| self.unit_flag(flag, true))
                 .transpose()?;
-            if let Some(record) = group.record {
-                for (ordinal, member) in group.targets.iter().enumerate() {
-                    let target = &region.targets[*member];
-                    let hold = match &target.lock {
-                        Lock::Object => None,
-                        Lock::Map { table, take, .. } => {
-                            self.prepare_hold(*table, take)?;
-                            match take {
-                                TableTake::Hold { record, .. } => Some(*record),
-                                _ => return Err(LoweringFailure::InvalidCheckedProgram),
-                            }
-                        }
-                    };
+            match &unit.lock {
+                // The first unit holds nothing before it, so it waits and
+                // suspends as a first object's acquire does.
+                Lock::Object => {
                     self.define(
                         IrType::Unit,
-                        IrOperation::AtomicGroupTarget {
-                            record,
-                            index: u32::try_from(ordinal)
-                                .map_err(|_| LoweringFailure::CounterOverflow)?,
-                            object: target.object,
-                            hold,
-                            wrote: target.wrote,
+                        if index == 0 {
+                            IrOperation::SharedAcquire {
+                                object: region.object,
+                            }
+                        } else {
+                            IrOperation::SharedTake {
+                                object: region.object,
+                            }
                         },
                     )?;
                 }
-                // The first group holds nothing before it, so it waits
-                // and suspends as a first object's acquire does.
-                self.define(
-                    IrType::Unit,
-                    if index == 0 {
-                        IrOperation::AtomicGroupAcquire { record }
-                    } else {
-                        IrOperation::AtomicGroupTake { record }
-                    },
-                )?;
-            } else {
-                let target = &region.targets[group.targets[0]];
-                match &target.lock {
-                    Lock::Object => {
-                        self.define(
-                            IrType::Unit,
-                            if index == 0 {
-                                IrOperation::SharedAcquire {
-                                    object: target.object,
-                                }
-                            } else {
-                                IrOperation::SharedTake {
-                                    object: target.object,
-                                }
-                            },
-                        )?;
-                    }
-                    Lock::Map { table, take, .. } => match take {
-                        TableTake::Entry {
+                Lock::Entry {
+                    table,
+                    record,
+                    key,
+                    read,
+                    inserts,
+                    stable_absence,
+                    ..
+                } => {
+                    self.define(
+                        IrType::Unit,
+                        IrOperation::TableLockEntry {
+                            record: *record,
+                            table: *table,
+                            key: *key,
+                            read: *read,
+                            inserts: *inserts,
+                            stable_absence: *stable_absence,
+                        },
+                    )?;
+                }
+                Lock::Whole {
+                    table,
+                    record,
+                    read,
+                    ..
+                } => {
+                    let record = *record;
+                    self.define(
+                        IrType::Unit,
+                        IrOperation::TableHoldBegin {
                             record,
-                            key,
-                            read,
-                            inserts,
-                            stable_absence,
-                        } => {
-                            self.define(
-                                IrType::Unit,
-                                IrOperation::TableLockEntry {
-                                    record: *record,
-                                    table: *table,
-                                    key: *key,
-                                    read: *read,
-                                    inserts: *inserts,
-                                    stable_absence: *stable_absence,
-                                },
-                            )?;
-                        }
-                        TableTake::Hold { record, .. } => {
-                            self.prepare_hold(*table, take)?;
-                            self.define(
-                                IrType::Unit,
-                                IrOperation::TableHoldTake { record: *record },
-                            )?;
-                        }
-                    },
+                            table: *table,
+                        },
+                    )?;
+                    self.define(IrType::Unit, IrOperation::TableHoldWhole { record })?;
+                    if *read {
+                        self.define(IrType::Unit, IrOperation::TableHoldRead { record })?;
+                    }
+                    self.define(IrType::Unit, IrOperation::TableHoldTake { record })?;
                 }
             }
-            if let Some(flag) = group.flag {
-                self.set_group_flag(flag, 1)?;
+            if let Some(flag) = unit.flag {
+                self.set_unit_flag(flag, 1)?;
             }
             if let Some(done) = done {
                 self.terminate(IrTerminator::Jump {
@@ -599,134 +663,101 @@ impl IrBuilder<'_> {
         }
         Ok(())
     }
-    fn bind_entries(
+    /// The entry slot a subscript of a map the statement locks by one entry
+    /// selects: `fields` are the subscripted map's struct fields below the
+    /// held state, and `offset` must read the unit's key binding.
+    pub(super) fn atomic_entry_slot(
         &mut self,
-        region: &AtomicRegion,
-        roots: &[Root],
-    ) -> Result<(), LoweringFailure> {
-        for root in roots {
-            let Some(group) = region.bindings.get(&root.binding) else {
-                continue;
-            };
-            // Locate this binding's written target in its type group.
-            let Some(target_index) = self.atomic_binding_target(region, root.binding) else {
-                continue;
-            };
-            let target = &region.targets[target_index];
-            let address = match &target.lock {
-                Lock::Map {
-                    nominal,
-                    take: TableTake::Entry { record, .. },
-                    ..
-                } => {
-                    let referent = self.table_entry(*nominal)?;
-                    Some(self.define(
-                        IrType::Address(referent),
-                        IrOperation::TableEntrySlot {
-                            nominal: *nominal,
-                            record: *record,
-                        },
-                    )?)
-                }
-                Lock::Map {
-                    nominal,
-                    take:
-                        TableTake::Hold {
-                            record,
-                            key: Some(_),
-                            ..
-                        },
-                    ..
-                } => {
-                    let referent = self.table_entry(*nominal)?;
-                    let position = self.u64_constant(0)?;
-                    Some(self.define(
-                        IrType::Address(referent),
-                        IrOperation::TableHoldSlot {
-                            nominal: *nominal,
-                            record: *record,
-                            position,
-                        },
-                    )?)
-                }
-                _ => None,
-            };
-            let _ = group;
-            if let Some(address) = address {
-                self.bindings.insert(root.binding, address);
-                self.promote_binding_if_needed(root.binding)?;
-            }
+        fields: &[u32],
+        offset: &CheckedExpression,
+    ) -> Result<Option<IrValueId>, LoweringFailure> {
+        let Some(region) = self.atomics.last() else {
+            return Ok(None);
+        };
+        let Some(Lock::Entry {
+            nominal,
+            record,
+            key_binding,
+            ..
+        }) = region
+            .units
+            .iter()
+            .find(|unit| unit.path.as_deref() == Some(fields))
+            .map(|unit| &unit.lock)
+        else {
+            return Ok(None);
+        };
+        let (nominal, record) = (*nominal, *record);
+        if key_binding_of(offset) != Some(*key_binding) {
+            return Err(LoweringFailure::InvalidCheckedProgram);
         }
-        Ok(())
+        let referent = self.table_entry(nominal)?;
+        Ok(Some(self.define(
+            IrType::Address(referent),
+            IrOperation::TableEntrySlot { nominal, record },
+        )?))
     }
-    fn atomic_binding_target(&self, region: &AtomicRegion, binding: BindingId) -> Option<usize> {
-        region.target_bindings.get(&binding).copied()
+    /// Whether `address` is the state the innermost statement holds, so that
+    /// a place's field path below it names its map units: the address the
+    /// statement began with, or its binding's value, which a join after a
+    /// branch of the block carries as a block parameter.
+    pub(super) fn is_held_state(&self, address: IrValueId) -> bool {
+        self.atomics.last().is_some_and(|region| {
+            region.state == address || self.bindings.get(&region.binding) == Some(&address)
+        })
     }
-    /// Gives up every group, last first. After a false guard, `watched`, the
-    /// statement wrote nothing; on leaving its block it releases an object
-    /// as written when the block or guard may write it.
-    fn release_groups(
+    /// Gives up every unit, last first. After a false guard, `watched`, the
+    /// statement wrote nothing; on leaving its block it releases a unit as
+    /// written when the block or guard may write it.
+    fn release_units(
         &mut self,
         region: &AtomicRegion,
         watched: bool,
     ) -> Result<(), LoweringFailure> {
-        for group in region.groups.iter().rev() {
-            let done = group
+        for unit in region.units.iter().rev() {
+            let done = unit
                 .flag
-                .map(|flag| self.group_flag(flag, false))
+                .map(|flag| self.unit_flag(flag, false))
                 .transpose()?;
-            if let Some(record) = group.record {
-                let nominal = match &region.targets[group.targets[0]].lock {
-                    Lock::Object => None,
-                    Lock::Map { nominal, .. } => Some(*nominal),
-                };
-                self.define(
-                    IrType::Unit,
-                    IrOperation::AtomicGroupRelease { record, nominal },
-                )?;
-            } else {
-                let target = &region.targets[group.targets[0]];
-                match &target.lock {
-                    Lock::Object => {
-                        self.define(
-                            IrType::Unit,
-                            IrOperation::SharedUnlock {
-                                object: target.object,
-                                wrote: target.wrote && !watched,
-                            },
-                        )?;
-                    }
-                    Lock::Map {
-                        nominal,
-                        take: TableTake::Entry { record, read, .. },
-                        ..
-                    } => {
-                        self.define(
-                            IrType::Unit,
-                            IrOperation::TableUnlockEntry {
-                                nominal: *nominal,
-                                record: *record,
-                                read: *read,
-                            },
-                        )?;
-                    }
-                    Lock::Map {
-                        nominal,
-                        take: TableTake::Hold { record, .. },
-                        ..
-                    } => {
-                        self.define(
-                            IrType::Unit,
-                            IrOperation::TableHoldRelease {
-                                nominal: *nominal,
-                                record: *record,
-                            },
-                        )?;
-                    }
+            match &unit.lock {
+                Lock::Object => {
+                    self.define(
+                        IrType::Unit,
+                        IrOperation::SharedUnlock {
+                            object: region.object,
+                            wrote: unit.wrote && !watched,
+                        },
+                    )?;
+                }
+                Lock::Entry {
+                    nominal,
+                    record,
+                    read,
+                    ..
+                } => {
+                    self.define(
+                        IrType::Unit,
+                        IrOperation::TableUnlockEntry {
+                            nominal: *nominal,
+                            record: *record,
+                            read: *read,
+                        },
+                    )?;
+                }
+                Lock::Whole {
+                    nominal, record, ..
+                } => {
+                    self.define(
+                        IrType::Unit,
+                        IrOperation::TableHoldRelease {
+                            nominal: *nominal,
+                            record: *record,
+                        },
+                    )?;
                 }
             }
-            if let Some(flag) = group.flag {
-                self.set_group_flag(flag, 0)?;
+            if let Some(flag) = unit.flag {
+                self.set_unit_flag(flag, 0)?;
             }
             if let Some(done) = done {
                 self.terminate(IrTerminator::Jump {
@@ -744,17 +775,16 @@ impl IrBuilder<'_> {
         &mut self,
         region: &AtomicRegion,
         guard: &CheckedExpression,
+        read: &BTreeSet<usize>,
         eager: Option<usize>,
         eager_direct: &BTreeMap<usize, SourceDescription>,
         ledger_site: &SourceDescription,
     ) -> Result<(), LoweringFailure> {
-        let mut roots = Vec::new();
-        expression_bindings(guard, &mut roots);
-        let mut read = self.reached_groups(region, &roots);
+        let mut read = read.clone();
         let mut direct = eager_direct.clone();
         if read.is_empty() {
-            read.extend(0..region.groups.len());
-            // The watch fallback really takes every group before evaluating
+            read.extend(0..region.units.len());
+            // The watch fallback really takes every unit before evaluating
             // a guard that reads none. It is an eager request, not a body use.
             direct.extend(read.iter().map(|index| (*index, ledger_site.to_owned())));
         }
@@ -767,10 +797,11 @@ impl IrBuilder<'_> {
         self.current = Some(acquire);
         self.define(IrType::Unit, IrOperation::SnapshotAtomicBegin)?;
         if let Some(last) = read.last().copied().max(eager) {
-            self.take_groups_through(region, last, &direct, true)?;
+            self.take_units_through(region, last, &direct, true)?;
         }
-        self.bind_entries(region, &roots)?;
+        self.guard_flags = Some(Vec::new());
         let holds = self.expression(guard)?;
+        let flags = self.guard_flags.take().unwrap_or_default();
         let proceed = self.new_block(&[])?.0;
         let watch = self.new_block(&[])?.0;
         self.terminate(IrTerminator::Match {
@@ -788,18 +819,15 @@ impl IrBuilder<'_> {
             ],
         })?;
         self.current = Some(watch);
-        let targets = region
-            .targets
-            .iter()
-            .map(|target| target.binding)
-            .collect::<Vec<_>>();
-        if region.targets.len() == 1 && matches!(region.targets[0].lock, Lock::Object) {
-            let target = &region.targets[0];
-            let test = self.wake_test(guard, target.binding, target.state, &targets)?;
+        if flags.is_empty()
+            && region.units.len() == 1
+            && matches!(region.units[0].lock, Lock::Object)
+        {
+            let test = self.wake_test(guard, region.binding, region.state)?;
             self.define(
                 IrType::Unit,
                 IrOperation::SharedWatch {
-                    object: target.object,
+                    object: region.object,
                     test,
                     site: region.wait_site.clone(),
                 },
@@ -808,34 +836,42 @@ impl IrBuilder<'_> {
             let record = self.record(IrRecordKind::Watch)?;
             self.define(IrType::Unit, IrOperation::WatchBegin { record })?;
             for index in read {
-                for member in &region.groups[index].targets {
-                    let target = &region.targets[*member];
-                    match &target.lock {
-                        Lock::Object => {
-                            let test =
-                                self.wake_test(guard, target.binding, target.state, &targets)?;
-                            self.define(
-                                IrType::Unit,
-                                IrOperation::WatchObject {
-                                    record,
-                                    object: target.object,
-                                    test,
-                                },
-                            )?;
-                        }
-                        Lock::Map { table, .. } => {
-                            self.define(
-                                IrType::Unit,
-                                IrOperation::WatchTable {
-                                    record,
-                                    table: *table,
-                                },
-                            )?;
-                        }
+                match &region.units[index].lock {
+                    Lock::Object => {
+                        let test = self.wake_test(guard, region.binding, region.state)?;
+                        self.define(
+                            IrType::Unit,
+                            IrOperation::WatchObject {
+                                record,
+                                object: region.object,
+                                test,
+                            },
+                        )?;
+                    }
+                    Lock::Entry { table, .. } | Lock::Whole { table, .. } => {
+                        self.define(
+                            IrType::Unit,
+                            IrOperation::WatchTable {
+                                record,
+                                table: *table,
+                            },
+                        )?;
                     }
                 }
             }
-            self.release_groups(region, true)?;
+            // [PRE-2] a flag the guard read false wakes the statement when
+            // it is fired; the statement holds no cancellation state.
+            for (seen, object) in flags {
+                self.define(
+                    IrType::Unit,
+                    IrOperation::WatchCancel {
+                        record,
+                        object,
+                        seen,
+                    },
+                )?;
+            }
+            self.release_units(region, true)?;
             self.define(
                 IrType::Unit,
                 IrOperation::WatchPark {
@@ -862,22 +898,6 @@ impl IrBuilder<'_> {
         }
         self.promote_binding_if_needed(binding)
     }
-    fn entries_record(
-        &mut self,
-        binding: BindingId,
-        referent: CheckedType,
-    ) -> Result<IrValueId, LoweringFailure> {
-        let IrType::Entries { element } = lower_type(self.erasure, referent)? else {
-            return Err(LoweringFailure::InvalidCheckedProgram);
-        };
-        let record = self.record(IrRecordKind::Entries)?;
-        let entries = self.define(
-            IrType::Address(IrAddressed::Entries { element }),
-            IrOperation::EntriesRecord { record, element },
-        )?;
-        self.bind_reference(binding, entries)?;
-        Ok(entries)
-    }
     fn table_entry(&self, nominal: IrNominalId) -> Result<IrAddressed, LoweringFailure> {
         match &self.nominals[nominal.index()].kind {
             IrNominalKind::Shared {
@@ -899,6 +919,51 @@ impl IrBuilder<'_> {
             }
         )
         .then_some(nominal)
+    }
+    /// The field path of every map a value of type `ty` holds through
+    /// struct fields alone, in field order: the paths a shared state's map
+    /// units take, and the maps a write keeps where they stand.
+    pub(super) fn map_paths(&self, ty: IrType) -> Result<Vec<Vec<u32>>, LoweringFailure> {
+        let mut paths = Vec::new();
+        self.collect_map_paths(ty, &mut Vec::new(), &mut paths)?;
+        Ok(paths)
+    }
+    fn collect_map_paths(
+        &self,
+        ty: IrType,
+        prefix: &mut Vec<u32>,
+        paths: &mut Vec<Vec<u32>>,
+    ) -> Result<(), LoweringFailure> {
+        if self.table_nominal(ty).is_some() {
+            paths.push(prefix.clone());
+            return Ok(());
+        }
+        if let IrType::Nominal(nominal) = ty
+            && let IrNominalKind::Struct { fields } = &self.nominals[nominal.index()].kind
+        {
+            for (index, field) in fields.iter().enumerate() {
+                prefix.push(u32::try_from(index).map_err(|_| LoweringFailure::CounterOverflow)?);
+                self.collect_map_paths(field.ty, prefix, paths)?;
+                prefix.pop();
+            }
+        }
+        Ok(())
+    }
+    /// The path of the first part, in field order, that no map covers.
+    fn object_path(&self, ty: IrType) -> Option<Vec<u32>> {
+        if self.table_nominal(ty).is_some() {
+            return None;
+        }
+        if let IrType::Nominal(nominal) = ty
+            && let IrNominalKind::Struct { fields } = &self.nominals[nominal.index()].kind
+        {
+            return fields.iter().enumerate().find_map(|(index, field)| {
+                let mut path = self.object_path(field.ty)?;
+                path.insert(0, u32::try_from(index).ok()?);
+                Some(path)
+            });
+        }
+        Some(Vec::new())
     }
     pub(super) fn record(&mut self, kind: IrRecordKind) -> Result<IrRecord, LoweringFailure> {
         let index = self.records;
@@ -922,35 +987,76 @@ impl IrBuilder<'_> {
         if let Some(block) = self.current {
             region.ledger.borrow_mut().exits.insert(block);
         }
-        self.release_groups(region, false)?;
-        self.append_drops(
-            region
-                .targets
-                .iter()
-                .filter(|t| t.owned)
-                .map(|t| IrDrop {
-                    subject: IrDropSubject::Value(t.object),
-                    ty: IrType::Nominal(t.nominal),
-                })
-                .collect(),
-        )
+        self.release_units(region, false)?;
+        if region.owned {
+            self.append_drops(vec![IrDrop {
+                subject: IrDropSubject::Value(region.object),
+                ty: IrType::Nominal(region.nominal),
+            }])?;
+        }
+        Ok(())
     }
     pub(super) fn atomic_depth(&self) -> usize {
         self.atomics.len()
     }
 }
-/// Executable uses throughout a block, reusing the same direct-expression
+impl AtomicRegion {
+    /// The positions of the units these reaches through the statement's
+    /// binding select.
+    fn positions_of(&self, reaches: &[Reach<'_>]) -> BTreeSet<usize> {
+        reaches
+            .iter()
+            .filter(|reach| reach.binding == self.binding)
+            .flat_map(|reach| units_of(&self.maps, self.has_object, reach))
+            .filter_map(|unit| self.positions[unit])
+            .collect()
+    }
+}
+/// The units one reach selects, maps by their index in `maps` and the
+/// object's own lock as `maps.len()`: a map's own path selects that map, and
+/// any other path the object's lock together with every map below it that
+/// the reach covers whole.
+fn units_of(maps: &[Vec<u32>], has_object: bool, reach: &Reach<'_>) -> Vec<usize> {
+    let path = reach.path();
+    if reach.fields.len() == path.len()
+        && let Some(unit) = maps.iter().position(|map| *map == path)
+    {
+        return vec![unit];
+    }
+    let mut units = Vec::new();
+    if has_object {
+        units.push(maps.len());
+    }
+    if reach.fields.len() == path.len() && matches!(reach.tail, Tail::Whole) {
+        units.extend(
+            maps.iter()
+                .enumerate()
+                .filter(|(_, map)| map.starts_with(&path))
+                .map(|(unit, _)| unit),
+        );
+    }
+    units
+}
+/// The binding a map key offset reads as a whole, `k` or `k^`.
+fn key_binding_of(offset: &CheckedExpression) -> Option<BindingId> {
+    match offset {
+        CheckedExpression::Binding { binding, .. }
+        | CheckedExpression::DerefAddressed { binding, .. } => Some(*binding),
+        _ => None,
+    }
+}
+/// Executable reaches throughout a block, reusing the same direct-expression
 /// walk that triggers lazy acquisition while lowering each statement.
-fn block_bindings(statements: &[CheckedStatement], roots: &mut Vec<Root>) {
+fn block_reach<'a>(statements: &'a [CheckedStatement], reach: &mut Vec<Reach<'a>>) {
     for statement in statements {
-        statement_bindings(statement, roots);
+        statement_reach(statement, reach);
         match statement {
             CheckedStatement::Loop { body, .. }
-            | CheckedStatement::CountedRange { body, .. } => block_bindings(body, roots),
+            | CheckedStatement::CountedRange { body, .. } => block_reach(body, reach),
             CheckedStatement::Match { arms, .. }
             | CheckedStatement::ValueMatchLet { arms, .. } => {
                 for arm in arms {
-                    block_bindings(&arm.body, roots);
+                    block_reach(&arm.body, reach);
                 }
             }
             CheckedStatement::Let { .. }
@@ -970,32 +1076,32 @@ fn block_bindings(statements: &[CheckedStatement], roots: &mut Vec<Root>) {
 }
 /// The places a statement's own expressions reach, not those of the blocks
 /// it holds.
-fn statement_bindings(statement: &CheckedStatement, roots: &mut Vec<Root>) {
+fn statement_reach<'a>(statement: &'a CheckedStatement, reach: &mut Vec<Reach<'a>>) {
     match statement {
         CheckedStatement::Let { value, .. }
         | CheckedStatement::DestructuringLet { value, .. }
         | CheckedStatement::Evaluate { value, .. }
         | CheckedStatement::DropExpression { value, .. }
         | CheckedStatement::Return { value, .. }
-        | CheckedStatement::Give { value, .. } => expression_bindings(value, roots),
+        | CheckedStatement::Give { value, .. } => expression_reach(value, reach),
         CheckedStatement::PropagateLet { scrutinee, .. }
         | CheckedStatement::Match { scrutinee, .. }
-        | CheckedStatement::ValueMatchLet { scrutinee, .. } => {
-            expression_bindings(scrutinee, roots)
-        }
+        | CheckedStatement::ValueMatchLet { scrutinee, .. } => expression_reach(scrutinee, reach),
         CheckedStatement::Set { target, value, .. } => {
             match target {
-                CheckedSetTarget::Place(place) => roots.push(Root {
+                CheckedSetTarget::Place(place) => reach.push(Reach {
                     binding: place.binding,
+                    fields: &[],
+                    tail: Tail::Whole,
                 }),
-                CheckedSetTarget::RangeIndex(place) => element_roots(place, roots),
-                CheckedSetTarget::Storage(root) => container_roots(root, roots),
+                CheckedSetTarget::RangeIndex(place) => element_reach(place, reach),
+                CheckedSetTarget::Storage(root) => container_reach(root, reach),
             }
-            expression_bindings(value, roots);
+            expression_reach(value, reach);
         }
         CheckedStatement::CountedRange { lower, upper, .. } => {
-            expression_bindings(lower, roots);
-            expression_bindings(upper, roots);
+            expression_reach(lower, reach);
+            expression_reach(upper, reach);
         }
         CheckedStatement::Loop { .. }
         | CheckedStatement::Proof(_)
@@ -1004,16 +1110,22 @@ fn statement_bindings(statement: &CheckedStatement, roots: &mut Vec<Root>) {
         | CheckedStatement::Atomic { .. } => {}
     }
 }
-
-fn expression_bindings(expression: &CheckedExpression, roots: &mut Vec<Root>) {
+fn whole(binding: BindingId) -> Reach<'static> {
+    Reach {
+        binding,
+        fields: &[],
+        tail: Tail::Whole,
+    }
+}
+fn expression_reach<'a>(expression: &'a CheckedExpression, reach: &mut Vec<Reach<'a>>) {
     match expression {
         CheckedExpression::Constant(_) | CheckedExpression::NamedConstant { .. } => {}
         CheckedExpression::Binding { binding, .. }
-        | CheckedExpression::DerefAddressed { binding, .. } => roots.push(Root::whole(*binding)),
-        CheckedExpression::Project { binding, .. } => roots.push(Root { binding: *binding }),
+        | CheckedExpression::DerefAddressed { binding, .. }
+        | CheckedExpression::Project { binding, .. } => reach.push(whole(*binding)),
         CheckedExpression::BoxTake { binding, path, .. } => {
-            roots.push(Root::path(*binding, path));
-            steps_roots(path, roots);
+            path_reach(*binding, path, reach);
+            steps_reach(path, reach);
         }
         CheckedExpression::UserCall { arguments, .. }
         | CheckedExpression::IntegerOperation { arguments, .. }
@@ -1027,113 +1139,134 @@ fn expression_bindings(expression: &CheckedExpression, roots: &mut Vec<Root>) {
             fields: arguments, ..
         } => {
             for argument in arguments {
-                expression_bindings(argument, roots);
+                expression_reach(argument, reach);
             }
         }
         // A field read through a reference, `s^.f.g`, reaches the place at
-        // that path and not the whole referent.
+        // that path and not the whole referent; its fields are not kept, so
+        // it reaches the object's own lock and every map below the root.
         CheckedExpression::ProjectValue { value, .. } => match projected_root(expression) {
-            Some((binding, _fields)) => roots.push(Root { binding }),
-            None => expression_bindings(value, roots),
+            Some(binding) => reach.push(Reach {
+                binding,
+                fields: &[],
+                tail: Tail::Below,
+            }),
+            None => expression_reach(value, reach),
         },
         CheckedExpression::NumericConversion { value, .. }
         | CheckedExpression::Reinterpret { value, .. }
-        | CheckedExpression::BoxDeref { value, .. } => expression_bindings(value, roots),
-        CheckedExpression::ArrayMeasure { root, .. } => array_roots(root, roots),
+        | CheckedExpression::BoxDeref { value, .. }
+        // [PRE-2] the watch is read where its place is; the flag lives in a
+        // cancellation state the statement does not hold, so adds no reach.
+        | CheckedExpression::CancelFlag { watch: value, .. } => expression_reach(value, reach),
+        CheckedExpression::ArrayMeasure { root, .. } => array_reach(root, reach),
         CheckedExpression::ArrayIndex { root, offset, .. } => {
-            array_roots(root, roots);
-            expression_bindings(offset, roots);
+            array_reach(root, reach);
+            expression_reach(offset, reach);
         }
         CheckedExpression::BufferMeasure { root, .. } => {
-            roots.push(Root::path(root.binding, &root.path));
-            steps_roots(&root.path, roots);
+            path_reach(root.binding, &root.path, reach);
+            steps_reach(&root.path, reach);
         }
         CheckedExpression::BufferIndex { root, offset, .. } => {
-            roots.push(Root::path(root.binding, &root.path));
-            steps_roots(&root.path, roots);
-            expression_bindings(offset, roots);
+            path_reach(root.binding, &root.path, reach);
+            steps_reach(&root.path, reach);
+            expression_reach(offset, reach);
         }
         CheckedExpression::RangeOf {
             source, start, end, ..
         } => {
             match source {
-                CheckedRangeSource::Storage(root) => container_roots(root, roots),
-                CheckedRangeSource::Range(root) => roots.push(Root::whole(root.binding)),
-                CheckedRangeSource::Element(place) => element_roots(place, roots),
+                CheckedRangeSource::Storage(root) => container_reach(root, reach),
+                CheckedRangeSource::Range(root) => reach.push(whole(root.binding)),
+                CheckedRangeSource::Element(place) => element_reach(place, reach),
             }
-            expression_bindings(start, roots);
-            expression_bindings(end, roots);
+            expression_reach(start, reach);
+            expression_reach(end, reach);
         }
         CheckedExpression::RangeMeasure { root, .. } => {
             if let Some(formation) = root.formation.as_deref() {
-                expression_bindings(formation, roots);
+                expression_reach(formation, reach);
             } else {
-                roots.push(Root::whole(root.binding));
+                reach.push(whole(root.binding));
             }
         }
         CheckedExpression::RangeElementMeasure { place, .. }
         | CheckedExpression::RangeIndex { place, .. }
-        | CheckedExpression::BorrowRangeIndex { place, .. } => element_roots(place, roots),
+        | CheckedExpression::BorrowRangeIndex { place, .. } => element_reach(place, reach),
         CheckedExpression::ContainerMeasure { root, .. }
         | CheckedExpression::ReadStorage { root, .. }
-        | CheckedExpression::BorrowAddressed { root, .. } => container_roots(root, roots),
+        | CheckedExpression::BorrowAddressed { root, .. } => container_reach(root, reach),
         CheckedExpression::BorrowSegment { root, segment, .. } => {
             match root {
                 crate::semantic::CheckedSegmentSource::Storage(root) => {
-                    container_roots(root, roots)
+                    container_reach(root, reach)
                 }
                 crate::semantic::CheckedSegmentSource::Element(place) => {
-                    element_roots(place, roots)
+                    element_reach(place, reach)
                 }
             }
             if let Some(offset) = segment.offset() {
-                expression_bindings(offset, roots);
+                expression_reach(offset, reach);
             }
         }
     }
 }
-
-/// The binding and the path of fields a chain of field reads through a
-/// reference's referent selects, `s^.f.g`.
-fn projected_root(expression: &CheckedExpression) -> Option<(BindingId, Vec<u32>)> {
+/// The binding a chain of field reads through a reference's referent,
+/// `s^.f.g`, selects below.
+fn projected_root(expression: &CheckedExpression) -> Option<BindingId> {
     match expression {
-        CheckedExpression::DerefAddressed { binding, .. } => Some((*binding, Vec::new())),
-        CheckedExpression::ProjectValue { value, field, .. } => {
-            let (binding, mut fields) = projected_root(value)?;
-            fields.push(*field);
-            Some((binding, fields))
-        }
+        CheckedExpression::DerefAddressed { binding, .. } => Some(*binding),
+        CheckedExpression::ProjectValue { value, .. } => projected_root(value),
         _ => None,
     }
 }
-
-fn container_roots(root: &CheckedContainerRoot, roots: &mut Vec<Root>) {
+/// The reach of a place `binding` and `path` select: its leading struct
+/// fields, then a subscript's offset or another selection.
+fn path_reach<'a>(binding: BindingId, path: &'a [CheckedPlaceStep], reach: &mut Vec<Reach<'a>>) {
+    let fields = path
+        .iter()
+        .take_while(|step| matches!(step, CheckedPlaceStep::Field(_)))
+        .count();
+    let tail = match path.get(fields) {
+        None => Tail::Whole,
+        Some(CheckedPlaceStep::Subscript(subscript)) => Tail::Key(&subscript.offset),
+        Some(_) => Tail::Below,
+    };
+    reach.push(Reach {
+        binding,
+        fields: &path[..fields],
+        tail,
+    });
+}
+fn container_reach<'a>(root: &'a CheckedContainerRoot, reach: &mut Vec<Reach<'a>>) {
     if let Some(binding) = root.binding() {
-        roots.push(Root::path(binding, &root.path));
+        path_reach(binding, &root.path, reach);
     }
-    steps_roots(&root.path, roots);
+    steps_reach(&root.path, reach);
 }
-
-fn element_roots(place: &CheckedRangeElementPlace, roots: &mut Vec<Root>) {
+fn element_reach<'a>(place: &'a CheckedRangeElementPlace, reach: &mut Vec<Reach<'a>>) {
     if let Some(formation) = place.root.formation.as_deref() {
-        expression_bindings(formation, roots);
+        expression_reach(formation, reach);
     } else {
-        roots.push(Root::whole(place.root.binding));
+        reach.push(whole(place.root.binding));
     }
-    expression_bindings(&place.offset, roots);
-    steps_roots(&place.path, roots);
+    expression_reach(&place.offset, reach);
+    steps_reach(&place.path, reach);
 }
-
-fn array_roots(root: &CheckedArrayRoot, roots: &mut Vec<Root>) {
+fn array_reach<'a>(root: &'a CheckedArrayRoot, reach: &mut Vec<Reach<'a>>) {
     if let CheckedArrayRoot::Binding { binding, .. } = root {
-        roots.push(Root { binding: *binding });
+        reach.push(Reach {
+            binding: *binding,
+            fields: &[],
+            tail: Tail::Below,
+        });
     }
 }
-
-fn steps_roots(steps: &[CheckedPlaceStep], roots: &mut Vec<Root>) {
+fn steps_reach<'a>(steps: &'a [CheckedPlaceStep], reach: &mut Vec<Reach<'a>>) {
     for step in steps {
         if let CheckedPlaceStep::Subscript(subscript) = step {
-            expression_bindings(&subscript.offset, roots);
+            expression_reach(&subscript.offset, reach);
         }
     }
 }

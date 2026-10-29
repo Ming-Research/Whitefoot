@@ -25,8 +25,9 @@
  * test also runs on one.
  *
  * Then guards that read a keyed table (keyed_table.c): context W's
- * statement holds a second object and then entry "k" of a table, and its
- * guard is true once that entry is Some. While it is None, W registers a
+ * statement holds an object and then entry "k" of a table, two lock units
+ * as one statement's state has them, and its guard is true once that entry
+ * is Some. While it is None, W registers a
  * watch on both, releases them and parks. The first time, thread G writes
  * the object between W's release and W's park, so the park answers at once;
  * then context X writes another entry, which wakes W to find its guard
@@ -37,7 +38,8 @@
  * Finally, on the same driver, R writes an object watched by an aged W and
  * asks for it again before yielding: it must park until W's next acquisition,
  * even though W's guard is still false. Repeat with several watchers and with
- * R first taking an exempt statement holding another object or table entry.
+ * R first holding another object or a table entry, which exempts its
+ * statement as an earlier unit of its state does.
  * The final nonexempt acquire detects leaked hold counts as well as missing
  * reservations. Only the oldest wakes initially; with four watchers, each
  * false retry must pass through the next oldest, including interior queue
@@ -67,12 +69,8 @@
  * cursor, or of a watch registered after the notifying write's cutoff: the
  * owner's release must sweep again and wake it, with no later write.
  *
- * Then a statement's first type group asks for an object an aged watch's
- * notification reserves: it parks holding none of its members until that
- * watch's attempt has completed. A group's release gives up a member no
- * target may write without entering the wake. Last, the rescan above, when
- * the notification's owner holds the object as a borrower of a hold an
- * unlock handed a parked context.
+ * Last, the rescan above, when the notification's owner holds the object as
+ * a borrower of a hold an unlock handed a parked context.
  *
  * Prints the first failure and exits 1, or exits 0.
  */
@@ -94,6 +92,14 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+
+/* A shared object whose state is a map, as `shared_new(map_new(capacity))`
+ * makes one. */
+static void *test_shared_map(uint64_t slot_size, uint64_t slot_align, uint64_t capacity) {
+    void *object = wf__shared_new(sizeof(void *));
+    *(void **)((unsigned char *)object + WF_SHARED_STATE_OFFSET) = wf__map_new(slot_size, slot_align, capacity);
+    return object;
+}
 
 /* P asks until it has been handed the object HANDED_ENOUGH times, and every
  * mutant of the hand-off fails in the first cycle; the run stops after
@@ -530,7 +536,7 @@ static void launch_guard(test_frame *root, void (*step)(test_frame *)) {
 
 static void guard_phase_begin(test_frame *root) {
     clock_gettime(CLOCK_MONOTONIC, &guard_started);
-    guard_map_object = wf__shared_map_new(2 * sizeof(uint64_t), sizeof(uint64_t), 0);
+    guard_map_object = test_shared_map(2 * sizeof(uint64_t), sizeof(uint64_t), 0);
     guard_table = *(void **)((char *)guard_map_object + WF_SHARED_STATE_OFFSET);
     guard_object = wf__shared_new(sizeof(uint64_t));
     *state_of(guard_object) = 0;
@@ -601,8 +607,8 @@ static unsigned turn_r_parked, turn_exempt, turn_registered;
 static uint64_t turn_first_wakes;
 static void *turn_object, *turn_other, *turn_map, *turn_table;
 
-/* All guard targets and frames stay live until the group joins, as in an
- * emitted atomic retry. State 0 and 1 both make W's guard false. */
+/* Every guarded object and frame stays live until the group joins, as in
+ * an emitted atomic retry. State 0 and 1 both make W's guard false. */
 static void turn_w_step(test_frame *f) {
     guard_frame *g = (guard_frame *)f;
     struct wf_table_entry *entry = (struct wf_table_entry *)g->entry;
@@ -680,7 +686,7 @@ static void turn_r_step(test_frame *f) {
             fail("an aged write did not wake only the oldest guard (woken, expected)", turn_first_wakes, 1);
 
         /* W is ready on this very driver and has not attempted the object.
-         * A statement already holding an earlier lock must still take O. */
+         * A statement already holding an earlier unit must still take O. */
         if (turn_case == TURN_OBJECT) {
             if (wf__shared_acquire(turn_other, 1, f))
                 fail("an uncontended earlier object suspended R (case)", turn_case, 0);
@@ -731,7 +737,7 @@ static void turn_phase_begin(test_frame *root) {
     turn_other = wf__shared_new(sizeof(uint64_t));
     *state_of(turn_object) = 0;
     if (turn_case == TURN_TABLE) {
-        turn_map = wf__shared_map_new(2 * sizeof(uint64_t), sizeof(uint64_t), 0);
+        turn_map = test_shared_map(2 * sizeof(uint64_t), sizeof(uint64_t), 0);
         turn_table = *(void **)((char *)turn_map + WF_SHARED_STATE_OFFSET);
     }
     for (unsigned i = 0; i < turn_waiters; i++)
@@ -858,8 +864,9 @@ static void cancel_w_step(test_frame *f) {
     }
     if (wf__shared_acquire(cancel_state, 1u, f))
         return;
-    /* Holding the earlier cancellation unit must not create a cycle with
-     * the reserved ordinary unit. This is the emitted mixed-target path. */
+    /* Holding the earlier cancellation unit, as a statement holds an earlier
+     * unit of its state, must not create a cycle with the reserved ordinary
+     * unit. */
     wf__shared_take(cancel_object, 1u);
     if (*(unsigned char *)((char *)cancel_state + WF_SHARED_STATE_OFFSET)) {
         if (!cancel_r_parked)
@@ -934,133 +941,6 @@ static void cancel_fresh_step(test_frame *f) {
     if (wf__shared_acquire(cancel_object, 1u, f))
         fail("a cancelled statement left a reservation after context exit (finished)", cancel_finished, 2);
     wf__shared_unlock(cancel_object, 1u);
-    f->done = 1;
-}
-
-/* A reserved retry can register on two objects, release B first, and be
- * notified by B before releasing its reservation on A. The native writer's
- * acknowledgement fixes that order independently of scheduling. A second
- * B-only watcher proves that joining the old A reservation does not lose
- * the rest of B's notification. The broken double-reserve implementation
- * aborts here; skipping the already-reserved watch or the remaining list
- * stalls or fails the early-wake / completion observations. */
-static void *cross_a, *cross_b;
-static _Atomic unsigned cross_released, cross_written;
-static unsigned cross_parked, cross_finished;
-static pthread_t cross_writer;
-
-static void *cross_write_thread(void *ignored) {
-    (void)ignored;
-    unsigned spins = 0u;
-    while (!atomic_load(&cross_released)) relax(&spins);
-    wf__shared_take(cross_b, 1u);
-    *state_of(cross_b) = 2u;
-    uint64_t before = atomic_load(&watch_ready);
-    wf__shared_unlock(cross_b, 1u);
-    if (atomic_load(&watch_ready) - before != 2u)
-        fail("cross-unit write lost one of its watch notifications (woken, expected)",
-             atomic_load(&watch_ready) - before, 2u);
-    atomic_store(&cross_written, 1u);
-    return NULL;
-}
-
-static void cross_w_step(test_frame *f) {
-    guard_frame *g = (guard_frame *)f;
-    for (;;) {
-        if (wf__shared_acquire(cross_a, 1u, f)) return;
-        /* The real lowering takes same-type targets in identity order;
-         * this fixture orders the two objects by identity at setup. */
-        wf__shared_take(cross_b, 1u);
-        if (*state_of(cross_b) == 2u) {
-            wf__shared_unlock(cross_b, 1u);
-            wf__shared_unlock(cross_a, 1u);
-            ++cross_finished;
-            f->done = 1;
-            return;
-        }
-        wf__watch_begin(g->watch);
-        wf__watch_object(g->watch, cross_a, NULL);
-        wf__watch_object(g->watch, cross_b, NULL);
-        wf__shared_unlock(cross_b, 1u);
-        if (f->statements++ != 0u) {
-            unsigned spins = 0u;
-            uint64_t early = atomic_load(&watch_early);
-            atomic_store(&cross_released, 1u);
-            while (!atomic_load(&cross_written)) relax(&spins);
-            wf__shared_unlock(cross_a, 1u);
-            if (wf__watch_park(g->watch, f, "waits for a native shared-object guard"))
-                fail("cross-unit reserved retry lost its early notification (early, expected)",
-                     atomic_load(&watch_early) - early, 1u);
-            if (atomic_load(&watch_early) - early != 1u)
-                fail("cross-unit retry did not observe its early wake (early, expected)",
-                     atomic_load(&watch_early) - early, 1u);
-            continue;
-        }
-        wf__shared_unlock(cross_a, 1u);
-        ++cross_parked;
-        if (!wf__watch_park(g->watch, f, "waits for a native shared-object guard"))
-            fail("cross-unit initial guard did not park (parked)", cross_parked, 1u);
-        return;
-    }
-}
-
-static void cross_b_step(test_frame *f) {
-    if (wf__shared_acquire(cross_b, 1u, f)) return;
-    if (f->statements != 0u) {
-        if (*state_of(cross_b) != 2u)
-            fail("remaining cross-unit watcher missed the write (state, expected)", *state_of(cross_b), 2u);
-        wf__shared_unlock(cross_b, 1u);
-        ++cross_finished;
-        f->done = 1;
-        return;
-    }
-    atomic_store(&guard_now, 2u);
-    ++f->statements;
-    ++cross_parked;
-    if (!wf__shared_watch(cross_b, 1u, f, NULL, "waits for a native shared-object guard"))
-        fail("B-only guard did not initially park (parked)", cross_parked, 2u);
-}
-
-static void cross_r_step(test_frame *f) {
-    if (cross_parked != 2u)
-        fail("cross-unit writer preceded registration (parked, expected)", cross_parked, 2u);
-    if (wf__shared_acquire(cross_a, 1u, f)) return;
-    atomic_store(&guard_now, TURN_AGE_NS + 3u);
-    *state_of(cross_a) = 1u;
-    uint64_t before = atomic_load(&watch_ready);
-    wf__shared_unlock(cross_a, 1u);
-    if (atomic_load(&watch_ready) - before != 1u)
-        fail("cross-unit setup did not select its A waiter (woken, expected)",
-             atomic_load(&watch_ready) - before, 1u);
-    f->done = 1;
-}
-
-static void cross_phase_begin(test_frame *root) {
-    atomic_store(&guard_now, 1u);
-    atomic_store(&cross_released, 0u);
-    atomic_store(&cross_written, 0u);
-    cross_parked = cross_finished = 0u;
-    cross_a = wf__shared_new(sizeof(uint64_t));
-    cross_b = wf__shared_new(sizeof(uint64_t));
-    if ((uintptr_t)cross_a > (uintptr_t)cross_b) {
-        void *swap = cross_a;
-        cross_a = cross_b;
-        cross_b = swap;
-    }
-    *state_of(cross_a) = *state_of(cross_b) = 0u;
-    pthread_create(&cross_writer, NULL, cross_write_thread, NULL);
-    launch_guard(root, cross_w_step);
-    launch(root, cross_b_step);
-    launch(root, cross_r_step);
-}
-
-static void cross_fresh_step(test_frame *f) {
-    if (wf__shared_acquire(cross_a, 1u, f))
-        fail("cross-unit exit left A reserved", cross_finished, 2u);
-    wf__shared_unlock(cross_a, 1u);
-    if (wf__shared_acquire(cross_b, 1u, f))
-        fail("cross-unit exit left B reserved", cross_finished, 2u);
-    wf__shared_unlock(cross_b, 1u);
     f->done = 1;
 }
 
@@ -1510,191 +1390,9 @@ static void rescan_phase_end(void) {
         wf__shared_free(rescan_object);
 }
 
-/* A statement's first type group under a guard's reservation: watcher W
- * registers on X at time 1, testing word0 == 1; R writes word0 = 1 past the
- * threshold, so W's notification reserves X, and at once asks for the group
- * {X, Y}, X first in identity order. The group's acquire must refuse X and
- * park holding nothing, Y included, which W, holding X, then takes and gives
- * back; once W's attempt has completed, R's resumed acquire takes both. A
- * group take that ignores the reservation, as one that took every member as
- * an earlier object's holder did, takes X at once. */
-/* A group record's target (bridge.h): its object, its table hold, and
- * whether the statement may write the object. */
-typedef struct group_target { void *object; void *hold; uint32_t wrote; } group_target;
-static void *group_x, *group_y;
-static wf_wake_test group_test;
-static group_target group_record[2];
-static unsigned group_w_evaluations, group_w_done, group_r_parks, group_r_done;
-
-static void group_w_step(test_frame *f) {
-    if (wf__shared_acquire(group_x, 1u, f))
-        return;
-    group_w_evaluations += 1u;
-    if (state_of(group_x)[0] != 1u) {
-        if (!wf__shared_watch(group_x, 1u, f, &group_test, "waits for a native shared-object guard"))
-            fail("the group case's watch parked at once (evaluations, expected)", group_w_evaluations, 1);
-        return;
-    }
-    if (group_r_parks != 1u)
-        fail("the reserved watch ran before the group asked for its object (parks, expected)", group_r_parks, 1);
-    /* Y is free while R's group is parked. A context holding Y would be
-     * exempt from X's reservation and take X at once, which the check above
-     * refuses first, so this only confirms that no path parks holding Y. */
-    if (wf__shared_acquire(group_y, 1u, f))
-        fail("a parked first group held a later member (parks, done)", group_r_parks, group_w_done);
-    wf__shared_unlock_unwritten(group_y, 1u);
-    group_w_done = 1u;
-    wf__shared_unlock_unwritten(group_x, 1u);
-    f->done = 1;
-}
-
-static void group_r_step(test_frame *f) {
-    if (f->begun == 0) {
-        if (group_w_evaluations != 1u)
-            fail("the group case's watch had not parked before R ran (evaluations, expected)",
-                 group_w_evaluations, 1);
-        atomic_store(&guard_now, TURN_AGE_NS + 10u);
-        if (wf__shared_acquire(group_x, 1u, f))
-            fail("an uncontended statement suspended (group, parks)", 0, group_r_parks);
-        state_of(group_x)[0] = 1u;
-        wf__shared_unlock(group_x, 1u);
-        f->begun = 1;
-    }
-    group_record[0] = (group_target){group_y, NULL, 1u};
-    group_record[1] = (group_target){group_x, NULL, 0u};
-    if (wf__atomic_group_acquire(group_record, 2u, f)) {
-        group_r_parks += 1u;
-        if (group_w_done)
-            fail("a first group parked after the reserved attempt had completed (parks, done)", group_r_parks,
-                 group_w_done);
-        return;
-    }
-    if (group_r_parks == 0u || !group_w_done)
-        fail("a first group took an object a live reservation keeps (parks, reserved attempt done)",
-             group_r_parks, group_w_done);
-    if (group_record[0].object != group_x || group_record[1].object != group_y)
-        fail("the group was not taken in identity order (first is X, second is Y)",
-             group_record[0].object == group_x, group_record[1].object == group_y);
-    state_of(group_y)[0] = 2u;
-    wf__atomic_group_release(group_record, 2u, 0u, 0u, 0u);
-    group_r_done = 1u;
-    f->done = 1;
-}
-
-static void group_phase_begin(test_frame *root) {
-    atomic_store(&guard_now, 1u);
-    group_w_evaluations = group_w_done = group_r_parks = group_r_done = 0u;
-    wake_equal(&group_test, 1u);
-    void *a = wf__shared_new(sizeof(uint64_t)), *b = wf__shared_new(sizeof(uint64_t));
-    group_x = (uintptr_t)a < (uintptr_t)b ? a : b;
-    group_y = group_x == a ? b : a;
-    state_of(group_x)[0] = state_of(group_y)[0] = 0u;
-    launch_guard(root, group_w_step);
-    launch(root, group_r_step);
-}
-
-static void group_phase_end(void) {
-    if (!group_w_done || !group_r_done || group_r_parks != 1u || group_w_evaluations != 2u)
-        fail("the group case did not finish as expected (parks, watch evaluations)", group_r_parks,
-             group_w_evaluations);
-    if (state_of(group_x)[0] != 1u || state_of(group_y)[0] != 2u)
-        fail("the group case's writes were not kept (X, Y)", state_of(group_x)[0], state_of(group_y)[0]);
-    if (wf__shared_release(group_x))
-        wf__shared_free(group_x);
-    if (wf__shared_release(group_y))
-        wf__shared_free(group_y);
-}
-
-/* A group's release gives up each object as its record says: watcher W
- * registers on X, testing word0 == 1, which already holds, while its guard
- * also needs word1 == 5. R takes the group {X, Y} marked written for
- * neither and releases it, which must enter no wake; then marked written
- * for X only, writing word1 = 5, whose release must notify W. A release
- * that gave up every member as written notifies W the first time. */
-static void *release_x, *release_y;
-static wf_wake_test release_test;
-static unsigned release_w_evaluations, release_w_done;
-
-static void release_w_step(test_frame *f) {
-    if (wf__shared_acquire(release_x, 1u, f))
-        return;
-    release_w_evaluations += 1u;
-    if (state_of(release_x)[1] != 5u) {
-        if (!wf__shared_watch(release_x, 1u, f, &release_test, "waits for a native shared-object guard"))
-            fail("the release case's watch parked at once (evaluations, expected)", release_w_evaluations, 1);
-        return;
-    }
-    release_w_done = 1u;
-    wf__shared_unlock_unwritten(release_x, 1u);
-    f->done = 1;
-}
-
-static void release_r_step(test_frame *f) {
-    group_target record[2];
-    if (f->begun == 0) {
-        if (release_w_evaluations != 1u)
-            fail("the release case's watch had not parked before R ran (evaluations, expected)",
-                 release_w_evaluations, 1);
-        record[0] = (group_target){release_y, NULL, 0u};
-        record[1] = (group_target){release_x, NULL, 0u};
-        if (wf__atomic_group_acquire(record, 2u, f))
-            fail("an uncontended group parked (written, evaluations)", 0, release_w_evaluations);
-        uint64_t written = atomic_load(&watch_written), ready = atomic_load(&watch_ready);
-        wf__atomic_group_release(record, 2u, 0u, 0u, 0u);
-        if (atomic_load(&watch_written) != written || atomic_load(&watch_ready) != ready)
-            fail("a group release marked unwritten entered the wake (woken, writes seen)",
-                 atomic_load(&watch_ready) - ready, atomic_load(&watch_written) - written);
-        record[0] = (group_target){release_y, NULL, 0u};
-        record[1] = (group_target){release_x, NULL, 1u};
-        if (wf__atomic_group_acquire(record, 2u, f))
-            fail("an uncontended group parked (written, evaluations)", 1, release_w_evaluations);
-        state_of(release_x)[1] = 5u;
-        ready = atomic_load(&watch_ready);
-        wf__atomic_group_release(record, 2u, 0u, 0u, 0u);
-        if (atomic_load(&watch_ready) - ready != 1u)
-            fail("a group release marked written for its watched member woke other than its watch (woken, expected)",
-                 atomic_load(&watch_ready) - ready, 1);
-        f->begun = 1;
-    }
-    while (!release_w_done) {
-        if (++f->statements > RESCAN_PASSES)
-            fail("the release case's watch never completed (evaluations, done)", release_w_evaluations,
-                 release_w_done);
-        if (wf__context_pass(f))
-            return;
-    }
-    f->done = 1;
-}
-
-static void release_phase_begin(test_frame *root) {
-    atomic_store(&guard_now, 1u);
-    release_w_evaluations = release_w_done = 0u;
-    wake_equal(&release_test, 1u);
-    /* X takes the lower identity, so the record's order {Y, X} must be
-     * sorted and each write flag must move with its target. */
-    void *a = wf__shared_new(2u * sizeof(uint64_t)), *b = wf__shared_new(2u * sizeof(uint64_t));
-    release_x = (uintptr_t)a < (uintptr_t)b ? a : b;
-    release_y = release_x == a ? b : a;
-    state_of(release_x)[0] = 1u;
-    state_of(release_x)[1] = 0u;
-    state_of(release_y)[0] = 0u;
-    launch_guard(root, release_w_step);
-    launch(root, release_r_step);
-}
-
-static void release_phase_end(void) {
-    if (!release_w_done || release_w_evaluations != 2u)
-        fail("the release case did not finish as expected (done, evaluations)", release_w_done,
-             release_w_evaluations);
-    if (wf__shared_release(release_x))
-        wf__shared_free(release_x);
-    if (wf__shared_release(release_y))
-        wf__shared_free(release_y);
-}
-
 /* The rescan of a borrowed hold's release (bridge.c's give-back path):
  * watchers A (time 1, guard word0 == 1 and word1 == 5) and O (time 2, a
- * statement holding an earlier object E, guard word0 == 1) both test
+ * statement that first holds E, an earlier unit, guard word0 == 1) both test
  * word0 == 1. R writes word0 = 1, which notifies A; A's false retry passes
  * the notification to O. Before O retries, thread H holds X while P parks
  * behind it and wakes P in vain twice, P's driver held by a context while H
@@ -1702,7 +1400,7 @@ static void release_phase_end(void) {
  * while it keeps the driver, H writes word1 = 5 and unlocks, which hands X
  * to P and, O owning the notification, marks O's rescan for A, an older
  * watch whose test holds. O then borrows the hold handed to P, as a
- * statement holding earlier locks does, reads its guard true and gives the
+ * statement holding an earlier unit does, reads its guard true and gives the
  * hold back without writing: the give-back's rescan alone wakes A. */
 static void *borrowed_x, *borrowed_e;
 static wf_wake_test borrowed_a_test, borrowed_o_test;
@@ -1942,13 +1640,9 @@ static void root_step(test_frame *f) {
          * reserves for a young watch, below and past the threshold; rescan
          * and rescan-late catch a write during another context's
          * notification that loses the wake of an older watch behind the
-         * sweep's cursor or of one registered past its cutoff; group-turn
-         * catches a statement's first type group taking an object a live
-         * reservation keeps;
-         * group-release catches a group release that gives up a member no
-         * target may write as written; rescan-borrowed catches a borrowed
-         * hold's release that drops the rescan a write during its
-         * notification marked. */
+         * sweep's cursor or of one registered past its cutoff;
+         * rescan-borrowed catches a borrowed hold's release that drops the
+         * rescan a write during its notification marked. */
         if (selected_case != NULL) {
             if (!strcmp(selected_case, "handoff") || !strcmp(selected_case, "newcomer")) {
                 root_phase = 3;
@@ -1960,26 +1654,17 @@ static void root_step(test_frame *f) {
             } else if (!strcmp(selected_case, "cancel")) {
                 root_phase = 5;
                 cancel_phase_begin(f);
-            } else if (!strcmp(selected_case, "cross-unit")) {
-                root_phase = 7;
-                cross_phase_begin(f);
             } else if (!strcmp(selected_case, "wake") || !strcmp(selected_case, "wake-aged")) {
-                root_phase = !strcmp(selected_case, "wake") ? 9 : 10;
-                wake_phase_begin(f, root_phase == 10);
+                root_phase = !strcmp(selected_case, "wake") ? 7 : 8;
+                wake_phase_begin(f, root_phase == 8);
             } else if (!strcmp(selected_case, "wake-callback")) {
-                root_phase = 16;
+                root_phase = 12;
                 callback_phase_begin(f);
             } else if (!strcmp(selected_case, "rescan") || !strcmp(selected_case, "rescan-late")) {
-                root_phase = !strcmp(selected_case, "rescan") ? 11 : 12;
-                rescan_phase_begin(f, root_phase == 12);
-            } else if (!strcmp(selected_case, "group-turn")) {
-                root_phase = 13;
-                group_phase_begin(f);
-            } else if (!strcmp(selected_case, "group-release")) {
-                root_phase = 14;
-                release_phase_begin(f);
+                root_phase = !strcmp(selected_case, "rescan") ? 9 : 10;
+                rescan_phase_begin(f, root_phase == 10);
             } else if (!strcmp(selected_case, "rescan-borrowed")) {
-                root_phase = 15;
+                root_phase = 11;
                 borrowed_phase_begin(f);
             } else {
                 fail("unknown SHARED_OBJECT_TEST_CASE", 0, 0);
@@ -2030,99 +1715,60 @@ static void root_step(test_frame *f) {
             return;
         }
         root_phase = 7;
-        cross_phase_begin(f);
+        wake_phase_begin(f, 0);
         if (wf__context_join_wait(f->group, f, "waits to join a native test context")) return;
     }
     if (root_phase == 7) {
-        pthread_join(cross_writer, NULL);
-        if (cross_finished != 2u)
-            fail("cross-unit watchers did not complete (finished, expected)", cross_finished, 2u);
+        wake_phase_end();
+        if (selected_case != NULL) {
+            f->done = 1;
+            return;
+        }
         root_phase = 8;
-        launch(f, cross_fresh_step);
+        wake_phase_begin(f, 1);
         if (wf__context_join_wait(f->group, f, "waits to join a native test context")) return;
     }
     if (root_phase == 8) {
-        if (wf__shared_release(cross_a)) wf__shared_free(cross_a);
-        if (wf__shared_release(cross_b)) wf__shared_free(cross_b);
+        wake_phase_end();
         if (selected_case != NULL) {
             f->done = 1;
             return;
         }
         root_phase = 9;
-        wake_phase_begin(f, 0);
+        rescan_phase_begin(f, 0);
         if (wf__context_join_wait(f->group, f, "waits to join a native test context")) return;
     }
     if (root_phase == 9) {
-        wake_phase_end();
+        rescan_phase_end();
         if (selected_case != NULL) {
             f->done = 1;
             return;
         }
         root_phase = 10;
-        wake_phase_begin(f, 1);
+        rescan_phase_begin(f, 1);
         if (wf__context_join_wait(f->group, f, "waits to join a native test context")) return;
     }
     if (root_phase == 10) {
-        wake_phase_end();
+        rescan_phase_end();
         if (selected_case != NULL) {
             f->done = 1;
             return;
         }
         root_phase = 11;
-        rescan_phase_begin(f, 0);
-        if (wf__context_join_wait(f->group, f, "waits to join a native test context")) return;
-    }
-    if (root_phase == 11) {
-        rescan_phase_end();
-        if (selected_case != NULL) {
-            f->done = 1;
-            return;
-        }
-        root_phase = 12;
-        rescan_phase_begin(f, 1);
-        if (wf__context_join_wait(f->group, f, "waits to join a native test context")) return;
-    }
-    if (root_phase == 12) {
-        rescan_phase_end();
-        if (selected_case != NULL) {
-            f->done = 1;
-            return;
-        }
-        root_phase = 13;
-        group_phase_begin(f);
-        if (wf__context_join_wait(f->group, f, "waits to join a native test context")) return;
-    }
-    if (root_phase == 13) {
-        group_phase_end();
-        if (selected_case != NULL) {
-            f->done = 1;
-            return;
-        }
-        root_phase = 14;
-        release_phase_begin(f);
-        if (wf__context_join_wait(f->group, f, "waits to join a native test context")) return;
-    }
-    if (root_phase == 14) {
-        release_phase_end();
-        if (selected_case != NULL) {
-            f->done = 1;
-            return;
-        }
-        root_phase = 15;
         borrowed_phase_begin(f);
         if (wf__context_join_wait(f->group, f, "waits to join a native test context")) return;
     }
-    if (root_phase == 15) {
+    if (root_phase == 11) {
         borrowed_phase_end();
         if (selected_case != NULL) {
             f->done = 1;
             return;
         }
-        root_phase = 16;
+        root_phase = 12;
         callback_phase_begin(f);
         if (wf__context_join_wait(f->group, f, "waits to join a native test context")) return;
     }
-    if (root_phase == 16) {
+    if (root_phase == 12) {
         callback_phase_end();
         f->done = 1;
         return;

@@ -3,7 +3,8 @@ alias exit_status = std::process::exit_status;
 
 const names: Array<u8, 8> =[97_u8, 98_u8, 99_u8, 100_u8, 101_u8, 102_u8, 103_u8, 104_u8];
 
-struct Totals {
+struct Store {
+  table: ConcurrentHashMap<u64>;
   total: u64;
 }
 
@@ -16,18 +17,18 @@ fn prefixes() -> keys: KeySet pure {
   return move keys;
 }
 
-fn bump_keys(store: Shared<Totals>, store_map: Shared<ConcurrentHashMap<u64>>) -> result: unit pure waits {
+fn bump_keys(store: Shared<Store>) -> result: unit pure waits {
   for @round (index in 0_u64..2000_u64) {
     for @key (at in 1_u64..9_u64) {
       let key = &names[0_u64..at];
-      atomic slot = &store_map[key], s = &store {
-        match slot^ {
+      atomic s = &store {
+        match s^.table[key] {
           Some(value: seen) => {
             let next = seen^ +wrap 1_u64;
-            set slot^ = Some<u64>(value: next);
+            set s^.table[key] = Some<u64>(value: next);
           }
           None() => {
-            set slot^ = Some<u64>(value: 1_u64);
+            set s^.table[key] = Some<u64>(value: 1_u64);
           }
         }
         set s^.total = s^.total +wrap 1_u64;
@@ -37,12 +38,13 @@ fn bump_keys(store: Shared<Totals>, store_map: Shared<ConcurrentHashMap<u64>>) -
   return unit;
 }
 
-fn watch_sums(store: Shared<Totals>, store_map: Shared<ConcurrentHashMap<u64>>, mismatches: Shared<u64>) -> result: unit pure waits {
+fn watch_sums(store: Shared<Store>, mismatches: Shared<u64>) -> result: unit pure waits {
   let keys = prefixes();
   for @look (index in 0_u64..300_u64) {
     let sum = 0_u64;
     let counted = 0_u64;
-    atomic all = &store_map[keys], s = &store {
+    atomic s = &store {
+      let all = &s^.table[keys];
       for @key (at in 0_u64..all^.len) {
         match all^[at] {
           Some(value: seen) => {
@@ -63,34 +65,32 @@ fn watch_sums(store: Shared<Totals>, store_map: Shared<ConcurrentHashMap<u64>>, 
   return unit;
 }
 
-fn bump_together(store: &Shared<Totals>, store_map: &Shared<ConcurrentHashMap<u64>>, mismatches: &Shared<u64>) -> result: unit reads(store), reads(mismatches), reads(store_map) waits {
+fn bump_together(store: &Shared<Store>, mismatches: &Shared<u64>) -> result: unit reads(store), reads(mismatches) waits {
   for @start (index in 0_u64..8_u64) {
-    let handle = shared_share::<Totals>(shared: store);
-    let handle_map = shared_share::<ConcurrentHashMap<u64>>(shared: store_map);
-    spawn bump_keys(store: move handle, store_map: move handle_map);
+    let handle = shared_share::<Store>(shared: store);
+    spawn bump_keys(store: move handle);
   }
   for @watch (index in 0_u64..2_u64) {
-    let handle = shared_share::<Totals>(shared: store);
-    let handle_map = shared_share::<ConcurrentHashMap<u64>>(shared: store_map);
+    let handle = shared_share::<Store>(shared: store);
     let seen = shared_share::<u64>(shared: mismatches);
-    spawn watch_sums(store: move handle, store_map: move handle_map, mismatches: move seen);
+    spawn watch_sums(store: move handle, mismatches: move seen);
   }
   return unit;
 }
 
 fn main() -> status: ExitStatus pure waits {
-  doc "One shared map and a separate totals object reached from ten contexts at once: eight each add one to the entries under eight keys, the prefixes of one name, two thousand times, and to the state's total in the same statement; two others hold the entries of all eight keys three hundred times each and compare their sum with the total, which agree whenever no other statement is under way. A statement then counts the entries and reads each, another removes one, and a last counts again. Every order of the statements gives the same counts, so the status is 0 on every driver count and names the first wrong one otherwise.";
-  let store_map = shared_map_new::<u64>(capacity: 0_u64);
-  let state = Totals(total: 0_u64);
-  let store = shared_new::<Totals>(value: state);
+  doc "One shared state holding a map and a total, reached from ten contexts at once: eight each add one to the entries under eight keys, the prefixes of one name, two thousand times, and to the state's total in the same statement; two others hold the entries of all eight keys three hundred times each and compare their sum with the total, which agree whenever no other statement is under way. A statement then counts the entries and reads each, another removes one, and a last counts again. Every order of the statements gives the same counts, so the status is 0 on every driver count and names the first wrong one otherwise.";
+  let table = map_new::<u64>(capacity: 0_u64);
+  let state = Store(table: move table, total: 0_u64);
+  let store = shared_new::<Store>(value: move state);
   let mismatches = shared_new::<u64>(value: 0_u64);
-  bump_together(store: &store, store_map: &store_map, mismatches: &mismatches);
+  bump_together(store: &store, mismatches: &mismatches);
   let counted = 0_u64;
   let wrong = 0_u64;
   let keys = prefixes();
-  atomic t = &store_map {
-    let all = &t^[keys];
-    set counted = map_count::<u64>(map: t);
+  atomic s = &store {
+    let all = &s^.table[keys];
+    set counted = map_count::<u64>(map: &s^.table);
     for @check (at in 0_u64..all^.len) {
       match all^[at] {
         Some(value: seen) => {
@@ -111,12 +111,12 @@ fn main() -> status: ExitStatus pure waits {
     return exit_status(code: 2_u8);
   }
   let first = &names[0_u64..1_u64];
-  atomic slot = &store_map[first] {
-    set slot^ = None<u64>();
+  atomic s = &store {
+    set s^.table[first] = None<u64>();
   }
   let left = 0_u64;
-  atomic t = &store_map {
-    set left = map_count::<u64>(map: t);
+  atomic s = &store {
+    set left = map_count::<u64>(map: &s^.table);
   }
   if left != 7_u64 {
     return exit_status(code: 3_u8);

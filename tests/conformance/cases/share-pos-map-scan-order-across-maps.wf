@@ -26,8 +26,10 @@ fn note(keys: &KeySet, a: u64, b: u64) -> result: unit writes(keys) {
 }
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let first = shared_map_new::<u8>(capacity: 1_u64);
-  let second = shared_map_new::<u8>(capacity: 64_u64);
+  let first_map = map_new::<u8>(capacity: 1_u64);
+  let first = shared_new::<ConcurrentHashMap<u8>>(value: move first_map);
+  let second_map = map_new::<u8>(capacity: 64_u64);
+  let second = shared_new::<ConcurrentHashMap<u8>>(value: move second_map);
   let code = 42_u8;
   atomic t = &first {
     for @fill (a in 0_u64..4_u64) {

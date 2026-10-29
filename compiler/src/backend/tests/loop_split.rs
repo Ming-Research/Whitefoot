@@ -171,19 +171,19 @@ fn split_table_read_fold_with_overlapping_writes_stays_sequential() {
     );
 }
 
-/// Two affine maps through potentially identical atomic roots may conflict,
-/// while writes at the same iteration index still own one element each.
+/// Two affine offsets of the one root an atomic statement binds may conflict
+/// across iterations, while writes at the same iteration index still own one
+/// element each.
 #[test]
-fn split_loop_keeps_atomic_aliases_in_element_prefixes() {
+fn split_loop_keeps_affine_offsets_of_one_atomic_root_apart() {
     let source = br#"fn main() -> status: std::process::ExitStatus pure waits {
   let values = array_filled::<u8, 65>(value: 0_u8);
   let first = shared_new::<Array<u8, 65>>(value: values);
-  let second = shared_share::<Array<u8, 65>>(shared: &first);
-  atomic a = &first, b = &second {
+  atomic a = &first {
     for @cells (i in 0_u64..64_u64) {
       let next = i + 1_u64;
       set a^[i] = 1_u8;
-      set b^[next] = 2_u8;
+      set a^[next] = 2_u8;
     }
   }
   return std::process::exit_status(code: 0_u8);
@@ -199,7 +199,7 @@ fn split_loop_keeps_atomic_aliases_in_element_prefixes() {
     assert!(!emit_with_overlap(source).contains("@wf__par_split_"));
     let same_index = std::str::from_utf8(source)
         .expect("source")
-        .replace("b^[next]", "b^[i]");
+        .replace("a^[next]", "a^[i]");
     let ledger = super::compile_permission_ledger(same_index.as_bytes());
     assert!(
         ledger

@@ -512,9 +512,10 @@ fn an_atomic_guard_is_a_premise_at_its_leaving_edge() {
 #[test]
 fn a_callee_postcondition_does_not_make_plain_atomic_aliases_unsupported() {
     check(
-        "fn update(first: Shared<u64>, second: Shared<u64>) -> result: unit pure waits {
+        "fn update(first: Shared<u64>) -> result: unit pure waits {
   let filled = array_filled::<u64, 1>(value: 0_u64);
-  atomic a = &first, b = &second {
+  atomic a = &first {
+    let b = a;
     set a^ = filled[0_u64];
     set b^ = 1_u64;
   }
@@ -534,9 +535,10 @@ fn a_write_through_an_atomic_alias_cannot_leave_an_ordinary_range_goal_proved() 
   return unit;
 }}
 
-fn update(first: Shared<u64>, second: Shared<u64>) -> result: unit pure waits {{
+fn update(first: Shared<u64>) -> result: unit pure waits {{
   let filled = array_filled::<u64, 1>(value: 0_u64);
-  atomic a = &first, b = &second {{
+  atomic a = &first {{
+    let b = a;
     set a^ = 1_u64;
     set b^ = 2_u64;
     need(x: a^);
@@ -559,8 +561,9 @@ fn atomic_aliases(body: &str) -> String {
   return unit;
 }}
 
-fn update(first: Shared<Zeroes>, second: Shared<Zeroes>) -> result: unit pure waits {{
-  atomic a = &first, b = &second {{
+fn update(first: Shared<Zeroes>) -> result: unit pure waits {{
+  atomic a = &first {{
+    let b = a;
 {body}  }}
   return unit;
 }}
@@ -584,8 +587,9 @@ fn a_call_cannot_observe_a_broken_type_invariant_through_an_atomic_alias() {
 #[test]
 fn atomic_alias_cases_retain_one_loop_certificate_with_all_covered_sites() {
     let source = format!(
-        "fn update(first: Shared<Array<u64, 2>>, second: Shared<Array<u64, 2>>) -> result: unit pure waits {{
-  atomic a = &first, b = &second {{
+        "fn update(first: Shared<Array<u64, 2>>) -> result: unit pure waits {{
+  atomic a = &first {{
+    let b = a;
     for (
       k in 0_u64..2_u64,
       apart(i, j) {{
@@ -609,7 +613,7 @@ fn atomic_alias_cases_retain_one_loop_certificate_with_all_covered_sites() {
             .find(|function| function.name == "update")
             .unwrap();
         let [certificate] = update.range_facts.certified.as_slice() else {
-            panic!("expected one certificate shared by the alias cases");
+            panic!("expected one certificate over the alias and its source");
         };
         assert_eq!(certificate.writes.len(), 1);
         assert_eq!(certificate.reads.len(), 1);

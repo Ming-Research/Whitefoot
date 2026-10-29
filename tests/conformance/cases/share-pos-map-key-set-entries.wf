@@ -1,7 +1,8 @@
 const names: Array<u8, 3> =[97_u8, 98_u8, 99_u8];
 
 fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<u64>(capacity: 0_u64);
+  let store_map = map_new::<u64>(capacity: 0_u64);
+  let store = shared_new::<ConcurrentHashMap<u64>>(value: move store_map);
   let keys = key_set_new(capacity: 4_u64);
   let payloads = array_filled::<u64, 3>(value: 0_u64);
   let index_0 = key_set_insert(keys: &keys, key: &names[1_u64..2_u64]);
@@ -19,7 +20,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
   if payloads[1_u64] != 1_u64 {
     return std::process::exit_status(code: 9_u8);
   }
-  atomic entries = &store[keys] {
+  atomic t = &store {
+    let entries = &t^[keys];
     for @put (at in 0_u64..keys.len) {
       let payload = payloads[at];
       set entries^[at] = Some<u64>(value: payload);
@@ -29,8 +31,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let a = &names[0_u64..1_u64];
   let b_value = 0_u64;
   let a_value = 0_u64;
-  atomic slot = &store[b] {
-    match slot^ {
+  atomic t = &store {
+    match t^[b] {
       Some(value: observed) => {
         set b_value = observed^;
       }
@@ -38,8 +40,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
       }
     }
   }
-  atomic slot = &store[a] {
-    match slot^ {
+  atomic t = &store {
+    match t^[a] {
       Some(value: observed) => {
         set a_value = observed^;
       }

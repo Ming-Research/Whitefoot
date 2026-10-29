@@ -1,0 +1,72 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const names: Array<u8, 1> =[97_u8];
+
+struct Databases {
+  dbs: Array<ConcurrentHashMap<Shared<u8>>, 2>;
+}
+
+fn value_or_zero(found: Option<u8>) -> result: u8 pure {
+  match found {
+    Some(value: inner) => {
+      return inner;
+    }
+    None() => {
+      return 0_u8;
+    }
+  }
+}
+
+fn databases() -> made: Array<ConcurrentHashMap<Shared<u8>>, 2> pure {
+  let slots = slots_new::<ConcurrentHashMap<Shared<u8>>, 2>();
+  let first = map_new::<Shared<u8>>(capacity: 1_u64);
+  place_back(window: &slots, value: move first);
+  let second = map_new::<Shared<u8>>(capacity: 1_u64);
+  place_back(window: &slots, value: move second);
+  let dbs = slots_into_array::<ConcurrentHashMap<Shared<u8>>, 2>(values: move slots);
+  return move dbs;
+}
+
+fn local_clear() -> result: u8 pure waits {
+  doc "A local map's entry holds a second handle of a cell. Clearing the map outside any statement ends that handle, so the close of the first handle that follows, while the map is still live, ends the cell's last handle and returns Some(3).";
+  let key = &names[0_u64..1_u64];
+  let cell = shared_new::<u8>(value: 3_u8);
+  let local = map_new::<Shared<u8>>(capacity: 1_u64);
+  let extra = shared_share::<u8>(shared: &cell);
+  set local[key] = Some<Shared<u8>>(value: move extra);
+  map_clear::<Shared<u8>>(map: &local);
+  let closed = shared_close::<u8>(shared: move cell);
+  let left = map_count::<Shared<u8>>(map: &local);
+  if left != 0_u64 {
+    return 50_u8;
+  }
+  let got = value_or_zero(found: closed);
+  return got;
+}
+
+fn element_clear(server: &Shared<Databases>) -> result: u8 reads(server) waits {
+  doc "An entry of the map in element 1 of the state's array field holds a second handle of a cell. A statement clears that map, which ends the handle, so the close of the first handle after the statement, while the state is still live, ends the cell's last handle and returns Some(4).";
+  let key = &names[0_u64..1_u64];
+  let cell = shared_new::<u8>(value: 4_u8);
+  let extra = shared_share::<u8>(shared: &cell);
+  atomic s = &server^ {
+    set s^.dbs[1_u64][key] = Some<Shared<u8>>(value: move extra);
+  }
+  atomic s = &server^ {
+    map_clear::<Shared<u8>>(map: &s^.dbs[1_u64]);
+  }
+  let closed = shared_close::<u8>(shared: move cell);
+  let got = value_or_zero(found: closed);
+  return got;
+}
+
+fn main() -> status: ExitStatus pure waits {
+  let first = local_clear();
+  let dbs = databases();
+  let initial = Databases(dbs: move dbs);
+  let server = shared_new::<Databases>(value: move initial);
+  let second = element_clear(server: &server);
+  let total = first +wrap second;
+  return exit_status(code: total);
+}

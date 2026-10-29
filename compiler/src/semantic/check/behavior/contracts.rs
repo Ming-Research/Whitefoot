@@ -591,32 +591,32 @@ fn contract_effect_place(
             .position(|parameter| parameter.declaration == declaration)
             .and_then(|index| u32::try_from(index).ok())
     };
-    let steps = path
-        .steps
-        .iter()
-        .map(|step| {
-            Some(match step {
-                CheckedEffectStep::Field(field) => PlaceStep::Field(*field),
-                CheckedEffectStep::Deref => PlaceStep::Deref,
-                CheckedEffectStep::Payload { variant, field } => PlaceStep::Payload {
-                    variant: *variant,
-                    field: *field,
-                },
-                CheckedEffectStep::Index(parameter) => {
-                    PlaceStep::Index(contract_index(ordinal(*parameter)?))
-                }
-                CheckedEffectStep::Page(parameter) => {
-                    PlaceStep::Page(contract_index(ordinal(*parameter)?))
-                }
-                CheckedEffectStep::Range { start, end } => PlaceStep::Range(CapturedRange {
-                    start: contract_index(ordinal(*start)?),
-                    end: contract_index(ordinal(*end)?),
-                }),
-                CheckedEffectStep::Part(part) => PlaceStep::Part(*part),
-                CheckedEffectStep::Measure(measure) => PlaceStep::Measure(*measure),
-            })
-        })
-        .collect::<Option<Vec<_>>>()?;
+    let mut steps = Vec::with_capacity(path.steps.len());
+    for step in &path.steps {
+        steps.push(match step {
+            CheckedEffectStep::Field(field) => PlaceStep::Field(*field),
+            CheckedEffectStep::Deref => PlaceStep::Deref,
+            CheckedEffectStep::Payload { variant, field } => PlaceStep::Payload {
+                variant: *variant,
+                field: *field,
+            },
+            CheckedEffectStep::Index(parameter) => {
+                PlaceStep::Index(contract_index(ordinal(*parameter)?))
+            }
+            CheckedEffectStep::Page(parameter) => {
+                PlaceStep::Page(contract_index(ordinal(*parameter)?))
+            }
+            CheckedEffectStep::Range { start, end } => PlaceStep::Range(CapturedRange {
+                start: contract_index(ordinal(*start)?),
+                end: contract_index(ordinal(*end)?),
+            }),
+            CheckedEffectStep::Part(part) => PlaceStep::Part(*part),
+            CheckedEffectStep::Measure(measure) => PlaceStep::Measure(*measure),
+            // [PRE-2] a watch's flag lives in its state: the place ends at
+            // the watch.
+            CheckedEffectStep::CancelFlag => break,
+        });
+    }
     Some(ResolvedPlace {
         root: PlaceRoot::Binding(BindingId(ordinal(path.root)?)),
         path: steps,

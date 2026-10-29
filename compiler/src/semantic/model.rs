@@ -613,10 +613,10 @@ pub(crate) enum CheckedType {
     /// lexicographic order, each with a `u64` payload. Its `len` is its key
     /// count, the one measure of the type and a bounded one [MSR-1].
     KeySet,
-    /// The `Entries<V>` an entry binding names over a key set [SHARE-2]:
-    /// one `Option<V>` place per key of the set, `element` being that
-    /// `Option<V>`. It exists only as the binding's referent; its `len` is the
-    /// set's [MSR-1].
+    /// The `Entries<V>` a key-set subscript selects [OP-4, SHARE-1]: one
+    /// `Option<V>` place per key of the set, `element` being that
+    /// `Option<V>`. It exists only as the referent of the reference that
+    /// subscript forms; its `len` is the set's [MSR-1].
     Entries {
         element: CheckedElement,
     },
@@ -1057,10 +1057,10 @@ pub(crate) enum CheckedNominalKind {
     },
 }
 
-/// One target of an atomic statement, in written order [SHARE-2].
+/// The target of an atomic statement [SHARE-2].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CheckedTarget {
-    pub(crate) lock_order: Vec<String>,
+    /// The handle place.
     pub(crate) node_path: NodePath,
     /// Source presentation for the non-normative lowering lock ledger.
     pub(crate) ledger_name: String,
@@ -1073,39 +1073,44 @@ pub(crate) struct CheckedTarget {
     /// so the statement counts no handle of its own.
     pub(crate) kept_by_place: bool,
     pub(crate) state: CheckedType,
-    pub(crate) kind: CheckedTargetKind,
-    pub(crate) referent: CheckedType,
+    /// Whether the guard and the block write nothing of the state.
     pub(crate) reads: bool,
-    /// Conservative permission to replace a map entry variant.
-    pub(crate) inserts: bool,
+    /// The paths below the state the guard and the block write, each as its
+    /// steps from the state, the empty path for the whole state; the
+    /// lowering takes the lock units they reach as written
+    /// (compiler/waiting-contexts/state-locks).
+    pub(crate) writes: Vec<Vec<CheckedEffectStep>>,
+    /// The paths among `writes` of the writes that may change an enum's
+    /// variant: those whose place has no payload step. A map's entry lock
+    /// inserts its entry only for one of these, since a write below the
+    /// entry's payload runs only where the entry is present
+    /// (compiler/waiting-contexts/concurrent-map).
+    pub(crate) variant_writes: Vec<Vec<CheckedEffectStep>>,
+    /// The bindings declared outside the statement whose value the guard or
+    /// the block may change: one written through a reference parameter's
+    /// row, one rebound, and one a write or move overlaps, at the binding or
+    /// at a path it names; a map key read from any other binding declared
+    /// outside it names the same entry throughout the statement.
+    pub(crate) written_roots: Vec<BindingId>,
     pub(crate) invariants: Vec<super::goal::CheckedCallRequirement>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum CheckedTargetKind {
-    Object,
-    MapWhole,
-    MapEntry(Box<CheckedExpression>),
-    MapSet(Box<CheckedExpression>),
+    /// Whether the statement's checking uses an invariant, which may name
+    /// parts of the state its code never reaches [SHARE-3]: a type invariant
+    /// of the state, affine or with a range [TYPE-11], or a local invariant
+    /// or a loop's affine or range invariant in its block [INV-1, RANGE-2].
+    /// The lowering then holds every unit, each map whole
+    /// (compiler/waiting-contexts/state-locks).
+    pub(crate) uses_invariants: bool,
 }
 
 impl CheckedTarget {
+    /// The expressions the statement evaluates when it begins: its handle
+    /// place's borrow [SHARE-2].
     pub(crate) fn expressions(&self) -> Vec<&CheckedExpression> {
-        let mut result = vec![self.handle.as_ref()];
-        if let CheckedTargetKind::MapEntry(index) | CheckedTargetKind::MapSet(index) = &self.kind {
-            result.push(index);
-        }
-        result
+        vec![self.handle.as_ref()]
     }
 
     pub(crate) fn expressions_mut(&mut self) -> Vec<&mut CheckedExpression> {
-        let mut result = vec![self.handle.as_mut()];
-        if let CheckedTargetKind::MapEntry(index) | CheckedTargetKind::MapSet(index) =
-            &mut self.kind
-        {
-            result.push(index.as_mut());
-        }
-        result
+        vec![self.handle.as_mut()]
     }
 }
 
@@ -2679,6 +2684,16 @@ pub(crate) enum CheckedExpression {
         referent: CheckedType,
         value: Box<CheckedExpression>,
     },
+    /// [PRE-2] a watch's `fired`: the flag of the cancellation state the
+    /// watch retains, read without holding that state. The read takes effect
+    /// at its own point [SHARE-3]; it is an evaluated value with no proof
+    /// path [ENT-2], and a statement that makes one has no overlap
+    /// permission [PAR-1, PAR-2].
+    CancelFlag {
+        carrier: NodePath,
+        /// The watch, read in place for its state's handle.
+        watch: Box<CheckedExpression>,
+    },
     /// A borrow of directly stored content, addressed by its complete typed
     /// field/subscript path [OWN-2, OWN-5, OP-4].
     BorrowAddressed {
@@ -2764,6 +2779,7 @@ impl CheckedExpression {
             | Self::BorrowRangeIndex { carrier, .. }
             | Self::ReadStorage { carrier, .. }
             | Self::BoxDeref { carrier, .. }
+            | Self::CancelFlag { carrier, .. }
             | Self::BoxTake { carrier, .. }
             | Self::BorrowAddressed { carrier, .. }
             | Self::BorrowSegment { carrier, .. }
@@ -2789,7 +2805,9 @@ impl CheckedExpression {
                 operand_type,
                 ..
             } => operation.result_type(*operand_type),
-            Self::BooleanOperation { .. } | Self::ValueEquality { .. } => CheckedType::Bool,
+            Self::BooleanOperation { .. }
+            | Self::ValueEquality { .. }
+            | Self::CancelFlag { .. } => CheckedType::Bool,
             Self::ArrayMeasure { .. } => CheckedType::Integer(IntegerType::U64),
             Self::ArrayIndex { element_type, .. } => *element_type,
             Self::BufferMeasure { .. }
@@ -3099,15 +3117,14 @@ pub(crate) enum CheckedStatement {
         target: CheckedLoopId,
         drops: Vec<CheckedDrop>,
     },
-    /// [SHARE-2] `atomic IDENT = &place (, IDENT = &place)* (when expr)?
-    /// { stmt* }`: the guard and block run with exclusive access to the
-    /// state of the shared object the target names, at a point where the
-    /// guard holds [SHARE-3].
+    /// [SHARE-2] `atomic IDENT = &place (when expr)? { stmt* }`: the guard
+    /// and block run with exclusive access to the state of the shared
+    /// object the target names, at a point where the guard holds [SHARE-3].
     Atomic {
         /// The complete `atomic_stmt`, which the waiting-call record names
         /// [WAIT-1] and which is the statement's own site.
         node_path: NodePath,
-        targets: Vec<CheckedTarget>,
+        target: Box<CheckedTarget>,
         /// The guard, an owned `Bool` whose footprint writes no path.
         guard: Option<Box<CheckedExpression>>,
         body: Vec<CheckedStatement>,
@@ -3180,8 +3197,9 @@ pub(crate) struct CheckedStatePath {
 /// One resolved selector of a declared effect path [EFF-1].
 ///
 /// This is the formal twin of [`super::places::PlaceStep`]: the same five
-/// storage selectors plus the two name families [TYPE-10] admits in a row,
-/// with the index and endpoint positions still unsubstituted. A signature
+/// storage selectors plus the two name families [TYPE-10] admits in a row
+/// and a watch's flag, with the index and endpoint positions still
+/// unsubstituted. A signature
 /// never contains an index expression — an index enters an effect only
 /// through an IDENT that resolves to a value parameter of the same callable
 /// — so an index position here is that parameter, and [EFF-5] replaces it
@@ -3210,6 +3228,11 @@ pub(crate) enum CheckedEffectStep {
     Part(super::places::WindowPart),
     /// `.len`, `.cap`, `.head`, or `.bytes` [MSR-1, OP-15, TYPE-2].
     Measure(CheckedMeasure),
+    /// `.fired` of a cancellation watch [PRE-2]: the flag of the state the
+    /// watch views. The flag lives in that state, so the step selects no
+    /// storage of the watch and has no place step; a footprint ends at the
+    /// watch above it.
+    CancelFlag,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3396,11 +3419,6 @@ pub(crate) enum CheckedSeparationOccasion {
     Call,
     /// Exchange's possible ancestry is refused by OP-11, rather than EFF-5.
     Exchange,
-    /// Two targets of one atomic statement whose handle places overlap
-    /// unless their positions differ, where one is a whole target [SHARE-2].
-    /// The site is the atomic statement, judged when it begins, and the
-    /// diagnostic cites the later target.
-    AtomicTargets(NodePath),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3678,6 +3696,7 @@ pub(crate) fn expression_children(expression: &CheckedExpression) -> Vec<&Checke
         CheckedExpression::NumericConversion { value, .. }
         | CheckedExpression::Reinterpret { value, .. }
         | CheckedExpression::BoxDeref { value, .. }
+        | CheckedExpression::CancelFlag { watch: value, .. }
         | CheckedExpression::ProjectValue { value, .. } => vec![value.as_ref()],
         CheckedExpression::BoxTake { .. } => Vec::new(),
         CheckedExpression::ArrayIndex { offset, .. } => vec![offset.as_ref()],
@@ -3843,23 +3862,14 @@ impl FunctionMentions {
                     self.types.extend(drops.iter().map(|drop| drop.ty));
                 }
                 CheckedStatement::Atomic {
-                    targets,
+                    target,
                     guard,
                     body,
                     fallthrough_drops,
                     ..
                 } => {
-                    self.types.extend(targets.iter().map(|t| t.state));
-                    // A key-set target builds an Entries descriptor when it
-                    // acquires the map, even if only erased proofs name it.
-                    self.types.extend(targets.iter().filter_map(|target| {
-                        matches!(target.kind, CheckedTargetKind::MapSet(_))
-                            .then_some(target.referent)
-                    }));
-                    for key in targets
-                        .iter()
-                        .flat_map(crate::semantic::CheckedTarget::expressions)
-                    {
+                    self.types.extend([target.state]);
+                    for key in target.expressions() {
                         self.expression(key);
                     }
                     if let Some(guard) = guard {

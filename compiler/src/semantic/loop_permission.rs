@@ -2358,6 +2358,12 @@ impl<'check, 'run> Survey<'check, 'run> {
                 self.refuse_form("an expression form this version no longer writes");
                 None
             }
+            // [PAR-2, PRE-2] a body that reads a cancellation flag has no
+            // permission; the watch's own read is this node's child.
+            CheckedExpression::CancelFlag { .. } => {
+                self.refuse_form("a cancellation-flag read [PRE-2]");
+                None
+            }
         };
         // The carrier is what a certificate names an element read by; a
         // measure read selects descriptor storage no element write changes.
@@ -2579,6 +2585,9 @@ impl<'check, 'run> Survey<'check, 'run> {
     ) {
         if footprint.decision_cell.is_some() {
             self.form.get_or_insert("a call with a decision-cell boundary [SHARE-3]");
+        }
+        if footprint.cancel_flag.is_some() {
+            self.form.get_or_insert("a cancellation-flag read [PRE-2]");
         }
         if let Some(argument) = &footprint.unresolved {
             self.unresolved.get_or_insert(argument.clone());
@@ -3406,9 +3415,7 @@ fn collect_introduced(statements: &[CheckedStatement], out: &mut Vec<BindingId>)
                 out.extend(bindings.iter().map(|(binding, _, _)| *binding));
             }
             CheckedStatement::CountedRange { binder, .. } => out.push(*binder),
-            CheckedStatement::Atomic { targets, .. } => {
-                out.extend(targets.iter().map(|t| t.binding))
-            }
+            CheckedStatement::Atomic { target, .. } => out.push(target.binding),
             _ => {}
         }
         if let CheckedStatement::Match { arms, .. } | CheckedStatement::ValueMatchLet { arms, .. } =

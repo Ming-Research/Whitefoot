@@ -1,0 +1,59 @@
+const names: Array<u8, 2> = "ab";
+
+struct Store {
+  table: ConcurrentHashMap<Box<u64>>;
+  total: u64;
+}
+
+fn peek(map: &ConcurrentHashMap<Box<u64>>, key: &[u8]) -> value: u64 reads(map), reads(key) {
+  doc "Matches the entry through the map reference: the Box payload binds as a reference and nothing is taken.";
+  match map^[key] {
+    Some(value: kept) => {
+      return kept^.inner;
+    }
+    None() => {
+      return 0_u64;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  doc "Entries whose value is not copy are matched in place through the state reference: a write through the payload binder changes the stored Box, a later match and a callee observe it, and an absent key takes the None arm.";
+  let table = map_new::<Box<u64>>(capacity: 2_u64);
+  let store = Store(table: move table, total: 0_u64);
+  let shared = shared_new::<Store>(value: move store);
+  let a = &names[0_u64..1_u64];
+  let b = &names[1_u64..2_u64];
+  atomic s = &shared {
+    let first = box_new::<u64>(value: 40_u64);
+    set s^.table[a] = Some<Box<u64>>(value: move first);
+  }
+  atomic s = &shared {
+    match s^.table[a] {
+      Some(value: kept) => {
+        set kept^.inner = kept^.inner +wrap 1_u64;
+        set s^.total = kept^.inner;
+      }
+      None() => {
+      }
+    }
+    match s^.table[b] {
+      Some(value: other) => {
+        set s^.total = other^.inner;
+      }
+      None() => {
+        set s^.total = s^.total +wrap 1_u64;
+      }
+    }
+  }
+  let code = 1_u8;
+  atomic s = &shared {
+    let peeked = peek(map: &s^.table, key: a);
+    if s^.total == 42_u64 {
+      if peeked == 41_u64 {
+        set code = 42_u8;
+      }
+    }
+  }
+  return std::process::exit_status(code: code);
+}

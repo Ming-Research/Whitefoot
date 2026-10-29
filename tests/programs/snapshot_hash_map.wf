@@ -28,9 +28,14 @@ binding Key : HashMapKey<u64, Keys> {
   equal = key_equal;
 }
 
-fn capture(reserve: std::snapshot::Reserve, table: &Shared<ConcurrentHashMap<HashMap<u64, u64, ceiling>>>, journal: &Shared<u64>) -> result: Result<Job, std::snapshot::CreateError> reads(table), reads(journal) waits {
-  atomic map = &table^, cut = &journal^ {
-    return std::snapshot::capture_export::<HashMap<u64, u64, ceiling>>(reserve: move reserve, map: map, cut: cut);
+struct Store {
+  table: ConcurrentHashMap<HashMap<u64, u64, ceiling>>;
+  sequence: u64;
+}
+
+fn capture(reserve: std::snapshot::Reserve, store: &Shared<Store>) -> result: Result<Job, std::snapshot::CreateError> reads(store) waits {
+  atomic current = &store^ {
+    return std::snapshot::capture_export::<HashMap<u64, u64, ceiling>>(reserve: move reserve, map: &current^.table, cut: &current^.sequence);
   }
 }
 
@@ -154,17 +159,18 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
       return std::process::exit_status(code: 21_u8);
     }
   }
-  let table = shared_map_new::<HashMap<u64, u64, ceiling>>(capacity: 1_u64);
-  let journal = shared_new::<u64>(value: 7_u64);
+  let entries = map_new::<HashMap<u64, u64, ceiling>>(capacity: 1_u64);
+  let initial = Store(table: move entries, sequence: 7_u64);
+  let store = shared_new::<Store>(value: move initial);
   let name_bytes = array_filled::<u8, 1>(value: 109_u8);
   let name = &name_bytes[0_u64..1_u64];
-  atomic slot = &table[name] {
-    set slot^ = Some<HashMap<u64, u64, ceiling>>(value: move pairs);
+  atomic s = &store {
+    set s^.table[name] = Some<HashMap<u64, u64, ceiling>>(value: move pairs);
   }
   let prepared = std::snapshot::prepare(scratch_bytes: 65536_u64, output_bytes: 4096_u64);
   match move prepared {
     Ok(value: reserve) => {
-      let captured = capture(reserve: move reserve, table: &table, journal: &journal);
+      let captured = capture(reserve: move reserve, store: &store);
       match move captured {
         Ok(value: job) => {
           let result = collect(job: move job, factory: &factory, output: &output);

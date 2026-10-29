@@ -366,10 +366,6 @@ pub(crate) enum ObligationFamily {
     /// Disjoint positions exclude proper ancestry at an exchange [OP-11]. The
     /// number is the query's position in the function's call separations.
     ExchangeSeparation(u32),
-    /// Two handle places of one atomic statement, one of a whole target,
-    /// must select different storage [SHARE-2, OWN-7]. The number is the
-    /// query's position in the function's call separations.
-    AtomicTargetSeparation(u32),
     /// A REF-2 use depends on this event-site separation query.
     ReferencePreservation(u32),
 }
@@ -1270,6 +1266,21 @@ pub(crate) struct CallGoalOutcome {
     pub(crate) range_lengths: Vec<RangeLengthReading>,
     /// Explanation only, computed after an unproved requirement.
     pub(crate) lost_header: Option<LostHeaderRelationNote>,
+    /// [TYPE-11] at an edge leaving an atomic block in which a `set` rebinds
+    /// the statement's binding: that rebinding. No term names the state after
+    /// it [ENT-2], so the invariant is unproved there without a judgment, and
+    /// the repair names the rebinding [DIAG-1].
+    pub(crate) rebound_binding: Option<ReboundBinding>,
+}
+
+/// [TYPE-11, ENT-2] a `set` that rebinds an atomic statement's binding, which
+/// the repair of an invariant it leaves unproved names [DIAG-1].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ReboundBinding {
+    /// The binding's source spelling.
+    pub(crate) name: String,
+    /// The first `set` of the block, in source order, that rebinds it.
+    pub(crate) rebinding: NodePath,
 }
 
 /// [REF-4] one range formed at a call whose `len` an unproved requirement
@@ -1898,15 +1909,12 @@ pub(super) fn collect_statement_calls(
                 collect_statement_calls(caller, body, calls);
             }
             CheckedStatement::Atomic {
-                targets,
+                target,
                 guard,
                 body,
                 ..
             } => {
-                for key in targets
-                    .iter()
-                    .flat_map(crate::semantic::CheckedTarget::expressions)
-                {
+                for key in target.expressions() {
                     collect_expression_calls(caller, key, calls);
                 }
                 if let Some(guard) = guard {

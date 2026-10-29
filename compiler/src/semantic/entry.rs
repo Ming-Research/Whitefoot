@@ -302,8 +302,8 @@ fn type_holds_heap(
         | CheckedType::Window { capacity: None, .. }
         | CheckedType::Segments { .. } => true,
         // A key set's memory is the runtime's, as a shared object's state is
-        // [SHARE-1], and keyed entries are an entry binding's referent, never
-        // a value of their own [SHARE-2].
+        // [SHARE-1], and keyed entries are the referent of a key-set
+        // subscript's reference, never a value of their own [OP-4].
         CheckedType::KeySet | CheckedType::Entries { .. } => false,
         CheckedType::Array { element, .. } | CheckedType::Window { element, .. } => program
             .elements

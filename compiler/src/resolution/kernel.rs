@@ -71,9 +71,9 @@ pub enum ContainerShape {
     /// each with a payload, whose one measure is its bounded `len`
     /// [SHARE-1, MSR-1].
     KeySet,
-    /// `Entries<V>`: the entries of a keyed table an entry binding names
-    /// over a key set, one `Option<V>` place per key, reached only as that
-    /// binding's referent [SHARE-2, OP-4].
+    /// `Entries<V>`: the entries of a keyed table a key-set subscript
+    /// selects, one `Option<V>` place per key, reached only as the referent
+    /// of the reference that subscript forms [SHARE-1, OP-4].
     Entries,
     /// `Box<T>`: one heap object of any nameable T, carrying no brand and no
     /// measure at all, a cell being never empty [TYPE-9]. Its declaration is

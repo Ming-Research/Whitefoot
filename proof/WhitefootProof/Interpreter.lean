@@ -123,7 +123,7 @@ def sameTy : Value → Value → Bool
 
 end Value
 
--- spec OP-4 f570fbbafdb636d5
+-- spec OP-4 8324a6ff5fe90443
 -- spec OP-4 89228ce1fa7785fd
 -- spec OP-4 352083e8b1804823
 -- spec OP-4 1cdd1364a8ad0ca8
