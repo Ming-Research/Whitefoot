@@ -1,0 +1,11 @@
+fn retain(window: Slots<Array<u8, 2>, 2>) -> (width: u64, rest: Slots<Array<u8, 2>, 2>) pure contract {
+  requires window.len == 1_u64;
+  ensures width == window[0_u64].len;
+} {
+  let removed = take_back(window: &window);
+  return 2_u64, move window;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

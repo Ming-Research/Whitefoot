@@ -1,0 +1,15 @@
+struct Cell {
+  digits: Array<u8, 2>;
+}
+
+fn establish(cell: &Cell, index: u64) -> result: unit writes(cell.digits) contract {
+  requires index < cell^.digits.len;
+  ensures 1_u8 <= cell^.digits[index];
+} {
+  set cell^.digits[index] = 0_u8;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -6,9 +6,8 @@ const pattern: Array<u8, 5> = "abcde";
 fn main() -> status: ExitStatus pure {
   let text = pattern;
   set text[1_u64] = 'Z'_u8;
-  if text[1_u64] != 'Z'_u8 {
-    return exit_status(code: 1_u8);
-  }
+  let patched = text[1_u64];
+  let drift = patched - 'Z'_u8;
   if pattern[1_u64] != 'b'_u8 {
     return exit_status(code: 2_u8);
   }
@@ -17,5 +16,6 @@ fn main() -> status: ExitStatus pure {
   }
   let length = text.len;
   let code = cvt::<u64, u8>(length);
-  return exit_status(code: code);
+  let status_code = code + drift;
+  return exit_status(code: status_code);
 }

@@ -269,10 +269,12 @@ impl Reasoning<'_, '_, '_> {
         // [OWN-7]. A fact these kills leave therefore meets no such event.
         let ledger = states.separations.clone();
         let live = self.event_live_bounds(states, &kills.events);
-        let separations = EventSeparations {
+        // [ENT-5] every support member meets each continuing event with its
+        // subscripts compared by position alone.
+        let separations = HeadSeparations(&EventSeparations {
             ledger: &ledger,
             live: &live,
-        };
+        });
         self.kill_result_evidence(&separations, states, &kills.events);
         self.invalidate_lost_headers(&separations, states, &kills.events);
         let removed = self.apply_loop_kills_one(&separations, &mut states.facts, kills);
@@ -289,6 +291,42 @@ impl Reasoning<'_, '_, '_> {
                 event,
             );
         }
+    }
+}
+
+/// [ENT-5] the separations a loop head judges a continuing event under:
+/// those of the state the head is formed from, except that two subscripts at
+/// one position are never told apart by their offsets, since an offset the
+/// event reads may hold another value at each iteration.
+struct HeadSeparations<'oracle>(&'oracle dyn SeparationOracle);
+
+impl SeparationOracle for HeadSeparations<'_> {
+    fn indices_distinct(&self, left: CapturedValue, right: CapturedValue) -> bool {
+        self.0.indices_distinct(left, right)
+    }
+
+    fn ranges_disjoint(&self, left: CapturedRange, right: CapturedRange) -> bool {
+        self.0.ranges_disjoint(left, right)
+    }
+
+    fn index_is_live(&self, window: &ResolvedPlace, index: CapturedValue) -> bool {
+        self.0.index_is_live(window, index)
+    }
+
+    fn index_outside_range(&self, index: CapturedValue, range: CapturedRange) -> bool {
+        self.0.index_outside_range(index, range)
+    }
+
+    fn range_within_length(&self, window: &ResolvedPlace, range: CapturedRange) -> bool {
+        self.0.range_within_length(window, range)
+    }
+
+    fn window_length_is_shared(&self, window: &ResolvedPlace) -> bool {
+        self.0.window_length_is_shared(window)
+    }
+
+    fn compares_offsets(&self) -> bool {
+        false
     }
 }
 

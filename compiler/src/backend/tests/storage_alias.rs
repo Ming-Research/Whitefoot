@@ -585,6 +585,7 @@ fn paged_directory_relocation_preserves_looping_field_accesses() {
 
 fn main() -> status: std::process::ExitStatus pure {
   let values = box_paged_new::<Pair>(capacity: 0_u64);
+  let drift = 0_u64;
   for (
     i in 0_u64..1025_u64,
     invariant length: values.inner.len == i,
@@ -598,20 +599,23 @@ fn main() -> status: std::process::ExitStatus pure {
     let right = i +wrap 29_u64;
     set values.inner[i].left = left;
     set values.inner[i].right = right;
-    if values.inner[i].left != left {
-      return std::process::exit_status(code: 1_u8);
-    }
-    if values.inner[i].right != right {
-      return std::process::exit_status(code: 2_u8);
-    }
+    let seen_left = values.inner[i].left;
+    let left_drift = seen_left - left;
+    let seen_right = values.inner[i].right;
+    let right_drift = seen_right - right;
     set values.inner[0_u64].left = i;
     set values.inner[0_u64].right = next;
-    if values.inner[0_u64].left != i {
-      return std::process::exit_status(code: 3_u8);
-    }
-    if values.inner[0_u64].right != next {
-      return std::process::exit_status(code: 4_u8);
-    }
+    let seen_first_left = values.inner[0_u64].left;
+    let first_left_drift = seen_first_left - i;
+    let seen_first_right = values.inner[0_u64].right;
+    let first_right_drift = seen_first_right - next;
+    set drift = ior(drift, left_drift);
+    set drift = ior(drift, right_drift);
+    set drift = ior(drift, first_left_drift);
+    set drift = ior(drift, first_right_drift);
+  }
+  if drift != 0_u64 {
+    return std::process::exit_status(code: 1_u8);
   }
   for (i in 1_u64..1025_u64) {
     let expected_left = i +wrap 17_u64;
@@ -647,7 +651,9 @@ fn main() -> status: std::process::ExitStatus pure {
     // Pair's two u64 fields occupy 16 bytes, so 1025 elements cross five
     // 4096-byte pages and outgrow the directory's 1/2/4-word reservations.
     // A stale owner/directory after relocation can fault, leave a new field
-    // zero (codes 1/2), or write/read the wrong old page (codes 3..6).
+    // zero or write/read the wrong old page while filling (code 1, the
+    // accumulated drift of every read-back from the value written), or leave
+    // a wrong field for the final pass (codes 5/6).
     let output = compile_and_run(&llvm);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
 }

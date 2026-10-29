@@ -562,8 +562,8 @@ fn main() -> status: std::process::ExitStatus pure {
         ],
     },
     RepairPair {
-        // A field of an element read through a range reference is no admitted
-        // value [ENT-3], so the goal keeps the argument's occurrence-local
+        // A field of an element whose offset is itself an element read is no
+        // [ENT-2] term, so the goal keeps the argument's occurrence-local
         // value, which DIAG-1 spells for the payload.
         name: "call-requirement-over-an-argument-evaluated-in-the-call.wf",
         rejected: br#"struct Stats {
@@ -578,8 +578,9 @@ fn small(x: u64) -> result: u64 pure contract {
 
 fn first(view: &[Stats]) -> result: u64 reads(view) contract {
   requires 1_u64 <= view^.len;
+  requires view^[0_u64].count < view^.len;
 } {
-  let r = small(x: view^[0_u64].count);
+  let r = small(x: view^[view^[0_u64].count].count);
   return r;
 }
 
@@ -604,8 +605,9 @@ fn small(x: u64) -> result: u64 pure contract {
 
 fn first(view: &[Stats]) -> result: u64 reads(view) contract {
   requires 1_u64 <= view^.len;
+  requires view^[0_u64].count < view^.len;
 } {
-  let c = view^[0_u64].count;
+  let c = view^[view^[0_u64].count].count;
   if c < 10_u64 {
     let r = small(x: c);
     return r;
@@ -1311,9 +1313,9 @@ fn main() -> status: std::process::ExitStatus pure {
         ],
     },
     RepairPair {
-        // An element read is no term [ENT-2], but it is part of the goal's
-        // identity, which a condition naming the same expression establishes
-        // [ENT-3].
+        // An element of a parameter is an [ENT-2] clause (b) term, which a
+        // requirement may name [FN-8] and a condition naming the same place
+        // establishes [ENT-3].
         name: "integer-domain-over-an-element.wf",
         rejected: br#"fn bump(values: &Array<u8, 2>) -> result: u8 reads(values) {
   let y = values^[0_u64] + 1_u8;
@@ -1327,9 +1329,21 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "OP-2",
         sentences: &[
             "\n  disposition: Unproved\n",
-            "\n  mechanical_fix: `values^[0_u64] +defined 1_u8` is not proved here: when facts that reach the operation imply it, prove it with an `invariant` whose `use` steps name them (a loop's header `invariant` for a value the loop computes); or guard the operation with `if values^[0_u64] +defined 1_u8` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare; or write the `+wrap`, `+checked` or `+sat` form\n",
+            "\n  mechanical_fix: add `requires values^[0_u64] +defined 1_u8;` to the `contract` of `bump`, which each caller then establishes; or guard the operation with `if values^[0_u64] +defined 1_u8` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare; or write the `+wrap`, `+checked` or `+sat` form\n",
         ],
-        repaired: &[br#"fn bump(values: &Array<u8, 2>) -> result: u8 reads(values) {
+        repaired: &[
+            br#"fn bump(values: &Array<u8, 2>) -> result: u8 reads(values) contract {
+  requires values^[0_u64] +defined 1_u8;
+} {
+  let y = values^[0_u64] + 1_u8;
+  return y;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn bump(values: &Array<u8, 2>) -> result: u8 reads(values) {
   if values^[0_u64] +defined 1_u8 {
     let y = values^[0_u64] + 1_u8;
     return y;
@@ -1340,7 +1354,8 @@ fn main() -> status: std::process::ExitStatus pure {
 fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
-"#],
+"#,
+        ],
     },
     // -------------------------------------------------------------------
     // [OP-6] a bare conversion's domain.
@@ -1701,8 +1716,9 @@ fn main() -> status: std::process::ExitStatus pure {
 "#],
     },
     RepairPair {
-        // An offset that is itself an element is no term [ENT-2], and a
-        // bound names terms alone, so no condition over it establishes one.
+        // [ENT-2] an offset that is itself an element of a parameter at a
+        // parameter offset is a clause (b) term, so a requirement names the
+        // bound over it, as a guard does.
         name: "bounds-over-an-element-offset.wf",
         rejected: br#"fn pick(order: &[u64], lens: &[u8], j: u64) -> result: u8 reads(order), reads(lens) contract {
   requires j < order^.len;
@@ -1717,14 +1733,25 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "OP-4",
         sentences: &[
             "\n  disposition: Unproved\n",
-            "\n  mechanical_fix: `order^[j] < lens^.len` reads a value no fact can name until a `let` binds it: bind that value with one preceding `let`, use the binding in the access, and establish the relation over the binding\n",
+            "\n  mechanical_fix: add `requires order^[j] < lens^.len;` to the `contract` of `pick`, which each caller then establishes; or guard the access with `if order^[j] < lens^.len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare\n",
         ],
-        repaired: &[br#"fn pick(order: &[u64], lens: &[u8], j: u64) -> result: u8 reads(order), reads(lens) contract {
+        repaired: &[
+            br#"fn pick(order: &[u64], lens: &[u8], j: u64) -> result: u8 reads(order), reads(lens) contract {
+  requires j < order^.len;
+  requires order^[j] < lens^.len;
+} {
+  return lens^[order^[j]];
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+            br#"fn pick(order: &[u64], lens: &[u8], j: u64) -> result: u8 reads(order), reads(lens) contract {
   requires j < order^.len;
 } {
-  let k = order^[j];
-  if k < lens^.len {
-    return lens^[k];
+  if order^[j] < lens^.len {
+    return lens^[order^[j]];
   }
   return 0_u8;
 }
@@ -1732,7 +1759,8 @@ fn main() -> status: std::process::ExitStatus pure {
 fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
-"#],
+"#,
+        ],
     },
     RepairPair {
         // [ENT-2, FN-8] a requirement forms its places at body entry, in the

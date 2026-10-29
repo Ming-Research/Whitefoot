@@ -32,6 +32,7 @@ ent4-pos-offset-boundaries
 ent4-pos-offset-join
 ent4-pos-offset-late-bound
 ent4-pos-offset-loop
+ent5-neg-element-expired-scope-spelling
 ent5-neg-loop-head-literal-index-write
 ent5-neg-offset-derived-only
 ent5-neg-replacement-overflow-bound
@@ -62,6 +63,7 @@ fn9-neg-affine-two-parameter-terms
 fn9-neg-affine-wrong-actual
 fn9-neg-division-floor-equality
 fn9-neg-entry-image-kill
+fn9-neg-owned-result-element
 fn9-neg-result-beside-module-alias
 fn9-neg-return-call-result
 fn9-neg-return-computed-unrelated

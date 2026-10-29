@@ -454,13 +454,14 @@ impl GoalProjection {
 
 /// [ENT-2, FN-8] the offset one written actual supplies for a formal-valued
 /// subscript of a declaration template: a written integer literal, an
-/// integer named const, whose value `named` gives, an in-scope const
-/// generic, or a clause (a) integer place, each with the identity its body
-/// spelling carries. Any other actual names no offset term.
+/// integer named const or an integer field below a named const, whose value
+/// `named` gives, an in-scope const generic, or a clause (a) integer place,
+/// each with the identity its body spelling carries. Any other actual names
+/// no offset term.
 pub(crate) fn actual_offset(
     argument: &GoalExpression,
     places: &super::places::CapturedPlaceTable,
-    named: &dyn Fn(DeclarationId) -> Option<u64>,
+    named: &dyn Fn(DeclarationId) -> Option<CheckedValue>,
 ) -> Option<super::places::CapturedValue> {
     use super::places::{CapturedTerm, CapturedValue};
     let GoalExpression::Datum(datum) = argument else {
@@ -500,11 +501,28 @@ pub(crate) fn actual_offset(
                 }),
             )
         }
+        // [CONST-2] the integer the const holds at that field, which an
+        // ordinary read of the same place folds to as well.
         GoalDatum::NamedConst {
             declaration,
             projections,
             ..
-        } if projections.is_empty() => CapturedTerm::Literal(named(*declaration)?),
+        } => {
+            let mut value = named(*declaration)?;
+            for projection in projections {
+                let GoalProjection::Field(index) = projection else {
+                    return None;
+                };
+                let CheckedValue::Struct { fields, .. } = value else {
+                    return None;
+                };
+                value = fields.get(*index as usize)?.clone();
+            }
+            let CheckedValue::Integer { bits, .. } = value else {
+                return None;
+            };
+            CapturedTerm::Literal(bits)
+        }
         _ => return None,
     };
     Some(CapturedValue::new(CapturedValue::unknown().capture, term).goal_identity())
@@ -517,7 +535,7 @@ pub(crate) fn projected_actual_offset(
     formal: super::places::FormalOffsetId,
     ty: CheckedType,
     places: &super::places::CapturedPlaceTable,
-    named: &dyn Fn(DeclarationId) -> Option<u64>,
+    named: &dyn Fn(DeclarationId) -> Option<CheckedValue>,
 ) -> Option<super::places::CapturedValue> {
     let mut image = argument.clone();
     for projection in formal_offset_projections(formal, places)? {

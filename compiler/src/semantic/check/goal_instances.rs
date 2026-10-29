@@ -149,10 +149,7 @@ impl Checker<'_, '_> {
             let constant = self
                 .types
                 .constant(*self.types.constants.get(&declaration)?);
-            match constant.ok()?.value {
-                CheckedValue::Integer { bits, .. } => Some(bits),
-                _ => None,
-            }
+            Some(constant.ok()?.value.clone())
         };
         Ok(argument
             .and_then(|argument| match projection {

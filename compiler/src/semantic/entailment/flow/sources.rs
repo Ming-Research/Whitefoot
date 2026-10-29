@@ -484,9 +484,11 @@ impl Vocabulary {
         Some(self.terms.intern(kind))
     }
 
-    /// [ENT-3.S5] admits direct scalar places, including fields and Box
-    /// content reached through a reference. A subscript anywhere in the
-    /// path excludes a commit image, even if its offset is a literal.
+    /// [ENT-3.S5] admits every [ENT-2] clause (a) or clause (b) fragment
+    /// place: a direct scalar place, including fields and Box content reached
+    /// through a reference, and a subscripted integer place whose offsets are
+    /// all represented terms. [SET-1] resolves the target after the
+    /// right-hand side, so the place is the one the commit writes.
     pub(super) fn commit_target_term(&mut self, target: &CheckedSetTarget) -> Option<TermId> {
         match target {
             CheckedSetTarget::Place(target) => {
@@ -496,11 +498,21 @@ impl Vocabulary {
                 if !target
                     .path
                     .iter()
-                    .any(|step| matches!(step, CheckedPlaceStep::Subscript(_))) =>
+                    .any(|step| matches!(step, CheckedPlaceStep::Subscript(_)))
+                    || target.integer_element_term() == Some(SubscriptedTerm::Represented) =>
             {
                 let fragment = fragment_type(target.ty)?;
                 let place = container_root_path(target);
                 Some(self.terms.intern(TermKind::Place(place, fragment)))
+            }
+            CheckedSetTarget::RangeIndex(target)
+                if target.integer_element_term() == Some(SubscriptedTerm::Represented) =>
+            {
+                let fragment = fragment_type(target.ty)?;
+                Some(
+                    self.terms
+                        .intern(TermKind::Place(target.proof_place(), fragment)),
+                )
             }
             _ => None,
         }
@@ -738,6 +750,35 @@ impl Input<'_, '_> {
                 root: PlaceRoot::Binding(*binding),
                 path: path.iter().map(CheckedPlaceStep::place_step).collect(),
             }),
+            // [ENT-2] clause (b): an element, or an aggregate inside one,
+            // whose every offset is a term is the exact source place of the
+            // integer terms below it.
+            CheckedExpression::ReadStorage { root, .. }
+                if root.subscripted_term() == Some(SubscriptedTerm::Represented) =>
+            {
+                Some(container_root_path(root))
+            }
+            CheckedExpression::RangeIndex { place, .. }
+                if place.subscripted_term() == Some(SubscriptedTerm::Represented) =>
+            {
+                Some(place.proof_place())
+            }
+            CheckedExpression::ArrayIndex { root, offset, .. } => {
+                let mut place = array_root_place(root);
+                place
+                    .path
+                    .push(PlaceStep::Index(self.read_offset_capture(offset)?));
+                Some(place)
+            }
+            CheckedExpression::BufferIndex { root, offset, .. }
+                if root.subscripted_term() == Some(SubscriptedTerm::Represented) =>
+            {
+                let mut place = root.proof_place();
+                place
+                    .path
+                    .push(PlaceStep::Index(self.read_offset_capture(offset)?));
+                Some(place)
+            }
             _ => self.read_place_path(value),
         }?;
         // A source subscript must name an MSR-1 offset. A computed offset
@@ -1303,9 +1344,10 @@ impl Vocabulary {
     /// the right-hand side to the `commit` term above and killed every fact
     /// about the old target value; this equality names that evaluated value,
     /// so an arithmetic or other computed right-hand side carries its own
-    /// image across the write exactly as an intervening `let` would. Only a
-    /// direct fragment place receives it; indexed storage establishes
-    /// nothing, since one element write is no image of the whole collection.
+    /// image across the write exactly as an intervening `let` would. Only an
+    /// admitted fragment place receives it [`Self::commit_target_term`]; a
+    /// write of an aggregate element establishes nothing, since it is no
+    /// image of the whole collection.
     pub(super) fn establish_commit_copy_fact(
         &mut self,
         node_path: &crate::NodePath,

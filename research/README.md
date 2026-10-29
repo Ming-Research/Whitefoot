@@ -61,6 +61,9 @@ the work-branch and merge boundary.
 - [Range field terms](investigations/range-field-terms/DESIGN.md): range
   terms that read a struct field, `Box` content or an enum payload below an
   element, with copy provenance, for Snowghost's stored left inverse.
+- [Ordinary contracts over integer elements](investigations/contract-element-terms/DESIGN.md):
+  integer elements and integer fields inside elements as ordinary terms,
+  their kills and postcondition offsets, and their meeting with sealed values.
 - [Range facts for ordinary obligations](investigations/ordinary-range-obligations/DESIGN.md):
   how a bounds, overflow or invariant obligation uses a range fact, comparing
   deferral to the range judgment with range facts inside ordinary entailment.

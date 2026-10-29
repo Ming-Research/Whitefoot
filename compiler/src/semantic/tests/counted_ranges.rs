@@ -186,14 +186,26 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#;
+    assert_checks(subscript);
+    let nested_offset =
+        br#"fn probe(bounds: Array<u64, 2>, slots: Array<u64, 1>) -> result: unit pure {
+  for @items (i in bounds[slots[0_u64]]..0_u64) {
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
     assert_rule(
-        subscript,
+        nested_offset,
         SemanticRule::Ent2,
         SemanticIssueKind::InvalidCountedEndpoint {
             mechanical_fix: ENDPOINT_TERM_FIX,
         },
     );
-    super::assert_rule_at(subscript, SemanticRule::Ent2, "bounds[0_u64]");
+    super::assert_rule_at(nested_offset, SemanticRule::Ent2, "bounds[slots[0_u64]]");
 
     // [EFF-1] a by-value parameter has no effect entry at all, so the row
     // names only the reference endpoint. The v0.59 spelling declared
@@ -241,7 +253,8 @@ fn check_records_client(main: &[u8]) -> Result<(), crate::CompilationFailure> {
 /// (c) term.
 ///
 /// A bare binding offset is represented and admitted. An array-element offset
-/// is no term, so the place is no term and the endpoint is ENT-2's rejection.
+/// is no clause (a) or (c) term, so the place is no term and the endpoint is
+/// ENT-2's rejection.
 /// A tracked field place is an admitted offset with its own identity and
 /// support, so it also supplies a readonly-field endpoint.
 #[test]
@@ -273,7 +286,7 @@ fn main() -> status: std::process::ExitStatus pure {{
     };
     check_records_client(program("i").as_bytes()).expect("a bare binding offset is admitted");
     let failure = check_records_client(program("slots[0_u64]").as_bytes())
-        .expect_err("an element offset is no term");
+        .expect_err("an element offset is no clause (a) or (c) term");
     assert_eq!(failure.rule_id(), Some("ENT-2"), "{failure}");
     assert!(
         failure.to_string().contains("InvalidCountedEndpoint"),

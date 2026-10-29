@@ -1,0 +1,17 @@
+fn probe(cells: &Array<u8, 3>) -> result: u8 writes(cells) {
+  doc "ENT-5 compares no two subscripts at one position by their offsets at a loop head, for signed goals as for L0 terms. The body writes cell one, so at the next head that write overlaps cell two and the goal cells[2] +defined 1 no longer discharges the inner addition.";
+  let total = 0_u8;
+  if cells^[2_u64] +defined 1_u8 {
+    for (i in 0_u64..2_u64) {
+      let next = cells^[2_u64] + 1_u8;
+      set total = total +wrap next;
+      set cells^[1_u64] = 0_u8;
+    }
+  }
+  return total;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Checking probe must refuse a signed goal a continuing write overlaps at the loop head.";
+  return std::process::exit_status(code: 0_u8);
+}

@@ -1,0 +1,58 @@
+const selected: u64 = 1_u64;
+
+struct Cursor {
+  index: u64;
+}
+
+fn fixed(values: &Array<u8, 2>) -> result: u8 reads(values) contract {
+  requires 1_u8 <= values^[0_u64];
+} {
+  let digit = values^[0_u64];
+  return digit - 1_u8;
+}
+
+fn named(values: &Array<u8, 2>) -> result: u8 reads(values) contract {
+  requires 1_u8 <= values^[selected];
+} {
+  return values^[selected] - 1_u8;
+}
+
+fn symbolic<const k: u64>(values: &Array<u8, 2>) -> result: u8 reads(values) contract {
+  requires k < values^.len;
+  requires 1_u8 <= values^[k];
+} {
+  return values^[k] - 1_u8;
+}
+
+fn runtime(values: &Array<u8, 2>, index: u64) -> result: u8 reads(values[index]) contract {
+  requires index < values^.len;
+  requires 1_u8 <= values^[index];
+} {
+  let digit = values^[index];
+  return digit - 1_u8;
+}
+
+fn field(values: &Array<u8, 2>, cursor: &Cursor) -> result: u8 reads(values), reads(cursor.index) contract {
+  requires cursor^.index < values^.len;
+  requires 1_u8 <= values^[cursor^.index];
+} {
+  return values^[cursor^.index] - 1_u8;
+}
+
+fn nested(matrix: &Array<Array<u8, 2>, 2>, row: u64, column: u64) -> result: u8 reads(matrix) contract {
+  requires row < matrix^.len;
+  requires column < matrix^[row].len;
+  requires 1_u8 <= matrix^[row][column];
+} {
+  let digit = matrix^[row][column];
+  return digit - 1_u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let values = array_filled::<u8, 2>(value: 1_u8);
+  if 1_u8 <= values[1_u64] {
+    let digit = symbolic::<1>(values: &values);
+    return std::process::exit_status(code: digit);
+  }
+  return std::process::exit_status(code: 1_u8);
+}

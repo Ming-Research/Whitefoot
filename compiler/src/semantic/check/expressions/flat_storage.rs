@@ -1875,6 +1875,26 @@ impl<'unit> Checker<'_, 'unit> {
         offset: &CheckedExpression,
     ) -> Option<CapturedValue> {
         let capture = CaptureId::source(u32::try_from(occurrence.index()).unwrap_or(u32::MAX - 1));
+        // [CONST-2] an integer field of a named const is the integer it
+        // holds, as the call substituting the same field reads it.
+        if let CheckedExpression::ReadStorage { root, .. } = offset
+            && let PlaceRoot::Constant(id) = root.root
+        {
+            let mut value = &self.types.constant(id).ok()?.value;
+            for step in &root.path {
+                let CheckedPlaceStep::Field(index) = step else {
+                    return None;
+                };
+                let super::super::super::model::CheckedValue::Struct { fields, .. } = value else {
+                    return None;
+                };
+                value = fields.get(*index as usize)?;
+            }
+            let super::super::super::model::CheckedValue::Integer { bits, .. } = value else {
+                return None;
+            };
+            return Some(CapturedValue::new(capture, CapturedTerm::Literal(*bits)));
+        }
         match offset {
             CheckedExpression::Constant(super::super::super::model::CheckedValue::Integer {
                 bits,
@@ -2745,11 +2765,10 @@ impl<'unit> TypeContext<'unit> {
             },
         })
     }
-    /// [ENT-2, DIAG-1] a measure read or a read whose final step selects a
-    /// readonly field below a subscript is a clause (b) term when every
-    /// offset is a tracked place or a constant. This compiler captures only
-    /// literals, consts and bare bindings, so a tracked-place offset with
-    /// projections is a term it cannot represent. Reading the place anyway as
+    /// [ENT-2, DIAG-1] a measure read or a read that selects one fragment
+    /// integer below a subscript is a clause (b) term when every offset is a
+    /// tracked place or a constant. A tracked-place offset this compiler
+    /// captures no value for is a term it cannot represent. Reading the place anyway as
     /// no term could turn the missing fact into a source rejection later, so
     /// the read is reported as the compiler capability it is.
     fn refuse_unrepresented_term_place(
@@ -2759,10 +2778,8 @@ impl<'unit> TypeContext<'unit> {
     ) -> Result<(), CheckStop> {
         let term = match expression {
             CheckedExpression::ContainerMeasure { root, .. } => root.subscripted_term(),
-            CheckedExpression::ReadStorage { root, .. } => root.readonly_field_term(&self.nominals),
-            CheckedExpression::RangeIndex { place, .. } => {
-                place.readonly_field_term(&self.nominals)
-            }
+            CheckedExpression::ReadStorage { root, .. } => root.integer_element_term(),
+            CheckedExpression::RangeIndex { place, .. } => place.integer_element_term(),
             _ => None,
         };
         if term == Some(SubscriptedTerm::Unrepresented) {

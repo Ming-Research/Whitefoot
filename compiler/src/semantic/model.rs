@@ -2035,14 +2035,12 @@ impl CheckedRangeElementPlace {
         )
     }
 
-    /// [ENT-2] clause (b): whether this element place is a term because its
-    /// final step selects a readonly field of one fragment type. The range's
-    /// own subscript selects the element every later step starts from.
-    pub(crate) fn readonly_field_term(
-        &self,
-        nominals: &[CheckedNominal],
-    ) -> Option<SubscriptedTerm> {
-        if !selects_readonly_fragment_field(nominals, self.root.element_type, &self.path) {
+    /// [ENT-2] clause (b): whether this element place is a term because the
+    /// value it selects is one fragment integer, the element itself or an
+    /// integer field inside it. The range's own subscript is the one every
+    /// such place has.
+    pub(crate) fn integer_element_term(&self) -> Option<SubscriptedTerm> {
+        if !matches!(self.ty, CheckedType::Integer(_)) {
             return None;
         }
         self.subscripted_term()
@@ -2210,22 +2208,18 @@ impl CheckedContainerRoot {
     }
 
     /// [ENT-2] clause (b): whether this subscripted place is a term because
-    /// its final step selects a readonly field of one fragment type.
+    /// the value it selects is one fragment integer, an element or an
+    /// integer field inside one.
     ///
-    /// Only the steps after the last subscript decide the final field; the
-    /// offsets of every subscript decide whether its identity is represented.
-    pub(crate) fn readonly_field_term(
-        &self,
-        nominals: &[CheckedNominal],
-    ) -> Option<SubscriptedTerm> {
-        let last = self
-            .path
-            .iter()
-            .rposition(|step| matches!(step, CheckedPlaceStep::Subscript(_)))?;
-        let CheckedPlaceStep::Subscript(index) = &self.path[last] else {
-            return None;
-        };
-        if !selects_readonly_fragment_field(nominals, index.element_type, &self.path[last + 1..]) {
+    /// The offsets of every subscript decide whether its identity is
+    /// represented.
+    pub(crate) fn integer_element_term(&self) -> Option<SubscriptedTerm> {
+        if !matches!(self.ty, CheckedType::Integer(_))
+            || !self
+                .path
+                .iter()
+                .any(|step| matches!(step, CheckedPlaceStep::Subscript(_)))
+        {
             return None;
         }
         self.subscripted_term()
@@ -2285,73 +2279,6 @@ impl SubscriptedTerm {
             term = Self::Unrepresented;
         }
         Some(term)
-    }
-}
-
-/// Whether `steps`, read from a value of type `start`, end by selecting a
-/// readonly field [TYPE-2] whose type is one fragment integer [ENT-2].
-fn selects_readonly_fragment_field(
-    nominals: &[CheckedNominal],
-    start: CheckedType,
-    steps: &[CheckedPlaceStep],
-) -> bool {
-    let struct_field = |ty: CheckedType, field: u32| {
-        let CheckedType::Nominal(nominal) = ty else {
-            return None;
-        };
-        let CheckedNominalKind::Struct { fields } = &nominals.get(nominal.0 as usize)?.kind else {
-            return None;
-        };
-        fields.get(field as usize)
-    };
-    let Some((last, prefix)) = steps.split_last() else {
-        return false;
-    };
-    let mut ty = start;
-    for step in prefix {
-        ty = match step {
-            CheckedPlaceStep::Subscript(index) => index.element_type,
-            CheckedPlaceStep::Measure(_) => return false,
-            CheckedPlaceStep::Field(field) => match struct_field(ty, *field) {
-                Some(field) => field.ty,
-                None => return false,
-            },
-            CheckedPlaceStep::Payload { variant, field, .. } => {
-                let CheckedType::Nominal(nominal) = ty else {
-                    return false;
-                };
-                let Some(CheckedNominalKind::Enum { variants }) = nominals
-                    .get(nominal.0 as usize)
-                    .map(|nominal| &nominal.kind)
-                else {
-                    return false;
-                };
-                let Some(field) = variants
-                    .get(*variant as usize)
-                    .and_then(|variant| variant.fields.get(*field as usize))
-                else {
-                    return false;
-                };
-                field.ty
-            }
-            CheckedPlaceStep::BoxReferent(nominal) => {
-                match nominals
-                    .get(nominal.0 as usize)
-                    .map(|nominal| &nominal.kind)
-                {
-                    Some(CheckedNominalKind::Box { referent, .. }) => *referent,
-                    _ => return false,
-                }
-            }
-        };
-    }
-    match last {
-        CheckedPlaceStep::Field(field) => struct_field(ty, *field)
-            .is_some_and(|field| field.readonly && matches!(field.ty, CheckedType::Integer(_))),
-        CheckedPlaceStep::Measure(measure) => ty
-            .measured()
-            .is_some_and(|measured| !matches!(measure.cell(measured), MeasureCell::Absent)),
-        _ => false,
     }
 }
 

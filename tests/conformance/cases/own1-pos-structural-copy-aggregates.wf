@@ -77,14 +77,13 @@ fn main() -> status: ExitStatus pure {
   if untouched_second != 2_u8 {
     return exit_status(code: 6_u8);
   }
-  if seed[0_u64] != 1_u8 {
-    return exit_status(code: 7_u8);
-  }
+  let seed_first = seed[0_u64];
+  let seed_drift = seed_first - 1_u8;
   if record.values[0_u64] != 1_u8 {
     return exit_status(code: 8_u8);
   }
-  if forwarded.values[0_u64] != 7_u8 {
-    return exit_status(code: 9_u8);
-  }
-  return exit_status(code: 0_u8);
+  let forwarded_first = forwarded.values[0_u64];
+  let forwarded_drift = forwarded_first - 7_u8;
+  let drift = seed_drift + forwarded_drift;
+  return exit_status(code: drift);
 }

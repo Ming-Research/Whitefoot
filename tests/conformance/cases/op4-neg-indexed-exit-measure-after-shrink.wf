@@ -1,0 +1,11 @@
+fn shrink(window: &Slots<Array<u8, 2>, 2>) -> result: unit writes(window.last), writes(window.len) contract {
+  requires 0_u64 < window^.len;
+  ensures window^[0_u64].len == 2_u64;
+} {
+  let removed = take_back(window: window);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

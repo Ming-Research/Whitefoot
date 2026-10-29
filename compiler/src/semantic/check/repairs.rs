@@ -15,9 +15,9 @@
 //! cannot guess otherwise, which is why those routes state the condition they
 //! need, the callee's `ensures` among them only when the goal reads a value a
 //! call returned; or a guard where skipping the construct is the program's
-//! intent. An operand
-//! that is no term [ENT-2], such as an element read, admits none of these
-//! until a `let` binds it, so that binding is its repair.
+//! intent. An operand that is no term [ENT-2], such as an element read at a
+//! computed offset, admits none of these until a `let` binds it, so that
+//! binding is its repair.
 //!
 //! The words of [TYPE-2]'s refusals of an opaque struct's construction and
 //! destructuring live here too. They turn on where the struct comes from,
@@ -326,7 +326,7 @@ impl<'a> Reads<'a> {
             GoalDatum::NamedConst { projections, .. } if spelled(projections) => {}
             GoalDatum::Place {
                 root, projections, ..
-            } if spelled(projections) => self.binding(*root),
+            } if spelled_element(projections) => self.binding(*root),
             GoalDatum::EvaluatedValue {
                 occurrence: EvaluatedValueOccurrence::CallArgument { argument, .. },
                 ..
@@ -602,6 +602,23 @@ fn spelled(projections: &[GoalProjection]) -> bool {
         .all(|projection| matches!(projection, GoalProjection::Deref | GoalProjection::Field(_)))
 }
 
+/// A spelled path that may also select elements [ENT-2]: each subscript's
+/// offset is a literal, a const or a tracked place, which a condition writes
+/// as the same atom, so the place renders as the source text of one.
+fn spelled_element(projections: &[GoalProjection]) -> bool {
+    projections.iter().all(|projection| match projection {
+        GoalProjection::Deref | GoalProjection::Field(_) => true,
+        GoalProjection::Subscript(offset) | GoalProjection::Page(offset) => matches!(
+            offset.term,
+            CapturedTerm::Literal(_)
+                | CapturedTerm::Binding(_)
+                | CapturedTerm::Place(_)
+                | CapturedTerm::Const(_)
+        ),
+        _ => false,
+    })
+}
+
 /// A range step, which a goal carries only for a range formed at its use.
 fn ranged(projections: &[GoalProjection]) -> bool {
     projections
@@ -686,9 +703,11 @@ pub(super) fn range_goal_shape(goal: &GoalExpression) -> RangeGoalShape {
 fn is_source_atom(expression: &GoalExpression) -> bool {
     match expression {
         GoalExpression::Datum(GoalDatum::Literal(_)) => true,
+        // An element term [ENT-2] renders as the place a source atom
+        // writes, as an element read below does.
         GoalExpression::Datum(
             GoalDatum::NamedConst { projections, .. } | GoalDatum::Place { projections, .. },
-        ) => spelled(projections),
+        ) => spelled_element(projections),
         // A measure, and an admitted element read, render as the place a
         // source atom writes.
         GoalExpression::Operation {

@@ -486,7 +486,7 @@ def lin : Affine → Option Lin
 /-- A linear form with its zero coefficients removed. -/
 def Lin.clean (l : Lin) : Lin := (l.1, l.2.filter (·.2 != 0))
 
--- spec FN-9 13f9ec57ad442ca0
+-- spec FN-9 f1da929500ee7293
 /-- The names a relation's sides carry once each side is normalized to its
 relation term [FN-9]: a name whose coefficients on one side cancel is not
 carried. A side with no linear form carries every name it writes. -/
@@ -1043,7 +1043,7 @@ structure Rhs where
 
 -- spec OP-4 fa19a463e6c858f7
 -- spec OP-4 0d38d77e458de31a
--- spec ENT-2 6ec83dd657d35ea3
+-- spec ENT-2 9e6958da11397825
 -- spec ENT-6 62fc71fc0b2e553d
 -- spec MSR-4 c4cc7da4378e488d
 -- spec MSR-4 fbf78b679bc4368e
@@ -1237,7 +1237,7 @@ def evalRhs (env : Env) (st : State) (e : Expr) : M Rhs := do
 -- spec ENT-3.S12 0112612f3d5d312b
 -- spec ENT-3.S12 955a394bc902da2c
 -- spec ENT-3.S12 f5b1c313daf9d95f
--- spec ENT-3.S12 8a88b1dd381ee3b7
+-- spec ENT-3.S12 18fcd7b6a0354d92
 -- spec ENT-3.S12 ba94a868ee83e2d6
 -- spec ENT-3.S13 9a2f6b9c4c26a844
 -- spec ENT-3.S13 132ca5bf809f0613

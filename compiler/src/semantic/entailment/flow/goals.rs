@@ -747,19 +747,38 @@ impl Input<'_, '_> {
                 projections,
                 ty,
                 ..
-            }) if projections.is_empty() => {
-                let CheckedValue::Integer {
-                    ty: value_type,
-                    bits,
-                } = &self.context.constant(*declaration)?.value
-                else {
-                    return None;
-                };
-                (*ty == CheckedType::Integer(*value_type))
-                    .then(|| integer_value(*value_type, *bits))
-            }
+            }) => self.named_const_integer(*declaration, projections, *ty),
             _ => None,
         }
+    }
+
+    /// [CONST-2] the integer a named const, or an integer field below one,
+    /// holds: the value an ordinary read of the same place folds to
+    /// [`Self::constant_storage_scalar`].
+    pub(super) fn named_const_integer(
+        &self,
+        declaration: crate::DeclarationId,
+        projections: &[GoalProjection],
+        ty: CheckedType,
+    ) -> Option<i128> {
+        let mut value = &self.context.constant(declaration)?.value;
+        for projection in projections {
+            let GoalProjection::Field(index) = projection else {
+                return None;
+            };
+            let CheckedValue::Struct { fields, .. } = value else {
+                return None;
+            };
+            value = fields.get(*index as usize)?;
+        }
+        let CheckedValue::Integer {
+            ty: value_type,
+            bits,
+        } = value
+        else {
+            return None;
+        };
+        (ty == CheckedType::Integer(*value_type)).then(|| integer_value(*value_type, *bits))
     }
 }
 
@@ -1541,19 +1560,16 @@ impl Reasoning<'_, '_, '_> {
                 projections,
                 ty,
                 ..
-            }) if projections.is_empty() => {
-                let CheckedValue::Integer {
-                    ty: value_type,
-                    bits,
-                } = &self.input.context.constant(*declaration)?.value
-                else {
-                    return None;
-                };
-                (*ty == CheckedType::Integer(*value_type)).then(|| {
-                    self.vocabulary
-                        .terms
-                        .intern(TermKind::Constant(integer_value(*value_type, *bits)))
-                })
+            }) if projections.is_empty()
+                || self
+                    .input
+                    .named_const_integer(*declaration, projections, *ty)
+                    .is_some() =>
+            {
+                let value = self
+                    .input
+                    .named_const_integer(*declaration, projections, *ty)?;
+                Some(self.vocabulary.terms.intern(TermKind::Constant(value)))
             }
             GoalExpression::Datum(datum) => {
                 let fragment = fragment_type(datum.ty())?;
