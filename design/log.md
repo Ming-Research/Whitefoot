@@ -5,6 +5,11 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-24 A requirement side displaced by a constant gives an exact entry relation, defined recursively
+
+Nodes: language/checks-and-proofs/requires-entry-contract
+
+Summary: A requirement whose complete goal is one integer comparison establishes an exact two-term relation at body entry when each side reduces to at most one term plus a folded constant through term-free sums, differences and products and widening conversions, because those preserve the mathematical value, the postcondition side already admits a datum displaced by a constant, and the checker already did so. The entry rule defines this projection itself and uses it for the root, the members of the signed decomposition and the ordering leaves that take no affine premise, and a symbolic const-generic parameter counts as a term. Refused were narrowing the checker to bare terms, constants and measure terms, which would have made writers' natural `i + 1 <= b` chains need explicit proof steps, and widening ENT-2's L0 projection to the same sides, which would reach goals outside the requirement-entry registration.
 ## 2026-10-23 A returned computed integer expression proves a postcondition as a `let` of it would
 
 Nodes: language/checks-and-proofs/automatic-facts
