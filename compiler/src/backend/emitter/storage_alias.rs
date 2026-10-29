@@ -42,11 +42,15 @@ impl Role {
     }
 }
 
-/// This is the module's only numbered metadata namespace. Keeping it in
-/// the existing header also carries the definitions into cached fragments.
+/// Register the fixed storage-role graph in the module metadata namespace.
+/// Functions record its tag roots; composition and fragments retain the graph.
 pub(super) fn emit_definitions(module: &mut Module) {
-    module.header("!0 = !{!\"Whitefoot checked storage roles\"}".to_owned());
-    module.header("!1 = !{!\"any memory\", !0, i64 0}".to_owned());
+    module.metadata_node(
+        0,
+        "!{!\"Whitefoot checked storage roles\"}".to_owned(),
+        BTreeSet::new(),
+    );
+    module.metadata_node(1, "!{!\"any memory\", !0, i64 0}".to_owned(), [0].into());
     for (index, name) in [
         "source scalar write",
         "Box owner",
@@ -64,8 +68,16 @@ pub(super) fn emit_definitions(module: &mut Module) {
     {
         let class = index + 2;
         let tag = index + 12;
-        module.header(format!("!{class} = !{{!\"{name}\", !1, i64 0}}"));
-        module.header(format!("!{tag} = !{{!{class}, !{class}, i64 0}}"));
+        module.metadata_node(
+            class as u64,
+            format!("!{{!\"{name}\", !1, i64 0}}"),
+            [1].into(),
+        );
+        module.metadata_node(
+            tag as u64,
+            format!("!{{!{class}, !{class}, i64 0}}"),
+            [class as u64].into(),
+        );
     }
 }
 
@@ -179,7 +191,7 @@ fn readonly_formals(function: &IrFunction) -> Vec<usize> {
 type FormalScopeLists = Vec<(usize, usize)>;
 
 /// Numbered metadata is one module-wide namespace, shared with the fixed TBAA
-/// definitions above. Headers accompany every fragment and cached roundtrip.
+/// definitions above. Recorded edges survive imports and cached roundtrips.
 pub(super) struct OwnerScopePlan {
     definitions: Vec<(usize, FormalScopeLists, usize)>,
     functions: BTreeMap<String, (BTreeMap<usize, usize>, usize)>,
@@ -220,18 +232,34 @@ impl OwnerScopePlan {
 
     pub(super) fn emit_definitions(&self, module: &mut Module) {
         for (domain, reads, writes) in &self.definitions {
-            module.header(format!("!{domain} = distinct !{{!{domain}}}"));
+            module.metadata_node(
+                *domain as u64,
+                format!("distinct !{{!{domain}}}"),
+                [*domain as u64].into(),
+            );
             for (_, list) in reads {
                 let scope = list - 1;
-                module.header(format!("!{scope} = distinct !{{!{scope}, !{domain}}}"));
-                module.header(format!("!{list} = !{{!{scope}}}"));
+                module.metadata_node(
+                    scope as u64,
+                    format!("distinct !{{!{scope}, !{domain}}}"),
+                    [scope as u64, *domain as u64].into(),
+                );
+                module.metadata_node(
+                    *list as u64,
+                    format!("!{{!{scope}}}"),
+                    [scope as u64].into(),
+                );
             }
             let scopes = reads
                 .iter()
                 .map(|(_, list)| format!("!{}", list - 1))
                 .collect::<Vec<_>>()
                 .join(", ");
-            module.header(format!("!{writes} = !{{{scopes}}}"));
+            module.metadata_node(
+                *writes as u64,
+                format!("!{{{scopes}}}"),
+                reads.iter().map(|(_, list)| (list - 1) as u64).collect(),
+            );
         }
     }
 }
@@ -324,6 +352,15 @@ impl OwnerAliases {
             }
         }
         result
+    }
+
+    /// Includes the write list even when it is not a declaration operand.
+    pub(super) fn metadata_roots(&self) -> impl Iterator<Item = u64> + '_ {
+        self.reads
+            .values()
+            .copied()
+            .chain(self.writes)
+            .map(|id| id as u64)
     }
 
     pub(super) fn scopes(&self) -> impl Iterator<Item = usize> + '_ {

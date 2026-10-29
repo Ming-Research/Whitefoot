@@ -40,7 +40,8 @@ pub(crate) const CLANG: &str = whitefoot::clang_executable();
 #[cfg(unix)]
 pub(crate) const COMPILE_ARGUMENTS: &[&str] = &["-pthread"];
 #[cfg(windows)]
-pub(crate) const COMPILE_ARGUMENTS: &[&str] = &[];
+// Match the production scheduler's native TLS and FLS cleanup lifetime.
+pub(crate) const COMPILE_ARGUMENTS: &[&str] = &["-fno-emulated-tls"];
 #[cfg(unix)]
 #[allow(dead_code)]
 pub(crate) const LINK_LIBRARIES: &[&str] = whitefoot::HOST_LINK_LIBRARIES;

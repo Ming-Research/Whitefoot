@@ -3,31 +3,17 @@
 //!
 //! # What is emitted
 //!
-//! For either a reduction
-//! `let a = INIT; for @l (i in lo..hi) { … set a = a (+) e … }` or an
-//! independently proved map `for @l (i in lo..hi) { set out[i] = e; }`, this
-//! builds two synthesized functions and replaces the loop site with one
-//! instruction:
+//! Every range uses the demand driver in `demand`: it executes ordinary
+//! subrange loops, polls the lane's request word at work-priced boundaries,
+//! and publishes the far half while retaining the near half. Runtime extent
+//! prices replace available static factors. A scalar reduction keeps its seed
+//! only in the retained work and combines near before far.
 //!
-//! ```text
-//! chunk(seed, lo, hi, captures…)   the loop itself; reduction seed/result is
-//!                                  the accumulator, map seed/result is Unit
-//! split(seed, lo, hi, captures…, budget)
-//!                                  hi <= lo         -> seed
-//!                                  budget 0 or thin -> chunk(seed, lo, hi, …)
-//!                                  otherwise        -> reduction: split left
-//!                                                      (+) split right
-//!                                                   -> map: split both, join,
-//!                                                      return Unit
-//! ```
-//!
-//! and at the site, one call: `split(seed, lo, hi, captures…, allowance)` in
-//! the overlapped world, `chunk(seed, lo, hi, captures…)` in the sequential
-//! one. A reduction's incoming accumulator folds into the leftmost chunk
-//! rather than being recombined afterwards, so the fold's leaf order is the
-//! source's own. A map's Unit return is ignored; the join makes its captured
-//! stores complete. In both forms the sequential world's call is the loop
-//! exactly.
+//! Indexed reductions pass their current destinations to both halves. The
+//! driver's overlap group carries the families, so only a granted far lane
+//! receives neutral private storage, which the offering activation combines
+//! into its destinations after the join and frees. No storage is predicted
+//! or allocated at the site.
 //!
 //! # Why the leaf is the loop and never one iteration
 //!
@@ -40,20 +26,14 @@
 //! out in the loop over a subrange keeps the body's own optimization inside
 //! the chunk and measured 3.1x at ten lanes on the same probe.
 //!
-//! # Why the runtime chooses the grain
+//! # Why the range may split
 //!
-//! Every admitted reduction combine is exactly associative on its type's
-//! complete value set, so its value does not depend on the combination tree.
-//! An independent map has no value to combine: its proof says distinct
-//! iterations write disjoint elements, and the `Unit` result exists only to
-//! carry the ordinary worker join. Those are the two reasons the *number* of
-//! chunks may depend on the span, the lane count, and what this lane is already
-//! doing — asked once per loop entry, never per iteration.
-//!
-//! [`assign_weights`] prices the emitted IR of the chunk and the functions it
-//! calls. Available captured extents replace fixed inner-loop factors; unknown
-//! work retains the static estimate. No program name or writer annotation
-//! selects a price.
+//! PAR-2 gives scalar reductions total associative combines and independent
+//! maps disjoint iteration writes, so request-driven splitting preserves the
+//! checked result. The ordinary subrange remains the computation unit.
+//! [`assign_weights`] substitutes available captured runtime extents through
+//! helper arguments; unavailable extents retain the static estimate. No
+//! program name or writer annotation selects a price.
 //!
 //! # What declines, and loudly
 //!
@@ -76,8 +56,8 @@ use crate::semantic::{
 use crate::target::{LANE_FRAME_BYTES, parallel_lane_frame_layout};
 use crate::{
     IrAddressed, IrBlock, IrBlockId, IrBooleanOperation, IrConstant, IrEnumType, IrFunction,
-    IrInstruction, IrIntegerOperation, IrMatchTarget, IrNominalKind, IrOperation, IrOverlap,
-    IrSynthesis, IrTerminator, IrType, IrValueId, LoweringFailure, NodePath,
+    IrInstruction, IrIntegerOperation, IrMatchTarget, IrNominalKind, IrOperation, IrSynthesis,
+    IrTerminator, IrType, IrValueId, LoweringFailure, NodePath,
 };
 
 use super::loops::U64;
@@ -86,12 +66,6 @@ use super::{BuildingBlock, IrBuilder};
 /// The widest scalar the backend puts in a frame, and so the alignment every
 /// frame field is conservatively charged.
 const FRAME_FIELD_ALIGN: u64 = 8;
-
-/// The type every shift amount carries in this IR.
-const SHIFT_AMOUNT: IrType = IrType::Integer {
-    width: 32,
-    signed: false,
-};
 
 /// Why one permitted loop was not actualized.
 ///
@@ -584,10 +558,32 @@ impl<'program> IrBuilder<'program> {
                 });
             }
         }
+        // Literal endpoints permit a complete cheap-site proof only after
+        // the candidate exposes its ordinary instructions. Delay reservations
+        // so a proven-small site can reuse that CFG without dead helpers. An
+        // indexed site qualifies too: its far-half setup charge only makes a
+        // split rarer, and the reused CFG updates the current destinations
+        // exactly as a refused far half or a declined frame does.
+        let literal = |value| {
+            self.blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .find_map(|instruction| match instruction {
+                    IrInstruction::Define {
+                        result,
+                        operation: IrOperation::Constant(IrConstant::Integer { ty: U64, bits }),
+                        ..
+                    } if *result == value => Some(*bits),
+                    _ => None,
+                })
+        };
+        let constant_span = literal(lower)
+            .zip(literal(upper))
+            .map(|(lower, upper)| upper.saturating_sub(lower));
         let prune_captures = self.frame_decline(result_type, &captures)?.is_some();
         // Preserve the established preorder names and complete fitting ABI.
-        // Only a still-undecided wide frame delays its helper reservation.
-        let reserved = if prune_captures {
+        // A wide frame or constant extent delays its helper reservation.
+        let reserved = if prune_captures || constant_span.is_some() {
             None
         } else {
             let mut synthesis = self.synthesis.borrow_mut();
@@ -628,6 +624,22 @@ impl<'program> IrBuilder<'program> {
             .zip(candidate.needed.iter().copied())
             .filter_map(|(capture, needed)| needed.then_some(capture))
             .collect();
+        if constant_span.is_some_and(|span| compile_time_small(&candidate.function, span)) {
+            self.note(
+                node_path,
+                "sequential: constant range is indivisible or below the split grain",
+            );
+            self.splice_chunk(
+                candidate,
+                reduction_seed,
+                lower,
+                upper,
+                accumulator,
+                &captures,
+                &indexed_roots,
+            )?;
+            return Ok(true);
+        }
         if let Some(decline) = self.frame_decline(result_type, &captures)?
             && parallel_lane_frame_layout(
                 self.target,
@@ -638,7 +650,7 @@ impl<'program> IrBuilder<'program> {
                     .chain(captures.iter().map(|capture| capture.ty))
                     .chain([U64]),
                 result_type,
-                // The splitter's allowance is already its final parameter.
+                // The splitter's runtime price is already its final parameter.
                 false,
             )?
             .is_none()
@@ -711,7 +723,7 @@ impl<'program> IrBuilder<'program> {
             Some(seed) => seed,
             None => self.define(IrType::Unit, IrOperation::Constant(IrConstant::Unit))?,
         };
-        let splitter_function = self.build_splitter(
+        let splitter_function = self.build_demand_driver(
             (splitter, &splitter_name),
             chunk,
             actualization,
@@ -1237,260 +1249,8 @@ impl<'program> IrBuilder<'program> {
         Ok(())
     }
 
-    /// The recursive range splitter, whose two halves are one ordinary overlap
-    /// group.
-    ///
-    /// The group here is produced by this lowering, not judged: it actualizes
-    /// the loop's own permission, and there is no pair of source statements for
-    /// the window judgment to have looked at. Everything downstream — the
-    /// lane acquisition, the frame, the thunk, the deque, and the join — is
-    /// the machinery a permitted pair already uses, unchanged.
-    fn build_splitter(
-        &self,
-        (ordinal, name): (u32, &str),
-        chunk: u32,
-        actualization: LoopActualization,
-        result_type: IrType,
-        capture_types: &[IrType],
-        indexed: &[crate::ir::IrIndexedReduction],
-    ) -> Result<IrFunction, LoweringFailure> {
-        let mut builder = IrBuilder::new(
-            self.context(),
-            result_type,
-            std::collections::HashSet::new(),
-            None,
-            self.overlap,
-            self.function_name,
-        )?;
-        let seed = builder.new_parameter(result_type)?;
-        let lower = builder.new_parameter(U64)?;
-        let upper = builder.new_parameter(U64)?;
-        let captures = capture_types
-            .iter()
-            .map(|ty| builder.new_parameter(*ty))
-            .collect::<Result<Vec<_>, _>>()?;
-        let budget = builder.new_parameter(U64)?;
-
-        let (empty_block, _) = builder.new_block(&[])?;
-        let (nonempty, _) = builder.new_block(&[])?;
-        let (leaf, _) = builder.new_block(&[])?;
-        let (halve, _) = builder.new_block(&[])?;
-
-        // **`hi <= lo` before any width arithmetic.** An inverted range whose
-        // width is computed first wraps to something near 2^64 and splits a
-        // range that does not exist; the loop it stands for runs zero times.
-        let nonempty_guard = builder.define(
-            IrType::Bool,
-            IrOperation::Integer {
-                operation: IrIntegerOperation::Less,
-                operand_type: U64,
-                arguments: vec![lower, upper],
-            },
-        )?;
-        builder.branch(nonempty_guard, nonempty, empty_block)?;
-
-        // An empty range folds or writes nothing, so its incoming value — the
-        // accumulator for a reduction, Unit for a map — arrives unchanged.
-        builder.current = Some(empty_block);
-        builder.terminate(IrTerminator::Return {
-            value: seed,
-            drops: Vec::new(),
-        })?;
-
-        // Two ways to reach the leaf: the allowance is spent, or the range is
-        // too thin to halve into two nonempty halves.
-        builder.current = Some(nonempty);
-        let width = builder.define(
-            U64,
-            IrOperation::Integer {
-                operation: IrIntegerOperation::SubtractWrap,
-                operand_type: U64,
-                arguments: vec![upper, lower],
-            },
-        )?;
-        let one = builder.define(
-            U64,
-            IrOperation::Constant(IrConstant::Integer { ty: U64, bits: 1 }),
-        )?;
-        let zero = builder.define(
-            U64,
-            IrOperation::Constant(IrConstant::Integer { ty: U64, bits: 0 }),
-        )?;
-        let affordable = builder.define(
-            IrType::Bool,
-            IrOperation::Integer {
-                operation: IrIntegerOperation::Less,
-                operand_type: U64,
-                arguments: vec![zero, budget],
-            },
-        )?;
-        let divisible = builder.define(
-            IrType::Bool,
-            IrOperation::Integer {
-                operation: IrIntegerOperation::Less,
-                operand_type: U64,
-                arguments: vec![one, width],
-            },
-        )?;
-        let splittable = builder.define(
-            IrType::Bool,
-            IrOperation::Boolean {
-                operation: crate::IrBooleanOperation::And,
-                arguments: vec![affordable, divisible],
-            },
-        )?;
-        builder.branch(splittable, halve, leaf)?;
-
-        builder.current = Some(leaf);
-        let mut leaf_arguments = vec![seed, lower, upper];
-        leaf_arguments.extend(captures.iter().copied());
-        let result = builder.define(
-            result_type,
-            IrOperation::Call {
-                function: chunk,
-                arguments: leaf_arguments,
-            },
-        )?;
-        builder.terminate(IrTerminator::Return {
-            value: result,
-            drops: Vec::new(),
-        })?;
-
-        builder.current = Some(halve);
-        // A shift amount is `u32` throughout the IR, so the halving carries its
-        // own constant rather than reusing the `u64` one above.
-        let one_bit = builder.define(
-            SHIFT_AMOUNT,
-            IrOperation::Constant(IrConstant::Integer {
-                ty: SHIFT_AMOUNT,
-                bits: 1,
-            }),
-        )?;
-        let half = builder.define(
-            U64,
-            IrOperation::Integer {
-                operation: IrIntegerOperation::ShiftRightWrap,
-                operand_type: U64,
-                arguments: vec![width, one_bit],
-            },
-        )?;
-        let middle = builder.define(
-            U64,
-            IrOperation::Integer {
-                operation: IrIntegerOperation::AddWrap,
-                operand_type: U64,
-                arguments: vec![lower, half],
-            },
-        )?;
-        let remaining = builder.define(
-            U64,
-            IrOperation::Integer {
-                operation: IrIntegerOperation::SubtractWrap,
-                operand_type: U64,
-                arguments: vec![budget, one],
-            },
-        )?;
-        // A reduction sends the incoming accumulator left and the identity
-        // right, preserving `seed, e0, e1, …` as the tree's leaf order. An
-        // independent map sends the same Unit token both ways: it carries no
-        // source value, but the two calls still form the ordinary overlap group
-        // whose join completes every disjoint store before this helper returns.
-        let right_seed = match actualization {
-            LoopActualization::IndependentMap => seed,
-            LoopActualization::Reduction { combine, .. } => {
-                builder.identity_value(combine, result_type)?
-            }
-        };
-        let mut left_captures = captures.clone();
-        let mut right_captures = captures.clone();
-        let mut split_captures = Vec::new();
-        for root in indexed {
-            if split_captures.contains(&root.capture) {
-                continue;
-            }
-            split_captures.push(root.capture);
-            let private_type = if let Some(block) = &root.root {
-                IrType::Address(
-                    IrAddressed::of(block.block_type)
-                        .ok_or(LoweringFailure::InvalidCheckedProgram)?,
-                )
-            } else {
-                root.private_type()
-            };
-            let slice = captures[root.capture];
-            let length = builder.define(U64, IrOperation::SliceMeasure { slice })?;
-            let half_cells = builder.define(
-                U64,
-                IrOperation::Integer {
-                    operation: IrIntegerOperation::ShiftRightWrap,
-                    operand_type: U64,
-                    arguments: vec![length, one_bit],
-                },
-            )?;
-            left_captures[root.capture] = builder.define(
-                capture_types[root.capture],
-                IrOperation::IndexedRange {
-                    private_type,
-                    slice,
-                    start: zero,
-                    end: half_cells,
-                },
-            )?;
-            right_captures[root.capture] = builder.define(
-                capture_types[root.capture],
-                IrOperation::IndexedRange {
-                    private_type,
-                    slice,
-                    start: half_cells,
-                    end: length,
-                },
-            )?;
-        }
-        let mut left_arguments = vec![seed, lower, middle];
-        left_arguments.extend(left_captures);
-        left_arguments.push(remaining);
-        let left = builder.define(
-            result_type,
-            IrOperation::Call {
-                function: ordinal,
-                arguments: left_arguments,
-            },
-        )?;
-        let mut right_arguments = vec![right_seed, middle, upper];
-        right_arguments.extend(right_captures);
-
-        right_arguments.push(remaining);
-        let right = builder.define(
-            result_type,
-            IrOperation::Call {
-                function: ordinal,
-                arguments: right_arguments,
-            },
-        )?;
-        // Left before right, always. A reduction combines in source order; a
-        // map only needs the join and may return either identical Unit token.
-        let result = match actualization {
-            LoopActualization::IndependentMap => right,
-            LoopActualization::Reduction { combine, .. } => {
-                builder.combine_values(combine, result_type, left, right)?
-            }
-        };
-        builder.terminate(IrTerminator::Return {
-            value: result,
-            drops: Vec::new(),
-        })?;
-
-        builder.finish(
-            splitter_symbol(name),
-            vec![IrOverlap {
-                members: vec![left, right],
-            }],
-            Some(IrSynthesis::Splitter),
-        )
-    }
-
     /// Materializes the combine's identity element.
-    fn identity_value(
+    pub(super) fn identity_value(
         &mut self,
         combine: LoopCombine,
         ty: IrType,
@@ -1500,7 +1260,7 @@ impl<'program> IrBuilder<'program> {
     }
 
     /// One application of the admitted combine.
-    fn combine_values(
+    pub(super) fn combine_values(
         &mut self,
         combine: LoopCombine,
         ty: IrType,
@@ -1522,7 +1282,7 @@ impl<'program> IrBuilder<'program> {
     }
 
     /// A two-way branch on a `Bool`, the shape every guard in this module uses.
-    fn branch(
+    pub(super) fn branch(
         &mut self,
         condition: IrValueId,
         when_true: IrBlockId,
@@ -1647,7 +1407,7 @@ const fn identity(combine: LoopCombine, ty: IrType) -> Option<IrConstant> {
 /// Both live in the `wf__par_` namespace [FORM-3] puts out of reach of every
 /// source IDENT, so a synthesized function can never collide with a declared
 /// one.
-fn splitter_symbol(name: &str) -> String {
+pub(super) fn splitter_symbol(name: &str) -> String {
     format!("_par_split_{name}")
 }
 
@@ -1679,14 +1439,31 @@ fn frame_bytes(ty: IrType) -> u64 {
     raw.div_ceil(FRAME_FIELD_ALIGN) * FRAME_FIELD_ALIGN
 }
 
+/// An empty or singleton range cannot split. Larger complete local work is
+/// known only for call-free, unnested loop bodies.
+/// Reuse assign_weights' exact static price; unknown helper work cannot turn
+/// a short literal range into a cheap site merely because its count is small.
+fn compile_time_small(function: &IrFunction, span: u64) -> bool {
+    if span <= 1 {
+        return true;
+    }
+    let price = cost(function);
+    price.calls.is_empty()
+        && loop_depths(function.blocks())
+            .iter()
+            .all(|depth| *depth <= 1)
+        && span.saturating_mul((price.instructions / LOOP_FACTOR).max(1))
+            < super::call_grain::CALL_OFFER_WORK_UNIT
+}
+
 /// Fills in every [`IrOperation::LoopSplit`]'s static fallback and available
 /// runtime extent estimate, once every function of the program exists.
 ///
 /// The weight is a cost estimate over the emitted IR: the instructions of the
 /// chunk, each charged more the deeper it sits inside a loop, plus the same
 /// estimate for what the chunk calls, to a bounded depth. It reads no name, no
-/// signature, and no source shape, and it feeds nothing but the runtime
-/// allowance. The runtime estimate then substitutes available counted extents
+/// signature, and no source shape, and it feeds only scheduling prices.
+/// The runtime estimate then substitutes available counted extents
 /// through helper arguments, distinguishing a 17-element row from a
 /// 1024-element row without changing either loop body. Unknown extents keep
 /// this static price; no universal grain plateau is established. Each
@@ -1719,7 +1496,7 @@ pub(crate) fn assign_weights(functions: &mut [IrFunction]) -> Vec<u64> {
                     // The chunk's own loop is charged [`LOOP_FACTOR`] like any
                     // other, so dividing it out turns the function's total back
                     // into what one iteration costs — which is the unit the
-                    // runtime allowance multiplies the span by. A loop nested
+                    // scheduling policy multiplies the remaining span by. A loop nested
                     // inside the body keeps its own factor, which is the whole
                     // point: its trip count is unknown and it does more work.
                     let chunk_weight = total.get(*chunk as usize).copied().unwrap_or(0);
@@ -1766,8 +1543,8 @@ fn cost(function: &IrFunction) -> Cost {
             match operation {
                 IrOperation::Call { function, .. } => calls.push((*function, factor)),
                 // A split reaches its chunk in either world, and the splitter's
-                // own descent is bounded by the allowance rather than by the
-                // range, so the site is charged the chunk it will run.
+                // scheduling driver contributes no source computation, so
+                // the site is charged the chunk it will run.
                 IrOperation::LoopSplit { chunk, .. } => calls.push((*chunk, factor)),
                 _ => {}
             }

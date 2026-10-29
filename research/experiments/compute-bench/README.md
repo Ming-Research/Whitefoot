@@ -1,5 +1,13 @@
 # compute-bench
 
+**This bundle does not build since default `--par` splits on demand
+(compute-bench-demand-split).** The harness asks the runtime for
+`wf__par_split_budget` and `wf__sched_split_work`, and the Makefile reads the
+budget call's weight out of each `--par` module and asserts that every image
+links the budget function; demand splitting removed all three. Every target
+here, `programs-check` included, and every command below fails until that
+item ports the bundle.
+
 One question, one table per host:
 
 > **For each kernel, at each width, is the Whitefoot program built by this
@@ -469,7 +477,8 @@ Each line starts with a fixture name and record kind (`manifest`, `raw`, or
 paths; manifests and tables omit empty rendered lines and terminal padding.
 Raw numerical rows are unchanged. For example, extract the main raw
 stream with `awk -F '\t' '$1 == "main" && $2 == "raw" { sub(/^[^\t]*\t[^\t]*\t/, ""); print }' compute-model-2026-09-13.tsv`.
-The manifest records the 10,000-unit runtime control; pass
+The manifest records the 10,000-unit runtime control, a work-unit macro the
+runtime no longer reads since the power-of-two split budget was removed; pass
 `-v runtimecontrol=-DWF_PAR_SPLIT_WORK_UNIT=10000` when reducing these rows.
 The `initial-pooloff-*` groups instead record the earlier adapter-only control
 and are explicitly inconclusive. This dated evidence is retained while its
@@ -595,9 +604,11 @@ translation units of the twin, including the floor, scheduler, completion and
 ordinary-value bodies, so one tree can answer "what would this runtime constant be
 worth on this block of kernels" without editing the constant per run:
 
+Like every command here, this waits for compute-bench-demand-split.
+
 ```sh
-make compare RESULTS=$WHITEFOOT_SCRATCH_ROOT/whitefoot-compute-bench/results/unit-300k \
-     WF_RUNTIME_CONTROL_FLAGS=-DWF_PAR_SPLIT_WORK_UNIT=300000
+make compare RESULTS=$WHITEFOOT_SCRATCH_ROOT/whitefoot-compute-bench/results/spin-0 \
+     WF_RUNTIME_CONTROL_FLAGS=-DWF_PAR_SPIN_ROUNDS=0
 ```
 
 Not every value it carries is a constant to sweep.
@@ -714,12 +725,14 @@ rather than a quotient of two run medians. The twin puts a second Whitefoot
 image into those same passes, so the two arms of an A/B are separated by
 minutes of one machine's own schedule instead of by two runs.
 
+Like every command here, these wait for compute-bench-demand-split.
+
 ```sh
-# the oversubscription cap and the work unit, one candidate against the shipped
+# the idle lanes' spin and yield rounds, one candidate against the shipped
 # runtime, in one set of passes
-make compare RESULTS=$WHITEFOOT_SCRATCH_ROOT/whitefoot-compute-bench/results/cap-256 \
+make compare RESULTS=$WHITEFOOT_SCRATCH_ROOT/whitefoot-compute-bench/results/spin-yield \
      PASSES=5 CALLS=5 \
-     WF_RUNTIME_CONTROL_FLAGS='-DWF_PAR_SPLIT_OVERSUBSCRIBE=256 -DWF_PAR_SPLIT_WORK_UNIT=75000'
+     WF_RUNTIME_CONTROL_FLAGS='-DWF_PAR_SPIN_ROUNDS=256 -DWF_PAR_YIELD_ROUNDS=4'
 
 # the instrument's own null check: a twin that differs in nothing
 make compare RESULTS=$WHITEFOOT_SCRATCH_ROOT/whitefoot-compute-bench/results/null \
@@ -1086,7 +1099,7 @@ wf-trace lane=<n> ev=<kind> t_us=<monotonic us> cpu=<sched_getcpu> v=<payload> s
 
 | kind | when | `v` | `seq` |
 | --- | --- | --- | --- |
-| `call_head` | the splitter's entry query, once per top-level call | the idle mask then | 0 |
+| `call_head` | the first publication of a top-level call, on the offering lane | the idle mask then | 0 |
 | `root_publish_first` | the first publish of a burst that finds lanes parked | the idle mask | 0 |
 | `park` | entering the condvar wait, in either idle loop | spin/yield rounds done | 0 |
 | `wake` | returning from that wait | the publish epoch seen | 0 |

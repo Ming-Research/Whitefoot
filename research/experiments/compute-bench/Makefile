@@ -1,6 +1,12 @@
 # Serves compute-bench: the one place every compiler flag is written, and the
 # only path from a Whitefoot source to a row in the table.
 #
+# DOES NOT BUILD since default --par splits on demand: harness.c calls the
+# removed wf__par_split_budget and wf__sched_split_work, the *_split.h rules
+# grep the removed budget call, and assert-real-runtime requires the removed
+# function. Every target below fails until compute-bench-demand-split ports
+# the bundle.
+#
 #   make deps            fetch (network) and build the pinned schedulers
 #   make build           the compiler, the modules, the objects, one image
 #                        per kernel, with the link-time assertions of 6.3
@@ -182,8 +188,9 @@ FORCE:
 # with this variable empty whatever it is set to -- so a run can measure what one
 # runtime constant is worth on this block of kernels, against the shipped
 # runtime in the same passes, without editing the constant per run: for example
-# `make compare WF_RUNTIME_CONTROL_FLAGS=-DWF_PAR_SPLIT_WORK_UNIT=300000`,
-# which builds the twin's splitter work unit at a quarter of its default. It is
+# `make compare WF_RUNTIME_CONTROL_FLAGS=-DWF_PAR_SPIN_ROUNDS=0`,
+# which builds the twin's idle lanes to park without spinning first (once
+# compute-bench-demand-split makes the bundle build again). It is
 # EMPTY BY DEFAULT and must stay empty for any table that is recorded: the `wf`
 # row of a recorded table is the program plain `--par` produces linked with the
 # runtime this tree ships, and a runtime built to make a row nicer would be
