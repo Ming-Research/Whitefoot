@@ -932,6 +932,8 @@ function-kind parameters follow the existing HashMap callback forms:
 | `ordered_map_remove(map: &M, key: &K, env: &E)` | `Option<OrderedPair<K,V>>`; caller owns every removed key and value. |
 | `ordered_map_each(map: &M, env: &F)` | unit; visit every pair in order. |
 | `ordered_map_range(map: &M, lower: &K, upper: &K, key_env: &E, visit_env: &F)` | unit; ordered half-open `[lower,upper)` visit, empty for equal/inverted bounds under lawful order. |
+| `ordered_map_first(map: &M)`, `ordered_map_last(map: &M)`, `ordered_map_seek(map: &M, seek, probe: &P, env: &E)` | `OrderedCursor`, an owned position at an end or at one of four probe placements ([Ordered-map cursor](#ordered-map-cursor)). |
+| `ordered_map_step(map: &M, cursor: &OrderedCursor, direction)`, `ordered_map_read(map: &M, cursor: &OrderedCursor, env: &F)` | Bool for a move one pair either way; `Result<R,unit>` from an observing callback on the cursor's pair; a cursor made before the latest insertion or removal neither moves nor reads. |
 | `ordered_map_free(map: M, env: &F)` | unit; explicitly consume every remaining pair and release all nodes. |
 
 Observe/visit callbacks read key and value and write their environment; edit
