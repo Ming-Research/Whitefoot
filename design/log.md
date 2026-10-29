@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-10-24 Every Whitefoot definition carries LLVM's inline hint
+
+Nodes: compiler/inline-hints
+
+Summary: Shrinking the standard library's hash map added a six-instruction test to its removal, which crossed LLVM's inline threshold of 225 and made remove-insert 4.0% to 4.5% slower on hosted runners and 1.6% to 8.5% slower on an i9-14900K sample ([question](../research/investigations/inline-policy/DESIGN.md#question)); source-level weights and hints only moved the boundary one caller outward. The new node gives every emitted Whitefoot definition `inlinehint`, LLVM's level for C++ `inline` and Rust `#[inline]`, keeping the C runtime at LLVM's defaults; global thresholds, a threshold chosen from the witness and compiler-selected always-inline sites are rejected. Evidence: rounds 1 to 3 of the [inline-policy investigation](../research/investigations/inline-policy/DESIGN.md#round-3-the-hint-level-for-whitefoots-own-definitions-hosted-runners).
+
 ## 2026-10-23 A returned computed integer expression proves a postcondition as a `let` of it would
 
 Nodes: language/checks-and-proofs/automatic-facts

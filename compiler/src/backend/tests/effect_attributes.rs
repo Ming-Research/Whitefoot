@@ -1,6 +1,6 @@
 //! Tripwire on the LLVM function attributes the backend is allowed to emit.
 //!
-//! The backend emits no function attributes today, so the assertion below is
+//! The backend emits no effect attributes today, so the first assertion below is
 //! currently satisfied without the emitter doing anything. That is the point:
 //! it is a canary for the effect-attribute channel that a future change will
 //! open when it starts translating Whitefoot effect rows (`pure`, `reads`,
@@ -81,5 +81,41 @@ fn no_emitted_module_promises_termination_with_the_willreturn_attribute() {
             "{path} emitted the willreturn attribute; v0 has no termination \
              checker, so no effect row licenses that promise [EFF-3]"
         );
+    }
+}
+
+/// Every definition the backend emits names the one attribute group that
+/// carries LLVM's inline hint, so LLVM prices each call to a Whitefoot
+/// definition at its hint level and the C runtime at its defaults
+/// (compiler/inline-hints). Counting the definitions, not finding one hinted
+/// definition, is what makes "every definition" checkable.
+#[test]
+fn every_emitted_definition_carries_the_inline_hint() {
+    for (path, source) in REPRESENTATIVE_PROGRAMS {
+        let module = compile(source);
+        let groups = module
+            .lines()
+            .filter(|line| line.starts_with("attributes #0 = { "))
+            .collect::<Vec<_>>();
+        assert_eq!(groups.len(), 1, "{path} must declare group #0 once:\n{module}");
+        assert!(
+            groups[0].split_whitespace().any(|word| word == "inlinehint"),
+            "{path}: the definitions' group must carry the hint: {}",
+            groups[0]
+        );
+        let definitions = module
+            .lines()
+            .filter(|line| line.starts_with("define "))
+            .collect::<Vec<_>>();
+        assert!(
+            !definitions.is_empty(),
+            "{path} must emit at least one function definition"
+        );
+        for definition in definitions {
+            assert!(
+                definition.contains(" #0 "),
+                "{path}: a definition outside the hinted group: {definition}"
+            );
+        }
     }
 }

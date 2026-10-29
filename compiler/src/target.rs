@@ -200,9 +200,9 @@ impl TargetLayout {
     }
 
     /// The stack-probe attributes of every generated definition
-    /// (`emit_module` adds `uwtable` to them). The Darwin fallback states the
-    /// 4 KiB stride explicitly; other targets retain their existing attributes
-    /// independently of the Darwin capability.
+    /// (`emit_module` adds `inlinehint` and `uwtable` to them). The Darwin
+    /// fallback states the 4 KiB stride explicitly; other targets retain their
+    /// existing attributes independently of the Darwin capability.
     pub(crate) fn stack_probe_attributes(self, darwin_helper: bool) -> &'static str {
         match self.stack_probe() {
             "__chkstk_darwin" if darwin_helper => "\"probe-stack\"=\"__chkstk_darwin\"",
