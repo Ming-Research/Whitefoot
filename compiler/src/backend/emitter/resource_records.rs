@@ -173,8 +173,9 @@ pub(super) fn resource_record_latch_fallback() -> Result<Module, BackendFailure>
 /// floor runtime's, not this module's, so the parking also holds between this
 /// writer and the floor's own — an execution that runs out of stack on one
 /// thread while another is refused an allocation still produces exactly one
-/// well-formed record rather than two interleaved ones. [PAR-1]'s
-/// erroneous-execution guarantee is met by construction.
+/// well-formed record rather than two interleaved ones. That is a runtime
+/// contract and no source outcome: [SCOPE-3] keeps resource exhaustion outside
+/// the source execution model.
 ///
 /// *Which* record wins may depend on the schedule, and that is the whole of
 /// what a permitted overlap can change about one. The bytes are fixed by the
