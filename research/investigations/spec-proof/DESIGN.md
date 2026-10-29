@@ -1046,12 +1046,14 @@ set nodes[nodes[i].next].next = 1000_u32;
 
 The fix, reading 1: the kill row offers for restoration only the debts the
 statement found; a debt the statement's own rows add is widened to `[?]` where
-the batch kills its offset, without restoration. It is the only working form.
-Restoring the new debts with the facts before the batch is the gap; not
-widening them leaves a debt naming another element; restoring every debt with
-the facts after the batch would reject
-`type11-pos-field-offset-restored-before-moved`, whose restoration needs the
-facts before the cursor moves (inferred from the definitions, not run).
+the batch kills its offset, without restoration. Each other form compared is
+unsound or refuses a program the fix accepts. Restoring the new debts with the
+facts before the batch is the gap; not widening them leaves a debt naming
+another element; restoring every debt with the facts after the batch would
+reject `type11-pos-field-offset-restored-before-moved`, whose restoration needs
+the facts before the cursor moves; and refusing such a write, which is sound,
+also refuses a body that replaces the written storage whole before handing it
+off (inferred from the definitions, not run).
 
 The second: the swap row (TYPE-11.S3 line 11) does not tell a target that
 resolves to one member from one that resolves to several, as the two store
@@ -1086,12 +1088,22 @@ let got = lookup(index: &a, table: table);
 The fix: a target that resolves to several members moves no debt. A debt
 proved at or below one of its members stays where it is and is copied,
 exchanged, onto the other target, as a debt that may be at or below a target
-is; `provedOne` in `Ctx.swapStay` is this fix. It is the only sound form that
-accepts what Whitefoot#484's cases accept: moving the debt is the gap; keeping
-it without the copy lets the value swapped onto `x`, which may be the broken
-one, form an instance; and rejecting a swap through such a target rejects
-`type11-pos-joined-reference-swap-write-restored`, whose target resolves to
-two members (inferred from the definitions and the case, not run).
+is; `provedOne` in `Ctx.swapStay` is this fix. Each other form compared is
+unsound or refuses a program the fix accepts. Moving the debt is the gap, and
+keeping it without the copy lets the value swapped onto `x`, which may be the
+broken one, form an instance. Giving the other target a cover in place of the
+exchanged debt is sound and keeps the verdict of every case of Whitefoot#484,
+since only the case above swaps through such a target while a debt lies at or
+below one of its members; but a field write does not restore a cover
+(`type11-neg-swap-below-level-becomes-cover`), so `set x.value = 1_u64;` after
+the swap and then a hand-off of `x` would be refused. Rejecting every swap
+through such a target rejects
+`type11-pos-joined-reference-swap-write-restored`, whose target resolves to two
+members. Rejecting it only while a debt lies at or below a member refuses a
+body that repairs both places after the swap, and refuses
+`type11-neg-swap-joined-reference-keeps-debt` at the swap, while the case
+requires the refusal at the hand-off, by FN-8. All of this is inferred from the
+definitions and the cases, not run.
 
 ### Cases
 
