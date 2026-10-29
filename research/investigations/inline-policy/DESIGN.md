@@ -480,3 +480,33 @@ the merge base `05e4c58eb`.
   holding 1, where round 3's hint arm made it 0.944 on a Xeon 8573C. No floor
   was given, so the verdicts decide nothing; the i9-14900K run compares that
   cell with its floor, and a regression there needs the owner's card.
+
+## Round 5: the timing acceptance (i9-14900K)
+
+Written before measuring. Every side is built from the commit to merge (or
+one whose compiler sources equal it), against its merge base with `main`.
+
+- **Hash-map cells.** `compiler-compare.yml` on the 14900K, group
+  `hash_map` only, CPU 2, `floor` set to the hash-map floor recorded for the
+  14900K (21 cells, twin spread 0.5%–10.6%). Two pairs:
+  1. inline: candidate = the commit with the shrinking library of
+     wf-need-firn-hash-shrink, base = its merge base with the same library.
+     Accepted when remove-insert's interval lies wholly below 1 at 1,000,
+     10,000 and 1,000,000. Any cell wholly above 1 with its noise at or under
+     the floor is a regression of the design (iterate at 1,000,000 is the
+     cell round 4's hosted runs flagged at +0.4%), and needs the owner's
+     card stating its size before the change merges.
+  2. against the library before shrinking: candidate as in 1, base = the
+     merge base with `main`'s library. Accepted when no remove-insert
+     interval lies wholly above 1; other cells are reported, since shrinking
+     itself changes them.
+  Each run takes about five minutes on the 14900K (the earlier full-default
+  run of this workflow there took five). The interpreters group is left out:
+  its wall timer resolves only 0.1 s (compare-perf-wall-time), so its floor
+  does not count until compare-timer-resolution fixes it.
+- **Firn.** `redis-bench.yml` compare mode on the 14900K, Firn built by the
+  candidate's compiler and by the merge base's, everything else the same:
+  redis-benchmark's default tests at depths 1 and 16, 16 passes each, the
+  Firn floor recorded for that mode. Accepted when no test's interval lies
+  wholly above 1 with the twin's interval holding 1. It runs once Firn
+  compiles with a compiler of `main` (firn-pin-wf-main).
