@@ -1305,12 +1305,13 @@ insertion or a removal then reads nothing and does not step, because those
 can move pairs between nodes, while an edit or a replacement of a present key
 moves nothing and keeps cursors usable. The writer re-seeks by key.
 
-**Rank.** Firn's `ZRANK` summed the published subtrees before a key, about
-rank divided by the pairs a node holds in node visits. With the tree private,
-a client could only count by stepping a cursor back to the first pair, one
-descent per step, about rank times height in node visits: at a million
-members and five levels, some 80 times the work. `ordered_map_rank` keeps the
-earlier cost inside the module: it follows the cursor's path and adds, at each
+**Rank.** Firn's `ZRANK` summed the published subtrees before a key: one
+size call for every link it passed, empty links below leaf entries included,
+so about one call and one loop turn per preceding pair. With the tree
+private, a client could only count by stepping a cursor back to the first
+pair, one descent from the root per step, about two calls per level for every
+preceding pair: some five to ten times the work at five levels, growing with
+the height. `ordered_map_rank` keeps the earlier cost inside the module: it follows the cursor's path and adds, at each
 level, the entries before the path and the whole subtrees left of it. Storing
 subtree sizes in the nodes would make rank logarithmic, but it changes the
 representation and is not part of this comparison. These costs are read from
