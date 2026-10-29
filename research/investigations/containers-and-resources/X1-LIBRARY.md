@@ -933,7 +933,7 @@ function-kind parameters follow the existing HashMap callback forms:
 | `ordered_map_each(map: &M, env: &F)` | unit; visit every pair in order. |
 | `ordered_map_range(map: &M, lower: &K, upper: &K, key_env: &E, visit_env: &F)` | unit; ordered half-open `[lower,upper)` visit, empty for equal/inverted bounds under lawful order. |
 | `ordered_map_first(map: &M)`, `ordered_map_last(map: &M)`, `ordered_map_seek(map: &M, seek, probe: &P, env: &E)` | `OrderedCursor`, an owned position at an end or at one of four probe placements ([Ordered-map cursor](#ordered-map-cursor)). |
-| `ordered_map_step(map: &M, cursor: &OrderedCursor, direction)`, `ordered_map_read(map: &M, cursor: &OrderedCursor, env: &F)` | Bool for a move one pair either way; `Result<R,unit>` from an observing callback on the cursor's pair; a cursor made before the latest insertion or removal neither moves nor reads. |
+| `ordered_map_step(map: &M, cursor: &OrderedCursor, direction)`, `ordered_map_read(map: &M, cursor: &OrderedCursor, env: &F)`, `ordered_map_rank(map: &M, cursor: &OrderedCursor)` | Bool for a move one pair either way; `Result<R,unit>` from an observing callback on the cursor's pair; `Result<u64,unit>` counting the pairs before it; a cursor made before the latest insertion or removal neither moves, reads nor ranks. |
 | `ordered_map_free(map: M, env: &F)` | unit; explicitly consume every remaining pair and release all nodes. |
 
 Observe/visit callbacks read key and value and write their environment; edit
@@ -1305,6 +1305,17 @@ insertion or a removal then reads nothing and does not step, because those
 can move pairs between nodes, while an edit or a replacement of a present key
 moves nothing and keeps cursors usable. The writer re-seeks by key.
 
+**Rank.** Firn's `ZRANK` summed the published subtrees before a key, about
+rank divided by the pairs a node holds in node visits. With the tree private,
+a client could only count by stepping a cursor back to the first pair, one
+descent per step, about rank times height in node visits: at a million
+members and five levels, some 80 times the work. `ordered_map_rank` keeps the
+earlier cost inside the module: it follows the cursor's path and adds, at each
+level, the entries before the path and the whole subtrees left of it. Storing
+subtree sizes in the nodes would make rank logarithmic, but it changes the
+representation and is not part of this comparison. These costs are read from
+the code, not timed.
+
 **Path bound.** The path is 32 levels. Every node below the root keeps at
 least seven entries, so eight children, and the root at least two children
 once it has a child, so a tree of depth 33 holds at least 2 times 8^31 times 7
@@ -1313,8 +1324,11 @@ pair instead. This is a deduction from the balancing in
 `lib/std/collections/ordered_map/ordered-map.wf`, not a measurement.
 
 **Not measured.** The cost of one descent per step against the callback walk
-was not timed. A sorted-set range command measured materially slower than its
-earlier node walk would reopen the comparison.
+was not timed. Firn's sorted-set range commands (`ZRANGE` with `LIMIT`,
+`ZREVRANGE`, `ZRANGEBYSCORE`) and `ZRANK` are to be compared on the i9-14900K
+with Firn's `redis-bench compare` when Firn adopts a Whitefoot release that
+carries the cursor; a range command measured materially slower than its earlier
+node walk would reopen the comparison.
 
 ## Ceiling challenges connected to real source contracts
 

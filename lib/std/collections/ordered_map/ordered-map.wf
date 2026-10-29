@@ -812,6 +812,97 @@ fn ordered_map_read<K, V, F, R, fn observe(env: &F, key: &K, value: &V) -> resul
   return ordered_map_read_link::<K, V, F, R, fn observe>(link: &map^.root, cursor: cursor, level: 0_u64, env: env);
 }
 
+fn ordered_map_link_size<K, V>(link: &Slots<Box<OrderedNode<K, V>>, 1>) -> size: u64 reads(link) {
+  doc "The number of pairs the subtree a link holds keeps; it is at most the map's length, so the sums cannot wrap.";
+  if link^.len == 0_u64 {
+    return 0_u64;
+  }
+  let node = &link^[0_u64].inner;
+  let size = ordered_map_link_size::<K, V>(link: &node^.leading);
+  let count = node^.entries.len;
+  set size = size +wrap count;
+  for (index in 0_u64..count) {
+    let below = ordered_map_link_size::<K, V>(link: &node^.entries[index].after);
+    set size = size +wrap below;
+  }
+  return size;
+}
+
+fn ordered_map_count_prefix<K, V>(node: &OrderedNode<K, V>, pairs: u64, subtrees: u64) -> count: u64 reads(node) {
+  doc "The pairs held by the node's first pairs entries and, whole, by its first subtrees child subtrees (the leading link, then each entry's following link).";
+  let count = 0_u64;
+  if subtrees > 0_u64 {
+    set count = ordered_map_link_size::<K, V>(link: &node^.leading);
+  }
+  let total = node^.entries.len;
+  for (index in 0_u64..total) {
+    if index < pairs {
+      set count = count +wrap 1_u64;
+    }
+    let following = index + 1_u64;
+    if following < subtrees {
+      let below = ordered_map_link_size::<K, V>(link: &node^.entries[index].after);
+      set count = count +wrap below;
+    }
+  }
+  return count;
+}
+
+fn ordered_map_rank_link<K, V>(link: &Slots<Box<OrderedNode<K, V>>, 1>, cursor: &OrderedCursor, level: u64) -> result: Result<u64, unit> reads(link), reads(cursor) {
+  if link^.len > 0_u64 {
+    return ordered_map_rank_node::<K, V>(node: &link^[0_u64].inner, cursor: cursor, level: level);
+  }
+  return Err<u64, unit>(error: unit);
+}
+
+fn ordered_map_rank_node<K, V>(node: &OrderedNode<K, V>, cursor: &OrderedCursor, level: u64) -> result: Result<u64, unit> reads(node), reads(cursor) {
+  doc "Follows the cursor's path, adding at each level the pairs of this node that come before the path: the entries before it and the whole subtrees left of it.";
+  if level < 32_u64 {
+  } else {
+    return Err<u64, unit>(error: unit);
+  }
+  let index = cvt::<u8, u64>(cursor^.path[level]);
+  let next = level + 1_u64;
+  if next >= cursor^.depth {
+    if index < node^.entries.len {
+      let following = index + 1_u64;
+      let before = ordered_map_count_prefix::<K, V>(node: node, pairs: index, subtrees: following);
+      return Ok<u64, unit>(value: before);
+    }
+    return Err<u64, unit>(error: unit);
+  }
+  if index > node^.entries.len {
+    return Err<u64, unit>(error: unit);
+  }
+  let before = ordered_map_count_prefix::<K, V>(node: node, pairs: index, subtrees: index);
+  let below = Err<u64, unit>(error: unit);
+  if index == 0_u64 {
+    set below = ordered_map_rank_link::<K, V>(link: &node^.leading, cursor: cursor, level: next);
+  } else {
+    let previous = index - 1_u64;
+    set below = ordered_map_rank_link::<K, V>(link: &node^.entries[previous].after, cursor: cursor, level: next);
+  }
+  match below {
+    Ok(value: inner) => {
+      let total = before +wrap inner;
+      return Ok<u64, unit>(value: total);
+    }
+    Err(error: absent) => {
+      return Err<u64, unit>(error: unit);
+    }
+  }
+}
+
+fn ordered_map_rank<K, V, const ceiling: u64>(map: &OrderedMap<K, V, ceiling>, cursor: &OrderedCursor) -> result: Result<u64, unit> reads(map), reads(cursor) {
+  if cursor^.version != map^.version {
+    return Err<u64, unit>(error: unit);
+  }
+  if cursor^.depth == 0_u64 {
+    return Err<u64, unit>(error: unit);
+  }
+  return ordered_map_rank_link::<K, V>(link: &map^.root, cursor: cursor, level: 0_u64);
+}
+
 fn ordered_map_free_node<K, V, F, fn consume(env: &F, key: K, value: V) -> result: unit writes(env)>(node: Box<OrderedNode<K, V>>, env: &F) -> result: unit writes(env) {
   loop @entries {
     if node.inner.entries.len == 0_u64 {

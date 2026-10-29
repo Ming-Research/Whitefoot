@@ -5,7 +5,6 @@ alias Entry = pkg::store::Entry;
 alias HashMapPair = std::collections::hash_map::HashMapPair;
 alias KeyEnv = pkg::bytes::KeyEnv;
 alias OrderedCursor = std::collections::ordered_map::OrderedCursor;
-alias OrderedDirection = std::collections::ordered_map::OrderedDirection;
 alias OrderedSeek = std::collections::ordered_map::OrderedSeek;
 alias Rank = pkg::store::Rank;
 alias RankOrder = pkg::store::RankOrder;
@@ -35,10 +34,10 @@ alias ordered_map_last = std::collections::ordered_map::ordered_map_last;
 alias ordered_map_len = std::collections::ordered_map::ordered_map_len;
 alias ordered_map_new = std::collections::ordered_map::ordered_map_new;
 alias ordered_map_put = std::collections::ordered_map::ordered_map_put;
+alias ordered_map_rank = std::collections::ordered_map::ordered_map_rank;
 alias ordered_map_read = std::collections::ordered_map::ordered_map_read;
 alias ordered_map_remove = std::collections::ordered_map::ordered_map_remove;
 alias ordered_map_seek = std::collections::ordered_map::ordered_map_seek;
-alias ordered_map_step = std::collections::ordered_map::ordered_map_step;
 alias push_item = pkg::protocol::push_item;
 alias push_score = pkg::protocol::push_score;
 alias rank_compare = pkg::store::rank_compare;
@@ -955,35 +954,20 @@ fn run_zmscore(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: 
   return unit;
 }
 
-fn rank_seen(env: &KeyEnv, key: &Rank, value: &unit) -> result: unit pure {
-  doc "Observes that a cursor is on a rank.";
-  return unit;
-}
-
 fn rank_before(sorted: &Sorted, key: &Rank, env: &KeyEnv) -> below: u64 reads(sorted), reads(key), reads(env) {
-  doc "How many ranks of a sorted set come before the key: the last rank before it and every rank back to the first.";
+  doc "How many ranks of a sorted set come before the key: one more than the count before the last rank below it, or none when no rank is below it.";
   let seek = OrderedSeek::OrderedBelow();
   let cursor = ordered_map_seek::<Rank, unit, KeyEnv, Rank, fn rank_compare, ceiling>(map: &sorted^.order, seek: seek, probe: key, env: env);
-  let keys = KeyEnv();
-  let on = ordered_map_read::<Rank, unit, KeyEnv, unit, fn rank_seen, ceiling>(map: &sorted^.order, cursor: &cursor, env: &keys);
-  match on {
-    Ok(value: seen) => {
+  let counted = ordered_map_rank::<Rank, unit, ceiling>(map: &sorted^.order, cursor: &cursor);
+  match counted {
+    Ok(value: before) => {
+      let below = before +wrap 1_u64;
+      return below;
     }
     Err(error: absent) => {
       return 0_u64;
     }
   }
-  let back = OrderedDirection::OrderedBackward();
-  let below = 1_u64;
-  loop @ranks {
-    let moved = ordered_map_step::<Rank, unit, ceiling>(map: &sorted^.order, cursor: &cursor, direction: back);
-    if moved {
-    } else {
-      break @ranks;
-    }
-    set below = below +wrap 1_u64;
-  }
-  return below;
 }
 
 fn member_rank(env: &Client, value: &Entry) -> kind: u64 reads(value), writes(env) {
