@@ -1036,7 +1036,7 @@ fn control_range_transport(module: &str) -> String {
 /// Observe the selected outer demand word without changing an inner loop's
 /// requests. With no outer request, ordinary slices must retain inner offers;
 /// the real request arm still proves a nonowner publication and completion.
-fn observe_outer_loop_budget(module: &str, caller: &str, splitter: &str, chunk: &str) -> String {
+fn observe_outer_loop_budget(module: &str, splitter: &str, chunk: &str) -> String {
     let mut observed = control_range_transport(module);
     for (symbol, observer) in [
         (splitter, "wf_test_outer_splitter"),
@@ -1497,8 +1497,7 @@ fn nested_boxed_array_payload_reductions_preserve_the_unsplit_result() {
             function_body(&split, outer_splitter).contains(&format!("call i64 {symbol}("))
         })
         .expect("the outer splitter has one chunk");
-    let observed =
-        observe_outer_loop_budget(&split, "@wf_nested", outer_splitter, outer_chunk_symbol);
+    let observed = observe_outer_loop_budget(&split, outer_splitter, outer_chunk_symbol);
     let observer = format!(
         "#define WF_TEST_NESTED 1\n{}\n{OUTER_LOOP_BUDGET_OBSERVER}",
         super::parallel::WORKER_SCHEDULE,
@@ -1627,7 +1626,7 @@ fn an_independent_map_joins_and_preserves_its_outer_buffer() {
     }
     identical(&runs).expect("splitting an independent map must not move one output byte");
 
-    let observed = observe_outer_loop_budget(&split, "@wf_mapped", &splitter_symbol, &chunk_symbol);
+    let observed = observe_outer_loop_budget(&split, &splitter_symbol, &chunk_symbol);
     let observer = format!(
         "#define WF_TEST_NESTED 0\n{}\n{OUTER_LOOP_BUDGET_OBSERVER}",
         super::parallel::WORKER_SCHEDULE,
