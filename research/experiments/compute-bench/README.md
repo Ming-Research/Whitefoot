@@ -1,5 +1,13 @@
 # compute-bench
 
+**This bundle does not build since default `--par` splits on demand
+(compute-bench-demand-split).** The harness asks the runtime for
+`wf__par_split_budget` and `wf__sched_split_work`, and the Makefile reads the
+budget call's weight out of each `--par` module and asserts that every image
+links the budget function; demand splitting removed all three. Every target
+here, `programs-check` included, and every command below fails until that
+item ports the bundle.
+
 One question, one table per host:
 
 > **For each kernel, at each width, is the Whitefoot program built by this
@@ -596,6 +604,8 @@ translation units of the twin, including the floor, scheduler, completion and
 ordinary-value bodies, so one tree can answer "what would this runtime constant be
 worth on this block of kernels" without editing the constant per run:
 
+Like every command here, this waits for compute-bench-demand-split.
+
 ```sh
 make compare RESULTS=$WHITEFOOT_SCRATCH_ROOT/whitefoot-compute-bench/results/spin-0 \
      WF_RUNTIME_CONTROL_FLAGS=-DWF_PAR_SPIN_ROUNDS=0
@@ -714,6 +724,8 @@ order, and the `wf` row's `ratio` is the median of **within-pass matched pairs**
 rather than a quotient of two run medians. The twin puts a second Whitefoot
 image into those same passes, so the two arms of an A/B are separated by
 minutes of one machine's own schedule instead of by two runs.
+
+Like every command here, these wait for compute-bench-demand-split.
 
 ```sh
 # the idle lanes' spin and yield rounds, one candidate against the shipped
