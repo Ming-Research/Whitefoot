@@ -701,10 +701,13 @@ fn emit_module(
     {
         text.declare_global("wf__empty_window".to_owned(), "[64 x i8]", 64);
     }
+    // Every definition this module emits carries group #0, so each gets
+    // LLVM's inline-hint level while the C runtime keeps its defaults
+    // (compiler/inline-hints).
     text.attribute_group(
         0,
         format!(
-            "{} uwtable",
+            "{} inlinehint uwtable",
             target.stack_probe_attributes(crate::toolchain::facts().darwin_stack_probe_helper)
         ),
     );
