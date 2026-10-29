@@ -1123,7 +1123,7 @@ sequences with a small fact core, and the build checks each verdict with
 - `type11-neg-swap-joined-reference-keeps-debt`, the second gap's example:
   rejected, and the value swapped onto `x` gets no instance.
 
-A temporary workflow put back, one per job, the rule each of three of these
+A temporary workflow put back, one per job, the rule each of four of these
 cases protects, and required the cases to fail and the proofs not to check.
 With the fifteenth round's joined store, a store through a reference with
 several members removing the debts proved at or below every member, the checks
@@ -1133,8 +1133,10 @@ of `type11-neg-joined-reference-store-keeps-debt` and
 exchanged debt keeping its recorded reference, the checks of the two
 `type11-neg-swap-after-joined-write-…` cases failed and `Debt.exchange_covers`
 did not check. With the first gap's literal reading, its case failed and
-`Ctx.writeDebts_cover` and `Ctx.store_holds` did not check. No other check
-failed.
+`Ctx.writeDebts_cover` and `Ctx.store_holds` did not check. With the second
+gap's literal reading, a target with several members moving the debts proved
+at or below each member, the second gap's case failed at its hand-off and
+`provedOne_false` did not check. No other check failed.
 
 ### Line by line
 
@@ -1226,11 +1228,16 @@ object code. With those lemmas merged in, the build took 61.5 s, 66.1 s and
 64.5 s on the next three runs, the three modules 3.3 to 3.6 s, 1.5 to 2.1 s and
 5.1 to 5.7 s, and the build's provisional budget rises from 85 s to 100 s,
 1.5 times 66.1 s rounded up to 5 s. The study's estimate was about 1,200 lines
-of definitions and 4,000 of proof. The part took two engineer turns, the first
-of which also made the study, ten `proof.yml` runs and three runs of the
-temporary workflow to its review. Three runs failed to compile: the meaning of
-a cover named a place it had not bound, three steps of the first lemmas did not
-type-check, and a lemma's proof referred to itself.
+of definitions and 4,000 of proof. The part took three engineer turns to its
+review, the first of which also made the study and the last of which only
+handed it on, with ten `proof.yml` runs and three runs of the temporary
+workflow. Three runs failed to compile: the meaning of a cover named a place it
+had not bound, three steps of the first lemmas did not type-check, and a
+lemma's proof referred to itself. The review found the second gap, which the
+draft had listed as a reading, and a declaration count the merge had made
+stale. The fixes, with the second gap's case and the workflow's fourth job,
+took one more engineer turn, two more `proof.yml` runs, the first of which
+built in 63.1 s, and two more runs of the temporary workflow.
 
 ## Cost
 
