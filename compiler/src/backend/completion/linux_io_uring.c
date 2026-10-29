@@ -485,7 +485,9 @@ int wf_linux_io_uring_carries(const wf_completion_record *record) {
         return record->request.operation.open_at.path != NULL
             && record->request.operation.open_at.has_mode <= 1u
             && record->request.operation.open_at.expected_kind
-                <= WF_FILE_EXPECT_DIRECTORY;
+                <= WF_FILE_EXPECT_DIRECTORY
+            && !wf_file_open_walks(record->request.operation.open_at.path,
+                                   record->request.operation.open_at.flags);
     case WF_FILE_CLOSE:
         return record->request.operation.close.descriptor >= 0;
     /* The four TCP kinds the ring carries (ordinary native library), which is where a

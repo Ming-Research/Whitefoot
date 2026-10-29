@@ -910,6 +910,7 @@ int wf__windows_relative_path_valid(
     uint64_t unit_count
 ) {
     uint64_t index;
+    uint64_t start;
     if (unit_count == 0) {
         return 1;
     }
@@ -928,6 +929,19 @@ int wf__windows_relative_path_valid(
     for (index = 0; index < unit_count; ++index) {
         if (text[index] == 0) {
             return 0;
+        }
+    }
+    /* [PRE-2] A component `..` would select the directory above the one the
+     * path is looked up from. Both `/` and `\` separate components. */
+    start = 0;
+    for (index = 0; index <= unit_count; ++index) {
+        if (index == unit_count || text[index] == UINT16_C('/')
+            || text[index] == UINT16_C('\\')) {
+            if (index - start == 2 && text[start] == UINT16_C('.')
+                && text[start + 1] == UINT16_C('.')) {
+                return 0;
+            }
+            start = index + 1;
         }
     }
     return 1;
@@ -1544,7 +1558,7 @@ done:
     return error;
 }
 
-static int wf_windows_open_at_worker(
+static int wf_windows_open_at_single(
     HANDLE root,
     const char *path,
     int flags,
@@ -1786,6 +1800,143 @@ static int wf_windows_open_at_worker(
     }
     *open_outcome = WF_WINDOWS_OPEN_SUCCEEDED;
     return descriptor;
+}
+
+/* [PRE-2] A path of several components that is opened without following a
+ * link (the no-follow flag) is looked up one component at a time, so that no
+ * component follows a reparse point: each component before the last, other
+ * than `.` and an empty one, which select the directory they are looked up in,
+ * is opened as a directory of the one before it with the reparse point itself
+ * as the object opened, and one that is a reparse point ends the open. The
+ * last component is then opened as a name is, from the directory the others
+ * reached, which refuses a reparse point at it. `/` and `\` separate
+ * components, and `relative_path` has already refused a component `..`. A
+ * name, a host path and a directory creation have one component to look up or
+ * follow links by design, and open as they did. */
+static int wf_windows_open_at_worker(
+    HANDLE root,
+    const char *path,
+    int flags,
+    unsigned mode,
+    unsigned has_mode,
+    unsigned expected_kind,
+    unsigned descriptor_class,
+    unsigned create_directory,
+    int *error_code,
+    unsigned *open_outcome
+) {
+    const uint16_t *units = (const uint16_t *)(const void *)path;
+    uint16_t component[WF_WINDOWS_COMPONENT_MAX_BYTES / 2u + 1u];
+    HANDLE current = root;
+    int owned = 0;
+    size_t unit_count = 0;
+    size_t at = 0;
+    size_t scan;
+    int separated = 0;
+    if (path != NULL && flags == WF_WINDOWS_NO_FOLLOW && !create_directory
+        && error_code != NULL && open_outcome != NULL
+        && wf_windows_bounded_wcslen(units, &unit_count)) {
+        for (scan = 0; scan < unit_count; ++scan) {
+            if (wf_windows_path_separator(units[scan])) {
+                separated = 1;
+                break;
+            }
+        }
+    }
+    if (!separated) {
+        return wf_windows_open_at_single(root, path, flags, mode, has_mode,
+            expected_kind, descriptor_class, create_directory, error_code,
+            open_outcome);
+    }
+    *error_code = 0;
+    *open_outcome = WF_WINDOWS_OPEN_FAILED;
+    if (!wf_windows_handle_valid(root)
+        || !wf__windows_relative_path_valid(units, (uint64_t)unit_count)) {
+        *error_code = wf_windows_handle_valid(root)
+            ? ERROR_INVALID_NAME : ERROR_INVALID_HANDLE;
+        wf_windows_record_error((DWORD)*error_code);
+        return -1;
+    }
+    for (;;) {
+        size_t end = at;
+        size_t length;
+        int last;
+        while (end < unit_count && !wf_windows_path_separator(units[end])) {
+            end++;
+        }
+        length = end - at;
+        last = end == unit_count;
+        if (length > WF_WINDOWS_COMPONENT_MAX_BYTES / 2u) {
+            *error_code = ERROR_FILENAME_EXCED_RANGE;
+            wf_windows_record_error(ERROR_FILENAME_EXCED_RANGE);
+            break;
+        }
+        if (length == 0 || (length == 1 && units[at] == UINT16_C('.'))) {
+            if (last) {
+                /* The path ends at a directory it already reached. */
+                if (expected_kind == WF_WINDOWS_EXPECT_REGULAR) {
+                    *open_outcome = WF_WINDOWS_OPEN_IS_DIRECTORY;
+                } else {
+                    *error_code = ERROR_INVALID_NAME;
+                    wf_windows_record_error(ERROR_INVALID_NAME);
+                }
+                break;
+            }
+            at = end + 1;
+            continue;
+        }
+        memcpy(component, units + at, length * sizeof(uint16_t));
+        component[length] = 0;
+        if (last) {
+            int descriptor = wf_windows_open_at_single(current,
+                (const char *)(const void *)component, flags, mode, has_mode,
+                expected_kind, descriptor_class, 0, error_code, open_outcome);
+            if (owned) {
+                wf_windows_open_return_provisional_handle(&current);
+            }
+            return descriptor;
+        }
+        {
+            FILE_ATTRIBUTE_TAG_INFO tag_information;
+            HANDLE next = wf_windows_open_namespace_handle(
+                current, (const char *)(const void *)component,
+                FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES
+                    | SYNCHRONIZE,
+                FILE_DIRECTORY_FILE | FILE_OPEN_FOR_BACKUP_INTENT
+                    | FILE_OPEN_REPARSE_POINT,
+                error_code);
+            if (!wf_windows_handle_valid(next)) {
+                wf_windows_record_error((DWORD)*error_code);
+                break;
+            }
+            if (GetFileInformationByHandleEx(
+                    next, FileAttributeTagInfo, &tag_information,
+                    (DWORD)sizeof(tag_information)) == FALSE) {
+                DWORD error = GetLastError();
+                wf_windows_open_return_provisional_handle(&next);
+                *error_code = (int)error;
+                *open_outcome = WF_WINDOWS_OPEN_STATUS_FAILED;
+                wf_windows_record_error(error);
+                break;
+            }
+            if ((tag_information.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)
+                != 0) {
+                wf_windows_open_return_provisional_handle(&next);
+                *open_outcome = WF_WINDOWS_OPEN_OTHER_KIND;
+                break;
+            }
+            if (owned) {
+                wf_windows_open_return_provisional_handle(&current);
+            }
+            current = next;
+            owned = 1;
+        }
+        at = end + 1;
+    }
+    if (owned) {
+        wf_windows_open_return_provisional_handle(&current);
+    }
+    return -1;
 }
 
 int wf__windows_completion_file_open_at_worker(
