@@ -1094,7 +1094,7 @@ fn main() -> status: std::process::ExitStatus pure {
                     instruction,
                     IrInstruction::Define {
                         operation: IrOperation::Integer {
-                            operation: IrIntegerOperation::AddWrap,
+                            operation: IrIntegerOperation::AddExact,
                             operand_type: IrType::Integer {
                                 width: 64,
                                 signed: false,
@@ -1148,7 +1148,7 @@ fn main() -> status: std::process::ExitStatus pure {
                         instruction,
                         IrInstruction::Define {
                             operation: IrOperation::Integer {
-                                operation: IrIntegerOperation::AddWrap,
+                                operation: IrIntegerOperation::AddExact,
                                 operand_type: IrType::Integer {
                                     width: 64,
                                     signed: false,
