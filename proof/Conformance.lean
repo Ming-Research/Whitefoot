@@ -116,6 +116,38 @@ fn main() -> status: std::process::ExitStatus pure {
   let z = y0 + 1_u8;
   return std::process::exit_status(code: z);
 }
+", some "FN-9"),
+  -- The call passes the divisor `0_u64`, which refutes `d != 0_u64`. A
+  -- disequality is proved by its L0 facts alone [ENT-6]; giving it an
+  -- empty list of affine components would discharge it vacuously, admit the
+  -- call, and let the division by zero run [FN-8].
+  ("a disequality requirement the call refutes", "fn divide(n: u64, d: u64) -> q: u64 pure contract {
+  requires d != 0_u64;
+} {
+  let r = n / d;
+  return r;
+}
+fn main() -> status: std::process::ExitStatus pure {
+  let v = divide(n: 84_u64, d: 0_u64);
+  if v == 42_u64 {
+  } else {
+    return std::process::exit_status(code: 201_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+", some "FN-8"),
+  -- The function returns its parameter, so the postcondition `r != v` is
+  -- false on every call; its L0 facts do not prove it, and it has no affine
+  -- component that could [FN-9, ENT-6].
+  ("a disequality postcondition the return refutes", "fn g(v: u8) -> r: u8 pure contract {
+  ensures r != v;
+} {
+  return v;
+}
+fn main() -> status: std::process::ExitStatus pure {
+  let w = g(v: 3_u8);
+  return std::process::exit_status(code: w);
+}
 ", some "FN-9")
 ]
 
