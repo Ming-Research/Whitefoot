@@ -11,7 +11,6 @@ on:
       - 'compiler/**'
       - 'tests/**'
       - 'design/**'
-      - 'research/**'
       - 'spec/**'
       - 'Makefile'
       - '.github/workflows/tmp-par-default-groups.yml'
