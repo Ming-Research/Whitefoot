@@ -107,10 +107,11 @@ jobs:
           for stage in spec-archives readme-translation spec-prose-integrity guidance source-size design-lint safety-claims; do
             perl .github/run-check.pl "tmp-$stage" make --no-print-directory "$stage"
           done
-      - name: The inline hint on every definition
-        run: perl .github/run-check.pl tmp-effect-attributes cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib effect_attributes
-      - name: The attribute group's stack probes and their negative controls
-        run: perl .github/run-check.pl tmp-exhaustion cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib exhaustion
+      # Every backend test: the hint test, the stack probes and their
+      # negative controls, and the tests that read a host-optimized module,
+      # whose inlining the hint can change.
+      - name: The backend's tests, the optimized-module shapes included
+        run: perl .github/run-check.pl tmp-backend cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib backend::tests
       - name: Sanitized groups
         run: perl .github/run-check.pl tmp-sanitizer cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --lib sanitizer
       - name: Fragment modules
