@@ -1,0 +1,325 @@
+# The fast workflow of the wf-agents engine (`ci.fast` of wf-agents.toml):
+# what an agent waits for when it asks the engine to run tests while it
+# writes, and what the engine's check before a merge runs again of the tests
+# the full workflows failed. It runs only when the engine asks, by hand, and
+# runs only what it is asked for: the Rust tests it is given by name, and the
+# gate's correctness groups `static` and `runtime` when it is given them as
+# checks. Every other check is the full workflows' (gate.yml, io-hosts.yml,
+# sanitizers.yml, proof.yml, map-sanitizers.yml and design-readiness.yml),
+# which the check before a merge runs once on the commit to merge.
+#
+# A test is named by the name libtest gives it in `cargo test`'s output, the
+# name its JUnit result gives it: its module path and function joined by
+# `::`, such as `programs::wfgrep::wfgrep_searches_a_real_tree_and_agrees_with_grep`.
+# The job `tests` builds the compiler's test binaries as the gate does (the
+# `gate` profile; the library's tests, the CLI's and the corpus harness) and
+# runs in each exactly the tests that have one of the names
+# (`--exact`), ignored ones too, since a test named is a test asked for.
+# Every binary runs to its end (`--no-fail-fast`). A name that no test has
+# runs nothing, and the engine says so, as it reads the results. The tests run
+# under libtest, as the gate runs them, not under a runner of one process per
+# test: the tests share process state as libtest runs them.
+#
+# Each job writes its results as JUnit XML with .github/junit.py, and the last
+# job puts them together in the artifact `test-results`, which the engine
+# reads: each test with its name, its outcome and what a failed one printed;
+# a test binary that was built and did not run to its result as a testsuite
+# with no testcase and an error; and a step of a job's own that failed beside
+# its tests as a testsuite of the job's name with an error naming the step.
+# libtest gives no test's time on stable Rust, so no testcase has one, and the
+# workflow takes no time limit for one test: a job stops at its own limit.
+#
+# It runs on GitHub's machines, as the gate does, from a fresh checkout each
+# time, with the host toolchain the gate installs.
+#
+# GitHub runs a workflow asked for by hand by the file of it on the branch it
+# is asked on. The engine always asks on main and gives the commit to test, so
+# this file as main holds it is what runs. The run's name holds the value only
+# that one request knows (`call`), by which the engine finds the run it asked
+# for.
+name: fast
+
+run-name: fast ${{ inputs.call }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: The commit to check out and test, pushed to a branch of the repository already
+        required: true
+      call:
+        description: A value only the request that asks for this run knows, which the run's name holds
+        required: true
+      tests:
+        description: >-
+          The tests to run, each name followed by a line break. Empty for none
+        required: false
+        default: ''
+      checks:
+        description: >-
+          The checks to run beside the tests, as a JSON array of the names of their jobs, ["static"],
+          ["runtime"] or both. Empty or [] for none
+        required: false
+        default: '[]'
+
+permissions:
+  contents: read
+
+# No concurrency group: every run is asked for on main, and each is a request
+# an agent waits for, which another request must not cancel.
+
+env:
+  CARGO_TERM_COLOR: never
+  # A fresh checkout gains nothing from incremental state (compiler/Cargo.toml).
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  # The tests named, in one job, so that the test binaries are built once.
+  tests:
+    if: ${{ inputs.tests != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+
+      - name: Set the scratch root
+        run: echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+
+      # One name a line, or names apart by white space where the input holds no
+      # line break; each trimmed and listed in the log. A name that is not the
+      # form of a libtest name, words of letters, digits and `_` joined by
+      # `::`, is no test's name: it is said, and not given to cargo.
+      - name: Read the names
+        id: names
+        env:
+          TESTS: ${{ inputs.tests }}
+        run: |
+          set -f
+          if [[ $TESTS == *$'\n'* ]]; then mapfile -t given <<< "$TESTS"; else read -ra given <<< "$TESTS"; fi
+          : > "$RUNNER_TEMP/names"
+          for n in "${given[@]}"; do
+            n=$(sed 's/^[[:space:]]*//; s/[[:space:]]*$//' <<< "$n")
+            [ -n "$n" ] || continue
+            if [[ $n =~ ^[A-Za-z_][A-Za-z0-9_]*(::[A-Za-z_][A-Za-z0-9_]*)*$ ]]; then
+              echo "Named: $n"
+              printf '%s\n' "$n" >> "$RUNNER_TEMP/names"
+            else
+              echo "No test is named $n: a test's name is words of letters, digits and _ joined by ::"
+            fi
+          done
+          if [ -s "$RUNNER_TEMP/names" ]; then echo "any=true" >> "$GITHUB_OUTPUT"; else echo "any=false" >> "$GITHUB_OUTPUT"; fi
+
+      # The host toolchain the gate installs on Linux (gate.yml, "Install the
+      # host toolchain"): the LLVM major .github/llvm-major pins, as the
+      # /usr/bin/clang and ld.lld the compiler runs.
+      - name: Install the host toolchain
+        if: ${{ steps.names.outputs.any == 'true' }}
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          ld.lld --version
+          /usr/bin/clang --version
+          rustup default stable
+          cargo --version
+
+      - name: Fetch locked compiler dependencies
+        if: ${{ steps.names.outputs.any == 'true' }}
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+
+      # As in gate.yml: cases that prove programs die must not each wait for
+      # systemd-coredump.
+      - name: Decline core dumps
+        if: ${{ steps.names.outputs.any == 'true' }}
+        run: |
+          sudo sysctl -w kernel.core_pattern=core
+          cat /proc/sys/kernel/core_pattern
+
+      # Built apart from the run, so that a test binary that does not compile is
+      # told from a test that fails; cargo lists each binary it built
+      # (`Executable`), which .github/junit.py holds the run to.
+      - name: Build the tests
+        id: build
+        if: ${{ steps.names.outputs.any == 'true' }}
+        run: |
+          set -o pipefail
+          perl .github/run-check.pl fast/test-build \
+            cargo test --manifest-path compiler/Cargo.toml --profile gate --lib --bins --test '*' \
+            --no-run --locked --offline 2>&1 | tee "$RUNNER_TEMP/tests.log"
+
+      - name: Run the named tests
+        id: run
+        if: ${{ steps.names.outputs.any == 'true' }}
+        run: |
+          set -o pipefail
+          mapfile -t names < "$RUNNER_TEMP/names"
+          ulimit -c 0
+          perl .github/run-check.pl fast/tests \
+            cargo test --manifest-path compiler/Cargo.toml --profile gate --lib --bins --test '*' \
+            --no-fail-fast --locked --offline -- --exact --include-ignored "${names[@]}" \
+            2>&1 | tee -a "$RUNNER_TEMP/tests.log"
+
+      # Where no name was the form of a test's, nothing ran and the file holds
+      # an empty suite: the engine says of each name that no test has it.
+      - name: Name the results
+        if: ${{ !cancelled() }}
+        env:
+          ANY: ${{ steps.names.outputs.any }}
+          BUILD: ${{ steps.build.outcome }}
+          RUN: ${{ steps.run.outcome }}
+        run: |
+          if [ "$ANY" != true ]; then
+            python3 -B .github/junit.py job --job tests --out "$RUNNER_TEMP/junit/tests.xml"
+            exit 0
+          fi
+          python3 -B .github/junit.py job --job tests --out "$RUNNER_TEMP/junit/tests.xml" \
+            --log "$RUNNER_TEMP/tests.log" --tests-step "Run the named tests" \
+            --step "$BUILD" "Build the tests" --step "$RUN" "Run the named tests"
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: junit-tests
+          path: ${{ runner.temp }}/junit
+          if-no-files-found: ignore
+
+  # The gate's static group, by name: the repository's checks, the
+  # conformance structure, the performance instrument and the compiler's lint,
+  # as `make check-group GROUP=static` runs them.
+  static:
+    if: ${{ contains(fromJSON(inputs.checks || '[]'), 'static') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+          fetch-depth: 0
+          # The design-tree skill's lint, design/skill.
+          submodules: true
+
+      - name: Set the scratch root
+        run: echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+
+      # As in gate.yml: `spec-archives` and `readme-translation` read `main` as
+      # a local ref.
+      - name: Name main as a local ref
+        run: |
+          git branch -f main origin/main
+          git log --oneline -1 main
+
+      # The commit's change is what it holds beyond main: its fork point from
+      # main is the design review base.
+      - name: Select the design review base
+        run: |
+          design_review_base=$(git merge-base refs/remotes/origin/main HEAD)
+          echo "DESIGN_REVIEW_BASE=$design_review_base" >> "$GITHUB_ENV"
+          git log --oneline -1 "$design_review_base"
+
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          /usr/bin/clang --version
+          python3 --version
+          rustup default stable
+          rustup component add clippy rustfmt
+          cargo --version
+
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+
+      - name: static
+        id: stage
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: 900
+        run: make check-group GROUP=static
+
+      - name: Name the results
+        if: ${{ !cancelled() }}
+        env:
+          STAGE: ${{ steps.stage.outcome }}
+        run: |
+          python3 -B .github/junit.py job --job static --out "$RUNNER_TEMP/junit/static.xml" \
+            --tests-step static --step "$STAGE" static
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: junit-static
+          path: ${{ runner.temp }}/junit
+          if-no-files-found: ignore
+
+  # The gate's runtime group, by name: the C runtime's own tests, as
+  # `make check-group GROUP=runtime` runs them.
+  runtime:
+    if: ${{ contains(fromJSON(inputs.checks || '[]'), 'runtime') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+
+      - name: Set the scratch root
+        run: echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          /usr/bin/clang --version
+
+      - name: Decline core dumps
+        run: |
+          sudo sysctl -w kernel.core_pattern=core
+          cat /proc/sys/kernel/core_pattern
+
+      - name: runtime
+        id: stage
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: 900
+        run: make check-group GROUP=runtime
+
+      - name: Name the results
+        if: ${{ !cancelled() }}
+        env:
+          STAGE: ${{ steps.stage.outcome }}
+        run: |
+          python3 -B .github/junit.py job --job runtime --out "$RUNNER_TEMP/junit/runtime.xml" \
+            --tests-step runtime --step "$STAGE" runtime
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: junit-runtime
+          path: ${{ runner.temp }}/junit
+          if-no-files-found: ignore
+
+  # The results of every job that ran, in the one artifact the engine reads.
+  # Where no job kept results there is nothing to put together, and the
+  # engine says the run uploaded none.
+  results:
+    needs: [tests, static, runtime]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/upload-artifact/merge@v4
+        continue-on-error: true
+        with:
+          name: test-results
+          pattern: junit-*

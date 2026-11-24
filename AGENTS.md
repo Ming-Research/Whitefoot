@@ -271,6 +271,12 @@ build time apart from test and program execution.
   baselines), and `io-bench.yml`, `compute-bench.yml` and
   `firn-check-time.yml` (Firn's check on the 14900K runner) on request, which
   are experiments and never a gate.
+- The wf-agents engine (`wf-agents.toml`) starts `fast.yml` by hand to run
+  the Rust tests an agent names, and the `static` and `runtime` groups when
+  named. Before it merges a work, it starts `gate.yml`, `io-hosts.yml`,
+  `sanitizers.yml`, `proof.yml`, `map-sanitizers.yml` and
+  `design-readiness.yml` by hand on the commit to merge. Each such run reports
+  its results as JUnit XML (`.github/junit.py`); each file's header says how.
 - Compiler releases: `compiler-release.yml`, dispatched when a downstream
   project needs a main commit that has a successful gate run with macOS jobs
   (started by `gh workflow run gate.yml --ref <branch whose tip is the commit>

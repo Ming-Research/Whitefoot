@@ -8,7 +8,20 @@
 # conformance cases or this workflow runs it on every push, drafts included,
 # so a covered rule or a compared case cannot change without the model
 # changing in the same work; a push to main with such a change runs it again.
+#
+# The wf-agents engine runs this workflow as one of its full workflows
+# (`ci.full` of wf-agents.toml), by hand on main's file, giving the commit to
+# merge (`commit`) and a value only its request knows (`call`), which the
+# run's name holds. Such a run first asks whether the commit's change from its
+# fork point with main touches the paths below that start a pull request's
+# run, and checks the model only where it does, as a pull request's run would;
+# it has a concurrency group of its own that no other run cancels, and ends
+# with the job `Test results`, which says how each other job ended as JUnit
+# XML (.github/junit.py) in the artifact `test-results`, which the engine
+# reads. Every other run skips the first job and the last.
 name: proof
+
+run-name: ${{ inputs.call && format('proof {0}', inputs.call) || '' }}
 
 on:
   push:
@@ -25,24 +38,64 @@ on:
       - tests/conformance/**
       - .github/workflows/proof.yml
   workflow_dispatch:
+    inputs:
+      commit:
+        description: The commit to check, for the wf-agents engine; empty for the branch the run is asked on
+        required: false
+        default: ''
+      call:
+        description: A value only the engine's request knows, which the run's name holds; empty otherwise
+        required: false
+        default: ''
 
 # Each main commit gets its own group, as in gate.yml: a shared main group
 # would cancel the run of every merge but the last of a quick succession, and
-# the cancelled commit would show red on the main line.
+# the cancelled commit would show red on the main line. A run the engine asked
+# for has a group of its own, named by its `call`, and is never cancelled: the
+# engine waits for it.
 concurrency:
-  group: proof-${{ github.event.pull_request.number || github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
-  cancel-in-progress: true
+  group: proof-${{ inputs.call && format('call-{0}-', inputs.call) || '' }}${{ github.event.pull_request.number || github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
+  cancel-in-progress: ${{ !inputs.call }}
 
 jobs:
+  # Only in a run the engine asked for: whether the commit's change touches
+  # the paths that start a pull request's run, listed above.
+  scope:
+    name: Choose whether to check
+    if: ${{ inputs.call }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.scope.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Choose whether to check
+        id: scope
+        run: |
+          base=$(git merge-base refs/remotes/origin/main HEAD)
+          if git diff --quiet "$base" HEAD -- spec/kernel-spec.md proof tests/conformance .github/workflows/proof.yml; then
+            echo "The change from $base touches none of the model's paths."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "The change from $base touches the model's paths."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
   proof:
     name: Lean model and proofs
+    needs: scope
+    if: ${{ !cancelled() && (!inputs.call || needs.scope.outputs.run == 'true') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       # The pull request's head, the revision a merge would take.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ inputs.commit || github.event.pull_request.head.sha || github.sha }}
 
       - name: Name the time-budget record
         run: echo "WHITEFOOT_TIME_BUDGET_RECORD=$RUNNER_TEMP/time-budget-overruns.txt" >> "$GITHUB_ENV"
@@ -73,3 +126,26 @@ jobs:
       - name: Hold every stage to its time budget
         if: always()
         run: perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD"
+
+  # Only in a run the engine asked for: how each other job ended, as JUnit XML
+  # in the artifact `test-results`, which the engine reads (.github/junit.py).
+  results:
+    name: Test results
+    needs: [scope, proof]
+    if: ${{ !cancelled() && inputs.call }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+          sparse-checkout: .github
+          persist-credentials: false
+      - name: Name the results
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 -B .github/junit.py needs --out "$RUNNER_TEMP/junit/Test results.xml"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: ${{ runner.temp }}/junit

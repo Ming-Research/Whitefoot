@@ -6,7 +6,21 @@
 # only. The owner chose to run both on every such change and to merge none
 # that fails them (status board, 2026-10-09). The ordinary builds of the same
 # test run in the gate's runtime group.
+#
+# The wf-agents engine runs this workflow as one of its full workflows
+# (`ci.full` of wf-agents.toml), by hand on main's file, giving the commit to
+# merge (`commit`) and a value only its request knows (`call`), which the
+# run's name holds. Such a run first asks whether the commit's change from its
+# fork point with main touches the paths below that start a pull request's
+# run, and runs the sanitizers only where it does, so that no macOS runner is
+# taken for a change that leaves the map alone; it has a concurrency group of
+# its own that no other run cancels, and ends with the job `Test results`,
+# which says how each other job ended as JUnit XML (.github/junit.py) in the
+# artifact `test-results`, which the engine reads. Every other run skips the
+# first job and the last.
 name: map-sanitizers
+
+run-name: ${{ inputs.call && format('map-sanitizers {0}', inputs.call) || '' }}
 
 on:
   pull_request:
@@ -20,14 +34,62 @@ on:
       - compiler/Makefile
       - .github/workflows/map-sanitizers.yml
   workflow_dispatch:
+    inputs:
+      commit:
+        description: The commit to check, for the wf-agents engine; empty for the branch the run is asked on
+        required: false
+        default: ''
+      call:
+        description: A value only the engine's request knows, which the run's name holds; empty otherwise
+        required: false
+        default: ''
 
+# A run the engine asked for has a group of its own, named by its `call`, and
+# is never cancelled: the engine waits for it.
 concurrency:
-  group: map-sanitizers-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: map-sanitizers-${{ inputs.call && format('call-{0}-', inputs.call) || '' }}${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ !inputs.call }}
 
 jobs:
+  # Only in a run the engine asked for: whether the commit's change touches
+  # the paths that start a pull request's run, listed above.
+  scope:
+    name: Choose whether to check
+    if: ${{ inputs.call }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.scope.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Choose whether to check
+        id: scope
+        run: |
+          base=$(git merge-base refs/remotes/origin/main HEAD)
+          if git diff --quiet "$base" HEAD -- \
+            compiler/src/backend/concurrent_map.c \
+            compiler/src/backend/concurrent_map.h \
+            compiler/src/backend/concurrent_map_layout.h \
+            compiler/src/backend/concurrent_map_test.c \
+            compiler/src/backend/keyed_table.c \
+            compiler/src/backend/completion/bridge.h \
+            compiler/Makefile \
+            .github/workflows/map-sanitizers.yml; then
+            echo "The change from $base touches none of the map's paths."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "The change from $base touches the map's paths."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
   sanitizers:
     name: map sanitizers (${{ matrix.os }})
+    needs: scope
+    if: ${{ !cancelled() && (!inputs.call || needs.scope.outputs.run == 'true') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -43,7 +105,7 @@ jobs:
       # than the merge commit a pull request run checks out by default.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ inputs.commit || github.event.pull_request.head.sha || github.sha }}
       - name: Set the scratch root
         run: |
           echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
@@ -58,3 +120,26 @@ jobs:
       - name: Hold every stage to its time budget
         if: always()
         run: perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD"
+
+  # Only in a run the engine asked for: how each other job ended, as JUnit XML
+  # in the artifact `test-results`, which the engine reads (.github/junit.py).
+  results:
+    name: Test results
+    needs: [scope, sanitizers]
+    if: ${{ !cancelled() && inputs.call }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+          sparse-checkout: .github
+          persist-credentials: false
+      - name: Name the results
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 -B .github/junit.py needs --out "$RUNNER_TEMP/junit/Test results.xml"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: ${{ runner.temp }}/junit
