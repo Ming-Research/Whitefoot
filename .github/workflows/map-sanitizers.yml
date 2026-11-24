@@ -89,7 +89,10 @@ jobs:
   sanitizers:
     name: map sanitizers (${{ matrix.os }})
     needs: scope
-    if: ${{ !cancelled() && (!inputs.call || needs.scope.outputs.run == 'true') }}
+    # Not for a pull request from a branch of a work of the wf-agents engine
+    # (`work-<n>-<tag>`): the engine runs this workflow by hand on the commit
+    # it is about to merge.
+    if: ${{ !cancelled() && (!inputs.call || needs.scope.outputs.run == 'true') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || !startsWith(github.head_ref, 'work-')) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:

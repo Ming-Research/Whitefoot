@@ -41,7 +41,10 @@ env:
 jobs:
   regression:
     name: compute regression (ubuntu-24.04)
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    # Not for a pull request from a branch of a work of the wf-agents engine
+    # (`work-<n>-<tag>`): the engine merges on the checks it runs by hand
+    # (wf-agents.toml), and this comparison is not one of them.
+    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.pull_request.head.repo.full_name != github.repository || !startsWith(github.head_ref, 'work-')))
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
