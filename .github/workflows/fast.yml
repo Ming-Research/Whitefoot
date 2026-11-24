@@ -29,8 +29,44 @@
 # libtest gives no test's time on stable Rust, so no testcase has one, and the
 # workflow takes no time limit for one test: a job stops at its own limit.
 #
-# It runs on GitHub's machines, as the gate does, from a fresh checkout each
-# time, with the host toolchain the gate installs.
+# Every job runs on the owner's own machine, the self-hosted runner `14900k`,
+# and not on GitHub's machines. An agent waits for this workflow each time it
+# asks for tests, so a run builds again only what changed. The machine runs
+# several runners at once. Each runner keeps its own checkout between runs,
+# and with it `compiler/target`, which the `gate` profile builds
+# incrementally (compiler/Cargo.toml), so no step sets CARGO_INCREMENTAL. The
+# runners share one home, so the crates cargo fetched stay there too. A
+# checkout leaves these in place (`clean: false`), and the step after it
+# clears everything else the last run left. A runner's first run builds
+# everything.
+#
+# The machine has its own tools, and a job sets up nothing: it puts cargo's
+# directory on the path, since a runner service starts without the login
+# shell's path, and stops with the tool it lacks named. The compiler and its
+# tests run the clang at /usr/bin/clang and link with ld.lld; the job checks
+# that this clang is the LLVM major .github/llvm-major pins, as the gate
+# installs it on GitHub's machines. rustup picks the toolchain
+# compiler/rust-toolchain.toml names. A job has no root on the machine, so the
+# owner installs a missing tool or a new LLVM major there by hand.
+#
+# For the same reason no job sets the kernel's core pattern, as the gate does
+# on GitHub's machines (gate.yml, "Decline core dumps"). The steps that run
+# programs set the core file limit to zero, which declines a dump where the
+# pattern names a file. Where the machine's pattern pipes each dump to a
+# program, the limit does not stop it, and each test that ends a child process
+# waits for that program; the job then says so in a warning, and the owner sets
+# the pattern on the machine once.
+#
+# run-check.pl takes a lock for the whole host, and refuses a command while
+# another holds it. Several runners of the machine run jobs at once, so each
+# job takes its own lock instead (WHITEFOOT_CHECK_LOCK_DIR), under the job's
+# temporary directory. A timing workflow on this machine is therefore not kept
+# apart from this one.
+#
+# It runs only by hand, which only someone who may write to the repository can
+# ask for. The repository is public, and a trigger by a pull request would run
+# anyone's code on the owner's machine. No later step pushes, so no job leaves
+# the token in the checkout, which the runner keeps.
 #
 # GitHub runs a workflow asked for by hand by the file of it on the branch it
 # is asked on. The engine always asks on main and gives the commit to test, so
@@ -70,23 +106,55 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: never
-  # A fresh checkout gains nothing from incremental state (compiler/Cargo.toml).
-  CARGO_INCREMENTAL: 0
 
 jobs:
   # The tests named, in one job, so that the test binaries are built once.
   tests:
     if: ${{ inputs.tests != '' }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, 14900k]
+    # A runner's first run builds the whole compiler and its tests.
     timeout-minutes: 40
     steps:
+      # The whole history, as the job `static` fetches it: the runners keep
+      # their checkouts, and a shallow fetch here would make the next full
+      # fetch of the same checkout start again.
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          clean: false
           persist-credentials: false
 
-      - name: Set the scratch root
-        run: echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+      - name: Clear what the last run left
+        run: git clean -ffdxq -e /compiler/target/
+
+      - name: Set up the machine's tools
+        run: |
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.cargo/bin:$PATH"
+          echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+          echo "WHITEFOOT_CHECK_LOCK_DIR=$RUNNER_TEMP/check-lock" >> "$GITHUB_ENV"
+          missing=
+          for tool in /usr/bin/clang ld.lld cargo rustc perl python3; do
+            command -v "$tool" >/dev/null || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::The machine lacks:$missing"
+            exit 1
+          fi
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          /usr/bin/clang --version
+          ld.lld --version
+          if ! /usr/bin/clang --version | head -1 | grep -q "clang version $version\."; then
+            echo "::error::/usr/bin/clang is not LLVM $version, which .github/llvm-major pins"
+            exit 1
+          fi
+          (cd compiler && rustc --version && cargo --version)
+          pattern=$(cat /proc/sys/kernel/core_pattern)
+          echo "core_pattern: $pattern"
+          case $pattern in
+            '|'*) echo "::warning::The core pattern pipes each dump to a program, which a core file limit of zero does not stop" ;;
+          esac
 
       # One name a line, or names apart by white space where the input holds no
       # line break; each trimmed and listed in the log. A name that is not the
@@ -112,33 +180,10 @@ jobs:
           done
           if [ -s "$RUNNER_TEMP/names" ]; then echo "any=true" >> "$GITHUB_OUTPUT"; else echo "any=false" >> "$GITHUB_OUTPUT"; fi
 
-      # The host toolchain the gate installs on Linux (gate.yml, "Install the
-      # host toolchain"): the LLVM major .github/llvm-major pins, as the
-      # /usr/bin/clang and ld.lld the compiler runs.
-      - name: Install the host toolchain
-        if: ${{ steps.names.outputs.any == 'true' }}
-        run: |
-          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
-          version=$(tr -d '[:space:]' < .github/llvm-major)
-          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
-          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
-          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
-          ld.lld --version
-          /usr/bin/clang --version
-          rustup default stable
-          cargo --version
-
+      # Into the home the runners share, where a crate fetched before stays.
       - name: Fetch locked compiler dependencies
         if: ${{ steps.names.outputs.any == 'true' }}
         run: cargo fetch --locked --manifest-path compiler/Cargo.toml
-
-      # As in gate.yml: cases that prove programs die must not each wait for
-      # systemd-coredump.
-      - name: Decline core dumps
-        if: ${{ steps.names.outputs.any == 'true' }}
-        run: |
-          sudo sysctl -w kernel.core_pattern=core
-          cat /proc/sys/kernel/core_pattern
 
       # Built apart from the run, so that a test binary that does not compile is
       # told from a test that fails; cargo lists each binary it built
@@ -193,19 +238,37 @@ jobs:
   # as `make check-group GROUP=static` runs them.
   static:
     if: ${{ contains(fromJSON(inputs.checks || '[]'), 'static') }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, 14900k]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.commit }}
-          persist-credentials: false
           fetch-depth: 0
+          clean: false
+          persist-credentials: false
           # The design-tree skill's lint, design/skill.
           submodules: true
 
-      - name: Set the scratch root
-        run: echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+      - name: Clear what the last run left
+        run: git clean -ffdxq -e /compiler/target/
+
+      - name: Set up the machine's tools
+        run: |
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.cargo/bin:$PATH"
+          echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+          echo "WHITEFOOT_CHECK_LOCK_DIR=$RUNNER_TEMP/check-lock" >> "$GITHUB_ENV"
+          missing=
+          for tool in cargo rustc make perl python3; do
+            command -v "$tool" >/dev/null || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::The machine lacks:$missing"
+            exit 1
+          fi
+          python3 --version
+          (cd compiler && rustc --version && cargo --version && cargo clippy --version)
 
       # As in gate.yml: `spec-archives` and `readme-translation` read `main` as
       # a local ref.
@@ -221,19 +284,6 @@ jobs:
           design_review_base=$(git merge-base refs/remotes/origin/main HEAD)
           echo "DESIGN_REVIEW_BASE=$design_review_base" >> "$GITHUB_ENV"
           git log --oneline -1 "$design_review_base"
-
-      - name: Install the host toolchain
-        run: |
-          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
-          version=$(tr -d '[:space:]' < .github/llvm-major)
-          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
-          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
-          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
-          /usr/bin/clang --version
-          python3 --version
-          rustup default stable
-          rustup component add clippy rustfmt
-          cargo --version
 
       - name: Fetch locked compiler dependencies
         run: cargo fetch --locked --manifest-path compiler/Cargo.toml
@@ -260,33 +310,47 @@ jobs:
           if-no-files-found: ignore
 
   # The gate's runtime group, by name: the C runtime's own tests, as
-  # `make check-group GROUP=runtime` runs them.
+  # `make check-group GROUP=runtime` runs them. Its test programs are built
+  # under the job's temporary directory, so each run builds them again.
   runtime:
     if: ${{ contains(fromJSON(inputs.checks || '[]'), 'runtime') }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, 14900k]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.commit }}
+          fetch-depth: 0
+          clean: false
           persist-credentials: false
 
-      - name: Set the scratch root
-        run: echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+      - name: Clear what the last run left
+        run: git clean -ffdxq -e /compiler/target/
 
-      - name: Install the host toolchain
+      - name: Set up the machine's tools
         run: |
-          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+          echo "WHITEFOOT_CHECK_LOCK_DIR=$RUNNER_TEMP/check-lock" >> "$GITHUB_ENV"
+          missing=
+          for tool in /usr/bin/clang clang cc make perl python3; do
+            command -v "$tool" >/dev/null || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::The machine lacks:$missing"
+            exit 1
+          fi
           version=$(tr -d '[:space:]' < .github/llvm-major)
-          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
-          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
-          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
           /usr/bin/clang --version
-
-      - name: Decline core dumps
-        run: |
-          sudo sysctl -w kernel.core_pattern=core
-          cat /proc/sys/kernel/core_pattern
+          cc --version
+          if ! /usr/bin/clang --version | head -1 | grep -q "clang version $version\."; then
+            echo "::error::/usr/bin/clang is not LLVM $version, which .github/llvm-major pins"
+            exit 1
+          fi
+          pattern=$(cat /proc/sys/kernel/core_pattern)
+          echo "core_pattern: $pattern"
+          case $pattern in
+            '|'*) echo "::warning::The core pattern pipes each dump to a program, which a core file limit of zero does not stop" ;;
+          esac
 
       - name: runtime
         id: stage
@@ -311,11 +375,12 @@ jobs:
 
   # The results of every job that ran, in the one artifact the engine reads.
   # Where no job kept results there is nothing to put together, and the
-  # engine says the run uploaded none.
+  # engine says the run uploaded none. It needs no checkout and no root, and
+  # runs on the same machine as the jobs before it.
   results:
     needs: [tests, static, runtime]
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, 14900k]
     timeout-minutes: 5
     steps:
       - uses: actions/upload-artifact/merge@v4

@@ -68,22 +68,27 @@ expected = ["tests/conformance/manifest.jsonl"]
 # The workflows the engine runs by hand on main's file, giving the commit to
 # run on and a value only its request knows. Each reports what became of every
 # test, and of every job that runs no test, as JUnit XML in the artifact
-# `test-results` (.github/junit.py). All run on GitHub's machines (`github`),
-# as Whitefoot's checks do: `ubuntu-24.04`, and `windows-latest` in
-# io-hosts.yml and `macos-15` in map-sanitizers.yml beside it.
+# `test-results` (.github/junit.py).
 [ci.fast]
 # Builds the compiler's test binaries and runs only the tests it is given by
 # name; runs the gate's groups `static` and `runtime` only when they are named
 # as checks.
 workflow = "fast.yml"
-runner = "github"
+# On the owner's own machine, the self-hosted runner `14900k`. An agent waits
+# for this workflow each time it asks for tests, so it must be quick: each
+# runner there keeps its checkout, the compiler's build and the fetched crates
+# between runs, and builds again only what changed, where a GitHub machine
+# builds everything from a fresh checkout each time. The workflow runs only
+# by hand, since the repository is public.
+runner = "14900k"
 checks = ["static", "runtime"]
 # The tests run under libtest, as the gate runs them, which on stable Rust
 # gives no test's time and cannot stop one test; so the workflow takes no
 # limit for one test, and a job stops at its own time limit.
 test_stop_input = ""
-# A run not complete by then is cancelled, and said as what it found. A run
-# builds the test binaries from a fresh checkout, which takes some minutes.
+# A run not complete by then is cancelled, and said as what it found. A
+# runner's first run builds the test binaries from nothing, which takes some
+# minutes.
 too_long = "1h"
 
 [ci.full]
@@ -101,6 +106,9 @@ workflows = [
   "map-sanitizers.yml",
   "design-readiness.yml",
 ]
+# On GitHub's machines, as Whitefoot's checks run: `ubuntu-24.04`, and
+# `windows-latest` in io-hosts.yml and `macos-15` in map-sanitizers.yml beside
+# it.
 runner = "github"
 # As for the fast workflow: libtest cannot stop one test.
 test_stop_input = ""
