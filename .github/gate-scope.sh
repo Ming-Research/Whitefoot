@@ -36,11 +36,20 @@
 # run may check its head. A ready pull request from a fork is not asked: no
 # push to the fork starts a run here, so its opening always runs.
 #
+# A branch of this repository named `work-<n>-<tag>` belongs to a work of the
+# wf-agents engine (wf-agents.toml), which starts these workflows by hand on
+# the commit it is about to merge and merges only on their result. So a push
+# to such a branch, and the opening, reopening or marking ready of its pull
+# request, skip without a query: a run there would check the same change a
+# second time. A pull request from a fork's branch of that name is not the
+# engine's, and is decided as any other.
+#
 # It reads GITHUB_EVENT_NAME, GITHUB_EVENT_PATH, GITHUB_REF, GITHUB_REF_NAME,
 # GITHUB_REPOSITORY, GITHUB_REPOSITORY_OWNER, GITHUB_RUN_ID and
 # GITHUB_WORKFLOW_REF, as Actions sets them, and queries GitHub with `gh`
-# (GH_TOKEN) for a push to a branch other than main, for the opening of a pull
-# request from this repository and for the marking of one ready. A failed
+# (GH_TOKEN) for a push to a branch other than main and the engine's, for the
+# opening of a pull request from this repository and for the marking of one
+# ready, but not from the engine's branches. A failed
 # query fails the step rather than quietly skipping the checks.
 # .github/test-gate-scope.sh exercises it.
 set -eu
@@ -53,6 +62,14 @@ decide() {
     printf 'run=%s\nreason=%s\n' "$1" "$2"
 }
 
+# Whether a branch name is one of the wf-agents engine's works.
+engine_branch() {
+    case "$1" in
+        work-*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 case "$GITHUB_EVENT_NAME" in
     workflow_dispatch)
         decide true 'manual run'
@@ -61,6 +78,16 @@ case "$GITHUB_EVENT_NAME" in
         action=$(event .action)
         number=$(event .pull_request.number)
         draft=$(event .pull_request.draft)
+        head_ref=$(event .pull_request.head.ref)
+        from=$(event .pull_request.head.repo.full_name)
+        case "$action" in
+            ready_for_review | opened | reopened)
+                if [ "$from" = "$GITHUB_REPOSITORY" ] && engine_branch "$head_ref"; then
+                    decide false "pull request $number from $head_ref, a work of the wf-agents engine, which runs these checks by hand before it merges"
+                    exit 0
+                fi
+                ;;
+        esac
         case "$action" in
             ready_for_review)
                 head_sha=$(event .pull_request.head.sha)
@@ -115,6 +142,8 @@ case "$GITHUB_EVENT_NAME" in
             decide true 'push to main'
         elif [ "${GITHUB_REF#refs/heads/}" = "$GITHUB_REF" ]; then
             decide false "push to $GITHUB_REF, which is not a branch"
+        elif engine_branch "${GITHUB_REF#refs/heads/}"; then
+            decide false "push to ${GITHUB_REF#refs/heads/}, a work of the wf-agents engine, which runs these checks by hand before it merges"
         else
             created=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at)
             case "$created" in
