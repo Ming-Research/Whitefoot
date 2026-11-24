@@ -2085,9 +2085,6 @@ impl<'unit> DeclarationInventory<'unit> {
     /// place image. All path steps are in the one suffix list [GRAM-5].
     fn call_goal_place_contains_subscript(&self, place: NodeId) -> Result<bool, CheckStop> {
         let suffixes = self.tree.children_with(place, Production::Psuffix)?;
-        if self.tree.last_subscript(&suffixes)?.is_some() {
-            return Ok(true);
-        }
-        Ok(false)
+        Ok(self.tree.last_subscript(&suffixes)?.is_some())
     }
 }
