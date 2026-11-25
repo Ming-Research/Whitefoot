@@ -485,7 +485,7 @@ jobs:
             echo '```text'
             for file in "$RUNNER_TEMP"/placement/lines/records-*.txt; do
               echo "${file##*/}"
-              head -12 "$file"
+              head -32 "$file"
             done
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
