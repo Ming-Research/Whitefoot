@@ -326,7 +326,7 @@ the `doc` text, which means nothing to the compiler.
 | `ensures` proved at each return and published to callers | FN-9 |
 | An implementation repeats its interface; other modules see only the interface | MOD-7, MOD-8 |
 | `pure` promises no termination; allocation carries no row entry | EFF-3, STOR-8 |
-| Why the row is exact | [`design/language/effects.md`](../../design/language/effects.md) |
+| Why the row is exact | decision `effect-rows-are-exact` in [`design/decisions/language/effects.md`](../../design/decisions/language/effects.md) |
 
 Every program in this article is accepted, or rejected as shown, by the
 compiler at commit `e041772d8`, with `whitefootc --check file.wf`. Each

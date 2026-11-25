@@ -1,1 +1,0 @@
-Decision: A function may declare an ordered list of two or more results, bound only by a destructuring let or a set target list and never used as an expression value, because a carrier struct for every combination of returned values is a cost rather than an expressibility gap, instead of requiring a declared struct for every multi-value return.
