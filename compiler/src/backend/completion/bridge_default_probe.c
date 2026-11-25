@@ -398,6 +398,8 @@ int main(int argc, char **argv) {
         uint64_t before = ring_submissions;
         wf_test_guard_phase("default-policy bridge TCP lifecycle");
         failed |= wf_test_socket_lifecycle(&tcp_port);
+        wf_test_guard_phase("socket address conversion");
+        failed |= wf_test_socket_address_conversion();
         tcp_ring_submissions =
             wf__completion_native_ring_submissions() - before;
     }

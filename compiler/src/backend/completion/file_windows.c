@@ -1042,6 +1042,6 @@ int wf_file_socket_local_address(int descriptor, wf_socket_address *address) {
     if (getsockname(connection, (struct sockaddr *)native.bytes, &length) != 0) {
         return wf_file_windows_socket_error();
     }
-    wf_socket_address_from_native(&native, (unsigned)length, address);
+    wf_socket_address_published(&native, (unsigned)length, address);
     return 0;
 }

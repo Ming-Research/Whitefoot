@@ -251,8 +251,9 @@ int wf_file_transfer_now(const wf_file_request *request, wf_file_result *result)
  * made on the calling thread with no request kind or record and never reaches
  * a queue or a ring.  Answers 0 with `address` written in the portable form an
  * emitted `SocketAddress` value carries (`socket_address.h`,
- * `wf_socket_address_from_native`), or the host's own nonzero refusal code
- * with `address` left all zero. */
+ * `wf_socket_address_published`), or the host's own nonzero refusal code
+ * with `address` left all zero.  A host report of a record of no admitted
+ * family is no refusal: it stops the process (`socket_address.h`). */
 int wf_file_socket_local_address(int descriptor, wf_socket_address *address);
 
 /* One descriptor a waiting context needs ready before it retries a socket

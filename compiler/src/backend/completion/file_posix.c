@@ -791,7 +791,7 @@ int wf_file_socket_local_address(int descriptor, wf_socket_address *address) {
         /* A failed call sets errno; zero would read as success. */
         return errno != 0 ? errno : EIO;
     }
-    wf_socket_address_from_native(&native, (unsigned)length, address);
+    wf_socket_address_published(&native, (unsigned)length, address);
     return 0;
 }
 

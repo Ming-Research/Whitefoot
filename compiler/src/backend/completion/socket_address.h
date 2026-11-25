@@ -38,6 +38,8 @@
 #endif
 
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #if defined(__cplusplus)
@@ -196,12 +198,16 @@ static inline unsigned wf_socket_native_wildcard(
     }
 }
 
-/* The reverse: one portable address from the host's own record.  A record of
- * neither family, or one shorter than its family needs, answers the all-zero
- * address rather than reading a byte the host did not write; the target
- * reported the peer and a target that reports nothing usable is not a program
- * outcome (ordinary native library). */
-static inline void wf_socket_address_from_native(
+/* The reverse: one portable address from the host's own record.  Answers 0
+ * with the address written, and 1 when the record is of neither family, or is
+ * shorter than its family needs, leaving the address all zero: the portable
+ * form holds no third family, and an all-zero value would read as 0.0.0.0:0,
+ * an address the host never reported.  The status is for a caller that has to
+ * tell the two apart; the engines use `wf_socket_address_published` below,
+ * because every socket a program holds was established from an address of one
+ * of the two families, so a record of any other form means the host broke
+ * what the runtime rests on. */
+static inline int wf_socket_address_from_native(
     const wf_socket_native_address *native,
     unsigned length,
     wf_socket_address *address
@@ -210,7 +216,7 @@ static inline void wf_socket_address_from_native(
     unsigned family;
     memset(address, 0, sizeof(*address));
     if (length < sizeof(head)) {
-        return;
+        return 1;
     }
     /* The family is read through `struct sockaddr`'s own member and never as
      * a number at the record's first byte: on Linux `sa_family` is a
@@ -232,7 +238,7 @@ static inline void wf_socket_address_from_native(
         }
         address->port_and_family =
             (unsigned)ntohs(host.sin6_port) | WF_SOCKET_FAMILY_V6;
-        return;
+        return 0;
     }
     if (family == AF_INET && length >= sizeof(struct sockaddr_in)) {
         struct sockaddr_in host;
@@ -248,6 +254,35 @@ static inline void wf_socket_address_from_native(
             );
         }
         address->port_and_family = (unsigned)ntohs(host.sin_port);
+        return 0;
+    }
+    return 1;
+}
+
+/* The runtime's stop for a host record of no admitted family: one line on
+ * standard error naming the condition, then `abort`, the same fail-stop shape
+ * as the bridge's own (`bridge.c`, `wf_bridge_fail`), which the engines cannot
+ * call because it is private to that unit.  The program is stopped by the
+ * trusted base's failure and is handed no address ([SCOPE-3]). */
+#define WF_SOCKET_ADDRESS_UNREPORTED_FAMILY \
+    "whitefoot completion: the host reported a socket address of no " \
+    "admitted family"
+
+static inline _Noreturn void wf_socket_address_stop_unreported(void) {
+    (void)fprintf(stderr, "%s\n", WF_SOCKET_ADDRESS_UNREPORTED_FAMILY);
+    (void)fflush(stderr);
+    abort();
+}
+
+/* The conversion every engine makes: the address the host reported, or the
+ * stop above.  A caller never holds an address the host did not report. */
+static inline void wf_socket_address_published(
+    const wf_socket_native_address *native,
+    unsigned length,
+    wf_socket_address *address
+) {
+    if (wf_socket_address_from_native(native, length, address) != 0) {
+        wf_socket_address_stop_unreported();
     }
 }
 
@@ -256,7 +291,7 @@ static inline void wf_socket_address_from_native(
  * so the join reads one form whichever of them ran the accept. */
 static inline void wf_socket_publish_peer(wf_file_request *request) {
     wf_socket_native_address native = request->operation.accept.peer.native;
-    wf_socket_address_from_native(
+    wf_socket_address_published(
         &native,
         request->operation.accept.peer_length,
         &request->operation.accept.peer.portable

@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-11-25 A host report of a socket address of no admitted family stops the program
+
+Nodes: language/system-interface/socket-addresses
+
+Summary: The runtime answered the all-zero address, which reads as 0.0.0.0:0, for a host record of a third family or one too short for its family, so `tcp_accept` and `local_address` could hand a program an address the host never reported. A decision is added that such a report stops the program with a report and gives it no address, because every socket is established from an IPv4 or IPv6 address and so no program can cause another family, with a rejected line for the all-zero address and one for a source-visible `Err(Unsupported)`, which no source program could test and which would need the accepted connection closed and its credit returned in three accept engines.
+
 ## 2026-10-23 A returned computed integer expression proves a postcondition as a `let` of it would
 
 Nodes: language/checks-and-proofs/automatic-facts
