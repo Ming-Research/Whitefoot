@@ -10,8 +10,9 @@
 //! one pair, and a kind added without one fails
 //! `every_rejection_kind_has_a_repair_pair`; `kind_coverage` holds the pairs
 //! of kinds that no repair family above reaches. Constructor, ownership,
-//! placement and linear-exit repairs are pinned in `remaining_repairs`,
-//! including multi-module fields.
+//! placement and linear-exit repairs are pinned in `remaining_repairs`, and
+//! the rejections of a module program in `module_pairs` and
+//! `module_kind_pairs`.
 
 use super::{CompilationFailureKind, CompilerLimits, compile};
 use crate::SourceInput;
