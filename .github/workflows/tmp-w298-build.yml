@@ -1,0 +1,69 @@
+# Temporary: the `compiler/build` stage against the budget table on hosted
+# Linux, with a record as the gate's jobs set it: the branch's table (within
+# budget), a copy that gives the stage one second (over budget) and main's
+# table (no row), each over a cold build. Runs on the pushes the wf-agents
+# engine makes of this work's commits (the `wf-try/work-298-26e0fade/` refs).
+# Removed before the full check (AGENTS.md, "Checks").
+name: tmp-w298-build
+
+on:
+  push:
+    branches: ['wf-try/work-298-26e0fade/**']
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  compiler-build-budget:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Toolchain, crates and host
+        run: |
+          rustup default stable
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          grep -m 1 'model name' /proc/cpuinfo
+          nproc
+          git fetch --depth=1 origin main
+          git show FETCH_HEAD:.github/time-budgets.txt > "$RUNNER_TEMP/main-table.txt"
+          sed 's|^compiler/build .*|compiler/build 1 1 1 1 - -|' .github/time-budgets.txt > "$RUNNER_TEMP/one-second-table.txt"
+          grep -n '^compiler/build ' .github/time-budgets.txt "$RUNNER_TEMP/main-table.txt" "$RUNNER_TEMP/one-second-table.txt" || true
+
+      - name: The branch's table
+        run: |
+          record="$RUNNER_TEMP/within.txt"
+          WHITEFOOT_TIME_BUDGET_RECORD="$record" make -C compiler build 2>&1 | tee "$RUNNER_TEMP/within.log"
+          grep -E '^== BUDGET compiler/build: [0-9.]+ s of [0-9]+ s \(linux\) ==$' "$RUNNER_TEMP/within.log"
+          perl .github/run-check.pl --budget-verdict "$record"
+
+      - name: A table that gives the stage one second
+        run: |
+          cargo clean --manifest-path compiler/Cargo.toml
+          record="$RUNNER_TEMP/over.txt"
+          WHITEFOOT_TIME_BUDGET_FILE="$RUNNER_TEMP/one-second-table.txt" WHITEFOOT_TIME_BUDGET_RECORD="$record" \
+            make -C compiler build 2>&1 | tee "$RUNNER_TEMP/over.log"
+          grep -E '^== OVER BUDGET: enforced: compiler/build took [0-9.]+ s, over its 1 s linux budget ==$' "$RUNNER_TEMP/over.log"
+          grep -E '^  ENFORCED: compiler/build took [0-9.]+ s, over its 1 s linux budget$' "$record"
+          status=0
+          perl .github/run-check.pl --budget-verdict "$record" || status=$?
+          echo "verdict exit $status"
+          test "$status" -eq 1
+
+      - name: Main's table, which has no row for the stage
+        run: |
+          cargo clean --manifest-path compiler/Cargo.toml
+          record="$RUNNER_TEMP/missing.txt"
+          WHITEFOOT_TIME_BUDGET_FILE="$RUNNER_TEMP/main-table.txt" WHITEFOOT_TIME_BUDGET_RECORD="$record" \
+            make -C compiler build 2>&1 | tee "$RUNNER_TEMP/missing.log"
+          grep -E '^  ENFORCED: compiler/build has no linux budget in ' "$record"
+          status=0
+          perl .github/run-check.pl --budget-verdict "$record" || status=$?
+          echo "verdict exit $status"
+          test "$status" -eq 1

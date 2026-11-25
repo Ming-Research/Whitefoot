@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-11-25 A budget row new to the table is set once from the runs it has
+
+Nodes: compiler/verification
+
+Summary: The budget-row decision keeps a row's former Linux value in every class until per-CPU measurements are recorded, and sets a class from its 20 most recent runs, but a row new to the table has neither a former value nor 20 runs in any class: `compiler/build`, the gate-profile compiler build, runs on hosted Linux only in the on-request benchmark workflows, and a measured sample of 20 cold builds split over four processor classes leaves none with 20. The decision now sets each such class once from the maximum of the runs it has plus 10%, rounded up to 5 s with the 10 s floor, gives a class with no run the row's largest class value, and keeps the cell like any other until its class has 20 runs. Refused: 1.5 times the longest run, which the node already refuses for rows with enough runs and which only reports growth of more than half, and sampling each class up to 20 runs first, which takes about 80 more cold builds and delays the row for a stage that never fails a job.
+
 ## 2026-10-23 A returned computed integer expression proves a postcondition as a `let` of it would
 
 Nodes: language/checks-and-proofs/automatic-facts

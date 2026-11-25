@@ -9,7 +9,10 @@
 # the unit group's three rows apart (below) (research/investigations/
 # test-economy/time-budgets.md, "Recomputing the Linux budgets"). A cell with
 # fewer than 20 runs of its class keeps its value, except in a column the owner
-# added (see xeon-8573c below).
+# added (see xeon-8573c below) and in a row new to the table, which has no value
+# to keep: its cell is set once from the runs it has, by the maximum plus 10%
+# rounded up to 5 s with the 10 s floor (a class with no run takes the row's
+# largest), and kept like any other until its class has 20 runs.
 # A model with fewer than 20 runs has no column unless the owner adds one. An
 # unmapped model uses the stage's largest Linux class budget and is reported by
 # name. Unsampled rows
@@ -90,6 +93,37 @@ linux-asan-ubsan                25         25         25         25          -  
 linux-default-tsan              10         10         10         10          -      -
 linux-deque-tsan                10         10         10         10          -      -
 linux-runtime-tsan              10         10         10         10          -      -
+
+# io-hosts.yml, completion-windows: every run step of the job but two runs under
+# run-check.pl and is held to the row its step id names. The Windows column is
+# the rule above on seven runs of the job (research/investigations/test-
+# economy/time-budgets.md, "Windows I/O host stages"): 1.25 times the slowest
+# of the seven, rounded up to 5 s, with the 10 s floor.
+windows-llvm-mingw              -          -          -          -           -      25
+windows-clang-identity          -          -          -          -           -      10
+windows-host                    -          -          -          -           -      40
+windows-test-images             -          -          -          -           -      15
+windows-image-imports           -          -          -          -           -      10
+windows-sched-deque             -          -          -          -           -      10
+windows-sched-cpu-policy        -          -          -          -           -      10
+windows-sched-startup           -          -          -          -           -      10
+windows-default-route           -          -          -          -           -      10
+windows-adapter-probe           -          -          -          -           -      10
+windows-bounded-send            -          -          -          -           -      10
+windows-ordinary-values         -          -          -          -           -      10
+windows-bridge-init             -          -          -          -           -      10
+windows-corpus-build            -          -          -          -           -      400
+windows-corpus                  -          -          -          -           -      65
+windows-driver-links            -          -          -          -           -      35
+
+# compiler/Makefile's build stage, the gate-profile compiler alone, which the
+# on-request benchmark workflows and `make -C compiler check` run and no job of
+# the gate does. Set on 2026-11-25 from 20 cold builds on hosted Linux
+# (research/investigations/test-economy/time-budgets.md, "Windows I/O host
+# stages and the compiler build stage"), fewer than 20 in each class: each class
+# is its maximum plus 10%, rounded up to 5 s, and a class with no run takes the
+# row's largest. A class takes the rule's value once it has 20 runs.
+compiler/build                  130        130        130        130         -      -
 
 # proof.yml: the Lean model's sentence coverage (building and running its
 # checker), the build of its model, proofs and conformance harness, and its run

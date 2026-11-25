@@ -21,6 +21,18 @@ test ! -e "$work/lock"
 perl "$runner" parent perl "$runner" nested true > "$work/nested.log" 2>&1
 test ! -e "$work/lock"
 
+# The wrapper itself prints the command's CPU times in the format of `time -p`,
+# before the END line, because Git for Windows has no /usr/bin/time: a command
+# that computes for a second must show most of it as user time, which the
+# wrapper's own CPU time, spent only in its polling loop, would not.
+perl "$runner" cpu perl -MTime::HiRes=time -e '$t = time; 1 while time - $t < 1' > "$work/cpu.log" 2>&1
+awk '/^real [0-9.]+$/ { real = 1 }
+     /^user [0-9.]+$/ { if ($2 >= 0.3) user = 1 }
+     /^sys [0-9.]+$/ { sys = 1 }
+     /^== END cpu: / { if (real && user && sys) ok = 1 }
+     END { exit !ok }' "$work/cpu.log"
+test ! -e "$work/lock"
+
 perl "$runner" holder sh -c 'touch "$1"; sleep 2' sh "$work/ready" > "$work/holder.log" 2>&1 &
 holder=$!
 attempt=0
@@ -215,6 +227,16 @@ for platform in linux windows; do
     perl "$runner" --budget-verdict "$work/$platform-record" > "$work/$platform-verdict.log" 2>&1 || status=$?
     test "$status" -eq 1
 done
+
+# Git for Windows' perl names its host msys; it reads the windows column.
+WHITEFOOT_TIME_BUDGET_RECORD=$work/msys-record \
+    perl "$work/run-host.pl" msys "$runner" host-over true > "$work/msys.log" 2>&1
+grep -q "== OVER BUDGET: enforced: host-over took [0-9.]* s, over its 0 s windows budget ==" "$work/msys.log"
+grep -q '^  ENFORCED: host-over took [0-9.]* s, over its 0 s windows budget$' "$work/msys-record"
+WHITEFOOT_TIME_BUDGET_RECORD=$work/msys-within-record \
+    perl "$work/run-host.pl" msys "$runner" host-within true > "$work/msys-within.log" 2>&1
+grep -q '== BUDGET host-within: [0-9.]* s of 600 s (windows) ==' "$work/msys-within.log"
+test ! -s "$work/msys-within-record"
 
 # WHITEFOOT_BUDGET_REPORT_ONLY reports only the labels it names, on Linux too;
 # an unnamed label stays enforced, and so does a named label with no budget.

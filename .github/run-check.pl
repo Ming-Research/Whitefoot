@@ -85,7 +85,10 @@ if ($child == 0) {
         defined setpgid(0, 0) or die "create check process group: $!\n";
         $ENV{WHITEFOOT_CHECK_PGID} = $$;
     }
-    exec '/usr/bin/time', '-p', @ARGV;
+    # No external `time`: Git for Windows, whose msys perl runs this wrapper
+    # on the Windows hosts, has no /usr/bin/time. The CPU times come from this
+    # process's own `times` below.
+    exec { $ARGV[0] } @ARGV;
     die "execute check: $!\n";
 }
 my $group = $owns_lock ? $child : $ENV{WHITEFOOT_CHECK_PGID};
@@ -131,6 +134,13 @@ while (1) {
 }
 my $code = $cancelled // (($status & 127) ? 128 + ($status & 127) : $status >> 8);
 my $elapsed = clock_gettime(CLOCK_MONOTONIC) - $started;
+if (defined $status) {
+    # The format of `time -p`: the command's wall time and the CPU times of
+    # everything this process has reaped, which is the command and its
+    # descendants that were waited for.
+    my ($user, $system) = (times)[2, 3];
+    printf STDERR "real %.2f\nuser %.2f\nsys %.2f\n", $completed - $started, $user, $system;
+}
 printf "== END %s: %.2f s, exit %d ==\n", $label, $elapsed, $code;
 check_budget($label, $elapsed) if !defined $cancelled;
 exit $code;
