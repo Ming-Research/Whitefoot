@@ -240,6 +240,10 @@ grep -q '^  ENFORCED: host-over took [0-9.]* s, over its 0 s windows budget$' "$
 WHITEFOOT_TIME_BUDGET_RECORD=$work/cygwin-within-record \
     perl "$work/run-host.pl" cygwin "$runner" host-within true > "$work/cygwin-within.log" 2>&1
 grep -q '== BUDGET host-within: [0-9.]* s of 600 s (windows) ==' "$work/cygwin-within.log"
+# The Windows I/O job's last step fails when the record does not exist, and the
+# verdict reads a missing record as "nothing over budget": a stage within its
+# budget must still leave the record created, and empty.
+test -e "$work/cygwin-within-record"
 test ! -s "$work/cygwin-within-record"
 grep -q '^== END host-within: ' "$work/cygwin-within.log"
 if grep -qE '^(real|user|sys) ' "$work/cygwin.log" "$work/cygwin-within.log"; then exit 1; fi

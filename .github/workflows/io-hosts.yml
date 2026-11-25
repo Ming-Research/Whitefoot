@@ -531,11 +531,19 @@ jobs:
 
       # run-check.pl appended every stage over its budget in
       # .github/time-budgets.txt, or without one, to the record; the stages
-      # themselves kept their own statuses. This step is not timed.
+      # themselves kept their own statuses. This step is not timed. The
+      # wrapper creates the record before it runs a stage, and the verdict
+      # reads a missing record as "nothing over budget", so a record that does
+      # not exist, because no step ran under the wrapper, fails here.
       - name: Hold every stage to its time budget
         if: always()
         shell: bash
-        run: perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD"
+        run: |
+          if [ ! -e "${WHITEFOOT_TIME_BUDGET_RECORD:-}" ]; then
+            echo "no stage ran under run-check.pl: the time budget record '${WHITEFOOT_TIME_BUDGET_RECORD:-}' does not exist" >&2
+            exit 1
+          fi
+          perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD"
 
   # Only in a run the engine asked for: how each other job ended, as JUnit XML
   # in the artifact `test-results`, which the engine reads (.github/junit.py).
