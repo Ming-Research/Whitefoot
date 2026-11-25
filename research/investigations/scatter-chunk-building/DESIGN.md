@@ -85,9 +85,14 @@ Fixed before measuring:
   append's whole-block work has no effect this instrument resolves, and the
   item's first outcome cannot rest on it.
 - **Leaving the inactive payload unwritten is enough for the append** if the
-  `no-clear` module's optimized `radix_scatter` holds no constant clear or copy
-  of at least 2,048 bytes. Otherwise the copy needs a placement change of its
-  own, which `tag-only` stands in for.
+  optimized `no-clear` module holds no constant clear or copy of at least
+  2,048 bytes that the optimized `tag-only` module lacks, and `tag-only`'s
+  note counts at least one shortened transfer. `tag-only` has no whole
+  transfer of an appended slot by construction, so what it keeps is the block
+  writer's or the entry's, in whichever function the optimizer put it; a
+  difference that comes from the two modules being inlined differently is
+  read in the probe's context lines and reported as such. Otherwise the copy
+  needs a placement change of its own, which `tag-only` stands in for.
 - **The block writer's transfers matter** if `in-place-tag-only`'s wall
   interval at eight workers lies wholly below `tag-only`'s.
 - **The proposal is rejected** if neither `tag-only` nor `in-place-tag-only`
@@ -97,12 +102,12 @@ Fixed before measuring:
   this program's empty slots as `no-clear` does, so `no-clear` decides it
   before any compiler change: the change is made if `no-clear`'s wall
   interval at eight workers lies wholly below 1, its wall and CPU intervals at
-  one worker do not lie wholly above 1, and its optimized `radix_scatter`
-  holds no constant clear or copy of at least 2,048 bytes. If the interval at
-  eight workers contains 1, no compiler change is made and the cost is
-  recorded. If the time improves and a whole-block copy stays, the lowering
-  does not give the item's first outcome alone, and that is reported before
-  any compiler change.
+  one worker do not lie wholly above 1, and it is enough for the append by
+  the criterion above. If the interval at eight workers contains 1, no
+  compiler change is made and the cost is recorded. If the time improves and
+  the append keeps a whole-block clear or copy, the lowering does not give
+  the item's first outcome alone, and that is reported before any compiler
+  change.
 
 Limits known in advance: the i9-14900K runner is a hybrid processor and the
 probe pins nothing, so eight workers may land on either kind of core; other
