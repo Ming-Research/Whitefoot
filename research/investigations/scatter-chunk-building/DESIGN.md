@@ -101,6 +101,59 @@ remove; process CPU time includes the runtime's idle lanes; the native chain
 is serial and allocates its chunks with `calloc`, so it is context for one
 worker only.
 
+## What the source and the emitter show, read on 2026-11-25
+
+These are read from the code at `ca8fe55bc`, not measured.
+
+**Where the clear comes from.** `initialize_construction` in
+`compiler/src/backend/emitter/places.rs` stores a zero of the whole value
+unless a field of the *active* variant holds constant-capacity window storage;
+only such active fields are left out, because the field copy that follows
+writes them. `None<Chunk>()` has no active field, so its construction stores
+4,120 zero bytes and then the tag. `Some<Chunk>(value: ...)` zeroes only its
+tag and copies the 4,112-byte chunk in, and `Chunk(low: ..., high: ...)`
+zeroes nothing. The test
+`backend::tests::windows::aggregate_construction_omits_only_copied_window_fields`
+pins this: its `empty_product` and `other` build a variant beside an inactive
+window and expect one zero store of the whole value.
+
+**Where the copies come from.** `copy_storage` in the same file moves a value
+of more than 128 bytes with one `memmove` of its whole size, the unoccupied
+slots of a window included. `place_back` is a function instance of its own
+(`row_place` in `compiler/src/lowering/builder/prelude.rs`) that receives the
+value by address and copies it into the slot, and the block writer's
+`set output^[0] = Some<Chunk>(...)` is an `IrInstruction::Store` of a value
+built in the frame. A construction is redirected into the place that consumes
+it only for a fresh binding whose address is taken
+(`select_destinations` in `compiler/src/backend/storage.rs`), not for a store
+or a placement.
+
+**The lowering `no-clear` stands for.** Leave every field that holds
+constant-capacity window storage out of the zero store, the fields of an
+inactive variant included, and keep the zero store for every other byte. It
+extends the header-only construction of 2026-10-09 from the active variant to
+the whole value, and it differs from the lowering declined on 2026-09-23 in
+what it leaves alone: a type with no inline window is built exactly as today.
+Of the libraries under `lib/std/collections`, only the ordered map names a
+constant-capacity window (its one-slot `Slots<Box<OrderedNode<K, V>>, 1>`
+links); the hash map and the slab name none, so their emitted modules are the
+same text under it unless a caller gives them a window payload. That is its
+falsifier for those two consumers: if a module of the 2026-09-23 comparison
+changes under the lowering, its two regressions have to be measured again
+before the lowering is proposed. Which maintained modules it does change, the
+ordered map's among them, is to be listed from their emitted text.
+
+**What the par-suite ratio is.** The 4.86 of the
+[par-suite baseline](../par-suite/DESIGN.md#baseline-2026-10-09) divides the
+process wall time of the `--par` image by that of the sequential image of the
+same program, on its own 8,209 keys, at 32 workers. Both images build the same
+33 chunks, so chunk building is in the numerator and the denominator alike:
+removing it cannot lower that ratio and, by shortening both, raises it a
+little. The ratio also predates the demand-driven hand-out of work. It is
+therefore not the measure of this investigation; the whole call on 1,048,593
+keys is.
+
 ## Results
 
-None yet.
+None yet. No probe has run: GitHub refused the request to start them for an
+exhausted API budget, last at 18:35 UTC on 2026-11-25.
