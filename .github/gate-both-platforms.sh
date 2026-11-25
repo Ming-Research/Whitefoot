@@ -30,11 +30,13 @@ wait_relist=${GATE_RELIST_WAIT:-30}
 attempts=5
 listings=4
 
-groups=$(printf '%s\n' "$GATE_GROUPS" | jq -er '.[]')
-test -n "$groups"
-
 work=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gate-both-platforms.XXXXXX")
 trap 'rm -rf "$work"' EXIT
+
+# One group name to a line: a name may hold spaces (`unit 1 of 3`), so it is
+# read a line at a time and never split on white space.
+printf '%s\n' "$GATE_GROUPS" | jq -er '.[]' > "$work/groups"
+test -s "$work/groups"
 
 # api LABEL ARGS...: gh api with retries; the answer goes to $work/answer.
 api() {
@@ -83,7 +85,7 @@ list() {
 judge() {
     absent=0
     failed=0
-    for group in $groups; do
+    while IFS= read -r group; do
         for os in ${GATE_PLATFORMS:-ubuntu-24.04 macos-15}; do
             name="$group ($os)"
             found=$(awk -F '\t' -v name="$name" '$2 == name && !seen { seen = 1; print "x" $3 }' "$work/sorted.tsv")
@@ -97,7 +99,7 @@ judge() {
                 failed=$((failed + 1))
             fi
         done
-    done
+    done < "$work/groups"
 }
 
 count=1

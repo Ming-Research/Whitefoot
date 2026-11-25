@@ -210,4 +210,41 @@ gate GATE_PLATFORMS='ubuntu-24.04 macos-15'
 [ "$listings" -eq 4 ] || fail "j: expected 4 listings, got $listings"
 want j '^MISSING corpus (macos-15): no gate job$'
 
+# (k) A group name may hold spaces, as a shard's does (`unit 1 of 3`): each
+# name is one job, never split on white space. All named jobs green pass; one
+# failed, or one without an entry, fails with its whole name.
+spaced='["static","unit 1 of 3","unit 2 of 3","corpus proof receipts"]'
+spaced_jobs() { # FILE [NAME=CONCLUSION ...] -- Linux alone, every job green but the named
+    file=$1
+    shift
+    : > "$file"
+    for g in 'static' 'unit 1 of 3' 'unit 2 of 3' 'corpus proof receipts'; do
+        name="$g (ubuntu-24.04)"
+        conclusion=success
+        for override in "$@"; do
+            [ "${override%%=*}" != "$name" ] || conclusion=${override#*=}
+        done
+        [ "$conclusion" = absent ] || printf '2026-10-13T10:00:00Z\t%s\t%s\n' "$name" "$conclusion" >> "$file"
+    done
+}
+newcase k1
+spaced_jobs "$FAKE_DIR/jobs.1"
+gate GATE_GROUPS="$spaced" GATE_PLATFORMS=ubuntu-24.04
+[ "$status" -eq 0 ] || fail 'k1: expected a pass for names with spaces'
+[ "$listings" -eq 1 ] || fail "k1: expected 1 listing, got $listings"
+want k1 '^ok      unit 1 of 3 (ubuntu-24.04)$'
+want k1 '^ok      corpus proof receipts (ubuntu-24.04)$'
+newcase k2
+spaced_jobs "$FAKE_DIR/jobs.1" 'unit 2 of 3 (ubuntu-24.04)=failure'
+gate GATE_GROUPS="$spaced" GATE_PLATFORMS=ubuntu-24.04
+[ "$status" -ne 0 ] || fail 'k2: expected a failure for a failed job with spaces in its name'
+[ "$listings" -eq 1 ] || fail "k2: expected 1 listing, got $listings"
+want k2 '^MISSING unit 2 of 3 (ubuntu-24.04): failure$'
+newcase k3
+spaced_jobs "$FAKE_DIR/jobs.1" 'corpus proof receipts (ubuntu-24.04)=absent'
+gate GATE_GROUPS="$spaced" GATE_PLATFORMS=ubuntu-24.04
+[ "$status" -ne 0 ] || fail 'k3: expected a failure for a missing job with spaces in its name'
+[ "$listings" -eq 4 ] || fail "k3: expected 4 listings, got $listings"
+want k3 '^MISSING corpus proof receipts (ubuntu-24.04): no gate job$'
+
 echo 'test-gate-both-platforms: ok'
