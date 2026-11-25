@@ -284,24 +284,27 @@ impl Record {
 
     /// What is wrong with the words of this record: a `?` standing for a
     /// value the renderer could not write, and a stretch the text marks as
-    /// source with backticks that the lexer does not read as source. Exact
-    /// values are the writer's own source bytes and are not read; the source
-    /// line and the marker are not part of the payload.
+    /// source with backticks that is not source. A stretch is source when the
+    /// lexer reads it, bare or as the body of a character literal (the
+    /// spelling of an escape), or when the writer wrote it on the line the
+    /// record quotes. Exact values are the writer's own source bytes and are
+    /// not read; the marker line is not part of the payload.
     pub(super) fn text_defects(&self) -> Vec<String> {
+        let written = self.at.as_ref().map(Place::line_text).unwrap_or_default();
         let mut defects = Vec::new();
         for (label, value) in &self.detail {
-            value_defects(label, value, &mut defects);
+            value_defects(label, value, &written, &mut defects);
         }
         defects
     }
 }
 
-fn value_defects(label: &str, value: &Value, defects: &mut Vec<String>) {
+fn value_defects(label: &str, value: &Value, written: &str, defects: &mut Vec<String>) {
     match value {
-        Value::Text(text) => text_defects(label, text, defects),
+        Value::Text(text) => text_defects(label, text, written, defects),
         Value::List(items) => {
             for item in items {
-                value_defects(label, item, defects);
+                value_defects(label, item, written, defects);
             }
         }
         Value::MatchSite {
@@ -309,21 +312,21 @@ fn value_defects(label: &str, value: &Value, defects: &mut Vec<String>) {
             missing_variants,
             ..
         } => {
-            text_defects(label, enum_name, defects);
+            text_defects(label, enum_name, written, defects);
             for variant in missing_variants {
-                value_defects(label, variant, defects);
+                value_defects(label, variant, written, defects);
             }
         }
         Value::Fields(fields) | Value::Variant(_, fields) => {
             for (inner, value) in fields {
-                value_defects(inner, value, defects);
+                value_defects(inner, value, written, defects);
             }
         }
         Value::Exact(_) | Value::Number(_) | Value::Place(..) => {}
     }
 }
 
-fn text_defects(label: &str, text: &str, defects: &mut Vec<String>) {
+fn text_defects(label: &str, text: &str, written: &str, defects: &mut Vec<String>) {
     if text.contains('?') {
         defects.push(format!("{label}: `?` stands for a value the text does not write: {text}"));
     }
@@ -332,7 +335,13 @@ fn text_defects(label: &str, text: &str, defects: &mut Vec<String>) {
     let mut pieces = text.split('`').peekable();
     let mut inside = false;
     while let Some(piece) = pieces.next() {
-        if inside && pieces.peek().is_some() && !piece.is_empty() && !lexes_as_source(piece) {
+        if inside
+            && pieces.peek().is_some()
+            && !piece.is_empty()
+            && !written.contains(piece)
+            && !lexes_as_source(piece)
+            && !lexes_as_source(&format!("'{piece}'"))
+        {
             defects.push(format!("{label}: `{piece}` is marked as source but is not source text"));
         }
         inside = !inside;

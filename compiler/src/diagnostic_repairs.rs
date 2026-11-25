@@ -76,9 +76,9 @@ pub(crate) const GRAM9_CONTRACT_FIX: &str = "if the inner operation is a non-con
 /// `struct_decl` writes TYPEID, and no class is admitted in another's slot.
 /// The expectation list names the class and never says what the class is, so
 /// a writer who spelled a const `Limit` read only `expected: ["IDENT"]`.
-pub(crate) const FORM3_IDENT_FIX: &str = "an IDENT slot admits only [FORM-3]'s IDENT `[a-z][a-z0-9_]*`, so a `const`, `fn`, parameter, `let`, field, or binder name is lowercase and is never a TYPEID `[A-Z][A-Za-z0-9]*`, a LABEL `@[a-z][a-z0-9_]*`, or an OPNAME; rename the name written here to the IDENT shape";
-pub(crate) const FORM3_TYPEID_FIX: &str = "a TYPEID slot admits only [FORM-3]'s TYPEID `[A-Z][A-Za-z0-9]*`, so a struct, enum, contract, variant, or constructor name is capitalized and is never an IDENT `[a-z][a-z0-9_]*`, a LABEL `@[a-z][a-z0-9_]*`, or an OPNAME; rename the name written here to the TYPEID shape";
-pub(crate) const FORM3_LABEL_FIX: &str = "a LABEL slot admits only [FORM-3]'s LABEL `@[a-z][a-z0-9_]*`, so write the leading `@`; an IDENT `[a-z][a-z0-9_]*`, a TYPEID `[A-Z][A-Za-z0-9]*`, and an OPNAME are other lexical classes and none is admitted here";
+pub(crate) const FORM3_IDENT_FIX: &str = "an IDENT slot admits only [FORM-3]'s IDENT `[a-z][a-z0-9_]*`, so a `const`, `fn`, parameter, `let`, field, or binder name is lowercase and is never a TYPEID `[A-Z][A-Za-z0-9]*`, a LABEL such as `@outer`, or an OPNAME; rename the name written here to the IDENT shape";
+pub(crate) const FORM3_TYPEID_FIX: &str = "a TYPEID slot admits only [FORM-3]'s TYPEID `[A-Z][A-Za-z0-9]*`, so a struct, enum, contract, variant, or constructor name is capitalized and is never an IDENT `[a-z][a-z0-9_]*`, a LABEL such as `@outer`, or an OPNAME; rename the name written here to the TYPEID shape";
+pub(crate) const FORM3_LABEL_FIX: &str = "a LABEL slot admits only [FORM-3]'s LABEL, an `@` followed by a lowercase name such as `@outer`, so write the leading `@`; an IDENT `[a-z][a-z0-9_]*`, a TYPEID `[A-Z][A-Za-z0-9]*`, and an OPNAME are other lexical classes and none is admitted here";
 
 /// [GRAM-2] fixes the order of a `contract_block`: every `contract_define`,
 /// then every `requires_clause`, then every `ensures_clause`. A clause written
