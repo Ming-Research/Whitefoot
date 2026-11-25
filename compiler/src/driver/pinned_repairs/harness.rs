@@ -205,6 +205,19 @@ pub(super) struct Run {
     pub(super) failures: Vec<String>,
 }
 
+/// Runs one pair's check, reporting a panic in it as that pair's failure so
+/// that one broken pair does not hide the others.
+fn guarded(name: &str, check: impl FnOnce() -> Result<String, String>) -> Result<String, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(check)).unwrap_or_else(|payload| {
+        let why = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| payload.downcast_ref::<&str>().map(|why| (*why).to_owned()))
+            .unwrap_or_default();
+        Err(format!("{name}: the check panicked: {why}"))
+    })
+}
+
 /// Checks every pinned pair once for the whole test binary: each pair
 /// compiles several programs, and two tests read its result.
 pub(super) fn run() -> &'static Run {
@@ -214,17 +227,19 @@ pub(super) fn run() -> &'static Run {
             reached: BTreeSet::new(),
             failures: Vec::new(),
         };
-        let results = all_pairs().map(check_pair).chain(
+        let mut results: Vec<Result<String, String>> = Vec::new();
+        results.extend(all_pairs().map(|pair| guarded(pair.name, || check_pair(pair))));
+        results.extend(
             super::module_pairs::MODULE_PAIRS
                 .iter()
                 .chain(super::module_kind_pairs::MODULE_KIND_PAIRS)
-                .map(super::module_pairs::check_module_pair),
+                .map(|pair| guarded(pair.name, || super::module_pairs::check_module_pair(pair))),
         );
-        let results = results.chain(
-            super::module_pairs::LIBRARY_GRAPH_PAIRS
-                .iter()
-                .map(super::module_pairs::check_library_graph_pair),
-        );
+        results.extend(super::module_pairs::LIBRARY_GRAPH_PAIRS.iter().map(|pair| {
+            guarded(pair.name, || {
+                super::module_pairs::check_library_graph_pair(pair)
+            })
+        }));
         for result in results {
             match result {
                 Ok(kind) => {
