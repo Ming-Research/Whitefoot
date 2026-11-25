@@ -90,17 +90,18 @@ sub reported_total {
     return ($total, $summaries);
 }
 
-# The text a command printed to standard output, copied to ours as it comes
-# when $stream is set, and its status; a signal is 128 plus its number. A
-# streamed command's standard error joins its standard output in one pipe, so
-# cargo's `Running` line for a test binary stays before that binary's results
-# in what the gate's log and .github/junit.py read.
+# The text a command printed to standard output and standard error, copied to
+# ours as it comes when $stream is set, and its status; a signal is 128 plus
+# its number. Both streams join in one pipe, so cargo's `Running` line for a
+# test binary stays before that binary's results in what the gate's log and
+# .github/junit.py read, and the `Running` lines of a listing, which has no
+# results, never reach that log: a listing's text is only shown when it fails.
 sub command {
     my ($stream, @command) = @_;
     my $pid = open my $output, '-|';
     defined $pid or die "test shards: fork: $!\n";
     if (!$pid) {
-        open STDERR, '>&', \*STDOUT if $stream;
+        open STDERR, '>&', \*STDOUT;
         exec @command or die "test shards: execute @command: $!\n";
     }
     my $text = '';
@@ -143,11 +144,19 @@ sub run_selected {
     return 0;
 }
 
+# A listing that fails (cargo could not build or list the tests) shows what it
+# printed, which the success path keeps back, and gives its status.
+sub listing_failed {
+    my ($listing, $status) = @_;
+    print $listing unless $quiet;
+    return $status;
+}
+
 sub run_unit {
     my ($cargo, $index, $count, $runner) = @_;
     my @test = cargo_test($cargo, '--lib');
     my ($listing, $status) = $runner->(0, @test, '--', '--list', '--format', 'terse');
-    return $status if $status;
+    return listing_failed($listing, $status) if $status;
     my @names = listed_names($listing);
     my %seen;
     $seen{$_}++ and die "test shards: unit: the test '$_' is listed twice\n" for @names;
@@ -163,7 +172,7 @@ sub run_corpus {
     my ($part, $index, $count) = @$selection;
     my @test = cargo_test($cargo, @corpus_targets);
     my ($listing, $status) = $runner->(0, @test, '--', '--list', '--format', 'terse');
-    return $status if $status;
+    return listing_failed($listing, $status) if $status;
     my @names = listed_names($listing);
     for my $name ($walk, $receipts) {
         my $listed = grep { $_ eq $name } @names;
@@ -316,6 +325,9 @@ sub self_test {
     check($text eq "a\n" && $status == 3, 'command reports output and exit status');
     ($text, $status) = command(1, 'perl', '-e', '$| = 1; print STDERR "first\n"; print "second\n"');
     check($text eq "first\nsecond\n" && $status == 0, 'a streamed command keeps its error output before its output');
+    ($text, $status) = command(0, 'perl', '-e', '$| = 1; print STDERR "Running a\n"; print "a: test\n"');
+    check($text eq "Running a\na: test\n" && $status == 0
+        && join(',', listed_names($text)) eq 'a', 'a listing keeps its standard error out of ours and in its text');
     ($text, $status) = command(0, 'perl', '-e', 'kill 9, $$');
     check($status == 137, 'command reports a signal as 128 plus its number');
     print "test shards: self-test ok\n";
