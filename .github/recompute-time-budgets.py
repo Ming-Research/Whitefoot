@@ -48,13 +48,16 @@ selects one for `table`, `headroom` and `replay`.
 import argparse
 import collections
 import concurrent.futures
+import contextlib
 import datetime
+import io
 import json
 import os
 import re
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 
 MINIMUM_RUNS = 20
@@ -477,8 +480,9 @@ def collect(repo, workflows, since, path, limit, until=None, branch=None, named=
                 chunk = runs[fetched:fetched + min(RUNS_PER_CHECK, affordable(left, reserve))]
                 if not chunk:
                     print(f"{workflow}: stopped with {left} requests left and {reserve} kept in reserve;"
-                          f" {len(runs) - fetched} runs not fetched; go on from --until"
-                          f" {runs[fetched - 1]['created_at'] if fetched else until}", file=sys.stderr)
+                          f" {len(runs) - fetched} runs not fetched"
+                          + (f"; go on from --until {runs[fetched - 1]['created_at']}" if fetched else ""),
+                          file=sys.stderr)
                     break
                 for found in pool.map(lambda run: fetch(run, workflow), chunk):
                     samples["jobs"].update(found)
@@ -760,6 +764,32 @@ def self_test():
     # is fetched at or below the reserve.
     assert [affordable(left, 920) for left in (1000, 999, 927, 920, 100, 0)] == [10, 9, 0, 0, 0, 0]
     assert affordable(5000, 1000) == 500
+    # The same through `collect` with a stubbed `gh`: 25 runs listed, 60
+    # requests left at the start and 20 kept in reserve; every request lowers
+    # the count, and fetching stops with the reserve intact and runs unfetched.
+    left, requests = [60], []
+    runs = [{"id": 100 + i, "head_sha": "s", "head_branch": "main", "run_attempt": 1, "conclusion": "success",
+             "created_at": f"2026-10-20T00:{59 - i:02d}:00Z"} for i in range(25)]
+    def stub(*args):
+        request = " ".join(args)
+        if request == "rate_limit":
+            return json.dumps({"resources": {"core": {"remaining": left[0]}}})
+        left[0] -= 1
+        requests.append(request)
+        if "/workflows/" in request:
+            return "\n".join(json.dumps(run) for run in runs)
+        if request.endswith("/logs"):
+            return stamp % 1 + " model name\t: Big CPU\n" + stamp % 2 + " == END stage/one: 1.00 s, exit 0 ==\n"
+        return json.dumps({"id": len(requests), "name": "unit (x)", "conclusion": "success", "run_attempt": 1})
+    real_gh = gh
+    try:
+        globals()["gh"] = stub
+        with tempfile.TemporaryDirectory() as scratch, contextlib.redirect_stderr(io.StringIO()):
+            collect("o/r", ["gate.yml"], "2026-10-20", os.path.join(scratch, "samples.json"), 25, reserve=20)
+            kept = json.load(open(os.path.join(scratch, "samples.json")))["jobs"]
+    finally:
+        globals()["gh"] = real_gh
+    assert 20 <= left[0] < 20 + REQUESTS_PER_RUN and 0 < len({job["run"] for job in kept.values()}) < 25, (left, kept)
     print("recompute-time-budgets self-test passed")
 
 

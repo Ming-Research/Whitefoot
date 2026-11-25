@@ -1448,10 +1448,14 @@ owner's raise of the same day).
 
 **Reproduction.** `collect` takes `--branch` and `--job` prefixes (for example
 `--workflow gate.yml --since 2026-10-19 --until 2026-10-21T05:00:00Z --job unit
---job corpus --job runtime --job static`); `replay` takes `--rule`
-(`spread`, `max+10`, `max+25`, `max+30`), `--every 0`, `--age`, `--branch`,
-`--attempt` and `--list`; `headroom` prints the headroom table. The runs of the
-comparison are those named under Sources; the samples are scratch.
+--job corpus --job runtime --job static`) and `--reserve` (default 1,000): it
+fetches ten runs at a time and stops, printing the `--until` to go on from,
+before the hour's requests fall to the reserve, since the 5,000 an hour are
+shared with the engine's own calls and the collection of this section spent
+them all once, which failed its next test run with HTTP 403. `replay` takes
+`--rule` (`spread`, `max+10`, `max+25`, `max+30`), `--every 0`, `--age`,
+`--branch`, `--attempt` and `--list`; `headroom` prints the headroom table. The
+runs of the comparison are those named under Sources; the samples are scratch.
 
 **Limits.** The data are those of one month, mostly of one week, so the
 replay's count of jobs red with no slowdown (1 of 756) cannot tell the
