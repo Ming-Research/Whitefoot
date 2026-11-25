@@ -1964,31 +1964,44 @@ void wf__body_exit_share(wf_value *result, const wf_value *capability) {
     memset(result, 0, sizeof(*result));
 }
 
+/* The floor runtime's one latch for every record that ends the process, which
+ * every link carries (`wf_floor.c`, `wf_floor_windows.c`). */
+volatile int *wf__floor_record_latch(void);
+
 /* Ends the process with the status at once, from whichever thread runs the
- * calling context [WAIT-2]. Neither `exit` nor `ExitProcess` would do: `exit`
- * runs the runtime's atexit shutdown while other drivers may still submit,
- * and `ExitProcess` runs DLL detach after the other threads are killed, where
- * a lock one of them held can stop it. So the process skips every atexit
- * handler, the completion runtime's shutdown and the `WF_REQUIRE_WINDOWS_IOCP`
- * check among them; that check requires every submission to have completed,
- * which an exit that leaves operations outstanding cannot meet. Stream writes
- * reach the host before their calls complete, so none is lost here. When two
- * contexts exit at once, the host ends the process with one of the two
- * statuses, which WAIT-2 makes an input of the execution. */
+ * calling context [WAIT-2]. The exit first takes the floor's record latch, so
+ * that it never cuts a resource record another thread has begun: a thread
+ * that finds the latch taken parks, and the latch's holder, a record writer
+ * or the first of several exits, ends the process with its own outcome.
+ *
+ * Neither `exit` nor `ExitProcess` would do: `exit` runs the runtime's atexit
+ * shutdown while other drivers may still submit, and `ExitProcess` runs DLL
+ * detach after the other threads are killed, where a lock one of them held
+ * can stop it. So the process skips every atexit handler, the completion
+ * runtime's shutdown and the `WF_REQUIRE_WINDOWS_IOCP` check among them; that
+ * check requires every submission to have completed, which an exit that
+ * leaves operations outstanding cannot meet. Stream writes reach the host
+ * before their calls complete, so none is lost here. */
 int wf__body_exit_now_start(uint8_t *result, const wf_value *capability,
                             const wf_value *status, wf_host_operation *operation) {
     uint8_t code = wf__ordinary_exit_code(status);
     (void)result;
     (void)capability;
     (void)operation;
+    if (__sync_bool_compare_and_swap(wf__floor_record_latch(), 0, 1)) {
 #if defined(_WIN32)
-    (void)TerminateProcess(GetCurrentProcess(), code);
-    for (;;) {
-        Sleep(INFINITE);
-    }
+        (void)TerminateProcess(GetCurrentProcess(), code);
 #else
-    _exit(code);
+        _exit(code);
 #endif
+    }
+    for (;;) {
+#if defined(_WIN32)
+        Sleep(INFINITE);
+#else
+        pause();
+#endif
+    }
 }
 
 void wf__body_exit_now_finish(uint8_t *result, const wf_value *capability,
