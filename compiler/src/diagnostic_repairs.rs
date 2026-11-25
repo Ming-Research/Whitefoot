@@ -63,7 +63,11 @@ pub(crate) fn replace_call_argument_datums(text: &str, stand_in: &str) -> String
     while let Some(at) = rest.find(CALL_ARGUMENT_DATUM_OPEN) {
         let after = &rest[at + CALL_ARGUMENT_DATUM_OPEN.len()..];
         let digits = after.bytes().take_while(|byte| byte.is_ascii_digit()).count();
-        match after[digits..].strip_prefix(CALL_ARGUMENT_DATUM_CLOSE) {
+        // The closing words end the datum: a longer word is not the datum.
+        let closed = after[digits..]
+            .strip_prefix(CALL_ARGUMENT_DATUM_CLOSE)
+            .filter(|tail| !tail.starts_with(|c: char| c.is_alphanumeric() || c == '_'));
+        match closed {
             Some(tail) if digits > 0 => {
                 replaced.push_str(&rest[..at]);
                 replaced.push_str(stand_in);

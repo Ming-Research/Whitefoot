@@ -1204,7 +1204,7 @@ fn a_source_relation_field_is_read_as_source_around_its_descriptions() {
         format!("{described_index} is below the length of rows"),
         "a # b".to_owned(),
         "i < rows^[?].len".to_owned(),
-        format!("i < rows^[{described_index}"),
+        format!("i < rows^[{}", described_index.trim_end_matches('\u{203a}')),
     ] {
         let defects = with_field("residual", Value::Source(text.clone())).text_defects();
         assert_eq!(defects.len(), 1, "{text}: {defects:?}");
@@ -1219,6 +1219,7 @@ fn a_source_relation_field_is_read_as_source_around_its_descriptions() {
         "cell^.inner.len unchanged".to_owned(),
         "move rows".to_owned(),
         "need::<4>".to_owned(),
+        "relay::<A, fn apply>".to_owned(),
     ] {
         let defects = with_field("residual", Value::Source(text.clone())).text_defects();
         assert!(defects.is_empty(), "{text}: {defects:?}");

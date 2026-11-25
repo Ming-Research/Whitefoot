@@ -455,10 +455,12 @@ fn is_source_relation(text: &str) -> bool {
 }
 
 /// Whether the grammar writes `second` right after the word `first`: `move`
-/// before a place, `unchanged` after a relation's left side, and the range
-/// clause words.
+/// before a place, `fn` before a function argument of a type-argument list,
+/// `unchanged` after a relation's left side, and the range clause words.
 fn joins_words(first: &[u8], second: &[u8]) -> bool {
-    const BEFORE: &[&[u8]] = &[b"move", b"not", b"is", b"in", b"when", b"forall", b"spawn", b"musttail"];
+    const BEFORE: &[&[u8]] = &[
+        b"move", b"not", b"is", b"in", b"when", b"forall", b"spawn", b"musttail", b"fn",
+    ];
     BEFORE.contains(&first) || second == b"unchanged" || second == b"is" || second == b"in"
 }
 
