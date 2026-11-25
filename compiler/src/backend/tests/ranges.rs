@@ -1191,6 +1191,59 @@ fn without_vacant_clears(module: &str) -> (String, usize) {
     (kept, removed)
 }
 
+/// [`without_vacant_clears`], with each whole `Option<Chunk>` transfer in the
+/// scatter's own functions shortened to the tag byte, and how many transfers
+/// were shortened. Those functions transfer such a value only to append an
+/// empty slot, whose tag is all of its value.
+fn with_tag_only_vacant_appends(module: &str) -> (String, usize) {
+    let (module, _) = without_vacant_clears(module);
+    let mut chunk = None;
+    for line in module.lines() {
+        if let Some((name, definition)) = line.split_once(" = type ")
+            && name.starts_with("%wf.t.")
+            && definition.contains("[256 x i64]")
+        {
+            chunk = Some(name.to_owned());
+        }
+    }
+    let Some(chunk) = chunk else {
+        return (module, 0);
+    };
+    let wanted = format!("{{ i8, {chunk} }}");
+    let mut option = None;
+    for line in module.lines() {
+        if let Some((name, definition)) = line.split_once(" = type ")
+            && name.starts_with("%wf.t.")
+            && definition.trim() == wanted
+        {
+            option = Some(name.to_owned());
+        }
+    }
+    let Some(option) = option else {
+        return (module, 0);
+    };
+    let size = format!("i64 ptrtoint (ptr getelementptr ({option}, ptr null, i32 1) to i64)");
+    let mut shortened = 0;
+    let mut in_scatter = false;
+    let mut kept = String::with_capacity(module.len());
+    for line in module.lines() {
+        if line.starts_with("define ") {
+            in_scatter = line
+                .split_once(" @")
+                .and_then(|(_, tail)| tail.split_once('('))
+                .is_some_and(|(name, _)| name.contains("radix_scatter"));
+        }
+        if in_scatter && line.contains("@llvm.mem") && line.contains(&size) {
+            shortened += 1;
+            kept.push_str(&line.replace(&size, "i64 1"));
+        } else {
+            kept.push_str(line);
+        }
+        kept.push('\n');
+    }
+    (kept, shortened)
+}
+
 /// The scatter with each block partitioned inside its destination chunk: the
 /// chunk is stored empty and then filled through a reference, so no run
 /// crosses a call result, a constructor or a store as a value.
@@ -1318,7 +1371,13 @@ fn stable_scatter_probe_reports_clears_and_copies() {
     }
     let (without_clears, removed) = without_vacant_clears(&emitted);
     summary.push(format!("vacant clears removed from the emitted module: {removed}"));
-    let mut modules = vec![("main", emitted), ("no-clear", without_clears)];
+    let (tag_only, shortened) = with_tag_only_vacant_appends(&emitted);
+    summary.push(format!("vacant appends shortened to the tag: {shortened}"));
+    let mut modules = vec![
+        ("main", emitted),
+        ("no-clear", without_clears),
+        ("tag-only", tag_only),
+    ];
     let in_place = in_place_scatter_source();
     let inputs = [SourceInput::new("test.wf", in_place.as_bytes())];
     match crate::compile_with_overlap(
@@ -1327,9 +1386,9 @@ fn stable_scatter_probe_reports_clears_and_copies() {
         OverlapLowering::On,
     ) {
         Ok(module) => {
-            let (cleared, removed) = without_vacant_clears(&module.into_string());
-            summary.push(format!("in-place source: vacant clears removed: {removed}"));
-            modules.push(("in-place-no-clear", cleared));
+            let (tag_only, shortened) = with_tag_only_vacant_appends(&module.into_string());
+            summary.push(format!("in-place source: vacant appends shortened: {shortened}"));
+            modules.push(("in-place-tag-only", tag_only));
         }
         Err(failure) => summary.push(format!("in-place source rejected: {failure}")),
     }
@@ -1510,8 +1569,10 @@ fn scatter_probe_medians(stdout: &str) -> (u64, u64) {
 /// Research probe for the scatter's whole call on 1,048,593 mixed keys. It
 /// always fails, so that its table reaches the test result. The images are
 /// the ordinary `--par` module, an identical twin of it, the same module
-/// without the clear of each empty `Option<Chunk>`, and the source that
-/// partitions inside the destination chunk; each is checked against the
+/// without the clear of each empty `Option<Chunk>`, that module with each
+/// empty slot appended as its tag only, and the source that partitions
+/// inside the destination chunk, as emitted and with tag-only appends; each
+/// is checked against the
 /// independent oracle before it is timed. Every pass runs each image once at
 /// each width, in an order the pass rotates, and one serial native chain.
 #[test]
@@ -1526,10 +1587,13 @@ fn stable_scatter_probe_times_whole_calls() {
     let emitted = emit_lowered(source, OverlapLowering::On);
     let (without_clears, removed) = without_vacant_clears(&emitted);
     report.push(format!("vacant clears removed from the emitted module: {removed}"));
+    let (tag_only, shortened) = with_tag_only_vacant_appends(&emitted);
+    report.push(format!("vacant appends shortened to the tag: {shortened}"));
     let mut modules = vec![
         ("main", emitted.clone()),
         ("twin", emitted),
         ("no-clear", without_clears),
+        ("tag-only", tag_only),
     ];
     let in_place = in_place_scatter_source();
     let inputs = [SourceInput::new("test.wf", in_place.as_bytes())];
@@ -1540,10 +1604,10 @@ fn stable_scatter_probe_times_whole_calls() {
     ) {
         Ok(module) => {
             let module = module.into_string();
-            let (cleared, removed) = without_vacant_clears(&module);
-            report.push(format!("in-place source: vacant clears removed: {removed}"));
+            let (tag_only, shortened) = with_tag_only_vacant_appends(&module);
+            report.push(format!("in-place source: vacant appends shortened: {shortened}"));
             modules.push(("in-place", module));
-            modules.push(("in-place-no-clear", cleared));
+            modules.push(("in-place-tag-only", tag_only));
         }
         Err(failure) => report.push(format!("in-place source rejected: {failure}")),
     }
