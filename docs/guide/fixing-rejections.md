@@ -36,8 +36,8 @@ for your program may offer others.
 
 ## Text and layout
 
-Rules: FORM-1, FORM-2, FORM-3, FORM-5, FORM-7, GIVE-1, GRAM-1, GRAM-2,
-GRAM-3, GRAM-4, GRAM-5, GRAM-6, GRAM-8, GRAM-9, GRAM-10, GRAM-11.
+Rules: FORM-1, FORM-2, FORM-3, FORM-4, FORM-5, FORM-7, GIVE-1, GRAM-1,
+GRAM-2, GRAM-3, GRAM-4, GRAM-5, GRAM-6, GRAM-8, GRAM-9, GRAM-10, GRAM-11.
 
 These rejections come before any proof. FORM-1 gives every construct exactly
 one spelling and one layout, and the grammar is deterministic, so the checker
@@ -71,8 +71,8 @@ fn main() -> status: std::process::ExitStatus pure {
 
 ## Names and modules
 
-Rules: MOD-1, MOD-3, MOD-4, MOD-5, MOD-6, MOD-7, MOD-9, MOD-10, MOD-11,
-TYPE-6.
+Rules: MOD-1, MOD-2, MOD-3, MOD-4, MOD-5, MOD-6, MOD-7, MOD-8, MOD-9,
+MOD-10, MOD-11, TYPE-6.
 
 A name resolves only in the module its prefix names, and only to a
 declaration that module makes accessible. MOD-5 is that lookup; MOD-6 keeps a
@@ -85,6 +85,10 @@ makes accessible.
 The example is MOD-5. `pkg::missing` names nothing the module declares.
 
 ```whitefoot reject MOD-5 file=lookup.wf
+fn zeta() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+
 fn alpha() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
@@ -101,6 +105,10 @@ placeholder
 The repaired program calls a function the module does declare:
 
 ```whitefoot file=lookup.wf
+fn zeta() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+
 fn alpha() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
@@ -206,8 +214,12 @@ message lists the ones that fit your goal.
 The example is OP-4. Nothing says `i` is below the length of `b`.
 
 ```whitefoot reject OP-4 file=bounds.wf
-fn get(b: &[i32], i: u64) -> result: i32 reads(b) {
+fn get(b: &[u8], i: u64) -> result: u8 reads(b) {
   return b^[i];
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 ```
 
@@ -218,11 +230,15 @@ placeholder
 The repaired program reads the element only where the condition holds:
 
 ```whitefoot file=bounds.wf
-fn get(b: &[i32], i: u64) -> result: i32 reads(b) {
+fn get(b: &[u8], i: u64) -> result: u8 reads(b) {
   if i < b^.len {
     return b^[i];
   }
-  return 0_i32;
+  return 0_u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 ```
 
@@ -251,8 +267,14 @@ fn small(x: u64) -> result: u64 pure contract {
   return x;
 }
 
-fn call(y: u64) -> result: u64 pure {
-  return small(x: y);
+fn caller(y: u64) -> result: u64 pure {
+  let r = small(x: y);
+  return r;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let r = caller(y: 3_u64);
+  return std::process::exit_status(code: 0_u8);
 }
 ```
 
@@ -270,10 +292,16 @@ fn small(x: u64) -> result: u64 pure contract {
   return x;
 }
 
-fn call(y: u64) -> result: u64 pure contract {
+fn caller(y: u64) -> result: u64 pure contract {
   requires y < 10_u64;
 } {
-  return small(x: y);
+  let r = small(x: y);
+  return r;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let r = caller(y: 3_u64);
+  return std::process::exit_status(code: 0_u8);
 }
 ```
 
@@ -284,8 +312,9 @@ Rules: LIV-1, OWN-1, OWN-11, PROV-6, WIN-3.
 Every value has one owner, and a value that cannot be copied is given away
 only by an explicit `move`, after which its binding is dead and cannot be
 read. Liveness is joined at every branch, which is what lets each release run
-unconditionally. [Safety claims](../safety-claims.md) lists OWN-1, LIV-1,
-WIN-3 and OWN-11 under memory corruption and uninitialized reads.
+unconditionally. [Safety claims](../safety-claims.md) lists OWN-1 and LIV-1
+under memory corruption and under uninitialized reads, and WIN-3 and OWN-11
+under uninitialized reads.
 
 The change: write `move` at the one place a value leaves its owner, and use
 the value nowhere after that.
@@ -408,22 +437,23 @@ under data races.
 
 The change: pass places the checker can show are different.
 
-The example is EFF-5. Both arguments are the same cell.
+The example is EFF-5. `copy_across` reads through `source` and writes through
+`destination`, and the call passes the same cell as both.
 
 ```whitefoot reject EFF-5 file=alias.wf
 struct Cell {
-  value: i32;
+  value: u64;
 }
 
-fn two(a: &Cell, b: &Cell) -> result: unit writes(a.value), writes(b.value) {
-  set a^.value = 0_i32;
-  set b^.value = 1_i32;
+fn copy_across(source: &Cell, destination: &Cell) -> result: unit reads(source.value), writes(destination.value) {
+  let v = source^.value;
+  set destination^.value = v;
   return unit;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let x = Cell(value: 0_i32);
-  two(a: &x, b: &x);
+  let a = Cell(value: 4_u64);
+  copy_across(source: &a, destination: &a);
   return std::process::exit_status(code: 0_u8);
 }
 ```
@@ -436,19 +466,19 @@ The repaired program passes two different cells:
 
 ```whitefoot file=alias.wf
 struct Cell {
-  value: i32;
+  value: u64;
 }
 
-fn two(a: &Cell, b: &Cell) -> result: unit writes(a.value), writes(b.value) {
-  set a^.value = 0_i32;
-  set b^.value = 1_i32;
+fn copy_across(source: &Cell, destination: &Cell) -> result: unit reads(source.value), writes(destination.value) {
+  let v = source^.value;
+  set destination^.value = v;
   return unit;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let x = Cell(value: 0_i32);
-  let y = Cell(value: 1_i32);
-  two(a: &x, b: &y);
+  let a = Cell(value: 4_u64);
+  let b = Cell(value: 0_u64);
+  copy_across(source: &a, destination: &b);
   return std::process::exit_status(code: 0_u8);
 }
 ```
@@ -458,11 +488,12 @@ fn main() -> status: std::process::ExitStatus pure {
 Rules: SHARE-1, SHARE-2, WAIT-1, WAIT-3.
 
 A call that may wait is part of its callee's signature, and only a function
-that itself waits may make one. Spawns and shared objects follow the same
-rule of making every wait and every shared update explicit, which is what lets
-the checker prove two contexts never touch the same storage unannounced.
-[Safety claims](../safety-claims.md) lists SHARE-2 and WAIT-3 under data
-races.
+that itself waits may make one. A spawn starts a context whose footprint is
+the storage its arguments moved or copied into it, so a spawned callee takes
+only value parameters [WAIT-3]; a shared object is reached only through the
+atomic forms [SHARE-2]. Together they let the checker prove that two contexts
+never touch the same storage unannounced. [Safety claims](../safety-claims.md)
+lists SHARE-2 and WAIT-3 under data races.
 
 The change: declare `waits` on the function that makes the waiting call.
 
@@ -473,6 +504,10 @@ declare it.
 fn close_it(factory: &std::io::HandleFactory, directory: std::fs::DirectoryRead) -> result: unit writes(factory) {
   std::fs::close_directory(factory: factory, directory: move directory);
   return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 ```
 
@@ -486,6 +521,10 @@ The repaired program declares the wait:
 fn close_it(factory: &std::io::HandleFactory, directory: std::fs::DirectoryRead) -> result: unit writes(factory) waits {
   std::fs::close_directory(factory: factory, directory: move directory);
   return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
 }
 ```
 
