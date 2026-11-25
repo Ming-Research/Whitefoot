@@ -59,10 +59,19 @@ jobs:
           one() { # dir out label
             ( cd "$1" && WHITEFOOT_CHECK_TIMEOUT=1500 perl .github/run-check.pl "$3" \
                 make -j4 -C compiler concurrent-map-test CC=$cc ) > "$2" 2>&1
-            echo "$3: exit $?"
+            last_status=$?
+            echo "$3: exit $last_status"
+          }
+          # The run page shows annotations without a sign-in, so each trial
+          # leaves one: both exits, the lines that say a run finished, and the
+          # first line of each output that looks like an error.
+          note() { # label exit-a exit-b
+            local text
+            text="$1: exit A $2, exit B $3; A: $(grep -c 'all checks passed' "$RUNNER_TEMP/a.out") finished, $(grep -c 'checkout B' "$RUNNER_TEMP/a.out") marked; B: $(grep -c 'all checks passed' "$RUNNER_TEMP/b.out") finished, $(grep -c 'checkout B' "$RUNNER_TEMP/b.out") marked; A first error: $(grep -m1 -i -E 'error|fail|cannot|No rule' "$RUNNER_TEMP/a.out" | cut -c1-200); B first error: $(grep -m1 -i -E 'error|fail|cannot|No rule' "$RUNNER_TEMP/b.out" | cut -c1-200)"
+            echo "::notice title=$1::$(printf '%s' "$text" | tr '\n' ' ' | cut -c1-900)"
           }
           verdict() { # label ok-condition-text status
-            if [ "$3" = ok ]; then echo "RESULT $1: $2: as expected"; else echo "RESULT $1: $2: NOT as expected"; problems=$((problems + 1)); fi
+            if [ "$3" = ok ]; then echo "RESULT $1: $2: as expected"; else echo "RESULT $1: $2: NOT as expected"; echo "::error title=$1::$2: NOT as expected"; problems=$((problems + 1)); fi
           }
           sees() { # file pattern
             grep -F -q -- "$2" "$1" && echo yes || echo no
@@ -86,8 +95,9 @@ jobs:
 
             echo "::group::$when (i) fixed order, shared TMPDIR"
             fresh "$commit"
-            one "$a" "$RUNNER_TEMP/a.out" "tmp-map-a"; one "$b" "$RUNNER_TEMP/b.out" "tmp-map-b"
+            one "$a" "$RUNNER_TEMP/a.out" "tmp-map-a"; ea=$last_status; one "$b" "$RUNNER_TEMP/b.out" "tmp-map-b"; eb=$last_status
             tail -3 "$RUNNER_TEMP/a.out" "$RUNNER_TEMP/b.out"
+            note "$when-i" $ea $eb
             check_pair "$when-i" $want
             if [ $when = after ]; then
               [ -z "$(git -C "$a" status --porcelain)" ] && verdict "$when-i" "A's worktree has nothing untracked" ok || { git -C "$a" status --porcelain | head; verdict "$when-i" "A's worktree has nothing untracked" bad; }
@@ -102,6 +112,7 @@ jobs:
               wait $pa; sa=$?; wait $pb; sb=$?
               echo "exit A $sa, exit B $sb"
               tail -3 "$RUNNER_TEMP/a.out" "$RUNNER_TEMP/b.out"
+              note "$when-ii" $sa $sb
               check_pair "$when-ii" marker
               echo "::endgroup::"
             fi
@@ -109,12 +120,14 @@ jobs:
             echo "::group::$when (iii) one named directory"
             fresh "$commit"
             export COMPLETION_TMP=$RUNNER_TEMP/explicit
-            one "$a" "$RUNNER_TEMP/a.out" "tmp-map-a"; one "$b" "$RUNNER_TEMP/b.out" "tmp-map-b"
+            one "$a" "$RUNNER_TEMP/a.out" "tmp-map-a"; ea=$last_status; one "$b" "$RUNNER_TEMP/b.out" "tmp-map-b"; eb=$last_status
             unset COMPLETION_TMP
             tail -3 "$RUNNER_TEMP/a.out" "$RUNNER_TEMP/b.out"
+            note "$when-iii" $ea $eb
             check_pair "$when-iii" $want
             echo "::endgroup::"
           done
 
           echo "problems: $problems"
+          echo "::notice title=summary::problems: $problems"
           [ "$problems" = 0 ]
