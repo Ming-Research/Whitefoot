@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-11-25 The runtime's C frames over a page are stack-probed, and the bundled clang's are checked
+
+Nodes: compiler/resource-exhaustion-floor, compiler/downstream-releases
+
+Summary: The runtime's C units were compiled with whatever probing their clang adds, which for upstream clang is none, so a 32 KiB frame in the file adapter's readiness wait could step over the guard page with the Linux gate's clang and the macOS package's; Apple's clang probes it by default. The exhaustion-floor decision that left this as a known gap now says the units compile with the target's probing method (the Linux option, Apple's `-fstack-check` where the Darwin capability probe selects the helper, the front-end option where it selects inline, none on MinGW), the native cache keys by it, and a corpus test requires a probe in every runtime frame over a page, the hand-written LLVM unit included; its rejected list gains keeping each clang's default and the driver option on Darwin. The release decision on bundled acceptance gains one exception: the frame test is built from the candidate's source and run beside each installed package's clang, and its rejected list gains the gate-side check with the pinned upstream clang, no check, and a Python reader of the cache.
+
 ## 2026-10-23 A returned computed integer expression proves a postcondition as a `let` of it would
 
 Nodes: language/checks-and-proofs/automatic-facts
