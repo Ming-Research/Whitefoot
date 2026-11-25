@@ -1486,15 +1486,29 @@ and its logs were not read):
 | a copy giving the stage 1 s | 79.12 s | `== OVER BUDGET: enforced: compiler/build took 79.1 s, over its 1 s linux budget ==` | 1 |
 | `main`'s, with no row | 79.64 s | `== OVER BUDGET: enforced: compiler/build has no linux budget in ... ==` | 1 |
 
-A manual run of `io-hosts.yml` on the head commit (run 45682294237) passed all
+A manual run of `io-hosts.yml` on commit 23a294d48 (run 45682294237) passed all
 19 steps of `completion-windows`, including the final verdict step. GitHub's
 step records give whole seconds: the program-case build took 259 s of its 400 s
 budget, the cases 46 s of 65 s, the driver links 23 s of 35 s and the test
 images 11 s of 15 s. The run's logs were not read, because the account's API
-quota was spent, so its `== START` and `== END` lines are not recorded here. A
-verdict step whose record file was never written passes, so this run alone
-does not show that the steps ran under the wrapper; a run with a stage over its
-budget does.
+quota was spent, so its `== START` and `== END` lines are not recorded here. The
+verdict then passed when its record file was never written, so that run alone
+did not show that the steps ran under the wrapper. From commit a57eb3342 the
+verdict step fails when the record does not exist, which the wrapper creates
+before it runs any stage, and the wrapper test requires the record to exist,
+and be empty, after a stage within its budget.
+
+**The wrapper test against its probes (2026-11-25).** A temporary workflow ran
+`.github/test-run-check.sh` of the head on `ubuntu-24.04` (run 45686947823, probe
+commit 7b919be69 on top of a57eb3342) against the wrapper of each probe and
+required the test to fail at the line the probe is meant to reach, reading the
+last commands of the shell's trace. All five steps passed: the head's wrapper
+passes the test; the wrapper without the Windows host guard (2fa583063) fails at
+the `grep -qE '^(real|user|sys) '` line; the wrapper that reads its own CPU
+times (270f1e7a4) fails at the awk that requires `real`, `user` of at least 0.3 s
+and `sys` before `== END cpu:`; the wrapper without the `cygwin` host name
+(1dd59da81) fails at the grep for the Windows budget; and the wrapper without
+the up-front creation of the record fails at the new `test -e` on the record.
 
 ## Daily loop
 
