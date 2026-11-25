@@ -594,4 +594,112 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#],
     },
+    // [FN-8] a contract that holds definitions and no clause.
+    RepairPair {
+        name: "fn8-neg-requires-no-check.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/fn8-neg-requires-no-check.wf"
+        ),
+        rule: "FN-8",
+        sentences: &[],
+        repaired: &[br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn no_check(x: i32) -> result: i32 pure contract {
+  define permitted = x >= 0_i32;
+  requires permitted;
+} {
+  doc "A define-only contract with no requires or ensures clause is malformed [FN-8].";
+  return x;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
+"#],
+    },
+    // [CONST-2] a set whose target is a constant.
+    RepairPair {
+        name: "const2-neg-set.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/const2-neg-set.wf"
+        ),
+        rule: "CONST-2",
+        sentences: &[],
+        repaired: &[br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const table: Array<u8, 4> =[10_u8, 20_u8, 30_u8, 40_u8];
+
+fn main() -> status: ExitStatus pure {
+  doc "A const item is immutable: a set through it is rejected.";
+  return exit_status(code: 0_u8);
+}
+"#],
+    },
+    // [GRAM-10] a match binder that reuses a live name.
+    RepairPair {
+        name: "x-match-gram10-binder-not-fresh.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/x-match-gram10-binder-not-fresh.wf"
+        ),
+        rule: "GRAM-10",
+        sentences: &[],
+        repaired: &[br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "GRAM-10 freshness: a match binder that reuses a live outer name (w) is not fresh and is a hard error citing GRAM-10 [TYPE-6].";
+  let w = 7_i32;
+  let v = match 40_i32 +checked 2_i32 {
+    Ok(value: z) => {
+      give z;
+    }
+    Err(error: e) => {
+      give 0_i32;
+    }
+  }
+  return exit_status(code: 0_u8);
+}
+"#],
+    },
+    // [OP-1] a call to a name no declaration gives.
+    RepairPair {
+        name: "op1-neg-eeq-retired.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/op1-neg-eeq-retired.wf"
+        ),
+        rule: "OP-1",
+        sentences: &[],
+        repaired: &[br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn compare(left: u32, right: u32) -> return_value: Bool pure {
+  return left == right;
+}
+
+fn main() -> return_value: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
+"#],
+    },
+    // [TYPE-6] a `continue` to the label of a loop that is not enclosing.
+    RepairPair {
+        name: "continue-neg-non-enclosing-label.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/continue-neg-non-enclosing-label.wf"
+        ),
+        rule: "TYPE-6",
+        sentences: &[],
+        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure {
+  doc "Exercises the continue transfer.";
+  loop @ended {
+    break;
+  }
+  loop @again {
+    continue @again;
+  }
+}
+"#],
+    },
 ];
