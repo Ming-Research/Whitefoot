@@ -403,8 +403,9 @@ reloaded two of its three hash constants for every pair and stored each
 pair in two halves; folding the helper back into one rebuild restores the
 base's loop, which the [implementation](#implementation) now does.
 
-The rerun on the revision to merge, against its new merge base with the same
-floor, judged one grow-only cell slower: lookup miss at 1,000 pairs, 1.0060
+The rerun, run 40059553947 on the 14900K, measured the branch head 4497af68b
+against the library of 89a0815fc, its merge base with main then, with the
+same floor. It judged one grow-only cell slower: lookup miss at 1,000 pairs, 1.0060
 [1.0018, 1.0144], with the twin at 1.0005 [0.9992, 1.0071]. The other eleven
 showed no change except growing insertion at 10,000, again faster, 0.8531
 [0.8429, 0.8606]; the three cells of the first run now show none. Read from
@@ -414,11 +415,43 @@ calls are identical instruction for instruction once addresses are removed,
 cell is attributed to code placement, an attribution read, not measured.
 The faster growing insertion at 10,000 pairs is measured only; its cause is
 neither read from the machine code nor isolated by a measurement, and stays
-unexplained. The ordinary removal cells, recorded without a verdict, were
-1.0119 [1.0048, 1.0214], 1.0044 [1.0019, 1.0061] and 1.0893
-[1.0781, 1.1043] for remove-insert at 1,000, 10,000 and 1,000,000 pairs; the
-longest single removal of the 1,000,000-pair drain took 11.39 ms, the
-rebuild from a capacity of 1,572,864 pairs to 786,432.
+unexplained.
+
+The rerun's removal numbers are recorded without a verdict. Remove-insert
+was 1.0119 [1.0048, 1.0214], 1.0044 [1.0019, 1.0061] and 1.0893
+[1.0781, 1.1043] at 1,000, 10,000 and 1,000,000 pairs. The removal tail's
+99th percentile was 1.0000 [0.9844, 1.0156] over the 10,000-pair drain, with
+the twin at 0.9923 [0.9692, 1.0156], and 0.9753 [0.9631, 0.9875] over the
+1,000,000-pair drain, with the twin at 0.9918 [0.9753, 1.1066]; the
+instrument left both unresolved. The longest single removal over the twelve
+rounds took 51,964 ns in the 10,000-pair drain and 11,393,754 ns in the
+1,000,000-pair drain, each the drain's first migration; the base's longest
+took 4,410 ns and 165,627 ns. A 10,000-pair drain migrated 12 times and a
+1,000,000-pair drain 19 times; the base never changed capacity. Each
+migration's removal, median and maximum over the twelve drains of each size,
+in microseconds to three significant figures (capacities count pairs):
+
+| Capacity before, after | Pairs left | 10,000-pair drain: median, max | 1,000,000-pair drain: median, max |
+| --- | ---: | ---: | ---: |
+| 1,572,864, 786,432 | 262,143 | - | 11,300, 11,400 |
+| 786,432, 393,216 | 131,071 | - | 4,820, 4,950 |
+| 393,216, 196,608 | 65,535 | - | 1,230, 1,330 |
+| 196,608, 98,304 | 32,767 | - | 551, 574 |
+| 98,304, 49,152 | 16,383 | - | 243, 253 |
+| 49,152, 24,576 | 8,191 | - | 116, 123 |
+| 24,576, 12,288 | 4,095 | - | 56.3, 62.1 |
+| 12,288, 6,144 | 2,047 | 47.5, 52.0 | 28.1, 32.5 |
+| 6,144, 3,072 | 1,023 | 27.4, 29.1 | 14.1, 18.5 |
+| 3,072, 1,536 | 511 | 7.52, 27.0 | 7.12, 11.5 |
+| 1,536, 768 | 255 | 3.71, 4.16 | 3.75, 3.96 |
+| 768, 384 | 127 | 1.90, 2.27 | 1.90, 1.95 |
+| 384, 192 | 63 | 1.02, 1.14 | 1.01, 1.04 |
+| 192, 96 | 31 | 0.583, 0.627 | 0.563, 0.608 |
+| 96, 48 | 15 | 0.374, 0.422 | 0.562, 0.703 |
+| 48, 24 | 7 | 0.252, 0.284 | 0.315, 0.381 |
+| 24, 12 | 3 | 0.184, 0.206 | 0.256, 0.287 |
+| 12, 6 | 1 | 0.127, 0.139 | 0.136, 0.155 |
+| 6, 0 | 0 | 0.0880, 0.107 | 0.203, 0.296 |
 
 ## Owner decisions
 
