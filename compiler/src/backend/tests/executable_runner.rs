@@ -52,12 +52,27 @@ fn a_module_without_an_executable_runner_is_accepted_by_the_host_toolchain() {
             crate::require_executable_runner(&module).is_err(),
             "{label}: the module must be a library"
         );
+        // The floor entry and the program body it calls exist together or not
+        // at all, so no library module names a body it does not define.
+        for symbol in ["@wf__main_body", "@wf__floor_run"] {
+            assert!(!module.contains(symbol), "{label}: names {symbol}\n{module}");
+        }
         if let Err(refusal) = host_code_generation(&module) {
             panic!("{label}: the host toolchain refused the module:\n{refusal}\n{module}");
         }
     }
+    // The same two symbols are present, defined, when a runner is generated.
+    let module = compile(b"fn main() -> result: unit pure {\n  return unit;\n}\n");
+    for definition in [
+        "define i32 @wf__main_body(",
+        "define weak i32 @wf__floor_run(",
+    ] {
+        assert!(module.contains(definition), "{definition}\n{module}");
+    }
+    if let Err(refusal) = host_code_generation(&module) {
+        panic!("the host toolchain refused a module with a runner:\n{refusal}\n{module}");
+    }
 }
-
 
 #[test]
 fn a_checked_library_entry_stops_before_native_build() {
