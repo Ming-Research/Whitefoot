@@ -12,7 +12,7 @@ OrderedMap is a B-tree of fanout 16 over boxed nodes, each node with one leading
 
 ### decision ordered-map-tree-is-private
 OrderedMap's tree is private to its module: the root field and the node and entry types are unpublished, and only the length is published, for its contract.
-- replaced: the root field and the node and entry fields were published readonly for clients to walk; the owner changed it, because the fanout-16 node is a measured baseline that may change, and every client walk written against it would break with it.
+- replaced: publishing the root field and the node and entry fields readonly for clients to walk was on main; the owner changed it, because the fanout-16 node is a measured baseline that may change, and every client walk written against it would break with it.
 
 ### decision ordered-map-walks-by-owned-cursor
 An OrderedMap walk is an owned cursor holding a path of child indices and the map's version, made at an end or a probe, stepped either way, read by lending, ranked in the module.
