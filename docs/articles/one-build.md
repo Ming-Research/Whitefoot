@@ -145,7 +145,7 @@ allocating call in the code it runs.
 | Resource exhaustion may stop the program, outside its meaning | SCOPE-3 |
 | One heap; allocation is total; `no_heap` | STOR-8 |
 | `musttail` reuses the frame | FN-10 |
-| The records, stack probing and the ledger's numbers | [`design/compiler/resource-exhaustion-floor.md`](../../design/compiler/resource-exhaustion-floor.md) |
+| The records, stack probing and the ledger's numbers | decision `exhaustion-writes-one-fixed-record`, decision `generated-functions-carry-stack-probes`, decision `stack-ledger-reads-the-host-compilation` in [`design/decisions/runtime/exhaustion-floor.md`](../../design/decisions/runtime/exhaustion-floor.md) |
 
 Every program in this article is compiled by the compiler at commit
 `e041772d8`. The ledger is `whitefootc --stack-ledger` output, and the runs
