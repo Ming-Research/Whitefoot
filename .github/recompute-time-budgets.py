@@ -43,7 +43,7 @@ import time
 
 MINIMUM_RUNS = 20
 # The columns the owner added for a model with fewer than MINIMUM_RUNS runs
-# (design/compiler/verification.md); an addition is the owner's decision.
+# (design/decisions/development/verification.md); an addition is the owner's decision.
 OWNER_COLUMNS = ("xeon-8573c",)
 BUDGETS = ".github/time-budgets.txt"
 DEFAULT_WINDOW = 50
