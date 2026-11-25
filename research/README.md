@@ -177,6 +177,10 @@ the work-branch and merge boundary.
   repaired the change log each time another merged (112 of 307 merges of main
   over 62 amendments), the alternatives compared, and what would reject the
   version derived from the log.
+- [Chunk building in the stable scatter](investigations/scatter-chunk-building/DESIGN.md):
+  which whole-block clears and copies the scatter's optimized code still
+  holds, what they cost of the whole call, and the lowerings that would
+  remove them, with the criteria fixed before measuring.
 
 Open research questions and evidence links are in [ideas](../docs/ideas.md);
 known compiler defects and implementation costs are on the
