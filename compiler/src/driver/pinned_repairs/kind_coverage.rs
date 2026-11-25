@@ -702,4 +702,27 @@ fn main() -> return_value: ExitStatus pure {
 }
 "#],
     },
+    // [OP-5] a requirement whose expression is no Bool.
+    RepairPair {
+        name: "fn8-neg-requires-non-bool-check.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/fn8-neg-requires-non-bool-check.wf"
+        ),
+        rule: "OP-5",
+        sentences: &[],
+        repaired: &[br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn non_bool(x: i32) -> result: i32 pure contract {
+  requires x >= 0_i32;
+} {
+  doc "A requires expression must have exact type Bool [FN-8/OP-5].";
+  return x;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
+"#],
+    },
 ];
