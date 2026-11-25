@@ -1486,7 +1486,8 @@ cannot make a stale table current: the table of 2026-10-23 was not recomputed
 before 2026-11-25, and a wider margin only gives it more room. Nothing was
 measured for the other workflows' rows (io-hosts, proof, sanitizers, the
 concurrent map's sanitizers and compute-regression), which keep the values of
-the former rule or their provisional ones; the sanitizer rows have the most
+the former rule or their provisional ones, each raised by a tenth in the
+owner's raise of 2026-11-25; the sanitizer rows have the most
 jobs and, unlike the gate's, a merge needs them green too. Two of the 22 jobs
 are not judged (above). A stage made 30% slower than its budget is shown to
 fail by a run of the verdict, not by this replay: see the next paragraph.

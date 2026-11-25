@@ -748,6 +748,17 @@ def self_test():
         ("stage/two", "Small CPU", "2026-10-26"): (None, "0 earlier runs of its class, 20 needed"),
         ("stage/three", "Thin CPU", "2026-10-26"): (None, "no class of its row has enough earlier runs"),
     }, verdicts
+    # With two other classes that have enough runs, 55 s (50 s) and 35 s (30 s),
+    # the owner column takes the larger. A run that finishes exactly at the
+    # cutoff is not among the runs before it: the fifth run of the big class,
+    # at 00:00:04 of the fifth day, has four earlier runs.
+    two_classes = sample([("stage/seven", "Big CPU", 5000, 1 + i, 0) for i in range(25)]
+                         + [("stage/seven", "Small CPU", 3000, 1 + i, 0) for i in range(25)]
+                         + [("stage/seven", "Thin CPU", 4000, 26, 0)])
+    seen = Judgment(flatten(two_classes), Table(table_text), "2026-10-26", 20, 1)
+    assert [(r["cpu"], budget, why) for r, budget, why in seen.stages] == [("Thin CPU", 55, None)], seen.stages
+    fifth = next(r for r in flatten(two_classes) if r["cpu"] == "Big CPU" and r["day"] == "2026-10-05")
+    assert len(seen.earlier("stage/seven", "Big CPU", moment(fifth["ts"]))) == 4, fifth
 
     # The jobs that went red as they ran (a stage over the budget its log
     # recorded, 110 s here): a 112 s run is cleared, the rule's budget being
