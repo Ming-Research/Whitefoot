@@ -220,6 +220,11 @@ pub(super) fn run() -> &'static Run {
                 .chain(super::module_kind_pairs::MODULE_KIND_PAIRS)
                 .map(super::module_pairs::check_module_pair),
         );
+        let results = results.chain(
+            super::module_pairs::LIBRARY_GRAPH_PAIRS
+                .iter()
+                .map(super::module_pairs::check_library_graph_pair),
+        );
         for result in results {
             match result {
                 Ok(kind) => {

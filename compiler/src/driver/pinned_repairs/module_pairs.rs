@@ -24,6 +24,11 @@ use crate::{
 /// the case root and its new bytes.
 pub(super) type Replacement = (&'static str, &'static [u8]);
 
+/// One rewrite of a record of the standard library the toolchain carries
+/// [MOD-10]: the record's logical path, a stretch of its text and the text
+/// written there instead.
+pub(super) type LibraryEdit = (&'static str, &'static str, &'static str);
+
 /// One repair pair [DIAG-1] on a module program.
 pub(super) struct ModulePair {
     /// Names the pair in a failure: the case directory, and what a probe
@@ -34,6 +39,10 @@ pub(super) struct ModulePair {
     /// The records of that directory a probe replaces to reject an accepted
     /// program; empty where the directory is rejected as it stands.
     pub(super) rejected: &'static [Replacement],
+    /// The rewrites of the carried library's records the rejected program
+    /// reads; a program the toolchain's own library alone can write is
+    /// reached through them, and the alternatives read the library as it is.
+    pub(super) library: &'static [LibraryEdit],
     /// The numbered rule the rejection must cite.
     pub(super) rule: &'static str,
     /// Exact substrings of the rendered rejection, as for a source pair.
@@ -46,6 +55,7 @@ pub(super) const MODULE_PAIRS: &[ModulePair] = &[ModulePair {
     name: "type11-neg-writable-public-field",
     case: "type11-neg-writable-public-field",
     rejected: &[],
+    library: &[],
     rule: "TYPE-11",
     sentences: &[
         "\n  mechanical_fix: write the field `public readonly`, so that code outside the declaring module reads it and only that module writes it, or make it private\n",
@@ -110,6 +120,34 @@ fn copy_directory(from: &Path, to: &Path) {
     }
 }
 
+/// The records `library` rewrites, placed in their library modules: the
+/// check reads each in place of the record the toolchain carries [MOD-10].
+fn edited_library_records(
+    case: &str,
+    graph: &crate::ModuleGraph,
+    library: &[LibraryEdit],
+) -> Vec<(&'static str, String, crate::ModuleId, crate::SourceRole)> {
+    library
+        .iter()
+        .map(|(logical, from, to)| {
+            let (_, text) = crate::library::RECORDS
+                .iter()
+                .find(|(path, _)| path == logical)
+                .unwrap_or_else(|| panic!("{case}: the library carries no record {logical}"));
+            assert!(text.contains(from), "{case}: {logical} holds no `{from}`");
+            let (path, role) = crate::library::record_module(logical)
+                .unwrap_or_else(|| panic!("{case}: {logical} names no library module"));
+            let module = graph
+                .modules()
+                .iter()
+                .position(|module| module.is_at(crate::Package::Standard, &path))
+                .and_then(crate::ModuleId::from_index)
+                .unwrap_or_else(|| panic!("{case}: the graph registers no module for {logical}"));
+            (*logical, text.replacen(from, to, 1), module, role)
+        })
+        .collect()
+}
+
 /// What checking one module program reached: its rejection, or the functions
 /// it declares when it is accepted.
 enum Reached {
@@ -119,7 +157,7 @@ enum Reached {
 
 /// Forms the graph, checks every module and every entry of the program in
 /// `root`, and returns the first rejection or the declared functions.
-fn reach(case: &str, root: &Path) -> Reached {
+fn reach(case: &str, root: &Path, library: &[LibraryEdit]) -> Reached {
     let graph =
         match form_module_program_graph(&root.join("modules.wfg"), CompilerLimits::default()) {
             Ok(graph) => graph,
@@ -128,13 +166,17 @@ fn reach(case: &str, root: &Path) -> Reached {
         };
     let sources =
         discover_module_sources(root, &graph).unwrap_or_else(|failure| panic!("{case}: {failure}"));
-    let inputs: Vec<_> = sources
+    let edited = edited_library_records(case, &graph, library);
+    let mut inputs: Vec<_> = sources
         .iter()
         .map(|source| {
             SourceInput::new(&source.logical_path, &source.bytes)
                 .in_module(source.module, source.role)
         })
         .collect();
+    inputs.extend(edited.iter().map(|(logical, text, module, role)| {
+        SourceInput::new(logical, text.as_bytes()).in_module(*module, *role)
+    }));
     if let Err(failure) = check_module_program(&graph, &inputs, CompilerLimits::default()) {
         return Reached::Rejected(failure);
     }
@@ -186,7 +228,7 @@ fn contradictions(case: &str, root: &Path, declared: &[String]) -> Vec<String> {
 pub(super) fn check_module_pair(pair: &ModulePair) -> Result<String, String> {
     let name = pair.name;
     let root = scratch_copy(pair.case, pair.rejected);
-    let rejected = reach(name, &root);
+    let rejected = reach(name, &root, pair.library);
     let _ = std::fs::remove_dir_all(&root);
     let failure = match rejected {
         Reached::Rejected(failure) => failure,
@@ -200,7 +242,7 @@ pub(super) fn check_module_pair(pair: &ModulePair) -> Result<String, String> {
     }
     for (alternative, replacements) in pair.repaired.iter().enumerate() {
         let root = scratch_copy(pair.case, replacements);
-        let outcome = match reach(name, &root) {
+        let outcome = match reach(name, &root, &[]) {
             Reached::Rejected(failure) => Err(format!(
                 "{name}: alternative {alternative} is rejected:\n{failure}"
             )),
@@ -217,6 +259,62 @@ pub(super) fn check_module_pair(pair: &ModulePair) -> Result<String, String> {
         };
         let _ = std::fs::remove_dir_all(&root);
         outcome?;
+    }
+    Ok(failure.kind_name().unwrap_or_default().to_owned())
+}
+
+/// One repair pair [DIAG-1] on the standard library's graph record, which
+/// only the toolchain's own library writes [MOD-10]: formed as the library's
+/// graph, where `pkg` names the library itself.
+pub(super) struct LibraryGraphPair {
+    /// Names the pair in a failure.
+    pub(super) name: &'static str,
+    /// The graph record the rejection reads.
+    pub(super) rejected: &'static [u8],
+    /// The numbered rule the rejection must cite.
+    pub(super) rule: &'static str,
+    /// Exact substrings of the rendered rejection, as for a source pair.
+    pub(super) sentences: &'static [&'static str],
+    /// One graph record for each alternative.
+    pub(super) repaired: &'static [&'static [u8]],
+}
+
+pub(super) const LIBRARY_GRAPH_PAIRS: &[LibraryGraphPair] = &[LibraryGraphPair {
+    name: "probe-library-graph-names-std",
+    rejected: b"pkg::io: [];\npkg::fs: [std::io];\n",
+    rule: "MOD-10",
+    sentences: &[],
+    repaired: &[b"pkg::io: [];\npkg::fs: [pkg::io];\n"],
+}];
+
+/// Forms `bytes` as the standard library's graph record.
+fn form_library_graph(bytes: &[u8]) -> Result<crate::ModuleGraph, CompilationFailure> {
+    super::super::form_graph_record(
+        SourceInput::new("std/modules.wfg", bytes),
+        CompilerLimits::default(),
+        crate::Package::Standard,
+        None,
+    )
+}
+
+/// Checks one library graph pair like a source pair and returns the kind its
+/// rejection prints, or why the pair fails.
+pub(super) fn check_library_graph_pair(pair: &LibraryGraphPair) -> Result<String, String> {
+    let name = pair.name;
+    let failure = match form_library_graph(pair.rejected) {
+        Ok(_) => return Err(format!("{name}: the pinned library graph is accepted")),
+        Err(failure) => failure,
+    };
+    check_rejection(name, pair.rule, pair.sentences, &failure)?;
+    if pair.repaired.is_empty() {
+        return Err(format!("{name}: the pair has no accepted program"));
+    }
+    for (alternative, bytes) in pair.repaired.iter().enumerate() {
+        if let Err(failure) = form_library_graph(bytes) {
+            return Err(format!(
+                "{name}: alternative {alternative} is rejected:\n{failure}"
+            ));
+        }
     }
     Ok(failure.kind_name().unwrap_or_default().to_owned())
 }

@@ -72,6 +72,7 @@ pub(super) const MODULE_KIND_PAIRS: &[ModulePair] = &[
         name: "mod1-neg-self-dependency",
         case: "mod1-neg-self-dependency",
         rejected: &[],
+        library: &[],
         rule: "MOD-1",
         sentences: &[],
         repaired: &[&[(
@@ -86,6 +87,7 @@ entry main = pkg::main;
         name: "mod1-neg-later-dependency",
         case: "mod1-neg-later-dependency",
         rejected: &[],
+        library: &[],
         rule: "MOD-1",
         sentences: &[],
         repaired: &[&[(
@@ -101,6 +103,7 @@ entry main = pkg::main;
         name: "mod1-neg-row-registers-bound-path",
         case: "mod1-neg-row-registers-bound-path",
         rejected: &[],
+        library: &[],
         rule: "MOD-1",
         sentences: &[],
         repaired: &[&[("modules.wfg", BOUND_GRAPH)]],
@@ -109,6 +112,7 @@ entry main = pkg::main;
         name: "probe-duplicate-module-row",
         case: "mod1-pos-ordered-graph-and-entries",
         rejected: &[("modules.wfg", DUPLICATE_ROW)],
+        library: &[],
         rule: "MOD-1",
         sentences: &[],
         repaired: &[&[]],
@@ -117,6 +121,7 @@ entry main = pkg::main;
         name: "probe-duplicate-dependency",
         case: "mod1-pos-ordered-graph-and-entries",
         rejected: &[("modules.wfg", DUPLICATE_DEPENDENCY)],
+        library: &[],
         rule: "MOD-1",
         sentences: &[],
         repaired: &[&[]],
@@ -125,6 +130,7 @@ entry main = pkg::main;
         name: "probe-unregistered-dependency",
         case: "mod1-pos-ordered-graph-and-entries",
         rejected: &[("modules.wfg", UNREGISTERED_DEPENDENCY)],
+        library: &[],
         rule: "MOD-1",
         sentences: &[],
         repaired: &[&[]],
@@ -133,6 +139,7 @@ entry main = pkg::main;
         name: "probe-duplicate-entry",
         case: "mod1-pos-ordered-graph-and-entries",
         rejected: &[("modules.wfg", DUPLICATE_ENTRY)],
+        library: &[],
         rule: "MOD-1",
         sentences: &[],
         repaired: &[&[]],
@@ -141,6 +148,7 @@ entry main = pkg::main;
         name: "probe-unregistered-entry-module",
         case: "mod1-pos-ordered-graph-and-entries",
         rejected: &[("modules.wfg", UNREGISTERED_ENTRY)],
+        library: &[],
         rule: "MOD-1",
         sentences: &[],
         repaired: &[&[]],
@@ -149,6 +157,7 @@ entry main = pkg::main;
         name: "mod10-neg-unknown-standard-module",
         case: "mod10-neg-unknown-standard-module",
         rejected: &[],
+        library: &[],
         rule: "MOD-10",
         sentences: &[],
         repaired: &[&[(
@@ -163,6 +172,7 @@ entry main = pkg::main;
         name: "mod10-neg-standard-row",
         case: "mod10-neg-standard-row",
         rejected: &[],
+        library: &[],
         rule: "MOD-10",
         sentences: &[],
         repaired: &[&[(
@@ -177,6 +187,7 @@ entry main = pkg::main;
         name: "mod10-neg-standard-entry",
         case: "mod10-neg-standard-entry",
         rejected: &[],
+        library: &[],
         rule: "MOD-10",
         sentences: &[],
         repaired: &[&[(
@@ -191,6 +202,7 @@ entry main = pkg::main;
         name: "mod11-neg-binding-cycle",
         case: "mod11-neg-binding-cycle",
         rejected: &[],
+        library: &[],
         rule: "MOD-11",
         sentences: &[],
         repaired: &[&[("json/modules.wfg", b"pkg: [];\n")]],
@@ -199,6 +211,7 @@ entry main = pkg::main;
         name: "mod11-neg-package-bound-twice",
         case: "mod11-neg-package-bound-twice",
         rejected: &[],
+        library: &[],
         rule: "MOD-11",
         sentences: &[],
         repaired: &[&[("modules.wfg", BOUND_GRAPH)]],
@@ -207,6 +220,7 @@ entry main = pkg::main;
         name: "mod11-neg-name-bound-twice",
         case: "mod11-neg-name-bound-twice",
         rejected: &[],
+        library: &[],
         rule: "MOD-11",
         sentences: &[],
         repaired: &[&[("modules.wfg", BOUND_GRAPH)]],
@@ -215,6 +229,7 @@ entry main = pkg::main;
         name: "mod11-neg-location-not-relative",
         case: "mod11-neg-location-not-relative",
         rejected: &[],
+        library: &[],
         rule: "MOD-11",
         sentences: &[],
         repaired: &[&[("modules.wfg", BOUND_GRAPH)]],
@@ -223,6 +238,7 @@ entry main = pkg::main;
         name: "mod11-neg-dependency-root-unbound",
         case: "mod11-neg-dependency-root-unbound",
         rejected: &[],
+        library: &[],
         rule: "MOD-11",
         sentences: &[],
         repaired: &[&[("modules.wfg", BOUND_GRAPH)]],
@@ -231,6 +247,7 @@ entry main = pkg::main;
         name: "mod11-neg-dependency-names-no-bound-module",
         case: "mod11-neg-dependency-names-no-bound-module",
         rejected: &[],
+        library: &[],
         rule: "MOD-11",
         sentences: &[],
         repaired: &[&[("modules.wfg", BOUND_GRAPH)]],
@@ -239,6 +256,7 @@ entry main = pkg::main;
         name: "mod4-neg-alias-after-item",
         case: "mod4-neg-alias-after-item",
         rejected: &[],
+        library: &[],
         rule: "MOD-4",
         sentences: &[],
         repaired: &[&[(
@@ -257,6 +275,7 @@ fn main() -> status: ExitStatus pure {
         name: "mod4-neg-alias-case-mismatch",
         case: "mod4-neg-alias-case-mismatch",
         rejected: &[],
+        library: &[],
         rule: "MOD-4",
         sentences: &[],
         repaired: &[&[(
@@ -275,6 +294,7 @@ fn main() -> status: ExitStatus pure {
         name: "mod4-neg-alias-takes-bound-name",
         case: "mod4-neg-alias-takes-bound-name",
         rejected: &[],
+        library: &[],
         rule: "MOD-4",
         sentences: &[],
         repaired: &[&[(
@@ -304,6 +324,7 @@ fn main() -> status: ExitStatus pure {
         name: "mod5-neg-missing-edge",
         case: "mod5-neg-missing-edge",
         rejected: &[],
+        library: &[],
         rule: "MOD-5",
         sentences: &[],
         repaired: &[&[(
@@ -320,6 +341,7 @@ entry main = pkg::main;
         name: "mod5-neg-private-declaration",
         case: "mod5-neg-private-declaration",
         rejected: &[],
+        library: &[],
         rule: "MOD-5",
         sentences: &[],
         repaired: &[&[(
@@ -340,6 +362,7 @@ public fn secret() -> result: u8 pure doc "Returns three.";
         name: "mod6-neg-public-in-implementation",
         case: "mod6-neg-public-in-implementation",
         rejected: &[],
+        library: &[],
         rule: "MOD-6",
         sentences: &[],
         repaired: &[&[(
@@ -362,6 +385,7 @@ fn main() -> status: ExitStatus pure {
         name: "mod6-neg-private-type-in-public-signature",
         case: "mod6-neg-private-type-in-public-signature",
         rejected: &[],
+        library: &[],
         rule: "MOD-6",
         sentences: &[],
         repaired: &[&[(
@@ -378,6 +402,7 @@ public fn leak(value: Secret) -> result: i32 pure doc "Reads the secret's value.
         name: "mod7-neg-interface-body",
         case: "mod7-neg-interface-body",
         rejected: &[],
+        library: &[],
         rule: "MOD-7",
         sentences: &[],
         repaired: &[&[
@@ -404,6 +429,7 @@ fn main() -> status: ExitStatus pure {
         name: "mod7-neg-interface-declaration-without-doc",
         case: "mod7-neg-interface-declaration-without-doc",
         rejected: &[],
+        library: &[],
         rule: "MOD-7",
         sentences: &[],
         repaired: &[&[(
@@ -418,6 +444,7 @@ public fn main() -> status: ExitStatus pure doc "Runs the program.";
         name: "mod7-neg-definition-differs",
         case: "mod7-neg-definition-differs",
         rejected: &[],
+        library: &[],
         rule: "MOD-7",
         sentences: &[],
         repaired: &[&[(
@@ -439,6 +466,7 @@ public fn main() -> status: ExitStatus pure doc "Runs the program.";
         name: "mod8-neg-pending-declaration-blocks-composition",
         case: "mod8-neg-pending-declaration-blocks-composition",
         rejected: &[],
+        library: &[],
         rule: "MOD-8",
         sentences: &[],
         repaired: &[&[(
@@ -456,6 +484,7 @@ fn main() -> status: ExitStatus pure {
         name: "mod9-neg-heap-declaration-in-module",
         case: "mod9-neg-heap-declaration-in-module",
         rejected: &[],
+        library: &[],
         rule: "MOD-9",
         sentences: &[],
         repaired: &[&[(
@@ -473,6 +502,7 @@ fn main() -> status: ExitStatus pure {
         name: "mod9-neg-private-entry",
         case: "mod9-neg-private-entry",
         rejected: &[],
+        library: &[],
         rule: "MOD-9",
         sentences: &[],
         repaired: &[&[(
@@ -487,6 +517,7 @@ public fn main() -> status: ExitStatus pure doc "Runs the program.";
         name: "mod5-neg-private-field-selection",
         case: "mod5-neg-private-field-selection",
         rejected: &[],
+        library: &[],
         rule: "MOD-5",
         sentences: &[],
         repaired: &[&[(
@@ -507,6 +538,7 @@ fn main() -> status: ExitStatus pure {
         name: "mod4-neg-alias-to-private-interface-function",
         case: "mod4-neg-alias-to-private-interface-function",
         rejected: &[],
+        library: &[],
         rule: "MOD-4",
         sentences: &[],
         repaired: &[&[(
@@ -525,6 +557,7 @@ fn main() -> status: ExitStatus pure {
         name: "mod3-neg-module-slot-collision",
         case: "mod3-neg-module-slot-collision",
         rejected: &[],
+        library: &[],
         rule: "MOD-3",
         sentences: &[],
         repaired: &[&[(
@@ -546,6 +579,7 @@ fn main() -> status: ExitStatus pure {
         name: "stor8-neg-entry-closure-allocates",
         case: "stor8-neg-entry-closure-allocates",
         rejected: &[],
+        library: &[],
         rule: "STOR-8",
         sentences: &[],
         repaired: &[&[(
@@ -560,6 +594,7 @@ entry small = pkg::main;
         name: "mod5-neg-qualified-const-in-let",
         case: "mod5-neg-qualified-const-in-let",
         rejected: &[],
+        library: &[],
         rule: "MOD-5",
         sentences: &[],
         repaired: &[&[(
@@ -593,6 +628,7 @@ fn main() -> status: ExitStatus pure {
 }
 "#,
         )],
+        library: &[],
         rule: "MOD-5",
         sentences: &[],
         repaired: &[&[]],
@@ -614,6 +650,7 @@ fn main() -> status: ExitStatus pure {
 }
 "#,
         )],
+        library: &[],
         rule: "MOD-5",
         sentences: &[],
         repaired: &[&[]],
@@ -636,7 +673,21 @@ fn main() -> status: ExitStatus pure {
 }
 "#,
         )],
+        library: &[],
         rule: "MOD-4",
+        sentences: &[],
+        repaired: &[&[]],
+    },
+    ModulePair {
+        name: "probe-library-record-names-itself",
+        case: "mod1-pos-ordered-graph-and-entries",
+        rejected: &[],
+        library: &[(
+            "std/process/module.wfm",
+            "alias IoError = pkg::io::IoError;",
+            "alias IoError = std::io::IoError;",
+        )],
+        rule: "MOD-10",
         sentences: &[],
         repaired: &[&[]],
     },
