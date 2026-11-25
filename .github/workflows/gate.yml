@@ -157,8 +157,9 @@ jobs:
         env:
           PLATFORMS: ${{ steps.platforms.outputs.platforms }}
         run: |
-          sh .github/gate-matrix.sh "$PLATFORMS" | tee -a "$GITHUB_OUTPUT"
-          echo "Jobs: $(sed -n 's/^jobs=//p' "$GITHUB_OUTPUT")" >> "$GITHUB_STEP_SUMMARY"
+          selected=$(sh .github/gate-matrix.sh "$PLATFORMS")
+          echo "$selected" >> "$GITHUB_OUTPUT"
+          echo "Jobs: $(echo "$selected" | sed -n 's/^jobs=//p')" >> "$GITHUB_STEP_SUMMARY"
       # Whether this revision is checked. A failed query fails the run rather
       # than quietly skipping the gate.
       - name: Choose whether to check

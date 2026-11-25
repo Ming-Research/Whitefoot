@@ -91,10 +91,18 @@ sub reported_total {
 }
 
 # The text a command printed to standard output, copied to ours as it comes
-# when $stream is set, and its status; a signal is 128 plus its number.
+# when $stream is set, and its status; a signal is 128 plus its number. A
+# streamed command's standard error joins its standard output in one pipe, so
+# cargo's `Running` line for a test binary stays before that binary's results
+# in what the gate's log and .github/junit.py read.
 sub command {
     my ($stream, @command) = @_;
-    open my $output, '-|', @command or die "test shards: execute @command: $!\n";
+    my $pid = open my $output, '-|';
+    defined $pid or die "test shards: fork: $!\n";
+    if (!$pid) {
+        open STDERR, '>&', \*STDOUT if $stream;
+        exec @command or die "test shards: execute @command: $!\n";
+    }
     my $text = '';
     while (my $line = <$output>) {
         $text .= $line;
@@ -306,6 +314,8 @@ sub self_test {
     # The real pipe: output, status and signal.
     my ($text, $status) = command(0, 'perl', '-e', 'print "a\n"; exit 3');
     check($text eq "a\n" && $status == 3, 'command reports output and exit status');
+    ($text, $status) = command(1, 'perl', '-e', '$| = 1; print STDERR "first\n"; print "second\n"');
+    check($text eq "first\nsecond\n" && $status == 0, 'a streamed command keeps its error output before its output');
     ($text, $status) = command(0, 'perl', '-e', 'kill 9, $$');
     check($status == 137, 'command reports a signal as 128 plus its number');
     print "test shards: self-test ok\n";
