@@ -26,4 +26,5 @@ The nonwaiting `std::net::local_address` takes a connection's receiving half and
 
 ### decision unreported-address-family-stops-the-program
 A host report of a socket address of neither IPv4 nor IPv6, or too short for its family, stops the program with a report and gives it no address.
-- replaced: the all-zero address, read as 0.0.0.0:0, was returned for such a record; the owner changed it, because the specification calls the peer and the local address the host's report and 0.0.0.0:0 is not a report the host made.
+- replaced: The all-zero address, read as 0.0.0.0:0, returned for such a record, was on main; the owner changed it, because the specification calls the peer and the local address the host's report and 0.0.0.0:0 is not a report the host made.
+- rejected: an agent proposed `Err(Unsupported)` from `tcp_accept` and `local_address`; the owner rejected it, because no program can make the host report a third family, so no source program could test it, and each of three accept engines would also close the connection and return its credit.
