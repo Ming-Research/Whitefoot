@@ -709,3 +709,54 @@ loop table and the cost verdict of an interval wholly below 1, at
 `bcb297c0e` (temporary-workflow runs 45632117676 and 45633343603: both
 self-test steps failed), and passing once that one line was restored at
 `fd08f4eaf` (run 45632117012).
+
+### The sizing runs
+
+The first sizing runs, at `f6143fb8e` on the 14900K (run 45681914464) and on
+a hosted runner (run 45681910389), stopped at the layout check before any
+timing, with the same 307 problems on both. None was a wrong layout. The
+emitted module defines the scheduler's entry points (`wf__par_publish`,
+`wf__floor_run` and the like) as weak functions that the C runtime's strong
+ones replace, and `bridge.c` defines the coroutine helpers as weak functions
+that `ordinary_values.ll` replaces; the check judged the copy in the image by
+the claim of the object whose copy the linker dropped. It now attributes a
+name to its one strong definition, or its only one, and leaves out a name it
+cannot resolve. The one other problem was real: a 64-byte data pad moved
+part of the writable data by 128 bytes, since some of it is aligned to 128,
+and the smallest data pad is now 128 bytes. Both changes are at `7828cbaa7`.
+
+What the two runs established before the check:
+
+- The kernels' `FR` module code is the same on both hosts: the disassembly
+  of each module object differs only in the object's path, so one loop
+  table serves every host.
+- `-falign-loops` takes effect on LLVM input under the pinned LLVM: `L32`
+  starts the hot loops of `records` at 0 and 32 within their lines, and
+  `L64` at 0.
+- `O16`, `O32` and `O48` start every function of the module, the hot ones
+  included, 16, 32 and 48 bytes past a line.
+
+The loop table of `records` under the pinned LLVM, read from the `FR` module
+object: each innermost loop of at most 64 bytes, as its offset in the
+function, its length and its place in its line under `FR`, and how many of
+the function's loops cross a line when the function starts 0, 16, 32 or 48
+bytes past one, which is where `FR`, `O16`, `O32` and `O48` start it.
+
+| function | loops | crossing at 0, 16, 32, 48 |
+|---|---|---|
+| `wf__par_seq_summarize_records` | 0xb0, 64 bytes, at 48; 0x180, 21, at 0 | 1, 0, 1, 2 |
+| `wf__par_chunk_summarize_records.1` | 0x30, 58, at 48; 0x100, 21, at 0 | 1, 0, 1, 2 |
+| `wf__par_seq__par_chunk_summarize_records.1` | as the line above | 1, 0, 1, 2 |
+| `wf__par_split_summarize_records.0` | 0x340, 21, at 0 | 0, 0, 0, 1 |
+| `wf_record_summary` | 0xb0, 21, at 48; 0x124, 31, at 36 | 2, 1, 0, 0 |
+| `wf_validate_record` | 0xc0, 21, at 0; 0x135, 32, at 53 | 1, 0, 0, 2 |
+| `wf__floor_record_latch` | 0x60, 4, at 32; 0x80, 31, at 0; 0x8a, 36, at 10 | 0, 0, 1, 2 |
+
+This differs from the October table: the multi-byte loop is 64 bytes long,
+not 54, the chunk's body is its own function rather than inline in the
+split function, and `FR` leaves one of the two hot loops across a line, not
+both. The hot function at each width is read from the rerun's software-clock
+samples, by the rule above. By the table, a width whose hot function is the
+sequential or the chunk function compares `O16`, with no crossing loop,
+against `O48`, with two; a width whose hot function is the split function
+compares `FR` against `O48`.
