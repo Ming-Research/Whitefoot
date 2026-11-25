@@ -681,3 +681,16 @@ Criterion, with the per-round ratio and interval defined above:
   micro-ops.
 - If no rule passes, the record states the cause as far as these arms locate
   it and the cost each rule left.
+
+### The rebuilt harness
+
+[`placement.sh`](placement.sh) builds every arm with one compiler,
+[`layout.py`](layout.py) writes each arm's module and refuses a run whose
+images do not have the layout their arm and placement claim, and
+[`summarize.py`](summarize.py) applies the criterion above. Both tools carry a
+self-test that the placement job runs before it builds anything. Each was
+seen failing on one deliberately wrong expectation, the crossing count of a
+loop table and the cost verdict of an interval wholly below 1, at
+`bcb297c0e` (temporary-workflow runs 45632117676 and 45633343603: both
+self-test steps failed), and passing once that one line was restored at
+`fd08f4eaf` (run 45632117012).
