@@ -709,46 +709,65 @@ fn main() -> status: std::process::ExitStatus pure {
             "{choice}"
         );
     }
+    // What follows depends on the 128-byte bound. Each mismatch is collected,
+    // so that one run reports all of them.
+    let mut mismatches = Vec::new();
     // Product (296 bytes) and OverBound (136) are product-laid-out values
     // over 128 bytes whose only payload holds a window: building the other
     // variant zeroes the tag alone.
     for name in ["empty_product", "over_bound"] {
-        assert_eq!(zero_stores(name), ["store i8 zeroinitializer"], "{name}");
+        let stores = zero_stores(name);
+        if stores != ["store i8 zeroinitializer"] {
+            mismatches.push(format!("{name}: {stores:?}"));
+        }
     }
     // Building Choice's other variant leaves the inactive view's window at
     // [16, 280) unwritten and zeroes the rest of the 520-byte union.
-    assert_eq!(
-        zero_stores("other"),
-        [
+    let stores = zero_stores("other");
+    if stores
+        != [
             "store [16 x i8] zeroinitializer",
-            "store [240 x i8] zeroinitializer"
+            "store [240 x i8] zeroinitializer",
         ]
-    );
+    {
+        mismatches.push(format!("other: {stores:?}"));
+    }
     let other = emitted_body(&module, "other");
     for offset in [0, 280] {
-        assert!(
-            other.lines().any(
-                |line| line.contains("getelementptr inbounds i8, ptr %wf.result")
-                    && line.ends_with(&format!(", i64 {offset}"))
-            ),
-            "{other}"
-        );
+        if !other.lines().any(|line| {
+            line.contains("getelementptr inbounds i8, ptr %wf.result")
+                && line.ends_with(&format!(", i64 {offset}"))
+        }) {
+            mismatches.push(format!("other: no zero store at offset {offset}"));
+        }
     }
     // AtBound is exactly 128 bytes and ByteChoice 40: each keeps the one
     // zero store of the whole value beside its inactive window.
     for name in ["at_bound", "byte_other", "plain"] {
         let stores = zero_stores(name);
-        assert_eq!(stores.len(), 1, "{name}: {stores:?}");
-        assert!(stores[0].starts_with("store %wf.t."), "{name}: {stores:?}");
+        if stores.len() != 1 || !stores[0].starts_with("store %wf.t.") {
+            mismatches.push(format!("{name}: {stores:?}"));
+        }
     }
     // Wide (2,064 bytes) is this source's one value of 2,048 bytes or more.
-    let transfers = large_constant_transfers(&host_optimized_module(&module), 2048);
-    assert!(
-        transfers.is_empty(),
-        "appending an empty Wide clears or copies a whole value: {transfers:?}"
-    );
+    // The out-of-line window placement copies whatever value it is given,
+    // so a whole copy may remain only in a function nothing calls.
+    let optimized = host_optimized_module(&module);
+    for transfer in large_constant_transfers(&optimized, 2048) {
+        let function = transfer
+            .split_once(": ")
+            .map_or("", |(function, _)| function);
+        let call = format!("@{function}(");
+        if optimized
+            .lines()
+            .any(|line| line.contains("call ") && line.contains(&call))
+        {
+            mismatches.push(format!("appending an empty Wide: {transfer}"));
+        }
+    }
     let output = compile_and_run(&module);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(mismatches.is_empty(), "{mismatches:#?}");
 }
 
 /// A take changes the descriptor even when no element bytes exist. Ring's

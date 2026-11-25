@@ -104,38 +104,38 @@ fn exchange_held(seed: u64) -> result: Bool pure {
   let no = False();
   let next = seed +wrap 1_u64;
   let third = seed +wrap 2_u64;
-  let held = slots_new::<Held, 2>();
+  let stored = slots_new::<Held, 2>();
   let first = box_new::<u64>(value: next);
   let cell = Held::Cell(value: move first);
-  place_back(window: &held, value: move cell);
+  place_back(window: &stored, value: move cell);
   let built = holder_of(seed: seed);
   let windows = Held::Windows(value: move built);
-  place_back(window: &held, value: move windows);
+  place_back(window: &stored, value: move windows);
   let second = box_new::<u64>(value: third);
   let replacing = Held::Cell(value: move second);
-  set held[1_u64] = move replacing;
+  set stored[1_u64] = move replacing;
   let rebuilt = holder_of(seed: seed);
   let wide = Held::Windows(value: move rebuilt);
-  set held[0_u64] = move wide;
-  let overwritten = holds(observed: &held[1_u64], windows: no, expected: third);
+  set stored[0_u64] = move wide;
+  let overwritten = holds(observed: &stored[1_u64], windows: no, expected: third);
   let overwrite_failed = bnot(overwritten);
   if overwrite_failed {
     return False();
   }
   let exchanged_box = box_new::<u64>(value: next);
   let exchanged = Held::Cell(value: move exchanged_box);
-  swap(first: &held[0_u64], second: &exchanged);
+  swap(first: &stored[0_u64], second: &exchanged);
   let moved_out = holds(observed: &exchanged, windows: yes, expected: seed);
   let out_failed = bnot(moved_out);
   if out_failed {
     return False();
   }
-  let moved_in = holds(observed: &held[0_u64], windows: no, expected: next);
+  let moved_in = holds(observed: &stored[0_u64], windows: no, expected: next);
   let into_failed = bnot(moved_in);
   if into_failed {
     return False();
   }
-  let last = take_back(window: &held);
+  let last = take_back(window: &stored);
   match move last {
     Windows(value: lost) => {
       return False();

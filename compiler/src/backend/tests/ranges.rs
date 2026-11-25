@@ -1219,7 +1219,8 @@ fn write_chunk(input: &[u64], bit: u32, output: &[Option<Chunk>]) -> result: u64
   let high = slots_new::<u64, 256>();
   let chunk = Chunk(low: move low, high: move high);
   set output^[0_u64] = Some<Chunk>(value: move chunk);
-  match output^[0_u64] {
+  let slot = &output^[0_u64];
+  match slot^ {
     None() => {
       return 0_u64;
     }
@@ -1362,7 +1363,7 @@ fn stable_scatter_probe_reports_clears_and_copies() {
     let mut emitted_report = Vec::new();
     let mut names = Vec::new();
     for line in modules[0].1.lines() {
-        if line.contains(" = type ") {
+        if line.contains(" = type ") && line.contains("[256 x i64]") {
             emitted_report.push(format!("emitted type: {line}"));
         }
     }
@@ -1387,6 +1388,8 @@ fn stable_scatter_probe_reports_clears_and_copies() {
     emitted_report.push(format!("emitted functions: {}", names.join(" ")));
     let mut optimized_report = Vec::new();
     let mut context = Vec::new();
+    let mut summary = Vec::new();
+    let mut whole_blocks = Vec::new();
     for (label, module) in &modules {
         let optimized = match std::panic::catch_unwind(|| host_optimized_module(module)) {
             Ok(optimized) => optimized,
@@ -1419,13 +1422,41 @@ fn stable_scatter_probe_reports_clears_and_copies() {
             }
         }
         optimized_report.push(format!("{label} optimized functions: {}", sizes.join(" ")));
-        for transfer in large_constant_transfers(&optimized, SCATTER_BLOCK_BYTES) {
-            optimized_report.push(format!("{label} WHOLE BLOCK {transfer}"));
+        let transfers = large_constant_transfers(&optimized, SCATTER_BLOCK_BYTES);
+        for transfer in &transfers {
+            summary.push(format!(
+                "{label} WHOLE BLOCK {transfer} (call sites: {})",
+                scatter_probe_call_sites(&optimized, transfer)
+            ));
         }
+        whole_blocks.push((*label, transfers));
     }
     let sequential = host_optimized_module(&emit_lowered(source, OverlapLowering::Off));
     for transfer in large_constant_transfers(&sequential, SCATTER_BLOCK_BYTES) {
-        optimized_report.push(format!("ordinary without --par WHOLE BLOCK {transfer}"));
+        summary.push(format!(
+            "ordinary without --par WHOLE BLOCK {transfer} (call sites: {})",
+            scatter_probe_call_sites(&sequential, &transfer)
+        ));
+    }
+    // What the ordinary module holds that its tag-only edit lacks, counted
+    // as a multiset of `function: operation bytes`.
+    let listed = |name: &str| {
+        whole_blocks
+            .iter()
+            .find(|(label, _)| *label == name)
+            .map(|(_, transfers)| transfers.clone())
+    };
+    if let (Some(ordinary), Some(mut tag_only)) = (listed("ordinary"), listed("tag-only")) {
+        for transfer in ordinary {
+            if let Some(at) = tag_only.iter().position(|kept| *kept == transfer) {
+                tag_only.swap_remove(at);
+            } else {
+                summary.push(format!("ordinary, not tag-only: {transfer}"));
+            }
+        }
+        for transfer in tag_only {
+            summary.push(format!("tag-only, not ordinary: {transfer}"));
+        }
     }
     // What a test result keeps is its end, so the least important part of
     // the report comes first and is cut to a bound.
@@ -1439,13 +1470,27 @@ fn stable_scatter_probe_reports_clears_and_copies() {
     }
     let mut optimized_report = optimized_report.join("\n");
     let length = optimized_report.chars().count();
-    if length > 24_000 {
-        optimized_report = optimized_report.chars().skip(length - 24_000).collect();
+    if length > 12_000 {
+        optimized_report = optimized_report.chars().skip(length - 12_000).collect();
     }
     panic!(
-        "scatter clears and copies\n{context}\n{emitted_report}\n{optimized_report}\n{}",
+        "scatter clears and copies\n{context}\n{emitted_report}\n{optimized_report}\n{}\n{}",
+        summary.join("\n"),
         notes.join("\n")
     );
+}
+
+/// How many call sites in an optimized module name the function of one
+/// [`large_constant_transfers`] line: zero for a body nothing calls.
+fn scatter_probe_call_sites(module: &str, transfer: &str) -> usize {
+    let function = transfer
+        .split_once(": ")
+        .map_or("", |(function, _)| function);
+    let call = format!("@{function}(");
+    module
+        .lines()
+        .filter(|line| line.contains("call ") && line.contains(&call))
+        .count()
 }
 
 /// The timing host of the scatter probe, appended to the independent oracle.
