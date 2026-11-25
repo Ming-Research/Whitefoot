@@ -33,49 +33,71 @@ proposal of that lowering has to measure again.
 
 The probes are two ignored tests in `compiler/src/backend/tests/ranges.rs`
 (`stable_scatter_probe_reports_clears_and_copies` and
-`stable_scatter_probe_times_whole_calls`, commit `94696cfad`). They fail on
-purpose so that their report reaches the test result, and they leave the
-branch before it merges. The source is the maintained program, unchanged,
-built with `--par`.
+`stable_scatter_probe_times_whole_calls`, first committed in `94696cfad`).
+They fail on purpose so that their report reaches the test result, and they
+leave the branch before it merges. The source is the maintained program,
+unchanged, built with `--par`.
 
-Besides the ordinary emission (`main`), each probe builds variants by editing
-the emitted module's text before the host optimizer runs. A variant shows what
-the optimized code and the time of this program would be under a lowering; it
+They run on two commits. On the commit before the emitter change, the
+structure probe reports what main's ordinary emission holds. On the commit
+with [the selected lowering](#the-lowering-the-owner-selected), the structure
+probe reports what the changed compiler's ordinary emission holds, and the
+timing probe measures that emission, `after`, against `before`: the same
+compiler emitting under the present construction rule, through a switch that
+exists only in the compiler's own tests and leaves the branch with the probes.
+`before` counts as main's emission if its module has the length and the hash
+of the scatter's `--par` module in the
+[census](#the-lowering-the-owner-selected) of the earlier commit. The
+timing probe is asked for alone: the tests named in one request run as threads
+of one process.
+
+Besides those emissions, each probe builds variants by editing an emitted
+module's text before the host optimizer runs. A variant shows what the
+optimized code and the time of this program would be under a lowering; it
 does not show that the lowering is correct in general. A variant whose module
 the host refuses, or whose result the independent oracle refuses, is named in
 the report and left out.
 
-| Variant | Edit |
+| Image | How it is made |
 | --- | --- |
-| `twin` | none: the same module again, for the run's spread |
-| `no-clear` | the whole-value clear before each empty `Option<Chunk>` is removed; the tag store stays |
-| `headers-only` | that clear is cut down to the two run lengths |
-| `tag-only` | `no-clear`, and each whole `Option<Chunk>` transfer in `radix_scatter` moves only the tag byte |
+| `before` | the present construction rule |
+| `twin` | `before` again, for the run's spread |
+| `after` | the selected lowering, as the changed compiler emits it |
+| `no-clear` | `before` with the whole-value clear before each empty `Option<Chunk>` removed; the tag store stays |
+| `headers-only` | `before` with that clear cut down to the two run lengths |
+| `tag-only` | `after`, and each whole `Option<Chunk>` transfer in `radix_scatter` moves only the tag byte |
 | `in-place` | another source: the block writer stores an empty chunk and partitions into it through a reference |
-| `in-place-tag-only` | `in-place` with the `tag-only` edits |
-| `sequential` | none: the same source built without `--par`, timed only |
+| `in-place-tag-only` | `in-place` with the `tag-only` edit |
+| `sequential` | `before`'s source built without `--par`, timed only |
 
-`in-place` is a control for what the block writer's value transfers cost. It
-is not a proposal to change the program: a redundant transfer of a by-value
-form is a compiler gap, and a changed spelling would hide it.
+`no-clear` stores the same value as `after` and is not the same text: on the
+product path the changed compiler still zeroes the tag as a field before it
+stores the tag, through an address of its own. It stays in the campaign to
+show whether the two time alike. `in-place` is a control for what the block
+writer's value transfers cost. It is not a proposal to change the program: a
+redundant transfer of a by-value form is a compiler gap, and a changed
+spelling would hide it.
 
 Structure: every constant clear or copy of at least 2,048 bytes (one run's
-payload) in the host-optimized module, by function, for each variant.
+payload) in the host-optimized module, by function, for the ordinary emission
+of the commit the probe runs on and for the variants made from it.
 
 Time: one call scatters 1,048,593 mixed keys. A process makes one unreported
 call and 20 timed ones, checked against the independent oracle outside the
 timed interval, and contributes the median wall and process CPU time. Nine
 passes run every image once at 1, 8 and 32 workers, rotating the image order.
-Each pass also times `main` on the 8,209 keys of the program's own entry, 200
-calls a process, to tell a slow call apart from the process startup that the
-[par-suite baseline](../par-suite/DESIGN.md#baseline-2026-10-09) includes in
-its 4.86 at 32 workers.
-A variant's per-pass ratio is its median over `main`'s in the same pass and
+Each pass also times `before` on the 8,209 keys of the program's own entry,
+200 calls a process, to tell a slow call apart from the process startup that
+the [par-suite baseline](../par-suite/DESIGN.md#baseline-2026-10-09) includes
+in its 4.86 at 32 workers.
+An image's per-pass ratio is its median over `before`'s in the same pass and
 width. The interval is the distribution-free 95% interval of the median of
 those ratios, as `median_interval` of
 `research/experiments/hash-map-compare/compare.py` defines it: with nine
-ratios, the second smallest and the second largest. A width is usable when the
-twin's interval contains 1.
+ratios, the second smallest and the second largest. A width counts only if
+the twin's wall interval there contains 1. A width that fails this is run once
+more; if it fails again the result is reported as unresolved, not as passed.
+32 workers is reported and decides nothing.
 
 Fixed before measuring:
 
@@ -85,29 +107,25 @@ Fixed before measuring:
   append's whole-block work has no effect this instrument resolves, and the
   item's first outcome cannot rest on it.
 - **Leaving the inactive payload unwritten is enough for the append** if the
-  optimized `no-clear` module holds no constant clear or copy of at least
-  2,048 bytes that the optimized `tag-only` module lacks, and `tag-only`'s
-  note counts at least one shortened transfer. `tag-only` has no whole
-  transfer of an appended slot by construction, so what it keeps is the block
-  writer's or the entry's, in whichever function the optimizer put it; a
-  difference that comes from the two modules being inlined differently is
-  read in the probe's context lines and reported as such. Otherwise the copy
-  needs a placement change of its own, which `tag-only` stands in for.
+  optimized `after` module holds no constant clear or copy of at least 2,048
+  bytes that the optimized `tag-only` module lacks, and `tag-only`'s note
+  counts at least one shortened transfer. `tag-only` has no whole transfer of
+  an appended slot by construction, so what it keeps is the block writer's or
+  the entry's, in whichever function the optimizer put it; a difference that
+  comes from the two modules being inlined differently is read in the probe's
+  context lines and reported as such. Otherwise the copy needs a placement
+  change of its own, which `tag-only` stands in for.
 - **The block writer's transfers matter** if `in-place-tag-only`'s wall
   interval at eight workers lies wholly below `tag-only`'s.
-- **The proposal is rejected** if neither `tag-only` nor `in-place-tag-only`
-  resolves an improvement at eight workers. The remaining cost is then
-  recorded here, which is the item's second outcome.
-- **The selected lowering** ([below](#the-lowering-the-owner-selected)) builds
-  this program's empty slots as `no-clear` does, so `no-clear` decides it
-  before any compiler change: the change is made if `no-clear`'s wall
-  interval at eight workers lies wholly below 1, its wall and CPU intervals at
-  one worker do not lie wholly above 1, and it is enough for the append by
-  the criterion above. If the interval at eight workers contains 1, no
-  compiler change is made and the cost is recorded. If the time improves and
-  the append keeps a whole-block clear or copy, the lowering does not give
-  the item's first outcome alone, and that is reported before any compiler
-  change.
+- **The selected lowering is kept**, and the item's first outcome holds, if
+  `after`'s wall interval at eight workers lies wholly below 1, its wall and
+  CPU intervals at one worker do not lie wholly above 1, and it is enough for
+  the append by the criterion above. This one campaign is the acceptance
+  measurement. If `after`'s interval at eight workers contains 1, the emitter
+  change is taken back and the remaining cost is recorded here, which is the
+  item's second outcome. If the time improves and the append keeps a
+  whole-block clear or copy, the lowering does not give the first outcome
+  alone, and that is reported before anything else is done.
 
 Limits known in advance: the i9-14900K runner is a hybrid processor and the
 probe pins nothing, so eight workers may land on either kind of core; other
@@ -115,6 +133,18 @@ runners of the same machine may be busy, which the twin measures and does not
 remove; process CPU time includes the runtime's idle lanes; the native chain
 is serial and allocates its chunks with `calloc`, so it is context for one
 worker only.
+
+What the lowering cannot remove, stated before the first result: the append
+still stores a tag byte into every 4,120-byte slot. Where the chunk
+allocation's pages are fresh at a call, which the allocator decides and no
+probe here observes, the serial append loop is still the first to touch
+nearly every one of them; only the stores of the clear and of the copy go.
+The native control of 2026-09-21 took its chunks from `calloc`
+(`research/experiments/compute-bench/radix_scatter_bench.c` includes the
+oracle's `allocate`), which may hand out pages it never touched, so its
+0.186 ms against 0.596 ms is not a bound on what this lowering recovers.
+Every image keeps the tag store, so the campaign measures what the lowering
+gives and does not separate the first touch from the rest.
 
 ## What the source and the emitter show, read on 2026-11-25
 
@@ -224,32 +254,12 @@ not yet from the compiler:
 An instance of the ordered map whose key and value pass 104 bytes together
 would put its `Option<OrderedEntry<..>>` over the limit; no maintained source
 has one. The falsifier for the "no" rows and for the libraries without a
-window: a probe emits the modules of firn, of the hash map, slab and ordered
-map programs and of the three programs that build a large value's window-less
-variant (the scatter, the dynamic inflate and the block pool) at the commit
-before the compiler change and at the commit after it, and reports each
-module's length and a hash of its text. The first group must be the same text
-at both commits, the second must differ.
-
-## Acceptance measurement of the selected lowering
-
-Fixed before the first result. One build of the changed compiler makes three
-images of the unchanged scatter with `--par`: `before`, built under the
-present construction rule through a switch that exists only in the compiler's
-own tests and leaves the branch with the probes; an identical twin of
-`before`; and `after`. The protocol is the timing probe's: 1,048,593 mixed
-keys, one unreported and 20 timed calls a process, nine passes rotating the
-image order at 1, 8 and 32 workers, each image checked against the
-independent oracle first, the per-pass ratio of `after` to `before`, and the
-distribution-free 95% interval of the median of the nine ratios.
-
-- The item's first outcome holds if the wall interval at eight workers has
-  its upper end below 1.00, and the wall and the CPU interval at one worker
-  do not lie wholly above 1.00.
-- A width counts only if the twin's wall interval there contains 1. A width
-  that fails this is run once more; if it fails again the result is reported
-  as unresolved, not as passed.
-- 32 workers is reported and decides nothing.
+window is a census: a probe emits the modules of firn, of the hash map, slab
+and ordered map programs and of the three programs that build a large value's
+window-less variant (the scatter with and without `--par`, the dynamic inflate
+and the block pool) at the commit before the compiler change and at the commit
+after it, and reports each module's length and a hash of its text. The first
+group must be the same text at both commits, the second must differ.
 
 ## Results
 
