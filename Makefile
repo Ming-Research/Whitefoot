@@ -102,10 +102,10 @@ static:
 # The checks that compare the branch with main read one base: the merge base of
 # origin/main and HEAD, chosen by .github/merge-base.sh the same way locally and
 # in CI and named in each stage's output. `static` chooses it once and passes it
-# to its stages as REVIEW_BASE; a stage run alone chooses it itself. A design
-# tree check prefers DESIGN_REVIEW_BASE, which CI sets from the event (a push to
-# main is compared with its previous tip) and which is empty locally. No check
-# reads the local branch main.
+# to its stages as REVIEW_BASE; a stage run alone chooses it itself. The
+# specification's readiness check prefers DESIGN_REVIEW_BASE, which CI sets from
+# the event (a push to main is compared with its previous tip) and which is
+# empty locally. No check reads the local branch main.
 REVIEW_BASE ?=
 DESIGN_REVIEW_BASE ?=
 REVIEW_BASE_SH = base='$(REVIEW_BASE)'; \
@@ -115,16 +115,20 @@ DESIGN_BASE_SH = base='$(DESIGN_REVIEW_BASE)'; \
 	if [ -n "$$base" ]; then echo "design review base: $$base (set by CI for the event)" >&2; \
 	else $(REVIEW_BASE_SH); fi
 
-# Structural lint for the design tree; form only, see design/skill/lint.py.
-# Its base is DESIGN_BASE_SH's: CI's, else the merge base above.
+# The design tree is in the wf-agents engine's form (`design/decisions/`), and
+# the engine checks that form before it merges a work. `design/skill/lint.py`
+# reads only the older form (`design/language.md`, `design/compiler.md` and
+# their directories), and no file of it is left: given those trees it would
+# fail on their missing root nodes, and with --require-approval it would ask
+# the frozen `design/log.md` for an entry naming every removed node. So
+# design-lint runs only the skill's own tests, and design-ready only the
+# specification log's readiness, against DESIGN_BASE_SH's base; both pass with
+# no older node file left.
 design-lint:
 	@$(PY) -m unittest discover -s design/skill -p 'test_lint.py'
-	@$(DESIGN_BASE_SH); \
-	$(PY) design/skill/lint.py --trees language compiler --base "$$base"
 
 design-ready:
 	@$(DESIGN_BASE_SH); \
-	$(PY) design/skill/lint.py --trees language compiler --base "$$base" --require-approval && \
 	sh .github/check-spec-archives.sh --require-approval "$$base"
 
 repository-invariants:

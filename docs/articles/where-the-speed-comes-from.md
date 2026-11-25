@@ -186,7 +186,7 @@ Ideas for further facts, and how to test that one pays for itself, are in
 | Proved facts may reach the backend; none adds a check | DIAG-2 |
 | Arguments' writes proved apart at each call | EFF-5 |
 | References are neither stored nor returned | REF-3 |
-| Which facts are emitted, and why | [`design/compiler/backend-facts.md`](../../design/compiler/backend-facts.md) |
+| Which facts are emitted, and why | decision `a-checked-fact-reaches-llvm-only-with-a-complete-mapping` in [`design/decisions/compiler/lowering/backend-facts.md`](../../design/decisions/compiler/lowering/backend-facts.md) |
 | Range references as pointer and count | [range-reference investigation](../../research/investigations/range-reference-facts/DESIGN.md) |
 | Parallel calls and loops | PAR-1, PAR-2 |
 

@@ -17,7 +17,7 @@ facts can also buy portability, automated tuning, stronger testing, safer
 interop, or tighter deployment controls. They also ask what those guarantees
 cost to author and check. Historical experiments retain their original
 conditions; they do not establish current compiler capabilities or a general
-advantage over another language. The [constitution](constitution.md) owns the
+advantage over another language. The [constitution](../design/constitution.md) owns the
 objectives against which a candidate would be judged.
 
 ## Candidate directions

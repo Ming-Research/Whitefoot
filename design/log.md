@@ -5,12 +5,6 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
-## 2026-11-25 The checks that compare a branch with main share one base, chosen the same way locally and in CI
-
-Nodes: compiler/verification
-
-Summary: The specification archive and README translation checks took the merge base with the local branch main, and the design tree's checks took origin/main's latest commit with no merge base, so a stale local main, an advanced remote main or a branch that had merged newer main made them charge the branch with changes it never made. The node gains a decision: one script chooses the merge base of origin/main and HEAD, fetching main outside CI and failing when it cannot, reading the checked-out ref when `GITHUB_ACTIONS=true` (any other value is a local run), and naming the base in each run; `static` chooses it once, and only the design tree's checks prefer a base a CI event sets. Taking origin/main without a fetch, giving the design tree checks main's latest commit, and rewriting the two check scripts to drop their own merge base are refused, each with its reason in the node.
-
 ## 2026-10-23 A returned computed integer expression proves a postcondition as a `let` of it would
 
 Nodes: language/checks-and-proofs/automatic-facts
