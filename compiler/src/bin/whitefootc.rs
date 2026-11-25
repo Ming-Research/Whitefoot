@@ -1297,8 +1297,6 @@ fn unit_arguments(command: &mut Command, directory: &Path, sanitizer: Option<San
         .arg("-I")
         .arg(directory.join("completion"))
         .args(sanitizer_arguments(sanitizer));
-    #[cfg(target_os = "linux")]
-    command.arg("-fstack-clash-protection");
 }
 
 /// The arguments a sanitized build adds to every compile and its link.
@@ -3840,22 +3838,44 @@ mod tests {
                 if bytes <= PAGE && *kind == "static" {
                     continue;
                 }
-                let label = format!("{name}:");
-                let body: String = text
+                // clang writes a definition's label with a comment after it
+                // (`name:  # @name`, `_name:  ## @name` on Darwin), so the
+                // label is the line's first word.
+                let labels = [format!("{name}:"), format!("_{name}:")];
+                let body: Vec<&str> = text
                     .lines()
-                    .skip_while(|line| *line != label && *line != format!("_{label}"))
+                    .skip_while(|line| {
+                        !line
+                            .split_whitespace()
+                            .next()
+                            .is_some_and(|word| labels.iter().any(|label| label == word))
+                    })
                     .take_while(|line| !line.trim_start().starts_with(".cfi_endproc"))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                let probed = ["___chkstk_darwin", "___chkstk_ms", "str\txzr, [sp]", "$0, (%rsp)"]
+                    .collect();
+                assert!(
+                    !body.is_empty(),
+                    "{relative_path}: the assembly holds no body for {name}"
+                );
+                let probed = body.iter().any(|line| {
+                    ["___chkstk_darwin", "___chkstk_ms", "str\txzr, [sp]", "$0, (%rsp)"]
+                        .iter()
+                        .any(|probe| line.contains(probe))
+                });
+                let stack_lines: Vec<&str> = body
                     .iter()
-                    .any(|probe| body.contains(probe));
-                report.push(format!("{relative_path} {name} {bytes} {kind} probed={probed}"));
+                    .copied()
+                    .filter(|line| ["sp", "chkstk"].iter().any(|word| line.contains(word)))
+                    .take(24)
+                    .collect();
+                report.push(format!(
+                    "{relative_path} {name} {bytes} {kind} probed={probed}\n{}",
+                    stack_lines.join("\n")
+                ));
                 if !probed {
                     unprobed.push(format!(
                         "{relative_path} {name} {bytes} {kind} args={:?}\n{}",
                         command.get_args().collect::<Vec<_>>(),
-                        body.lines().take(60).collect::<Vec<_>>().join("\n")
+                        stack_lines.join("\n")
                     ));
                 }
             }
