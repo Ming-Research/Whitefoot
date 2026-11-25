@@ -1148,10 +1148,9 @@ fn function_bodies(module: &str) -> Vec<(&str, &str)> {
     functions
 }
 
-/// The emitted module without the whole-value clear that precedes each
-/// construction of an empty `Option<Chunk>`, and how many clears were removed.
-/// The tag store that follows each clear stays, so the value is the same.
-fn without_vacant_clears(module: &str) -> (String, usize) {
+/// The emitted type of the scatter's `Option<Chunk>`: the named type made of
+/// an 8-bit tag and the named type that holds the two 256-word runs.
+fn vacant_chunk_type(module: &str) -> Option<String> {
     let mut chunk = None;
     for line in module.lines() {
         if let Some((name, definition)) = line.split_once(" = type ")
@@ -1161,10 +1160,7 @@ fn without_vacant_clears(module: &str) -> (String, usize) {
             chunk = Some(name.to_owned());
         }
     }
-    let Some(chunk) = chunk else {
-        return (module.to_owned(), 0);
-    };
-    let wanted = format!("{{ i8, {chunk} }}");
+    let wanted = format!("{{ i8, {} }}", chunk?);
     let mut option = None;
     for line in module.lines() {
         if let Some((name, definition)) = line.split_once(" = type ")
@@ -1174,21 +1170,43 @@ fn without_vacant_clears(module: &str) -> (String, usize) {
             option = Some(name.to_owned());
         }
     }
-    let Some(option) = option else {
+    option
+}
+
+/// The emitted module with the whole-value clear that precedes each
+/// construction of an empty `Option<Chunk>` removed, or, with `headers`, cut
+/// down to the two run lengths, and how many clears were changed. The tag
+/// store that follows each clear stays, so the value is the same.
+fn with_vacant_clears(module: &str, headers: bool) -> (String, usize) {
+    let Some(option) = vacant_chunk_type(module) else {
         return (module.to_owned(), 0);
     };
     let clear = format!("  store {option} zeroinitializer, ptr ");
-    let mut removed = 0;
+    let mut changed = 0;
     let mut kept = String::with_capacity(module.len());
     for line in module.lines() {
-        if line.starts_with(&clear) {
-            removed += 1;
+        let Some(destination) = line.strip_prefix(&clear) else {
+            kept.push_str(line);
+            kept.push('\n');
             continue;
+        };
+        changed += 1;
+        if headers {
+            // The runs' lengths sit at bytes 8 and 2064 of the value: the tag
+            // and its padding, then each run's length before its 256 words.
+            for (run, offset) in [("low", 8), ("high", 2064)] {
+                kept.push_str(&format!(
+                    "  %wfp.vacant.{changed}.{run} = getelementptr inbounds i8, ptr {destination}, i64 {offset}\n  store i64 0, ptr %wfp.vacant.{changed}.{run}\n"
+                ));
+            }
         }
-        kept.push_str(line);
-        kept.push('\n');
     }
-    (kept, removed)
+    (kept, changed)
+}
+
+/// [`with_vacant_clears`] removing each clear whole.
+fn without_vacant_clears(module: &str) -> (String, usize) {
+    with_vacant_clears(module, false)
 }
 
 /// [`without_vacant_clears`], with each whole `Option<Chunk>` transfer in the
@@ -1197,29 +1215,7 @@ fn without_vacant_clears(module: &str) -> (String, usize) {
 /// empty slot, whose tag is all of its value.
 fn with_tag_only_vacant_appends(module: &str) -> (String, usize) {
     let (module, _) = without_vacant_clears(module);
-    let mut chunk = None;
-    for line in module.lines() {
-        if let Some((name, definition)) = line.split_once(" = type ")
-            && name.starts_with("%wf.t.")
-            && definition.contains("[256 x i64]")
-        {
-            chunk = Some(name.to_owned());
-        }
-    }
-    let Some(chunk) = chunk else {
-        return (module, 0);
-    };
-    let wanted = format!("{{ i8, {chunk} }}");
-    let mut option = None;
-    for line in module.lines() {
-        if let Some((name, definition)) = line.split_once(" = type ")
-            && name.starts_with("%wf.t.")
-            && definition.trim() == wanted
-        {
-            option = Some(name.to_owned());
-        }
-    }
-    let Some(option) = option else {
+    let Some(option) = vacant_chunk_type(&module) else {
         return (module, 0);
     };
     let size = format!("i64 ptrtoint (ptr getelementptr ({option}, ptr null, i32 1) to i64)");
@@ -1371,11 +1367,13 @@ fn stable_scatter_probe_reports_clears_and_copies() {
     }
     let (without_clears, removed) = without_vacant_clears(&emitted);
     summary.push(format!("vacant clears removed from the emitted module: {removed}"));
+    let (header_clears, _) = with_vacant_clears(&emitted, true);
     let (tag_only, shortened) = with_tag_only_vacant_appends(&emitted);
     summary.push(format!("vacant appends shortened to the tag: {shortened}"));
     let mut modules = vec![
         ("main", emitted),
         ("no-clear", without_clears),
+        ("headers-only", header_clears),
         ("tag-only", tag_only),
     ];
     let in_place = in_place_scatter_source();
@@ -1569,8 +1567,9 @@ fn scatter_probe_medians(stdout: &str) -> (u64, u64) {
 /// Research probe for the scatter's whole call on 1,048,593 mixed keys. It
 /// always fails, so that its table reaches the test result. The images are
 /// the ordinary `--par` module, an identical twin of it, the same module
-/// without the clear of each empty `Option<Chunk>`, that module with each
-/// empty slot appended as its tag only, and the source that partitions
+/// without the clear of each empty `Option<Chunk>`, the same module clearing
+/// only the two run lengths, that module with each empty slot appended as
+/// its tag only, and the source that partitions
 /// inside the destination chunk, as emitted and with tag-only appends; each
 /// is checked against the
 /// independent oracle before it is timed. Every pass runs each image once at
@@ -1587,12 +1586,14 @@ fn stable_scatter_probe_times_whole_calls() {
     let emitted = emit_lowered(source, OverlapLowering::On);
     let (without_clears, removed) = without_vacant_clears(&emitted);
     report.push(format!("vacant clears removed from the emitted module: {removed}"));
+    let (header_clears, _) = with_vacant_clears(&emitted, true);
     let (tag_only, shortened) = with_tag_only_vacant_appends(&emitted);
     report.push(format!("vacant appends shortened to the tag: {shortened}"));
     let mut modules = vec![
         ("main", emitted.clone()),
         ("twin", emitted),
         ("no-clear", without_clears),
+        ("headers-only", header_clears),
         ("tag-only", tag_only),
     ];
     let in_place = in_place_scatter_source();
