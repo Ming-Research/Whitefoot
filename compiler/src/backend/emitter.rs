@@ -63,7 +63,7 @@ use crate::{
 };
 use cleanup::{CleanupOperand, emit_cleanup, emit_resource_drop_helpers, type_requires_cleanup};
 pub use floor::FLOOR_STACK_BYTES;
-use floor::floor_runtime_fallback;
+pub(crate) use floor::floor_runtime_fallback;
 pub use floor::{FLOOR_RUNTIME_SOURCE, FLOOR_WINDOWS_RUNTIME_SOURCE};
 pub(crate) use frontier::is_recursion_budget_symbol;
 use frontier::{Grain, RecursiveFrontiers, recursion_budget_symbol};
@@ -672,11 +672,10 @@ fn emit_module(
         text.text("\n");
         text.append(functions);
     }
-    // Unconditional, unlike the parallel runtime's: every program can run out
-    // of stack, so every module names the floor and carries its own answer for
-    // a link that does not supply one.
-    text.text("\n");
-    text.append(floor_runtime_fallback()?);
+    // The floor's entry is not written here: its standalone answer calls the
+    // program body, which only the executable caller defines, so the caller
+    // writes both (`driver::launcher::render`). A module without one is a
+    // library and names neither.
     text.text("\n");
     // A declaration selects the allocator unit for text-only linkers. Use
     // emitted references, including cleanup helpers and parallel thunks,

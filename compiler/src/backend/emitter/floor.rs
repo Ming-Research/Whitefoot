@@ -31,11 +31,18 @@ pub const FLOOR_STACK_BYTES: u64 = 1024 * 1024 * 1024;
 
 /// The module's own definition of the floor entry point.
 ///
-/// An emitted module is a complete program on its own — `--emit-llvm` output
-/// must link and run without the compiler's driver — so the module defines
-/// every runtime symbol it names. `weak` linkage lets the real definition in
-/// [`FLOOR_RUNTIME_SOURCE`] replace this one whenever that unit is linked,
-/// which for the floor is every ordinary build.
+/// An emitted module with an executable caller is a complete program on its
+/// own — `--emit-llvm` output must link and run without the compiler's
+/// driver — so it defines every runtime symbol it names. `weak` linkage lets
+/// the real definition in [`FLOOR_RUNTIME_SOURCE`] replace this one whenever
+/// that unit is linked, which for the floor is every ordinary build.
+///
+/// The definition calls `wf__main_body`, which only the executable caller
+/// defines, so it is written beside that definition
+/// (`driver::launcher::render`) and a module without one, a library, carries
+/// neither: a reference to a body nothing defines or declares is not valid
+/// LLVM, and declaring it instead would leave a library that cannot link
+/// without a host that supplies the body.
 ///
 /// The call carries `noinline` so that a small enough program is not pasted
 /// into this definition as well, leaving every module with a second copy of
@@ -48,7 +55,7 @@ pub const FLOOR_STACK_BYTES: u64 = 1024 * 1024 * 1024;
 /// answer is to run the entry on the thread the host started: the program
 /// still runs and still means the same thing, with the ceiling and the bare
 /// host signal it had before the floor existed.
-pub(super) fn floor_runtime_fallback() -> Result<Module, BackendFailure> {
+pub(crate) fn floor_runtime_fallback() -> Result<Module, BackendFailure> {
     let mut module = Module::default();
     let mut signature = Signature::new(
         "wf__floor_run",

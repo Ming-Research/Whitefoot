@@ -8,7 +8,7 @@ use std::fmt::Write;
 
 use crate::backend::abi::{FunctionAbi, ParameterAbi, ResultAbi};
 use crate::backend::emission::{FunctionBody, Module, Parameter, Signature};
-use crate::backend::emitter::source_symbol;
+use crate::backend::emitter::{floor_runtime_fallback, source_symbol};
 use crate::{BackendFailure, IrNominalKind, IrProgram, IrSourceMode, IrType};
 
 /// The standard library's invocation inputs and exit status, by the
@@ -216,6 +216,10 @@ pub(crate) fn render(program: &IrProgram, selected: &str) -> Result<Module, Back
         &["wf__floor_run"],
     );
     module.define(signature.define(output, "")?);
+    // The floor's standalone entry calls the body defined above, so it is
+    // written only where the body is.
+    module.text("\n");
+    module.append(floor_runtime_fallback()?);
     Ok(module)
 }
 
