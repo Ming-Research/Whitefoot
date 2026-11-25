@@ -1460,14 +1460,24 @@ every build is into an empty target directory.
 - The samples budget `performance-candidate-compiler` by the table's rule. A
   batch is 40 jobs, 20 at a time, and a machine whose CPU model is not a column
   of the table builds nothing; batches repeat until each of the three EPYC
-  columns has 20 counted runs, and stop after five. A job's log counts only if
-  it shows no cache action and as many `Compiling` lines as a build into an
-  empty target directory (9 at `e7974f0c5`). The rule's value is taken
-  whatever it is: where it is not below the present 160 s the stage's budget
-  does not fall, which is a result, not a failure of the sampling. The Xeon
-  column follows the owner-column rule of `.github/recompute-time-budgets.py`.
-  Only runs after the preparation count; the earlier runs, which include the
-  first build's extra time, are left out.
+  columns and the Xeon 6975P-C column has 20 counted runs, and stop after ten
+  batches (400 jobs, the first included). The stop depends on the counts, never
+  on the times. The Xeon 6975P-C took 16 of the 36 jobs of the first
+  experiment and 50 of the 80 of the second and third batches, which built
+  nothing on it because the table had no column for it; it was given one before
+  the fourth batch and is sampled from then on. A batch after the third names in
+  its commit message the classes that already have 20 counted runs, whose jobs
+  build nothing. A job's log counts only if it shows no cache action and as
+  many `Compiling` lines as a build into an empty target directory (9 at
+  `e7974f0c5`). The rule's value is taken whatever it is: where it is not below
+  the present 160 s the stage's budget does not fall, which is a result, not a
+  failure of the sampling. A class with fewer than 20 counted runs keeps its
+  value, and a Xeon column follows the owner-column rule of
+  `.github/recompute-time-budgets.py`. Only runs after the preparation count;
+  the earlier runs, which include the first build's extra time, are left out.
+  From the second batch each job publishes its sample as a branch of the
+  repository, readable with git when the API's rate limit holds back the logs;
+  the first batch and the order check are read from their logs.
 
 ## Daily loop
 
