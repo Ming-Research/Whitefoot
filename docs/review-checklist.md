@@ -86,8 +86,9 @@ Source: [specification and test integrity](../AGENTS.md#specification-and-test-i
   group names alone do not establish matching test selection.
 - [ ] **T8 — Time budgets.** A new labeled CI stage has a row in
   `.github/time-budgets.txt` for each host it runs on. Linux CPU-class values
-  follow the maximum of at least the 20 most recent runs plus 10%, rounded up to
-  5 s, with a 10 s floor; models with fewer runs have no column unless the owner
+  follow 1.1 times the maximum of at least the 20 most recent runs plus their
+  spread above the median (maximum minus median), rounded up to 5 s, with a
+  10 s floor; models with fewer runs have no column unless the owner
   adds one. Unknown models use the stage's largest Linux value with a recorded
   note. macOS overruns and the stages named in `WHITEFOOT_BUDGET_REPORT_ONLY`
   are report-only; other Linux and Windows overruns and missing rows on any host

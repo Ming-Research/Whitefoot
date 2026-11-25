@@ -304,8 +304,9 @@ leaves Cargo and the test harness at every available processor unless
 system time every 30 seconds, and stops a command after 30 minutes unless
 `WHITEFOOT_CHECK_TIMEOUT` gives another limit in seconds. It compares each
 labeled stage with its budget in `.github/time-budgets.txt` without changing
-the command's status. Linux budgets are per CPU model: the maximum of at least
-its 20 most recent recorded runs plus 10%, rounded up to 5 s, with a 10 s floor.
+the command's status. Linux budgets are per CPU model: 1.1 times the maximum of
+at least its 20 most recent recorded runs plus their spread above the median
+(maximum minus median), rounded up to 5 s, with a 10 s floor.
 Models with fewer runs have no column unless the owner adds one; unknown models
 use the stage's largest Linux budget, with a note. macOS overruns are
 report-only, and so are the stages named in `WHITEFOOT_BUDGET_REPORT_ONLY`

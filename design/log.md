@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-11-25 A class's time-budget margin follows its own spread above the median
+
+Nodes: compiler/verification
+
+Summary: The Linux budget of a stage and CPU class was the maximum of its recent runs plus a fixed 10%, and from 2026-10-20 the gate's first attempt turned red in 22 jobs of 20 main runs on overruns of at most 1.108 times the budget while every test passed. The decision on the budget rule now takes 1.1 times the maximum plus the maximum's distance above the median, so a quiet class keeps a headroom of +26% to +35% over its median on the unit group and EPYC 9V74, whose runs vary most, gets +74%. A new decision records the grounds: the replay of 756 gate jobs finds 1 job red with no slowdown against 5 for the fixed 10%, and sees a 30% slowdown of every stage in 360 jobs against 40 for a fixed 30%. Replaced: the fixed 10% margin. Refused: a fixed 30% or 25% margin, which leaves a quiet class +40% to +46% before it trips, and a re-run of an overrun, which was red again in 6 of 18 re-runs because the table ages. The decision says that a slowdown below a stage's headroom is seen by no check and that this weakens the reason given for refusing to time every push's gate against its merge base.
+
 ## 2026-10-23 A returned computed integer expression proves a postcondition as a `let` of it would
 
 Nodes: language/checks-and-proofs/automatic-facts
