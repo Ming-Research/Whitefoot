@@ -19,7 +19,7 @@ mod resolution;
 pub use resolution::{Toolchain, resolved_toolchain};
 
 /// LLVM forms accepted by the clang on the running compiler's host.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct ToolchainFacts {
     pub(crate) preserve_none: bool,
     pub(crate) no_capture_attribute: &'static str,
