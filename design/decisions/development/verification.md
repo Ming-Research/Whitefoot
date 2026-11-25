@@ -146,7 +146,7 @@ When its own run's groups did not all succeed, the final job "Gate on both platf
 ### decision final-gate-job-takes-its-own-runs-success
 The final job "Gate on both platforms" takes the result of its own run's groups as the verdict when it is success, with no GitHub call, and reads the revision's runs and jobs only when it is not.
 - replaced: Judging every run by the revision's job listing was on main; the owner changed it, because GitHub recorded finished group jobs as complete minutes late, so a passed group read as absent (data: `research/investigations/test-economy/time-budgets.md`).
-- rejected: a reviewer agent proposed keeping the listing and counting a group it lacks as the run's success; the owner rejected it, because the final job would still need GitHub's answer, so repeated HTTP 502 would still turn a green run red, and a failure already listed would still decide.
+- rejected: an agent proposed keeping the listing and counting a group it lacks as the run's success; the owner rejected it, because the final job would still need GitHub's answer, so repeated HTTP 502 would still turn a green run red, and a failure already listed would still decide.
 - rejected: an agent proposed dropping the listing and judging only by the run's own groups, deleting the summary script, its self-test and the Makefile line; the owner rejected it, because the listing still decides where a later success of another run settles a run whose groups did not succeed.
 
 ### decision ready-event-reuses-a-manual-run
