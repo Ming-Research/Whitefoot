@@ -2,6 +2,7 @@
 //! the program fixture and are also run through its ordinary sequential build.
 
 use super::{BoundedOutput, build_linked_executable, emit, emit_with_overlap, test_directory};
+use crate::toolchain::verify_llvm;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -1094,6 +1095,36 @@ fn extended_forms_execute_forced_splits_against_literal_oracles() {
     std::fs::remove_dir_all(directory).expect("remove extended-form artifacts");
 }
 
+/// The host clang's LLVM verifier accepts `module`. Linking an emitted module
+/// does not show this: a release clang parses and optimizes it without
+/// running the verifier.
+fn assert_llvm_verifies(module: &str, directory: &Path, name: &str) {
+    let output = verify_llvm(directory, name, module).expect("run clang's LLVM verifier");
+    assert!(
+        output.status.success(),
+        "{name} is not well-formed LLVM:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// The helper above must be able to fail: the parser accepts this module, and
+/// only the verifier finds that `%x` is used where its definition does not
+/// dominate the use.
+#[test]
+fn llvm_verifier_helper_rejects_a_value_that_does_not_dominate_its_use() {
+    let directory = test_directory();
+    let module = "define i64 @f(i1 %c) {\nentry:\n  br i1 %c, label %a, label %b\n\
+                  a:\n  %x = add i64 1, 2\n  br label %b\n\
+                  b:\n  %y = add i64 %x, 1\n  ret i64 %y\n}\n";
+    let output = verify_llvm(&directory, "dominance", module).expect("run clang's LLVM verifier");
+    let diagnostic = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success() && diagnostic.contains("dominate"),
+        "the verifier must reject the use of %x: {diagnostic}"
+    );
+    std::fs::remove_dir_all(directory).expect("remove verifier artifacts");
+}
+
 const MARKS_FIELDS: &str =
     include_str!("../../../../tests/programs/parallel/indexed_marks_fields.wf");
 
@@ -1117,6 +1148,7 @@ fn indexed_marks_and_fields_execute_private_dense_slabs_and_nested_joins() {
     assert!(fields.contains(".stride = select i1"), "{fields}");
     assert!(!emit(MARKS_FIELDS.as_bytes()).contains("%indexed."));
     let directory = test_directory();
+    assert_llvm_verifies(&module, &directory, "marks_fields");
     let names = [
         "marks_one",
         "marks_zero",
@@ -1148,6 +1180,21 @@ fn indexed_marks_and_fields_execute_private_dense_slabs_and_nested_joins() {
         report.contains("indexed loops=1,1,1,1,5,0,0,0\n"),
         "{report}"
     );
+    // `main` runs `marks_one` first and it splits over two mark roots, so
+    // private allocations 1 and 2 of this executable are their two masks; each
+    // failure must release every mask already taken before the program ends.
+    for fail in ["1", "2"] {
+        let output = Command::new(&executable)
+            .env("WF_WORKERS", "4")
+            .env("WF_TEST_FAIL", fail)
+            .bounded_output()
+            .expect("run mark mask acquisition failure");
+        assert_eq!(
+            output.status.code(),
+            Some(90),
+            "mask allocation {fail}: {output:?}"
+        );
+    }
     std::fs::remove_dir_all(directory).expect("remove mark/field native artifacts");
 }
 
@@ -1156,6 +1203,7 @@ fn indexed_field_family_acquisition_failure_releases_earlier_sibling_slabs() {
     let source = include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-fields.wf");
     let module = emit_with_overlap(source);
     let directory = test_directory();
+    assert_llvm_verifies(&module, &directory, "indexed_fields");
     let executable = build_linked_executable(
         &observed_with(&module, &["reduce"]),
         Some(OBSERVER),
