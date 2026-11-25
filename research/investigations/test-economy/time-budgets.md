@@ -1361,8 +1361,8 @@ Run 40115097375 (main, head `a4f69f2e`), first attempt. The three jobs
 17:30:34 with the annotation "The job has exceeded the maximum execution time
 of 15m0s", while their own durations were not that long: `corpus` and `static`
 list no step at all (the runner never reported one), and `unit` lists every
-step as succeeded, the last ending at 17:19:42. No push or cancellation of the
-run came between; the final job ran on `!cancelled()` and its log shows
+step as succeeded, the last ending at 17:19:42. The final job ran (it runs on `!cancelled()`, so the run itself was not
+cancelled) and its log shows
 `list jobs of run 40115097375` failing five times with HTTP 502 from 17:33:45
 to 17:35:42. The cause is on GitHub's side (the runner's step results and the
 job's completion never reached the service), and the jobs ended with no
