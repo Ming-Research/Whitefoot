@@ -216,7 +216,7 @@ printed with its reason.
 | Disjoint places and ranges | OWN-7 |
 | Adjacent statements may overlap | PAR-1 |
 | Loop iterations may overlap | PAR-2 |
-| The two versions and the recursion budget | [`design/compiler/parallel-lowering/two-worlds.md`](../../design/compiler/parallel-lowering/two-worlds.md) |
+| The two versions and the recursion budget | decision `par-builds-emit-two-worlds`, decision `recursion-budget-spends-only-at-groups` in [`design/decisions/compiler/lowering/parallel/two-worlds.md`](../../design/decisions/compiler/lowering/parallel/two-worlds.md) |
 
 Every program, diagnostic and ledger line in this article comes from the
 compiler at commit `3cd7e8139`; the times come from the measurement record,

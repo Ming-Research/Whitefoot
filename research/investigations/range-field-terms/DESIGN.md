@@ -163,7 +163,7 @@ These decisions and their ancestors were read as rationale, not language
 authority. A later approved amendment would update their field-admission
 claims together; this draft changes none of them.
 
-The [constitution](../../../docs/constitution.md) calls for practical proof
+The [constitution](../../../design/constitution.md) calls for practical proof
 and runtime costs under the safety constraint. It does not uniquely select
 field granularity or enum admission. The technical grounds here are that
 owned field projection supplies the same integer-valued function that a
