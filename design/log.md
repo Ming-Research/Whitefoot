@@ -5,12 +5,6 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
-## 2026-11-25 The paired performance comparison does not time a program whose images match, and gates the rest on its own null control
-
-Nodes: compiler/verification
-
-Summary: The paired-performance decision replaces its host control, which timed the candidate's images against themselves for all five kernels and ended the comparison as inconclusive if any kernel failed it, with a per-kernel judgment. The two arms' runtime, runner and oracle are built with one source-path prefix map, since the runtime's assert messages embedded each checkout's path and made the linked images differ in every retained run; a kernel whose images in the two arms are byte-identical is not timed. Each timed kernel is judged against the null control of its own image on the invocation's host: a failing comparison with an adverse null control is indeterminate, measured once more alone, and inconclusive (the job passes with a warning) if it is still indeterminate, while a failure in any round fails the job; each verdict records the CPU model. `performance-candidate-compiler` takes its budget per processor (165, 150, 135 s; the 8573C column by the rule for a model with few runs). The retained artifacts of 187 runs show every failure on identical code fell where the module objects were identical (`research/investigations/identical-code-noise/README.md`). The earlier host control and the 14900K re-judgment and the 8573C budget from its own runs only are recorded as rejected under the decision.
-
 ## 2026-10-23 A returned computed integer expression proves a postcondition as a `let` of it would
 
 Nodes: language/checks-and-proofs/automatic-facts

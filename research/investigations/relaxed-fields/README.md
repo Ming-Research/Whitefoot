@@ -2597,7 +2597,7 @@ consulted for this investigation; their general capabilities are not native
 Whitefoot qualification results.
 
 [spec]: ../../../spec/kernel-spec.md
-[constitution]: ../../../docs/constitution.md
+[constitution]: ../../../design/constitution.md
 [research-method]: ../../README.md
 [language-node]: ../../../design/language.md
 [data-model]: ../../../design/language/data-model.md
