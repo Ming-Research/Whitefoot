@@ -1388,6 +1388,17 @@ and the host's I/O and CPU pressure (`/proc/pressure`), page-ins and
 - A preparation is sufficient for the stage if the first build is within 5% of
   the second in every job of its arm.
 
+**What the experiment leaves out.** Its jobs restore no Cargo cache. The order
+effect it explains was measured in runs whose cache step missed (both runs in
+the table above log `Cache not found` for the `formal-compute` key), so neither
+the writeback of a restored `compiler/target` nor a restored build state can
+account for it. A run whose cache step hits restores the target directory of
+an earlier run of the same pull request, and Cargo's fingerprints then leave
+the locked dependencies built and recompile only the `whitefoot` crate (read
+from Cargo's rules, not observed in a run): a smaller build than a miss, which
+therefore does not set the stage's slowest time. Whether that restore's
+writeback slows the smaller build is not measured.
+
 ## Daily loop
 
 One edit, measured in the local container with the new defaults: an unused
