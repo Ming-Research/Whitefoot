@@ -1659,8 +1659,9 @@ fn main() -> status: ExitStatus pure {
         ),
         rule: "RANGE-1",
         sentences: &[],
-        repaired: &[br##"fn need_small(source: &[u64], i: u64, j: u64) -> result: unit pure contract {
+        repaired: &[br##"fn need_small(source: &[u64], i: u64, j: u64) -> result: unit reads(source) contract {
   define next = i * 2_u64;
+  requires next < source^.len;
   requires forall small(k in 0_u64..1_u64): source^[next] <= 7_u64;
 } {
   doc "Expanding next exposes multiplication of two integer parameters, which is not a range term.";
