@@ -647,7 +647,11 @@ impl Input<'_, '_> {
                 ordinal,
                 projections,
                 ..
-            } => self.render_goal_projections(format!("parameter #{ordinal}"), None, projections),
+            } => self.render_goal_projections(
+                described(&format!("parameter #{ordinal}")),
+                None,
+                projections,
+            ),
             GoalDatum::NamedConst {
                 declaration,
                 projections,

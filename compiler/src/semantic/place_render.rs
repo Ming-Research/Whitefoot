@@ -68,13 +68,16 @@ pub(super) fn render_place_projections<N: PlaceNames>(
         let step = match projection {
             PlaceProjection::Place(step) => *step,
             PlaceProjection::FormalSubscript(ordinal) => {
-                rendered.push_str(&format!("[parameter #{ordinal}]"));
+                rendered.push_str(&format!("[{}]", described(&format!("parameter #{ordinal}"))));
                 ty = names.element(ty, range)?;
                 range = false;
                 continue;
             }
             PlaceProjection::FormalPage(ordinal) => {
-                rendered.push_str(&format!(".pages[parameter #{ordinal}]"));
+                rendered.push_str(&format!(
+                    ".pages[{}]",
+                    described(&format!("parameter #{ordinal}"))
+                ));
                 ty = names.element(ty, range)?;
                 range = true;
                 continue;
