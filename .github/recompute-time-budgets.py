@@ -13,7 +13,8 @@ comparison in `run-check.pl`.
             keep each stage's time, CPU model and logged budget in a samples
             file (JSON; kept outside the repository, it is scratch input);
             --branch keeps one branch's runs, --job the jobs whose names
-            start with a prefix (each repeatable)
+            start with a prefix (each repeatable); --reserve keeps part of
+            the hour's API requests for others and stops before them
   table     print each Linux cell's count, median, maximum, old and new
             budget; with --write, rewrite the table file
   headroom  print, per CPU class, how far above its median a typical run of a
@@ -405,12 +406,33 @@ def save(path, samples):
     os.replace(path + ".tmp", path)
 
 
-def collect(repo, workflows, since, path, limit, until=None, branch=None, named=()):
+REQUESTS_PER_RUN = 8
+RUNS_PER_CHECK = 10
+
+
+def affordable(left, reserve):
+    """How many more runs `collect` may fetch with `left` requests of the hour left, `reserve` kept back.
+
+    A run costs a listing of its jobs and a log per job kept: REQUESTS_PER_RUN
+    is an upper estimate for the gate's runs, so the reserve survives the
+    runs fetched together with it.
+    """
+    return max(0, (left - reserve) // REQUESTS_PER_RUN)
+
+
+def quota_left():
+    """Requests the token may still make this hour (the `rate_limit` endpoint is free)."""
+    return json.loads(gh("rate_limit"))["resources"]["core"]["remaining"]
+
+
+def collect(repo, workflows, since, path, limit, until=None, branch=None, named=(), reserve=0):
     """Add the jobs of finished runs to the samples file; a rerun skips known jobs.
 
     `branch` keeps the runs of one branch; `named` keeps the jobs whose names
     start with one of the prefixes, which spares the log downloads of the
-    others.
+    others. The runs are fetched RUNS_PER_CHECK at a time, and fetching stops
+    before the requests left in the hour fall to `reserve`: the quota is
+    shared with the engine's own calls, which fail once it is spent.
     """
     try:
         with open(path) as handle:
@@ -448,13 +470,22 @@ def collect(repo, workflows, since, path, limit, until=None, branch=None, named=
         # A run's jobs are recorded together, so a run with a recorded job is done.
         known = {job["run"] for job in samples["jobs"].values()}
         runs = [r for r in runs if r["id"] not in known]
+        fetched = 0
         with concurrent.futures.ThreadPoolExecutor(6) as pool:
-            for done, found in enumerate(pool.map(lambda run: fetch(run, workflow), runs), 1):
-                samples["jobs"].update(found)
-                if done % 10 == 0:
-                    save(path, samples)
-                    print(f"{workflow}: {done} of {len(runs)} runs", file=sys.stderr, flush=True)
-        print(f"{workflow}: {len(runs)} runs, {len(samples['jobs'])} jobs kept", file=sys.stderr)
+            while fetched < len(runs):
+                left = quota_left()
+                chunk = runs[fetched:fetched + min(RUNS_PER_CHECK, affordable(left, reserve))]
+                if not chunk:
+                    print(f"{workflow}: stopped with {left} requests left and {reserve} kept in reserve;"
+                          f" {len(runs) - fetched} runs not fetched; go on from --until"
+                          f" {runs[fetched - 1]['created_at'] if fetched else until}", file=sys.stderr)
+                    break
+                for found in pool.map(lambda run: fetch(run, workflow), chunk):
+                    samples["jobs"].update(found)
+                fetched += len(chunk)
+                save(path, samples)
+                print(f"{workflow}: {fetched} of {len(runs)} runs, {left} requests were left", file=sys.stderr, flush=True)
+        print(f"{workflow}: {fetched} runs, {len(samples['jobs'])} jobs kept", file=sys.stderr)
     save(path, samples)
 
 
@@ -724,6 +755,11 @@ def self_test():
     assert [status for _, status, *_ in reds(12600)] == ["still red"], reds(12600)
     assert [status for _, status, *_ in reds(11200, "Small CPU")] == ["not judgeable"], reds(11200, "Small CPU")
     assert reds(10100) == [], "a stage within its logged budget is not a red job"
+    # `collect` leaves the reserve of the hour's requests to others: at 8
+    # requests a run, 1,000 left with 920 kept back is 10 runs, and nothing
+    # is fetched at or below the reserve.
+    assert [affordable(left, 920) for left in (1000, 999, 927, 920, 100, 0)] == [10, 9, 0, 0, 0, 0]
+    assert affordable(5000, 1000) == 500
     print("recompute-time-budgets self-test passed")
 
 
@@ -739,6 +775,9 @@ def main():
     fetch.add_argument("--limit", type=int, default=400, help="newest runs per workflow")
     fetch.add_argument("--branch", help="keep the runs of this branch only")
     fetch.add_argument("--job", action="append", default=[], help="keep the jobs whose names start with this")
+    fetch.add_argument("--reserve", type=int, default=1000,
+                       help="requests of the hour's 5,000 to leave for others (default 1000); fetching"
+                            " stops before the quota falls to it")
     fetch.add_argument("--samples", required=True)
     for name in ("table", "headroom", "replay"):
         command = sub.add_parser(name)
@@ -767,7 +806,7 @@ def main():
         return self_test()
     if args.command == "collect":
         return collect(args.repo, args.workflow, args.since, args.samples, args.limit, args.until,
-                       args.branch, tuple(args.job))
+                       args.branch, tuple(args.job), args.reserve)
     if args.command is None:
         parser.error("name a command or --self-test")
     rows = flatten(load(args.samples))
