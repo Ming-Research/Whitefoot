@@ -33,7 +33,7 @@ The two completion conditions are:
    tests pass, and native code retains probes. This is a prerequisite for the
    macOS package, not an optional package optimization.
 
-The [constitution's safety constraint](../../../docs/constitution.md#article-1-safe-safety-is-proved-before-a-program-is-accepted)
+The [constitution's safety constraint](../../../design/constitution.md#article-1-safe-safety-is-proved-before-a-program-is-accepted)
 rules out removing probes: a frame can cross a guard page and write into
 another mapping. Resource exhaustion being outside source outcomes in
 [the specification](../../../spec/kernel-spec.md) does not permit corruption.
@@ -680,7 +680,8 @@ the owner's rulings are on the board, and Windows packaging is its own work.
   ([measurements](../../experiments/runtime-c-stack-probes/README.md)). The
   runtime's C units now compile with the target's probing method, and the
   acceptance runs the compiler's frame test beside each installed package's
-  clang, as the exhaustion-floor design decision states.
+  clang, as the design decisions `runtime-c-units-carry-the-generated-probe-method` and
+  `acceptance-runs-the-candidates-runtime-frame-test` state.
 - **Safety qualification outstanding:** post-LTO probing, aligned and variable
   frames, unwinding and stack-ledger correspondence; Apple inline support; exact
   Apple helper ABI and deployment availability. The completed arm64 non-LTO

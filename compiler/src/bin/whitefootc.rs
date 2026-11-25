@@ -1287,7 +1287,7 @@ fn compile_executable(
 /// `-fno-sanitize=all` then keeps that closure uninstrumented. `probe` is
 /// [`whitefoot::runtime_stack_probe_arguments`]: the stack probing of every
 /// runtime C frame over a page, in the method generated code carries
-/// (compiler/resource-exhaustion-floor).
+/// (design decision `runtime-c-units-carry-the-generated-probe-method`).
 fn unit_arguments(
     command: &mut Command,
     directory: &Path,

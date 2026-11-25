@@ -8,7 +8,7 @@
 //! This reads, for every unit any link compiles, each frame over a page or of
 //! non-fixed size from `-fstack-usage` and demands the probe in its assembly,
 //! so a frame the runtime grows later is caught on the host this runs on
-//! (compiler/resource-exhaustion-floor).
+//! (design decision `runtime-c-units-carry-the-generated-probe-method`).
 
 use std::path::Path;
 
