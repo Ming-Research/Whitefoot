@@ -91,8 +91,14 @@ pub(super) fn check_rejection(
     }
     let rendered = format!("{failure}\n");
     if sentences.is_empty() && rendered.contains("\n  mechanical_fix:") {
+        let repairs: Vec<&str> = rendered
+            .lines()
+            .filter(|line| line.starts_with("  mechanical_fix:"))
+            .collect();
         return Err(format!(
-            "{name}: this position must not offer an unverified repair: {rendered}"
+            "{name}: this position must not offer an unverified repair; its rendering opens with `{}` and prints:\n{}",
+            rendered.lines().next().unwrap_or_default(),
+            repairs.join("\n")
         ));
     }
     for sentence in sentences {
