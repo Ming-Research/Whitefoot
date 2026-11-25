@@ -47,7 +47,7 @@ resolve() {
         fail "refs/remotes/origin/main does not exist; fetch main from origin (CI checks out with fetch-depth 0)"
     head=$(git rev-parse --verify --quiet 'HEAD^{commit}') ||
         fail "HEAD is not a commit"
-    base=$(git merge-base main "$head") ||
+    base=$(git merge-base "$remote" "$head") ||
         fail "origin/main and HEAD have no merge base"
     printf 'review base: %s (merge base of origin/main %s and HEAD %s)\n' \
         "$(git rev-parse --short "$base")" "$(git rev-parse --short "$remote")" \
