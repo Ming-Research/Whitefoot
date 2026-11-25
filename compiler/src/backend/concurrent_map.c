@@ -62,16 +62,6 @@
 #ifndef WF_CMAP_CURRENT_USER
 #define WF_CMAP_CURRENT_USER(map) ((wf_cmap_user *)NULL)
 #endif
-/* The reason of the refusal of a write selection under a read-only hold. */
-#define WF_CMAP_WRITE_UNDER_READ "write selection under a read-only whole hold"
-#ifndef WF_CMAP_REFUSED
-#define WF_CMAP_REFUSED(reason) wf_cmap_refuse(reason)
-static _Noreturn void wf_cmap_refuse(const char *reason) {
-    (void)fprintf(stderr, "whitefoot runtime: %s\n", reason);
-    (void)fflush(stderr);
-    abort();
-}
-#endif
 /* The size the includer's pool grants a request of `bytes`, which its heap
  * reading counts [PRE-2]; the request itself when it grants exactly. */
 #ifndef WF_CMAP_GRANTED
@@ -91,6 +81,16 @@ static _Noreturn void wf_cmap_refuse(const char *reason) {
 
 #include "concurrent_map.h"
 #include <assert.h>
+/* The reason of the refusal of a write selection under a read-only hold. */
+#define WF_CMAP_WRITE_UNDER_READ "write selection under a read-only whole hold"
+#ifndef WF_CMAP_REFUSED
+#define WF_CMAP_REFUSED(reason) wf_cmap_refuse(reason)
+static _Noreturn void wf_cmap_refuse(const char *reason) {
+    (void)fprintf(stderr, "whitefoot runtime: %s\n", reason);
+    (void)fflush(stderr);
+    abort();
+}
+#endif
 
 /* The map's test drives interleavings through these points: a writer that
  * is about to claim an empty or removed cell for an entry's key, and one
