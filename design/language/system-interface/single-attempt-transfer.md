@@ -1,1 +1,0 @@
-Decision: The ordinary byte-I/O primitives expose a single attempt's progress and terminal outcome, leaving looping read-exact and write-all policies to source helpers, because the caller can preserve partial progress and choose whether to retry while a composite native loop hides that decision, instead of requiring each caller to accept a built-in loop-to-completion policy.

@@ -53,7 +53,7 @@ retroactively change the versions or runtime used for those measurements.
 
 ## Ground and evidence
 
-The [constitution](../../../docs/constitution.md) chooses large-system and
+The [constitution](../../../design/constitution.md) chooses large-system and
 embedded capability, machine-checked safety, and runtime performance within
 practical development and verification costs. Those aims do not uniquely select
 a container representation. This investigation requires correct ownership and
