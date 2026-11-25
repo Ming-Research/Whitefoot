@@ -273,6 +273,77 @@ group must be the same text at both commits, the second must differ.
 
 ## Results
 
-None yet. No probe has run: GitHub refused each request to start them for an
-exhausted API budget, on 2026-11-25 at 18:35 UTC and again at 19:16 UTC, less
-than ten minutes after the budget's hourly reset at 19:06:39 UTC.
+### Structure and census, 2026-11-25
+
+Two runs of the fast workflow on the 14900K runner, read from the probes'
+reports and the named tests' results:
+
+- main's rule: commit `5d836f636`, whose emitter is main's at `ca8fe55bc`,
+  [run 45694027022](https://github.com/Ming-Research/Whitefoot/actions/runs/45694027022);
+- the selected rule: commit `ea1bf64df`,
+  [run 45694027617](https://github.com/Ming-Research/Whitefoot/actions/runs/45694027617).
+
+The structure probe of these runs ended its report with a cut tail, which
+lost the ordinary module's list of whole-block transfers; what follows is
+read from its context lines and from the lists of the other images and of
+the build without `--par`. Commit `9282c7d81` ends the report with every
+list and each function's call sites.
+
+1. The `--par` module the probe emits is 145,203 bytes with FNV-1a
+   `7a67fe1ca703ed4d` under main's rule, and 145,325 bytes with
+   `b707dcd037d72654` under the selected rule.
+2. Under main's rule the optimizer already builds each appended empty slot in
+   place: the append loop of `wf_radix_scatter`, unrolled by four, stores the
+   tag byte into the slot and then clears its 4,112 bytes from offset 8 with
+   one `memset`; no copy of a temporary into the slot is left on that path.
+   Without `--par`, `wf_radix_scatter` holds five such `memset`s. Of the clear
+   and the copy seen on 2026-09-21, the copy is gone on main and the clear
+   remains.
+3. Under the selected rule, `wf_radix_scatter` holds no constant clear or copy
+   of 2,048 bytes or more in either build besides the block writer's copies
+   it inlines. The emitted module holds no zero store of the whole
+   `Option<Chunk>` in either world: the assertion added to
+   `stable_scatter_matches_an_independent_oracle_and_hands_out_output_work`
+   fails under main's rule (in the world without `--par`, the first it
+   checks) and passes under the selected rule, whose run also passed the
+   oracle in both worlds.
+4. In both modules the out-of-line definition
+   `place_back$instance$bf6eebe3abbd4940` keeps a 4,120-byte `memcpy`, since
+   it copies whatever value it is given. These runs do not say whether
+   anything calls it.
+5. The block writer is the same under both rules: `partition_block` returns
+   its two runs through two 2,056-byte copies, and `write_chunk` copies them
+   into a `Chunk` (two of 2,056 bytes), the `Chunk` into the `Some` (4,112)
+   and the `Some` into the slot (4,119 after the tag byte). That is about
+   16 KB copied for each block of 2 KB of keys.
+6. The in-place control was rejected by the checker in both runs (OWN-1: a
+   by-value match of a window element whose payload is not a copy type);
+   `9282c7d81` matches it through a reference.
+
+The census probe (`programs::memory::stable_scatter_probe_reports_module_census`)
+reported each module's byte length and FNV-1a:
+
+| Module | Main's rule | Selected rule |
+| --- | --- | --- |
+| firn | 7,035,808 `7b2f92a657c8456c` | 7,035,808 `7b2f92a657c8456c` |
+| hash map, without `--par` | 939,997 `82e1e9587b226859` | 939,997 `82e1e9587b226859` |
+| hash map, `--par` defaults | 996,377 `e709c9bedfff4eb2` | 996,377 `e709c9bedfff4eb2` |
+| slab, without `--par` | 497,926 `440d5676b086b484` | 497,926 `440d5676b086b484` |
+| slab, `--par` defaults | 497,926 `440d5676b086b484` | 497,926 `440d5676b086b484` |
+| ordered map, without `--par` | 556,766 `f6a8427ede4ba216` | 556,766 `f6a8427ede4ba216` |
+| ordered map, `--par` defaults | 627,011 `f7024073ceb4cbe1` | 627,011 `f7024073ceb4cbe1` |
+| scatter, without `--par` | 73,824 `6ff694a8b766aae6` | 73,887 `ebd1454e91829d25` |
+| scatter, `--par` | 145,203 `7a67fe1ca703ed4d` | 145,325 `b707dcd037d72654` |
+| dynamic inflate | 341,013 `a6b306de6e5cbc77` | 341,295 `a628c0069f63afe3` |
+| block pool | 60,751 `58e0dffed0280889` | 60,810 `fc0f204434889055` |
+
+The first group is the same text under both rules and the second differs, as
+[the selected lowering](#the-lowering-the-owner-selected) predicted. Under the
+selected rule the four raw deflate tests, the block pool's test and the hash
+map, slab and ordered map tests in both lowering modes passed.
+
+### Timing
+
+Not run yet. GitHub refused the requests for an exhausted API budget at
+18:35, 19:16, 20:35 and 20:36 UTC on 2026-11-25, and once refused a push for
+an error of its own storage.
