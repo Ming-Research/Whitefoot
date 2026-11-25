@@ -248,8 +248,8 @@ def format_table(table):
 # --- symbol tables ----------------------------------------------------------
 
 def symbols(table_text):
-    """{name: (section, address, is_function)} from `objdump -t`; a name
-    defined more than once maps to None."""
+    """{name: (section, address, is_function, is_weak)} from `objdump -t`; a
+    name defined more than once maps to None."""
     seen = {}
     for line in table_text.splitlines():
         match = SYMBOL.match(line)
@@ -258,9 +258,32 @@ def symbols(table_text):
         address, flags, section, _, name = match.groups()
         if section in ("*UND*", "*ABS*") or flags[5] == "d" or flags[6] == "f":
             continue
-        entry = (section, int(address, 16), flags[6] == "F")
+        entry = (section, int(address, 16), flags[6] == "F", flags[1] == "w")
         seen[name] = None if name in seen else entry
     return seen
+
+
+def owners(object_tables):
+    """{code name: index of the object whose definition the image holds}: the
+    one strong definition among the objects, or the only definition. A weak
+    definition gives way to a strong one, as the module's weak scheduler
+    entries do to the C runtime's and bridge.c's weak coroutine helpers to
+    ordinary_values.ll's. A name with two strong definitions (local
+    functions of one name) or only weak ones is left out: the check cannot
+    tell by name which copy the image holds."""
+    found = collections.defaultdict(list)
+    for index, table in enumerate(object_tables):
+        for name, entry in symbols(table).items():
+            if entry and code_section(entry[0]):
+                found[name].append((index, entry[3]))
+    result = {}
+    for name, definitions in found.items():
+        strong = [index for index, weak in definitions if not weak]
+        if len(strong) == 1:
+            result[name] = strong[0]
+        elif not strong and len(definitions) == 1:
+            result[name] = definitions[0][0]
+    return result
 
 
 def defined(object_tables, sections):
@@ -358,13 +381,15 @@ def check_rows(rows, image_table, object_table, read_text, object_disassembly):
     for row in rows:
         here = table(row.image)
         name = f"{row.arm} {row.placement} {row.kernel}"
-        module_names = defined([object_table(row.module)], code_section)
-        runtime_names = defined([object_table(path) for path in row.runtime], code_section)
+        # Object 0 is the module, then the runtime's objects in link order.
+        owner = owners([object_table(row.module)] + [object_table(path) for path in row.runtime])
+        module_names = {name for name, index in owner.items() if index == 0}
+        runtime_names = {name for name, index in owner.items() if index > 0}
         claims = read_claims(read_text(row.claims)) if row.claims != "none" else []
         present = 0
         for function, modulus, offset, _ in claims:
             entry = here.get(function)
-            if not entry:
+            if not entry or function not in module_names:
                 continue
             present += 1
             if entry[1] % modulus != offset:
@@ -375,7 +400,8 @@ def check_rows(rows, image_table, object_table, read_text, object_disassembly):
         claimed_runtime = runtime_claim(row.runtime_claim)
         if claimed_runtime:
             modulus, objects = claimed_runtime
-            for function in sorted(defined([object_table(path) for path in objects], code_section)):
+            claimed = {index + 1 for index, path in enumerate(row.runtime) if path in objects}
+            for function in sorted(name for name, index in owner.items() if index in claimed):
                 entry = here.get(function)
                 if entry and entry[2] and entry[0] == ".text" and entry[1] % modulus:
                     problems.append(f"{name}: runtime function {function} starts at "
@@ -589,9 +615,11 @@ def disassembly(functions_spec):
 
 
 def symbol_table(entries):
-    """objdump -t text for [(name, section, address, is_function)]."""
-    return "".join(f"{address:016x} {'g     F' if function else 'g     O'} {section}\t"
-                   f"{16:016x} {name}\n" for name, section, address, function in entries) + \
+    """objdump -t text for [(name, section, address, is_function[, weak])]."""
+    def flags(entry):
+        binding = " w    " if len(entry) > 4 and entry[4] else "g     "
+        return binding + ("F" if entry[3] else "O")
+    return "".join(f"{entry[2]:016x} {flags(entry)} {entry[1]}\t{16:016x} {entry[0]}\n" for entry in entries) + \
         "0000000000000000 l    df *ABS*\t0000000000000000 crt.c\n"
 
 
@@ -650,15 +678,23 @@ def self_test():
             pass
 
     # The image check on synthetic tables: each refusal it exists for.
+    # The module's weak wf__par_publish gives way to the runtime's strong one,
+    # and the claimed runtime object's weak wf__coro_done to the unclaimed
+    # values.o's strong one, as the emitted module and bridge.c give way to the
+    # C runtime and ordinary_values.ll: the image holds the strong copies.
     module_obj = symbol_table([("wf__hot", ".text", 0x0, True), ("wf__cold", ".text", 0x40, True),
+                               ("wf__par_publish", ".text", 0x80, True, True),
                                ("wf_state", ".data", 0x0, False), ("wf_counts", ".bss", 0x0, False)])
-    runtime_obj = symbol_table([("wf_rt_run", ".text", 0x0, True), ("wf_rt_queue", ".bss", 0x0, False)])
-    claims_text = "wf__hot 64 0 -\nwf__cold 64 0 -\n"
-    p_claims = "wf__hot 64 48 0\n"
+    runtime_obj = symbol_table([("wf_rt_run", ".text", 0x0, True), ("wf__par_publish", ".text", 0x40, True),
+                                ("wf__coro_done", ".text", 0x80, True, True), ("wf_rt_queue", ".bss", 0x0, False)])
+    values_obj = symbol_table([("wf__coro_done", ".text", 0x0, True)])
+    claims_text = "wf__hot 64 0 -\nwf__cold 64 0 -\nwf__par_publish 64 0 -\n"
+    p_claims = "wf__hot 64 48 0\nwf__par_publish 64 48 -\n"
 
     def image(hot_at, rt_at, data_at):
         return symbol_table([("wf__hot", ".text", hot_at, True), ("wf__cold", ".text", hot_at + 0x40, True),
-                             ("wf_rt_run", ".text", rt_at, True),
+                             ("wf_rt_run", ".text", rt_at, True), ("wf__par_publish", ".text", rt_at + 0x40, True),
+                             ("wf__coro_done", ".text", rt_at + 0x90, True),
                              ("wf_state", ".data", data_at, False), ("wf_counts", ".bss", data_at + 0x100, False),
                              ("wf_rt_queue", ".bss", data_at + 0x140, False)])
 
@@ -678,7 +714,8 @@ def self_test():
             aligned = arm != "U"
             claims = {"P": "p.claims", "A32": "a32.claims"}.get(arm, "fr.claims" if aligned else "none")
             runtime = "none" if not aligned else "32@runtime.o" if arm == "A32" else "64@runtime.o"
-            rows.append(Row("records", arm, placement, key, "module.o", claims, runtime, ["runtime.o"]))
+            rows.append(Row("records", arm, placement, key, "module.o", claims, runtime,
+                            ["runtime.o", "values.o"]))
         return rows
 
     texts = {"fr.claims": claims_text, "p.claims": p_claims, "a32.claims": claims_text.replace(" 64 ", " 32 ")}
@@ -687,7 +724,7 @@ def self_test():
 
     def run(images, disassembly_text=p_disassembly):
         return check_rows(rows_for(images), images.__getitem__,
-                          {"module.o": module_obj, "runtime.o": runtime_obj}.__getitem__,
+                          {"module.o": module_obj, "runtime.o": runtime_obj, "values.o": values_obj}.__getitem__,
                           texts.__getitem__, lambda _: disassembly_text)
 
     expect("a good layout", run(good), [])

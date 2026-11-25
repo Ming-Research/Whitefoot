@@ -608,11 +608,14 @@ table, and objects that differ get a table each.
 - Code placements `p0`, `m16`, `m32`, `m48`, `r16`, `r48`, and for the
   aligned arms `m1024` and `m2048`, which move aligned code by 16 and 32
   lines and so change its offset within a page.
-- Data placements: `FR` at `p0` with 64, 1024 and 2048 bytes linked at the
+- Data placements: `FR` at `p0` with 128, 1024 and 2048 bytes linked at the
   front of `.data`, which moves the writable static data (`.data` and
-  `.bss`) and leaves the code and the read-only data where they are (`d64`,
-  `d1024`, `d2048`), and `U` at `p0` with the filler that gives its `.data`
-  and `.bss` `FR`'s addresses (`dFR`).
+  `.bss`) and leaves the code and the read-only data where they are
+  (`d128`, `d1024`, `d2048`), and `U` at `p0` with the filler that gives its
+  `.data` and `.bss` `FR`'s addresses (`dFR`). The smallest pad was 64 bytes
+  until the first sizing run's layout check found the writable data aligned
+  to 128 bytes, which moved part of it by 128 under a 64-byte pad; every
+  pad is now a multiple of that alignment.
 - Every decisive run also samples `FR` at `p0` and the fastest placement of
   `U` by the software clock, reduced to time per 64-byte line.
 

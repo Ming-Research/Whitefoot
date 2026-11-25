@@ -30,7 +30,7 @@
 # Code placements, a pad of never-executed code linked ahead of the module
 # (m) or ahead of the runtime (r): p0 m16 m32 m48 r16 r48, and m1024 m2048
 # for every arm whose module is aligned. Data placements, linked first in
-# .data, for records only: FR at p0 with 64, 1024 or 2048 bytes (d64 d1024
+# .data, for records only: FR at p0 with 128, 1024 or 2048 bytes (d128 d1024
 # d2048), and U at p0 with the bytes that give its data FR's addresses (dFR).
 # records runs every arm and placement; the other kernels run U, FR, L32,
 # L64, A32 and P at the code placements; every kernel has its null.
@@ -224,7 +224,7 @@ pad() { # SECTION BYTES: one pad object of that many bytes
     "$clang" -c "$file.s" -o "$file.o"
 }
 for bytes in 0 16 32 48 1024 2048; do pad text "$bytes"; done
-for bytes in 0 64 1024 2048; do pad data "$bytes"; done
+for bytes in 0 128 1024 2048; do pad data "$bytes"; done
 
 # image ARM PLACEMENT KERNEL: the module, the kernel's oracle and the runner,
 # then the runtime, as tests/performance/Makefile links them, with one data
@@ -277,7 +277,7 @@ for kernel in "${kernels[@]}"; do
         done
     done
     if [[ $kernel == records ]]; then
-        for placement in d64 d1024 d2048; do image FR "$placement" records; done
+        for placement in d128 d1024 d2048; do image FR "$placement" records; done
         image U dFR records
     fi
     image null p0 "$kernel"
