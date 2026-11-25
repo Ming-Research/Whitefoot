@@ -210,4 +210,39 @@ gate GATE_PLATFORMS='ubuntu-24.04 macos-15'
 [ "$listings" -eq 4 ] || fail "j: expected 4 listings, got $listings"
 want j '^MISSING corpus (macos-15): no gate job$'
 
+# GATE_RUN_RESULT is the result of this run's own group jobs (gate.yml gives
+# it `needs.gate.result`). Only `success` is taken for the verdict without a
+# listing: GitHub may show a finished job complete minutes late, and a group
+# listed too late must not read as absent in a run whose groups all passed.
+
+# (l1) A run whose groups did not succeed still reads the listing: a group
+# absent from every listing fails after 4 listings.
+newcase l1
+jobs "$FAKE_DIR/jobs.1" 'corpus (ubuntu-24.04)=absent'
+gate GATE_RUN_RESULT=failure
+[ "$status" -ne 0 ] || fail 'l1: expected a failure for a missing group in a failed run'
+[ "$listings" -eq 4 ] || fail "l1: expected 4 listings, got $listings"
+want l1 '^MISSING corpus (ubuntu-24.04): no gate job$'
+
+# (l3) A cancelled run is not a success: the listing is read, once when it is
+# complete and green.
+newcase l3
+jobs "$FAKE_DIR/jobs.1"
+gate GATE_RUN_RESULT=cancelled
+[ "$status" -eq 0 ] || fail 'l3: expected the green listing to pass'
+[ "$listings" -eq 1 ] || fail "l3: expected 1 listing, got $listings"
+want l3 '^ok      corpus (macos-15)$'
+
+# (k1) A run whose groups all succeeded passes on its own result: the listing
+# never shows the finished group `corpus (ubuntu-24.04)` complete, and no
+# listing is made.
+newcase k1
+jobs "$FAKE_DIR/jobs.1" 'corpus (ubuntu-24.04)=absent'
+gate GATE_RUN_RESULT=success
+[ "$status" -eq 0 ] || fail 'k1: expected a pass on the success of the run'
+[ "$listings" -eq 0 ] || fail "k1: expected no listing, got $listings"
+want k1 '^ok      corpus (ubuntu-24.04)$'
+want k1 '^ok      corpus (macos-15)$'
+want k1 '^ok      static (ubuntu-24.04)$'
+
 echo 'test-gate-both-platforms: ok'
