@@ -140,8 +140,29 @@ links); the hash map and the slab name none, so their emitted modules are the
 same text under it unless a caller gives them a window payload. That is its
 falsifier for those two consumers: if a module of the 2026-09-23 comparison
 changes under the lowering, its two regressions have to be measured again
-before the lowering is proposed. Which maintained modules it does change, the
-ordered map's among them, is to be listed from their emitted text.
+before the lowering is proposed.
+
+**Which values a lowering keyed on window storage alone would change.** A
+search of the maintained sources for an enum with an inline constant-capacity
+window in a variant's payload finds, besides the scatter's `Option<Chunk>`:
+
+| Where | Enum | Inline window |
+| --- | --- | --- |
+| `tests/programs/block_pool.wf` | `Option<Lease>` | `Slots<u8, 256>` |
+| `tests/programs/raw_deflate_dynamic.wf` | `Result<HuffmanTable, InflateError>` | `Slots<u64, 16>`, `Slots<u64, 286>` |
+| `tests/programs/short_lived_windows.wf` | `Held` | `Slots<Box<u64>, 64>`, `Ring<Box<u64>, 4>` |
+| `apps/firn/bytes/module.wfm` | `Bytes`, and through it `Value`, `Option<Entry>`, `Option<Key>`, `Option<Rank>` | `Slots<u8, 24>` |
+| `lib/std/collections/ordered_map/ordered-map.wf` | `Option<OrderedEntry<K, V, OrderedNode<K, V>>>` | `Slots<Box<OrderedNode<K, V>>, 1>` |
+
+and a number of conformance cases with windows of 1 to 8 elements. Firn's
+byte strings and the ordered map's links are small values that the bounded
+transfer moves by layout granules, and both regressions of 2026-09-23 were of
+small or medium values whose optimized code changed shape. No measurement of
+firn or of the ordered map under such a lowering exists. A lowering that also
+requires the value to be larger than the bounded transfer's 128 bytes leaves
+them exactly as today and still reaches the first three rows and the scatter.
+Which maintained modules a candidate changes is to be confirmed from their
+emitted text.
 
 **What the par-suite ratio is.** The 4.86 of the
 [par-suite baseline](../par-suite/DESIGN.md#baseline-2026-10-09) divides the
