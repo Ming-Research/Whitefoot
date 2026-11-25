@@ -1,0 +1,56 @@
+# Temporary (work 285): twenty-four hosted machines each judge two
+# identical copies of the candidate's images, then run the instrument's slowdown
+# control and the null control timed, and print the CPU model beside each result.
+# Removed before the full check.
+name: tmp-performance-ten
+on:
+  push:
+    branches: ['work-285-**']
+    paths:
+      - .github/workflows/tmp-performance-ten.yml
+defaults:
+  run:
+    shell: bash
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_BUILD_JOBS: 2
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          rustup default stable
+          cargo build --manifest-path compiler/Cargo.toml --locked --profile gate --bin whitefootc
+          make -s -j2 -C tests/performance build BUILD="$RUNNER_TEMP/images"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: images
+          path: ${{ runner.temp }}/images
+  judge:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        n: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: images
+          path: ${{ runner.temp }}/images
+      - run: chmod +x "$RUNNER_TEMP"/images/*
+      - name: Judge, slowdown control, timed null control
+        run: |
+          cpu=$(sh tests/performance/cpu-model.sh)
+          images="$RUNNER_TEMP/images"
+          judge=0; bash tests/performance/judge.sh "$images" "$images" "$RUNNER_TEMP/judged" > /dev/null || judge=$?
+          slow=0; bash tests/performance/compare.sh "$images" "$images" "$RUNNER_TEMP/slow" slow > "$RUNNER_TEMP/slow.log" 2>&1 || slow=$?
+          slow_kernels=$(sed -n 's/^VERDICT: FAIL -- \([0-9]*\) kernel.*/\1/p' "$RUNNER_TEMP/slow/verdict.txt")
+          null=0; bash tests/performance/compare.sh "$images" "$images" "$RUNNER_TEMP/null" > "$RUNNER_TEMP/null.log" 2>&1 || null=$?
+          echo "RESULT n=${{ matrix.n }} cpu=[$cpu] judge=$judge slow=$slow slow-failing-kernels=$slow_kernels timed-null=$null"
+          tail -n 1 "$RUNNER_TEMP/judged/verdict.txt"
+          test "$judge" -eq 0 && test "$slow" -eq 1 && test "$slow_kernels" -eq 5

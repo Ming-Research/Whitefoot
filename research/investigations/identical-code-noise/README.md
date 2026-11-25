@@ -29,3 +29,29 @@ Facts read from the artifacts (2026-11-25):
 - Run 38389055091's `stencil` processes sit in separate modes: the baseline's five
   processes' medians were 40.3-46.4 ms, the candidate's 44.9-47.8 ms, each process
   steady inside itself (within 1-2%).
+
+## Replay of the new judgment (2026-11-25)
+
+`replay.sh identity DIR` and `replay.sh all DIR` apply `tests/performance/decide.awk`
+to the retained artifacts of 182 runs that kept both arms' images (the 187 above
+less the runs whose artifact lacks them, plus run 38389055091).
+
+- `replay-identity.txt`: a kernel whose module, oracle, runner and native objects
+  match (`keyed_table.o` allowed 130 differing bytes, the path) is not timed, as the
+  built images now are with the path prefix map. 160 of 182 runs have all five
+  kernels identical, so nothing is timed and the job passes, among them run
+  38389055091, the four other comparison failures and the two null-control
+  failures. The other 22 runs
+  have all five kernels different (a changed runtime or emitter) and are timed: 22
+  runs, 110 kernel judgments, all `pass`.
+- `replay-all-different.txt`: the same data with every kernel taken as different
+  code, which tests the null-control gate alone. 910 kernel judgments: 5 runs
+  decide something other than `pass`. Of the five known false comparisons (run
+  38389055091 and the four runs of 10-21), three stay `FAIL` because their own
+  null control is clean (38389055091 stencil, 39531047299 records, 39607981611
+  stencil), and two become `indeterminate` and would be measured once more
+  (39573372405 records, 39610184438 stencil). The two runs whose null control
+  failed (39614173708, 39733395799) have a passing comparison and no decision.
+  What this gives the choice of remedy: the gate catches 2 of 5 false failures
+  of code that really differs; for the three it does not catch, byte-identical
+  images are what keeps them from being timed.
