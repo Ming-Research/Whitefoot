@@ -5,10 +5,10 @@ still make the kernel measurably slower, because an unrelated change ahead of
 it in the image moves its instructions. This investigation asks whether
 starting every emitted and runtime function on a 64-byte boundary makes the
 five compute kernels' times independent of where they land, what it costs,
-and whether loop-header alignment adds anything. Its decision is in
-[design/compiler/code-alignment.md](../../../design/compiler/code-alignment.md).
-The cost of the aligned layout to `records` on some processors, which that
-decision accepted provisionally, is
+and whether loop-header alignment adds anything. Its decisions are in
+[design/decisions/compiler/lowering/code-alignment.md](../../../design/decisions/compiler/lowering/code-alignment.md).
+The cost of the aligned layout to `records` on some processors, accepted
+provisionally when the alignment was adopted, is
 [reopened below](#the-aligned-layouts-cost-to-records-reopened).
 
 ## The observation
