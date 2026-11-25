@@ -48,7 +48,14 @@ SCHED_DIR := src/backend/sched
 # The core owns current-stack join/help/steal, entry.c owns configuration and
 # startup policy, and the native leaf supplies threads and per-lane waiting.
 SCHED_SOURCES := $(SCHED_DIR)/core.c $(SCHED_DIR)/prim_host.c $(SCHED_DIR)/entry.c
-COMPLETION_TMP ?= $(WHITEFOOT_SCRATCH_ROOT)/whitefoot-completion-test
+# The executables here are compared with their sources by modification time,
+# so one that another checkout built a moment later would count as up to date
+# and run in place of this checkout's own. The default directory therefore lies
+# inside the checkout, git-ignored (/compiler/.scratch/ in .gitignore) and
+# removed with the checkout, and a hosted job's `git clean -x` clears it as it
+# clears the rest of what a run leaves. A caller that names COMPLETION_TMP
+# (io-hosts.yml does on Windows) gets that directory as given.
+COMPLETION_TMP ?= $(CURDIR)/.scratch/completion-test
 COMPLETION_DEFINES := \
 	-DWF_COMPLETION_GETDIRENTRIES64=wf_completion_test_getdirentries64 \
 	-DWF_COMPLETION_GETDENTS64=wf_completion_test_getdents64 \
@@ -235,8 +242,10 @@ docs:
 
 # Construction is shared by local, focused and host-CI callers; phony test
 # targets always rerun assertions. Distinct hook/sanitizer flags name distinct
-# objects. The stamp prevents a shared scratch root reusing another checkout
-# or compiler/flag configuration, without caching a previous test verdict.
+# objects. The default directory belongs to one checkout; the stamp keeps a
+# directory that a caller shares between checkouts, or reuses under another
+# compiler or flag configuration, from serving executables built under the
+# other one, without caching a previous test verdict.
 COMPLETION_HEADERS := $(wildcard src/backend/*.h $(SCHED_DIR)/*.h $(COMPLETION_DIR)/*.h)
 COMPLETION_CONFIG := $(COMPLETION_TMP)/configuration.txt
 .PHONY: completion-configuration-force
@@ -541,19 +550,19 @@ concurrent-map-test: $(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/co
 	cat "$(COMPLETION_TMP)/concurrent-map-ignore-activity.log"; \
 	test "$$status" -eq 1 && grep -q '^concurrent-map-test: retired reserve release did not collect the exited users' \
 		"$(COMPLETION_TMP)/concurrent-map-ignore-activity.log"
-$(COMPLETION_TMP)/concurrent-map-test-copy-out: $(CONCURRENT_MAP_SOURCES) Makefile
+$(COMPLETION_TMP)/concurrent-map-test-copy-out: $(CONCURRENT_MAP_SOURCES) Makefile $(COMPLETION_CONFIG)
 	@mkdir -p "$(dir $@)"
 	$(CC) $(COMPLETION_BASE_CFLAGS) src/backend/concurrent_map_test.c -o "$@"
-$(COMPLETION_TMP)/concurrent-map-test-locked: $(CONCURRENT_MAP_SOURCES) Makefile
+$(COMPLETION_TMP)/concurrent-map-test-locked: $(CONCURRENT_MAP_SOURCES) Makefile $(COMPLETION_CONFIG)
 	@mkdir -p "$(dir $@)"
 	$(CC) $(COMPLETION_BASE_CFLAGS) -DWF_CMAP_LOCKED_READ src/backend/concurrent_map_test.c -o "$@"
 # Entries' hashes narrowed to four bits, so that most keys share one.
-$(COMPLETION_TMP)/concurrent-map-test-collide: $(CONCURRENT_MAP_SOURCES) Makefile
+$(COMPLETION_TMP)/concurrent-map-test-collide: $(CONCURRENT_MAP_SOURCES) Makefile $(COMPLETION_CONFIG)
 	@mkdir -p "$(dir $@)"
 	$(CC) $(COMPLETION_BASE_CFLAGS) -DWF_CMAP_TAG_MASK=15 src/backend/concurrent_map_test.c -o "$@"
 # The retired-table regression must reject ignoring statement activity.
 # Only its focused path runs: an unrelated failure is not a passing control.
-$(COMPLETION_TMP)/concurrent-map-test-ignore-activity: $(CONCURRENT_MAP_SOURCES) Makefile
+$(COMPLETION_TMP)/concurrent-map-test-ignore-activity: $(CONCURRENT_MAP_SOURCES) Makefile $(COMPLETION_CONFIG)
 	@mkdir -p "$(dir $@)"
 	$(CC) $(COMPLETION_BASE_CFLAGS) -DWF_CMAP_IGNORE_ACTIVITY src/backend/concurrent_map_test.c -o "$@"
 
