@@ -1,0 +1,128 @@
+# Temporary (board item wf-need-firn-hash-shrink); remove before the branch is ready.
+# Checks the merge of main into the hash-shrink branch: the merged reducer's
+# self-test, and that it fails without the tail twin check; that the four
+# images the 14900K run 40059553947 timed (bench and tail, each library) are
+# byte-identical when built from the pre-merge head 49ad236e0 and from the
+# merged head; and a hosted smoke of compiler-compare's hash_map stage over
+# the merged instrument.
+name: tmp-hash-shrink-merge
+
+on:
+  push:
+    branches: [claude/hash-shrink, work-141-26e0fade]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: tmp-hash-shrink-merge-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  WHITEFOOT_CHECK_TIMEOUT: 1800
+  RUNNER_KIND: github
+
+jobs:
+  merge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    name: merged instrument and images
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          /usr/bin/clang --version
+          grep -m 1 'model name' /proc/cpuinfo
+
+      - name: Self-tests of the merged instrument
+        run: OUT="$RUNNER_TEMP/self" perl .github/run-check.pl thm-selftest bash research/experiments/compiler-compare/run.sh selftest
+
+      - name: The self-test fails without the tail twin check
+        run: |
+          mkdir -p "$RUNNER_TEMP/mutant"
+          sed 's/ or digests\["tail-twin"\] != digests\["tail-base"\]//' \
+            research/experiments/hash-map-compare/compare.py > "$RUNNER_TEMP/mutant/compare.py"
+          if cmp -s research/experiments/hash-map-compare/compare.py "$RUNNER_TEMP/mutant/compare.py"; then
+            echo "the mutation changed nothing"
+            exit 1
+          fi
+          status=0
+          python3 -B "$RUNNER_TEMP/mutant/compare.py" self-test > "$RUNNER_TEMP/mutant/out.txt" || status=$?
+          cat "$RUNNER_TEMP/mutant/out.txt"
+          if [ "$status" = 0 ]; then
+            echo "the self-test passed without the tail twin check"
+            exit 1
+          fi
+          grep -qx 'FAIL tail twin differs: accepted' "$RUNNER_TEMP/mutant/out.txt"
+
+      - name: Images of the pre-merge head
+        run: |
+          perl .github/run-check.pl thm-pre-arms bash research/experiments/hash-map-compare/arms.sh \
+            49ad236e0fd7cfb6803c63d43cfc9a9db3034697 89a0815fc5f14f7bff913a37aac2bf7fa0080aeb "$RUNNER_TEMP/pre"
+          arms="$RUNNER_TEMP/pre/arms"
+          perl .github/run-check.pl thm-pre-build python3 -B research/experiments/hash-map-compare/compare.py build \
+            --base-wfc "$arms/base/compiler/target/gate/whitefootc" \
+            --candidate-wfc "$arms/candidate/compiler/target/gate/whitefootc" \
+            --runtime-root "$arms/candidate" --out "$RUNNER_TEMP/pre"
+          cat "$RUNNER_TEMP/pre/manifest.txt"
+
+      - name: Images of the merged head
+        run: |
+          perl .github/run-check.pl thm-post-arms bash research/experiments/hash-map-compare/arms.sh \
+            "$GITHUB_SHA" "" "$RUNNER_TEMP/post"
+          arms="$RUNNER_TEMP/post/arms"
+          perl .github/run-check.pl thm-post-build python3 -B research/experiments/hash-map-compare/compare.py build \
+            --base-wfc "$arms/base/compiler/target/gate/whitefootc" \
+            --candidate-wfc "$arms/candidate/compiler/target/gate/whitefootc" \
+            --runtime-root "$arms/candidate" --out "$RUNNER_TEMP/post"
+          cat "$RUNNER_TEMP/post/manifest.txt"
+
+      - name: The timed images are the same before and after the merge
+        id: same
+        run: |
+          for side in pre post; do
+            grep -E '^image (bench|tail)-(base|candidate) ' "$RUNNER_TEMP/$side/manifest.txt" > "$RUNNER_TEMP/$side.images"
+          done
+          cat "$RUNNER_TEMP/post.images"
+          test "$(wc -l < "$RUNNER_TEMP/post.images")" = 4
+          diff "$RUNNER_TEMP/pre.images" "$RUNNER_TEMP/post.images"
+
+      - name: Machine code of the images that differ
+        if: ${{ failure() && steps.same.outcome == 'failure' }}
+        run: |
+          for image in bench-base bench-candidate tail-base tail-candidate; do
+            pre="$RUNNER_TEMP/pre/images/$image"
+            post="$RUNNER_TEMP/post/images/$image"
+            if ! cmp -s "$pre" "$post"; then
+              objdump -d --no-addresses --no-show-raw-insn "$pre" > "$RUNNER_TEMP/$image.pre.s"
+              objdump -d --no-addresses --no-show-raw-insn "$post" > "$RUNNER_TEMP/$image.post.s"
+              echo "== $image"
+              diff "$RUNNER_TEMP/$image.pre.s" "$RUNNER_TEMP/$image.post.s" | head -400 || true
+            fi
+          done
+
+      - name: compiler-compare's hash_map stage over the merged head (hosted smoke, not judged)
+        if: ${{ !cancelled() }}
+        env:
+          OUT: ${{ runner.temp }}/post
+          SIZES: "1000"
+          MIN_ROUNDS: "6"
+          MAX_ROUNDS: "6"
+        run: |
+          perl .github/run-check.pl thm-hashmap bash research/experiments/compiler-compare/run.sh hashmap
+          cat "$RUNNER_TEMP/post/hashmap/summary.txt"
