@@ -2399,9 +2399,10 @@ static int test_a_submitted_operation_is_kicked_before_it_waits(
  * native handle, whichever way the pair is released -- and it is checked here
  * by asking the host whether the descriptor is still this program's.
  *
- * The listener's own port is the kernel's choice, and no operation reports it,
- * so this frame asks the host directly. That is the same thing the program
- * corpus does from the other side, where the harness picks the port. */
+ * The listener's own port is the kernel's choice, and this frame runs below
+ * the std::net operations, so it asks the host directly. That is the same
+ * thing the program corpus does from the other side, where the harness picks
+ * the port. */
 static int test_socket_lifecycle_and_the_pair_two_count(void) {
     unsigned port;
     return wf_test_socket_lifecycle(&port);

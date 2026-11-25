@@ -875,7 +875,9 @@ static void tcp_probe(wf_inputs *inputs) {
  * `getsockname` gives the connecting socket, the connecting side's
  * `local_address` is that same peer, and the accepted connection's
  * `local_address` is the listened address after its sending half has closed.
- * No query spends or returns a credit. */
+ * The listener, bound to port 0, reports through `listener_address` that same
+ * address at the port the host chose, which is not 0. No query spends or
+ * returns a credit. */
 static void address_probe(wf_inputs *inputs) {
     static const uint16_t groups[8] = {
         0x2001u, 0x0db8u, 0x1234u, 0x5678u, 0x9abcu, 0xdef0u, 0x0102u, 0xfffeu
@@ -906,6 +908,10 @@ static void address_probe(wf_inputs *inputs) {
     wf__body_tcp_listen(&listener, &inputs->handles, &address);
     assert(listener.tag == 0);
     wf__body_socket_address_v4(&address, 127, 0, 0, 1, listener_port(&listener.ok.value));
+    assert((unsigned)wf__body_socket_address_port(&address) != 0u);
+    wf__body_listener_address(&local, &listener.ok.value);
+    assert(local.tag == 0 && WF_PROBE_INPUT_BUDGET == before - 1);
+    assert(memcmp(local.ok.value.words, address.words, 3 * sizeof(uint64_t)) == 0);
     wf__body_tcp_connect(&client, &inputs->handles, &address, NULL, &wf_probe_never);
     assert(client.tag == 0);
     wf__body_tcp_accept(&server, &inputs->handles, &listener.ok.value, NULL, &wf_probe_never);

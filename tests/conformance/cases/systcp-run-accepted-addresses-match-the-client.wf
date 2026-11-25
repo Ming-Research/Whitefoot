@@ -1,13 +1,16 @@
 alias AcceptedConnection = std::net::AcceptedConnection;
 alias ExitStatus = std::process::ExitStatus;
 alias Inputs = std::process::Inputs;
+alias IoError = std::io::IoError;
 alias SocketAddress = std::net::SocketAddress;
 alias TcpConnection = std::net::TcpConnection;
+alias TcpListener = std::net::TcpListener;
 alias TcpReceive = std::net::TcpReceive;
 alias close_listener = std::net::close_listener;
 alias close_receive = std::net::close_receive;
 alias close_send = std::net::close_send;
 alias exit_status = std::process::exit_status;
+alias listener_address = std::net::listener_address;
 alias local_address = std::net::local_address;
 alias socket_address_ip = std::net::socket_address_ip;
 alias socket_address_port = std::net::socket_address_port;
@@ -87,46 +90,64 @@ fn address_mismatch(server: &TcpReceive, client: &TcpReceive, peer: &SocketAddre
   return 0_u8;
 }
 
+fn bound_endpoint(listener: &TcpListener) -> result: Result<SocketAddress, IoError> reads(listener) {
+  doc "Returns the endpoint the listener is bound to, as the host reports it; the helper's row names exactly the read listener_address declares [PRE-2].";
+  return listener_address(listener: listener);
+}
+
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  doc "Listens on 127.0.0.1 port 9109, connects to it, accepts that connection, and checks both ends' addresses against each other: the accepted peer must be the local endpoint the connecting side reports, and the accepted connection's local endpoint the listened address [PRE-2].";
+  doc "Listens on 127.0.0.1 with port 0, reads the port the host chose from the listener, connects to that address, accepts that connection, and checks both ends' addresses against each other: the reported port is not 0, the accepted peer must be the local endpoint the connecting side reports, and the accepted connection's local endpoint the listener's own address [PRE-2].";
   let Inputs(cwd: cwd_directory, handles: handles, ..) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
   std::fs::close_directory(factory: &handles, directory: move cwd);
-  let listen_at = socket_address_v4(a: 127_u8, b: 0_u8, c: 0_u8, d: 1_u8, port: 9109_u16);
+  let listen_at = socket_address_v4(a: 127_u8, b: 0_u8, c: 0_u8, d: 1_u8, port: 0_u16);
   let no_deadline = None<std::time::Instant>();
   match tcp_listen(factory: &handles, address: &listen_at) {
     Ok(value: listener) => {
-      let connect_cancel = std::time::cancel_never();
-      let connected = tcp_connect(factory: &handles, address: &listen_at, deadline: no_deadline, cancel: &connect_cancel);
-      std::time::close_cancel_watch(watch: move connect_cancel);
-      match move connected {
-        Ok(value: client) => {
-          let accept_cancel = std::time::cancel_never();
-          let accepted = tcp_accept(factory: &handles, listener: &listener, deadline: no_deadline, cancel: &accept_cancel);
-          std::time::close_cancel_watch(watch: move accept_cancel);
-          let outcome = 20_u8;
-          match move accepted {
-            Ok(value: arrival) => {
-              let AcceptedConnection(connection: server, peer: arrived_from) = move arrival;
-              set outcome = address_mismatch(server: &server.receive, client: &client.receive, peer: &arrived_from, listened: &listen_at);
-              let TcpConnection(receive: server_receive, send: server_send) = move server;
-              close_receive(factory: &handles, receive: move server_receive);
-              close_send(factory: &handles, send: move server_send);
+      match bound_endpoint(listener: &listener) {
+        Ok(value: bound) => {
+          let bound_port = socket_address_port(address: &bound);
+          if bound_port == 0_u16 {
+            close_listener(factory: &handles, listener: move listener);
+            return exit_status(code: 25_u8);
+          }
+          let connect_cancel = std::time::cancel_never();
+          let connected = tcp_connect(factory: &handles, address: &bound, deadline: no_deadline, cancel: &connect_cancel);
+          std::time::close_cancel_watch(watch: move connect_cancel);
+          match move connected {
+            Ok(value: client) => {
+              let accept_cancel = std::time::cancel_never();
+              let accepted = tcp_accept(factory: &handles, listener: &listener, deadline: no_deadline, cancel: &accept_cancel);
+              std::time::close_cancel_watch(watch: move accept_cancel);
+              let outcome = 20_u8;
+              match move accepted {
+                Ok(value: arrival) => {
+                  let AcceptedConnection(connection: server, peer: arrived_from) = move arrival;
+                  set outcome = address_mismatch(server: &server.receive, client: &client.receive, peer: &arrived_from, listened: &bound);
+                  let TcpConnection(receive: server_receive, send: server_send) = move server;
+                  close_receive(factory: &handles, receive: move server_receive);
+                  close_send(factory: &handles, send: move server_send);
+                }
+                Err(error: accept_problem) => {
+                  set outcome = 21_u8;
+                }
+              }
+              let TcpConnection(receive: client_receive, send: client_send) = move client;
+              close_receive(factory: &handles, receive: move client_receive);
+              close_send(factory: &handles, send: move client_send);
+              close_listener(factory: &handles, listener: move listener);
+              return exit_status(code: outcome);
             }
-            Err(error: accept_problem) => {
-              set outcome = 21_u8;
+            Err(error: connect_problem) => {
+              close_listener(factory: &handles, listener: move listener);
+              return exit_status(code: 22_u8);
             }
           }
-          let TcpConnection(receive: client_receive, send: client_send) = move client;
-          close_receive(factory: &handles, receive: move client_receive);
-          close_send(factory: &handles, send: move client_send);
-          close_listener(factory: &handles, listener: move listener);
-          return exit_status(code: outcome);
         }
-        Err(error: connect_problem) => {
+        Err(error: address_problem) => {
           close_listener(factory: &handles, listener: move listener);
-          return exit_status(code: 22_u8);
+          return exit_status(code: 24_u8);
         }
       }
     }

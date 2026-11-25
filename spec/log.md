@@ -22,6 +22,12 @@ archive `spec/kernel-spec-<version>.md` marks a milestone: a copy of the active
 file added by a change that edits no rule. The earlier procedure archived the
 outgoing version with every amendment; git holds the rest of the history.
 
+## 2026-11-25 a listener's own address is readable
+
+Rules: changed PRE-2
+
+Summary: A program that opens a listener on port 0 had no way to learn which port the host chose, because `local_address` answers only for a connection's receiving half, so conformance cases and program tests listened on fixed ports or reserved one outside the program. PRE-2 gains `listener_address`, which returns the host's report of the endpoint a listener is bound to, in the same form as the peer `tcp_accept` returns and the address `local_address` returns, and whose host refusal carries the same origin 10 as `local_address`'s; the one sentence stating that form and the one stating the refusal now name both queries instead of a second statement being added. A query function, not a field of the listener or a result of `tcp_listen`, because it costs a host call only when a program asks and changes no listener state that another operation's order must respect.
+
 ## 2026-10-23 a returned computed integer expression proves a postcondition as a `let` of it would
 
 Rules: changed FN-9, ENT-2, ENT-3.S7, ENT-6

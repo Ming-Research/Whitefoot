@@ -285,6 +285,7 @@ void wf__body_socket_address_ip(wf_ip_address *result, const wf_value *address);
 uint16_t wf__body_socket_address_port(const wf_value *address);
 /* Result<SocketAddress, IoError> shares wf_open_result's layout. */
 void wf__body_local_address(wf_open_result *result, const wf_value *receive);
+void wf__body_listener_address(wf_open_result *result, const wf_value *listener);
 void wf__body_tcp_listen(wf_open_result *result, wf_value *factory, const wf_value *address);
 void wf__body_tcp_accept(wf_accept_result *result, wf_value *factory, wf_value *listener, const wf_deadline *deadline, const wf_cancel_handle *cancel);
 void wf__body_tcp_connect(wf_connect_result *result, wf_value *factory, const wf_value *address, const wf_deadline *deadline, const wf_cancel_handle *cancel);

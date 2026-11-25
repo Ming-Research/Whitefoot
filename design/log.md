@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-11-25 A listener's own address is readable
+
+Nodes: language/system-interface/socket-addresses
+
+Summary: A program that opened a listener on port 0 had no way to read the port the host chose, so conformance cases and program tests listened on fixed ports or reserved one outside the program. The node gains a decision: listener_address is a nonwaiting std::net function on a borrowed listener that returns the host's report of the endpoint it is bound to, with the origin and refusal shape of local_address. Having tcp_listen return the address or keeping it in TcpListener is refused in the decision's own words, because it would charge every listen for an address most programs never read. The specification's change log records the PRE-2 amendment.
+
 ## 2026-10-23 A returned computed integer expression proves a postcondition as a `let` of it would
 
 Nodes: language/checks-and-proofs/automatic-facts

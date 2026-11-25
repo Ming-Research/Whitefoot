@@ -318,6 +318,77 @@ fn an_accepted_connection_reports_its_peer_and_its_own_end_on_both_routes() {
     }
 }
 
+/// Sixteen bytes that differ from one call to the next, so that a listener
+/// which echoes them back is one that received them from this call.
+fn fresh_token() -> [u8; 16] {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the host clock is past 1970")
+        .as_nanos();
+    let mut state = nanos as u64 ^ ((nanos >> 64) as u64) ^ 0x9e37_79b9_7f4a_7c15;
+    let mut token = [0_u8; 16];
+    for byte in token.iter_mut() {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        *byte = (state >> 24) as u8;
+    }
+    token
+}
+
+/// [PRE-2] A listener opened on port 0 reports the port the host chose:
+/// `tcp_listener_address.wf` connects to a listener this test holds, listens
+/// on 127.0.0.1 port 0, reads its own port with `listener_address`, and sends
+/// that port over the connection as decimal text. This test then connects to
+/// the reported port and sends a token that differs on every call; the program
+/// accepts on its own listener and echoes what arrives. The token coming back
+/// whole is what shows that the reported port is the one the program's own
+/// listener is bound to, which this side's view of its own connection to that
+/// port cannot show, since that connection reaches whatever listens there. The
+/// port is never reserved outside the program: this side holds the first
+/// listener for the whole run.
+#[test]
+fn a_listener_reports_the_port_the_host_chose_on_both_routes() {
+    let llvm = compile_program("tcp_listener_address.wf");
+    let program = build_program(&llvm);
+    for native_ring in [true, false] {
+        let held = TcpListener::bind("127.0.0.1:0").expect("hold a loopback listener");
+        let held_port = held.local_addr().expect("the held listener's address").port();
+        let text = held_port.to_string();
+        let child = program.spawn_on_route(native_ring, &[text.as_bytes()]);
+        let mut report = accept_when_ready(&held);
+        let mut line = Vec::new();
+        let mut byte = [0_u8; 1];
+        while line.last() != Some(&b'\n') {
+            assert!(line.len() < 16, "the report is a short line: {line:?}");
+            let count = report.read(&mut byte).expect("read the reported port");
+            assert_eq!(count, 1, "the report ended before its line feed: {line:?}");
+            line.push(byte[0]);
+        }
+        let reported: u16 = std::str::from_utf8(&line[..line.len() - 1])
+            .expect("the report is text")
+            .parse()
+            .expect("the report is one decimal port");
+        assert_ne!(reported, 0, "native ring: {native_ring}");
+        assert_ne!(reported, held_port, "native ring: {native_ring}");
+        let mut stream = connect_to_when_ready(SocketAddr::from(([127, 0, 0, 1], reported)));
+        let token = fresh_token();
+        stream.write_all(&token).expect("send the token");
+        stream
+            .shutdown(Shutdown::Write)
+            .expect("end this side's sending");
+        let mut echoed = Vec::new();
+        stream
+            .read_to_end(&mut echoed)
+            .expect("read the echoed token");
+        drop(stream);
+        drop(report);
+        let (status, _) = finished(child);
+        assert_eq!(status, 0, "native ring: {native_ring}");
+        assert_eq!(echoed, token, "native ring: {native_ring}");
+    }
+}
+
 /// One port the host is not using on the IPv6 loopback, or `None` when the
 /// host has no IPv6 loopback to bind.
 fn free_port_v6() -> Option<u16> {
