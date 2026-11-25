@@ -9,9 +9,11 @@ that `run-check.pl` prints (`== END <label>: <s> s, exit <n> ==`) in the logs
 of CI runs; it changes neither who approves a raise nor the host's own
 comparison in `run-check.pl`.
 
-  collect   fetch the job logs of a workflow's finished runs with `gh` and
-            keep each stage's time, CPU model and logged budget in a samples
-            file (JSON; kept outside the repository, it is scratch input);
+  collect   fetch the job logs of a workflow's finished runs with `gh` (the
+            archive of a run attempt's logs, two requests for the attempt
+            with its jobs' listing) and keep each stage's time, CPU model and
+            logged budget in a samples file (JSON; kept outside the
+            repository, it is scratch input);
             --branch keeps one branch's runs, --job the jobs whose names
             start with a prefix (each repeatable); --reserve keeps part of
             the hour's API requests for others and stops before them
@@ -59,6 +61,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import zipfile
 
 MINIMUM_RUNS = 20
 # The columns the owner added for a model with fewer than MINIMUM_RUNS runs
@@ -387,16 +390,31 @@ def red_jobs(judgment):
     return found
 
 
-def gh(*args):
-    """Output of `gh api`; a server error (HTTP 5xx) is retried a few times."""
+def gh(*args, binary=False):
+    """Output of `gh api` (bytes when `binary`); a server error (HTTP 5xx) is retried a few times."""
     for attempt in range(1, 5):
-        done = subprocess.run(["gh", "api", "--allow-escape-sequences", *args],
-                              capture_output=True, text=True)
+        done = subprocess.run(["gh", "api", "--allow-escape-sequences", *args], capture_output=True)
         if done.returncode == 0:
-            return done.stdout
-        if "HTTP 5" not in done.stderr or attempt == 4:
-            raise SystemExit(f"gh api {' '.join(args)}: {done.stderr.strip()}")
+            return done.stdout if binary else done.stdout.decode("utf-8", "replace")
+        error = done.stderr.decode("utf-8", "replace")
+        if "HTTP 5" not in error or attempt == 4:
+            raise SystemExit(f"gh api {' '.join(args)}: {error.strip()}")
         time.sleep(3 * attempt)
+
+
+def attempt_logs(repo, run, attempt):
+    """{job name: log text} of one run attempt, from the one archive GitHub keeps of its logs.
+
+    The archive holds a file `<n>_<job name>.txt` for each job. One request
+    gives every job of the attempt, where a log per job costs one request each.
+    """
+    with zipfile.ZipFile(io.BytesIO(gh(f"repos/{repo}/actions/runs/{run}/attempts/{attempt}/logs", binary=True))) as archive:
+        found = {}
+        for member in archive.namelist():
+            match = re.fullmatch(r"\d+_(.*)\.txt", member)
+            if match:
+                found[match.group(1)] = archive.read(member).decode("utf-8", "replace")
+        return found
 
 
 def lines(*args):
@@ -416,10 +434,10 @@ RUNS_PER_CHECK = 10
 def affordable(left, reserve):
     """How many more runs `collect` may fetch with `left` requests of the hour left, `reserve` kept back.
 
-    A run costs a listing of its jobs and a log per job kept: REQUESTS_PER_RUN
-    is an upper estimate for the gate's runs (about 5 with the jobs of three
-    groups) and the sanitizers' (9), so the reserve survives the runs fetched
-    together with it.
+    A run costs, per attempt, a listing of its jobs and the archive of their
+    logs (and a log of its own for a job the archive lacks): REQUESTS_PER_RUN is
+    an upper estimate that covers a run re-run several times, so the reserve
+    survives the runs fetched together with it.
     """
     return max(0, (left - reserve) // REQUESTS_PER_RUN)
 
@@ -433,10 +451,11 @@ def collect(repo, workflows, since, path, limit, until=None, branch=None, named=
     """Add the jobs of finished runs to the samples file; a rerun skips known jobs.
 
     `branch` keeps the runs of one branch; `named` keeps the jobs whose names
-    start with one of the prefixes, which spares the log downloads of the
-    others. The runs are fetched RUNS_PER_CHECK at a time, and fetching stops
-    before the requests left in the hour fall to `reserve`: the quota is
-    shared with the engine's own calls, which fail once it is spent.
+    start with one of the prefixes, which leaves the others unread (the
+    archive of the attempt's logs is not fetched when none is kept). The runs
+    are fetched RUNS_PER_CHECK at a time, and fetching stops before the
+    requests left in the hour fall to `reserve`: the quota is shared with the
+    engine's own calls, which fail once it is spent.
     """
     try:
         with open(path) as handle:
@@ -448,12 +467,15 @@ def collect(repo, workflows, since, path, limit, until=None, branch=None, named=
         for attempt in range(1, run["run_attempt"] + 1):
             jobs = lines("--paginate", f"repos/{repo}/actions/runs/{run['id']}/attempts/{attempt}/jobs",
                          "--jq", ".jobs[] | {id, name, conclusion, run_attempt} | tojson")
-            for job in jobs:
-                if job["conclusion"] not in ("success", "failure") or str(job["id"]) in samples["jobs"]:
-                    continue
-                if named and not job["name"].startswith(tuple(named)):
-                    continue
-                model, rows = parse_log(gh(f"repos/{repo}/actions/jobs/{job['id']}/logs"))
+            wanted = [job for job in jobs
+                      if job["conclusion"] in ("success", "failure") and str(job["id"]) not in samples["jobs"]
+                      and (not named or job["name"].startswith(tuple(named)))]
+            archive = attempt_logs(repo, run["id"], attempt) if wanted else {}
+            for job in wanted:
+                text = archive.get(job["name"])
+                if text is None:
+                    text = gh(f"repos/{repo}/actions/jobs/{job['id']}/logs")
+                model, rows = parse_log(text)
                 found.append((str(job["id"]), {"run": run["id"], "workflow": workflow, "sha": run["head_sha"],
                                                "branch": run["head_branch"], "attempt": job["run_attempt"],
                                                "cpu": model, "rows": rows}))
@@ -779,10 +801,19 @@ def self_test():
     # The same through `collect` with a stubbed `gh`: 25 runs listed, 60
     # requests left at the start and 20 kept in reserve; every request lowers
     # the count, and fetching stops with the reserve intact and runs unfetched.
+    # A run attempt's jobs come from one archive of its logs (a job, a
+    # cancelled job that is not read, and a job whose name the archive does not
+    # hold, which is read from its own log): three requests besides the listing
+    # of the runs, 1 for the jobs, 1 for the archive and 1 for the odd job's log.
     left, requests = [60], []
     runs = [{"id": 100 + i, "head_sha": "s", "head_branch": "main", "run_attempt": 1, "conclusion": "success",
              "created_at": f"2026-10-20T00:{59 - i:02d}:00Z"} for i in range(25)]
-    def stub(*args):
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as made:
+        made.writestr("1_unit (x).txt", stamp % 1 + " model name\t: Archive CPU\n" + stamp % 2 + " == END stage/one: 1.00 s, exit 0 ==\n")
+        made.writestr("unit (x)/system.txt", "not a job's log")
+        made.writestr("2_unit (z).txt", stamp % 1 + " model name\t: Cancelled CPU\n")
+    def stub(*args, binary=False):
         request = " ".join(args)
         if request == "rate_limit":
             return json.dumps({"resources": {"core": {"remaining": left[0]}}})
@@ -790,9 +821,17 @@ def self_test():
         requests.append(request)
         if "/workflows/" in request:
             return "\n".join(json.dumps(run) for run in runs)
-        if request.endswith("/logs"):
-            return stamp % 1 + " model name\t: Big CPU\n" + stamp % 2 + " == END stage/one: 1.00 s, exit 0 ==\n"
-        return json.dumps({"id": len(requests), "name": "unit (x)", "conclusion": "success", "run_attempt": 1})
+        if request.endswith("/attempts/1/logs"):
+            assert binary
+            return archive.getvalue()
+        if "/attempts/1/jobs" in request:
+            n = len(requests)
+            return "\n".join(json.dumps(job) for job in (
+                {"id": 10 * n, "name": "unit (x)", "conclusion": "success", "run_attempt": 1},
+                {"id": 10 * n + 1, "name": "unit (z)", "conclusion": "cancelled", "run_attempt": 1},
+                {"id": 10 * n + 2, "name": "odd/name (y)", "conclusion": "failure", "run_attempt": 1}))
+        assert request.endswith("/logs") and "/jobs/" in request, request
+        return stamp % 1 + " model name\t: Own-log CPU\n" + stamp % 2 + " == END stage/one: 2.00 s, exit 0 ==\n"
     real_gh = gh
     try:
         globals()["gh"] = stub
@@ -801,7 +840,29 @@ def self_test():
             kept = json.load(open(os.path.join(scratch, "samples.json")))["jobs"]
     finally:
         globals()["gh"] = real_gh
-    assert 20 <= left[0] < 20 + REQUESTS_PER_RUN and 0 < len({job["run"] for job in kept.values()}) < 25, (left, kept)
+    fetched_runs = len({job["run"] for job in kept.values()})
+    assert 20 <= left[0] < 20 + REQUESTS_PER_RUN and 0 < fetched_runs < 25, (left, kept)
+    assert len(kept) == 2 * fetched_runs and sorted({job["cpu"] for job in kept.values()}) == ["Archive CPU", "Own-log CPU"], kept
+    assert sum(r.endswith("/logs") and "/jobs/" in r for r in requests) == fetched_runs, requests
+    assert sum(r.endswith("/attempts/1/logs") for r in requests) == fetched_runs and 1 + 3 * fetched_runs == len(requests), requests
+    # An attempt with no job worth reading, here one cancelled job, costs only
+    # the listing of its jobs.
+    requests.clear()
+    runs[:] = runs[:1]
+    def only_cancelled(*args, binary=False):
+        if args == ("rate_limit",):
+            return json.dumps({"resources": {"core": {"remaining": 100}}})
+        requests.append(" ".join(args))
+        if "/workflows/" in requests[-1]:
+            return json.dumps(runs[0])
+        return json.dumps({"id": 7, "name": "unit (z)", "conclusion": "cancelled", "run_attempt": 1})
+    try:
+        globals()["gh"] = only_cancelled
+        with tempfile.TemporaryDirectory() as scratch, contextlib.redirect_stderr(io.StringIO()):
+            collect("o/r", ["gate.yml"], "2026-10-20", os.path.join(scratch, "samples.json"), 25, reserve=0)
+    finally:
+        globals()["gh"] = real_gh
+    assert not any(r.endswith("/logs") for r in requests), requests
     print("recompute-time-budgets self-test passed")
 
 
