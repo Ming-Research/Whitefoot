@@ -36,7 +36,6 @@ use whitefoot::{
     SCHED_PRIM_WINDOWS_SOURCE as PRIM_SOURCE, WINDOWS_RUNTIME_SOURCE,
 };
 
-
 /// The toolchain every test compiles and links with: the one the compiler
 /// resolves for the executable running the test, so a test binary placed in an
 /// installed package builds with that package's clang, and any other with the
@@ -57,16 +56,6 @@ pub(crate) fn clang_link() -> Command {
     selected_toolchain().link_command()
 }
 
-/// The compiler under test: the test-only `WHITEFOOT_TEST_COMPILER` names a
-/// compiler other than the one Cargo built, as the one inside an installed
-/// package, and none selects the built one.
-#[allow(dead_code)]
-pub(crate) fn compiler_under_test() -> PathBuf {
-    std::env::var_os("WHITEFOOT_TEST_COMPILER").map_or_else(
-        || PathBuf::from(env!("CARGO_BIN_EXE_whitefootc")),
-        PathBuf::from,
-    )
-}
 #[cfg(unix)]
 pub(crate) const COMPILE_ARGUMENTS: &[&str] = &["-pthread"];
 #[cfg(windows)]

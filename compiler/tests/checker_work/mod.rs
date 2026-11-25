@@ -87,7 +87,7 @@ fn repeat(op: Op, limit: u64) -> out: u64 pure {
 "#;
 
 fn check(source: &Path, output: Option<&Path>) -> Output {
-    let mut command = Command::new(crate::support::compiler_under_test());
+    let mut command = Command::new(crate::compiler_under_test());
     command
         .arg("--check")
         .arg(source)

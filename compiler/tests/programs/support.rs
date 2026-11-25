@@ -18,8 +18,7 @@ use whitefoot::{
 
 use crate::support::{
     COMPILE_ARGUMENTS, LINK_LIBRARIES, append_runtime_objects,
-    append_runtime_objects_with_guard_counters, clang_link, compiler_under_test, require_sanitized,
-    sanitized,
+    append_runtime_objects_with_guard_counters, clang_link, require_sanitized, sanitized,
 };
 // Only `build_app`, which exists on Linux alone, selects a sanitizer.
 #[cfg(target_os = "linux")]
@@ -52,7 +51,7 @@ pub(super) fn build_cli_program(name: &str, parallel: bool) -> CompiledProgram {
         directory,
         executable,
     };
-    let mut command = Command::new(compiler_under_test());
+    let mut command = Command::new(crate::compiler_under_test());
     command
         .arg(corpus_directory().join(name))
         .arg("-o")
@@ -324,7 +323,7 @@ pub fn build_app(name: &str, entry: &str) -> CompiledProgram {
         std::env::temp_dir().join(format!("whitefoot-app-{}-{sequence}", std::process::id()));
     std::fs::create_dir(&directory).expect("create unique program directory");
     let executable = directory.join(format!("{entry}{}", std::env::consts::EXE_SUFFIX));
-    let mut command = Command::new(compiler_under_test());
+    let mut command = Command::new(crate::compiler_under_test());
     // `--par --par-call-grain off` selects the overlap lowering the program
     // cases build with (`OverlapLowering::On`), which the plain command line
     // leaves off.
