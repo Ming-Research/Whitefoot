@@ -49,10 +49,8 @@ cpu epyc-9v45  AMD EPYC 9V45 96-Core Processor
 # performance-candidate-compiler is set per class by the owner (165 s on
 # epyc-7763, 150 s on epyc-9v74, 135 s on epyc-9v45), after the 145 s of every
 # class, set on 2026-10-13, was exceeded four times in the recent runs (152.0 s
-# at most); its xeon-8573c column follows the rule for a model with too few runs,
-# the larger of the largest class and its own runs by the rule, which is the 165 s
-# while no 8573C build ran longer than 150 s (research/investigations/
-# identical-code-noise/README.md).
+# at most); its xeon-8573c column follows the rule for a model with too few runs:
+# the larger of the largest class and the model's own runs by the rule.
 cpu xeon-8573c INTEL(R) XEON(R) PLATINUM 8573C
 
 label                           epyc-7763  epyc-9v74  epyc-9v45  xeon-8573c  macos  windows
