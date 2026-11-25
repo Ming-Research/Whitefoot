@@ -1338,6 +1338,38 @@ chose on 2026-10-09 (above): it is path-filtered and rare, and a path-filtered
 workflow that listed `ready_for_review` would be waited for after a ready mark
 even when no path matched.
 
+### The final job read a job listing that lagged, and two runs ended red without a failing group (2026-11-25)
+
+Read with `gh api` on 2026-11-25 from the runs' records; the listing's lag
+itself was not seen again, only its effect in the final job's log.
+
+Run 39607651901 (a manual run on a work branch, head `291b948e`), second
+attempt, which re-ran only `corpus (ubuntu-24.04)`. The group job ended at
+13:40:45 with `success` and `Gate on both platforms` started at 13:40:48. Its
+log shows four listings, at 13:41:00, 13:41:33, 13:42:05 and 13:42:38, each
+with `MISSING corpus (ubuntu-24.04): no gate job` and every other group `ok`,
+and the step failed. The script keeps only jobs that have a `completed_at`
+(`.github/gate-both-platforms.sh`, `list`), and the revision's job listing
+had no completed entry for the re-run job for at least those 98 s; the owner
+saw it show the job complete at 13:46:42. Attempt 3, started 13:47, passed.
+The listing was the only source the final job read for this run's own groups.
+`needs.gate.result` of the same run, which the engine's mode of the same step
+already reads, is `success` as soon as every group job has ended.
+
+Run 40115097375 (main, head `a4f69f2e`), first attempt. The three jobs
+`corpus`, `static` and `unit` (Linux) ended `cancelled` at 17:33:21 and
+17:30:34 with the annotation "The job has exceeded the maximum execution time
+of 15m0s", while their own durations were not that long: `corpus` and `static`
+list no step at all (the runner never reported one), and `unit` lists every
+step as succeeded, the last ending at 17:19:42. No push or cancellation of the
+run came between; the final job ran on `!cancelled()` and its log shows
+`list jobs of run 40115097375` failing five times with HTTP 502 from 17:33:45
+to 17:35:42. The cause is on GitHub's side (the runner's step results and the
+job's completion never reached the service), and the jobs ended with no
+conclusion that says the group passed, so nothing in the run can show them
+green; attempt 2 of the same run, started 2026-10-29, passed every group.
+Only a re-run settles such a run.
+
 ## Daily loop
 
 One edit, measured in the local container with the new defaults: an unused
