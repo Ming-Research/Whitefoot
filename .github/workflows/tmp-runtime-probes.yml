@@ -1,8 +1,10 @@
-# Temporary: which stack probes each clang puts in the runtime's C frames over
-# a page, under each candidate argument, on the pushes the wf-agents engine
-# makes of this work's commits (the `wf-try/work-208-26e0fade/` refs), and the
-# runtime frame test on macOS. Removed before the full check (AGENTS.md,
-# "Checks").
+# Temporary: the runtime frame test on macOS with Apple's clang, the gate's
+# macOS compiler, and with the pinned upstream clang 22.1.8 placed beside a
+# copy of the test binary, which the toolchain resolution then selects as a
+# packaged clang, as the macOS bundle's compiler is; on the pushes the
+# wf-agents engine makes of this work's commits (the
+# `wf-try/work-208-26e0fade/` refs). Each result is also written as a notice.
+# Removed before the full check (AGENTS.md, "Checks").
 name: tmp-runtime-probes
 
 on:
@@ -13,39 +15,65 @@ permissions:
   contents: read
 
 jobs:
-  # The runtime frame test itself, with the gate's compiler on each platform:
-  # LLVM 22 as /usr/bin/clang on Linux, Apple's clang on macOS.
   frame-test:
-    name: frame-test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    runs-on: macos-15
     timeout-minutes: 40
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04]
     steps:
       - uses: actions/checkout@v4
-      - name: Install LLVM as the gate does
-        if: runner.os == 'Linux'
+
+      - name: Install the pinned upstream clang
         run: |
-          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
-          version=$(tr -d '[:space:]' < .github/llvm-major)
-          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
-          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
-          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
-      # From compiler/, so that rustup takes the toolchain its
-      # rust-toolchain.toml names.
-      - name: Set up Rust
-        working-directory: compiler
-        run: |
-          /usr/bin/clang --version
-          cargo --version
+          set -euo pipefail
+          asset=$(python3 -c 'import json; print(json.load(open(".github/toolchain/llvm-assets.json"))["platforms"]["macos-arm64"]["asset"])')
+          digest=$(python3 -c 'import json; print(json.load(open(".github/toolchain/llvm-assets.json"))["platforms"]["macos-arm64"]["sha256"])')
+          tag=$(python3 -c 'import json; print(json.load(open(".github/toolchain/llvm-assets.json"))["llvm_tag"])')
+          curl --fail --location --retry 3 --max-time 600 \
+            "https://github.com/llvm/llvm-project/releases/download/$tag/$asset" -o "$RUNNER_TEMP/$asset"
+          echo "$digest  $RUNNER_TEMP/$asset" | shasum -a 256 -c -
+          mkdir -p "$RUNNER_TEMP/llvm"
+          tar -xJf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP/llvm"
+          root=$(echo "$RUNNER_TEMP"/llvm/*)
+          echo "UPSTREAM_CLANG=$root/bin/clang" >> "$GITHUB_ENV"
+
       - name: Fetch locked compiler dependencies
         working-directory: compiler
         run: cargo fetch --locked
-      - name: Runtime frame test
+
+      - name: Build the test binary
         working-directory: compiler
         run: |
-          perl ../.github/run-check.pl tmp/runtime-frame-test \
-            cargo test --profile gate --locked --offline \
-            --bin whitefootc -- --exact tests::every_runtime_c_frame_over_a_page_is_probed --nocapture
+          set -euo pipefail
+          perl ../.github/run-check.pl tmp/runtime-frame-build \
+            cargo test --profile gate --locked --offline --bin whitefootc --no-run
+          exe=$(cargo test --profile gate --locked --offline --bin whitefootc --no-run --message-format=json \
+            | python3 -c 'import json, sys
+          for line in sys.stdin:
+              m = json.loads(line)
+              if m.get("reason") == "compiler-artifact" and m.get("executable") and m["target"]["name"] == "whitefootc" and m["profile"]["test"]:
+                  print(m["executable"])')
+          echo "TEST_BINARY=$exe" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/packaged"
+          cp "$exe" "$RUNNER_TEMP/packaged/whitefootc-tests"
+          ln -s "$UPSTREAM_CLANG" "$RUNNER_TEMP/packaged/clang"
+          ls -l "$RUNNER_TEMP/packaged"
+
+      # Both runs are shown and noted before the step reads their statuses.
+      - name: Runtime frame test with each clang
+        run: |
+          set +e
+          note() {
+            label="$1"; file="$2"; status="$3"
+            body=$(grep -E '^test |panicked|probed=|probe|args=|chkstk|xzr|\(%rsp\)|sub.*sp|toolchain|error' "$file" | head -45 \
+              | sed -e 's/%/%25/g' | awk '{ printf "%s%%0A", $0 }')
+            echo "::notice title=$label (exit $status)::$body"
+          }
+          "$TEST_BINARY" --exact tests::every_runtime_c_frame_over_a_page_is_probed --nocapture > apple.txt 2>&1
+          apple=$?
+          cat apple.txt
+          note "Apple clang" apple.txt "$apple"
+          "$RUNNER_TEMP/packaged/whitefootc-tests" --exact tests::every_runtime_c_frame_over_a_page_is_probed --nocapture > upstream.txt 2>&1
+          upstream=$?
+          cat upstream.txt
+          note "Upstream clang 22.1.8 as packaged" upstream.txt "$upstream"
+          echo "apple=$apple upstream=$upstream"
+          [ "$apple" -eq 0 ] && [ "$upstream" -eq 0 ]
