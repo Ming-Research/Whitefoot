@@ -9,7 +9,8 @@
 # exact backend failures instead of marking them expected-to-fail. The Windows
 # job builds with the pinned llvm-mingw release for x86_64-w64-windows-gnu, the
 # one Windows target the compiler emits and the Windows package ships
-# (design/compiler/toolchain-resolution). Every run step of the Windows job
+# (design/decisions/compiler/command-line/toolchain-resolution.md). Every run
+# step of the Windows job
 # runs under .github/run-check.pl and is held to the budget row that its id
 # names in .github/time-budgets.txt, as the Linux job's stages are. The bench
 # jobs that record performance live in `io-bench.yml` and run on demand.
