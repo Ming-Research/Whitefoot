@@ -21,6 +21,18 @@ RESEARCH_CARGO_TARGET := $(WHITEFOOT_SCRATCH_ROOT)/whitefoot-research-tests-targ
 # The _check-<group> recipes below own the commands on both paths. CI reads
 # check-groups and invokes check-group; it keeps no second command inventory.
 CHECK_GROUPS := static unit corpus runtime
+
+# A group may also be run as parts that together run what the whole group runs
+# once, each part compiling for itself. The parts are named here and nowhere
+# else, with no host in the list: which host runs the parts and which the whole
+# group is the workflow's choice (.github/gate-matrix.sh). A part is `I/N` of
+# a group's tests by sorted name (unit), `walk-I/N` of the conformance walk's
+# cases, the proof-receipt test alone (`receipts`) or every other test
+# (`rest`); `all` is the whole group, which every group accepts and `make
+# check` runs. .github/shard-tests.pl runs the parts.
+CHECK_SHARDS_unit := 1/3 2/3 3/3
+CHECK_SHARDS_corpus := walk-1/3 walk-2/3 walk-3/3 receipts rest
+SHARD ?= all
 ifeq ($(strip $(CHECK_GROUPS)),)
 $(error the correctness group inventory must not be empty)
 endif
@@ -54,16 +66,28 @@ _check:
 	@echo "== WHITEFOOT ALL TESTS GREEN =="
 
 # JSON is consumed directly by the GitHub Actions matrix. This is a view of
-# CHECK_GROUPS, not generated source or another list to maintain.
+# CHECK_GROUPS and CHECK_SHARDS_*, not generated source or another list to
+# maintain.
+#
+# One object for each part of a split group and one `all` object for each group
+# that is not split, in the group order; a part's job name is the group and the
+# part with no `/`, which no file or artifact name may hold.
 check-groups:
 	@printf '['; separator=''; \
-	for group in $(CHECK_GROUPS); do \
-		printf '%s"%s"' "$$separator" "$$group"; separator=,; \
+	for entry in $(foreach group,$(CHECK_GROUPS),$(if $(CHECK_SHARDS_$(group)),$(foreach shard,$(CHECK_SHARDS_$(group)),$(group):$(shard)),$(group):all)); do \
+		group=$${entry%%:*}; shard=$${entry#*:}; name=$$group; \
+		test "$$shard" = all || name=$$(printf '%s %s' "$$group" "$$shard" | sed 's|-| |; s|/| of |'); \
+		printf '%s{"group":"%s","shard":"%s","name":"%s"}' "$$separator" "$$group" "$$shard" "$$name"; separator=,; \
 	done; printf ']\n'
 
+# The stage label of a part tells its kind (check/unit-shard, check/corpus-walk,
+# check/corpus-receipts, check/corpus-rest), so that each kind has its own time
+# budget.
 check-group:
 	@$(if $(and $(filter 1,$(words $(GROUP))),$(filter $(CHECK_GROUPS),$(GROUP))),:,$(error GROUP must name one correctness group from: $(CHECK_GROUPS)))
-	@$(CHECK_RUN) "check/$(GROUP)" $(MAKE) --no-print-directory "_check-$(GROUP)"
+	@$(if $(and $(filter 1,$(words $(SHARD))),$(filter all $(CHECK_SHARDS_$(GROUP)),$(SHARD))),:,$(error SHARD must be all or a part of $(GROUP): $(CHECK_SHARDS_$(GROUP))))
+	@$(CHECK_RUN) "check/$(GROUP)$(if $(filter all,$(SHARD)),,-$(if $(findstring walk-,$(SHARD)),walk,$(if $(findstring /,$(SHARD)),shard,$(SHARD))))" \
+		$(MAKE) --no-print-directory "_check-$(GROUP)" SHARD="$(SHARD)"
 
 .PHONY: _check-static
 _check-static:
@@ -76,12 +100,12 @@ _check-static:
 .PHONY: _check-unit
 _check-unit:
 	@$(MAKE) -C compiler test-build-unit
-	@$(MAKE) -C compiler test-unit
+	@$(MAKE) -C compiler test-unit SHARD="$(SHARD)"
 
 .PHONY: _check-corpus
 _check-corpus:
 	@$(MAKE) -C compiler test-build-corpus
-	@$(MAKE) -C compiler test-corpus
+	@$(MAKE) -C compiler test-corpus SHARD="$(SHARD)"
 
 .PHONY: _check-runtime
 _check-runtime:
@@ -114,6 +138,8 @@ repository-invariants:
 	@$(PY) .github/check-research-inputs.py
 	@sh .github/test-run-check.sh
 	@$(PY) .github/recompute-time-budgets.py --self-test
+	@perl .github/shard-tests.pl --self-test
+	@sh .github/test-gate-matrix.sh
 	@sh .github/test-gate-scope.sh
 	@sh .github/test-gate-both-platforms.sh
 	@sh .github/test-compiler-release-retention.sh

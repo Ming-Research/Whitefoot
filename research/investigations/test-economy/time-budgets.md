@@ -1338,6 +1338,46 @@ chose on 2026-10-09 (above): it is path-filtered and rare, and a path-filtered
 workflow that listed `ready_for_review` would be waited for after a ready mark
 even when no path matched.
 
+### The slowest gate groups run in parts (2026-11-25)
+
+Question: can the hosted Linux gate give every job's result within six
+minutes of the push when no job waits for a runner, with the tested cases and
+verdicts unchanged? Comparison: the gate with each group run whole against the
+gate with the unit and corpus groups run as parts that each build for
+themselves. The change is rejected if any of five consecutive hand-started runs
+of one head, each started after the previous run's jobs ended and with every
+job started within 60 s of its creation, takes more than 360 s from the run's
+creation to its last job's end.
+
+Before the change, the one gate run on the main line that the engine recorded
+for commit 1bbc3b378 (2026-11-25, Linux) took, per job: corpus 438 s, unit
+402 s, static 129 s, runtime 68 s, the job that selects the groups 12 s, the
+check for a temporary workflow 5 s and the final job 18 s. The slowest group
+bounded the run; the job that selects groups, the check for a temporary
+workflow and the final job are serial with it and took 35 s together. The owner's figures for 25 pushes since 2026-10-23,
+shortest 381 s and median 454 s with none under six minutes, give the same
+shape.
+
+The parts. The unit group's library tests run in three parts, positions p of the
+bytewise-sorted names with `p mod 3 == i-1`, by exact name. The corpus group
+runs the conformance walk in three parts over every third manifest case
+(`WHITEFOOT_CONFORMANCE_SHARD`, the variable the sanitizer workflow already
+uses), the proof-receipt test alone over every case in one process, and every
+other test of the CLI and integration targets in one part (`--exact --skip` of
+the two). The earlier trial on `claude/gate-shards`, which ran the receipt test
+over each walk subset in every corpus part and again whole, put the walk and the
+receipt test in one part when divided by name (196 s of test execution in that
+part against 26 s and 36 s in the other two), which is why the walk is divided by case and the
+receipt test runs once, whole: the whole run checks every case against one
+cache, which three subsets do not.
+
+Each part's time budget is its own row. Its initial value in every CPU column is
+the whole group's current row, which a part's share of the work cannot exceed;
+the existing rule recomputes it once a CPU class has 20 runs of the part.
+
+Not yet measured: the five runs of the question above. They are appended here,
+each with its job times and the CPU model of its jobs, when they have run.
+
 ## Daily loop
 
 One edit, measured in the local container with the new defaults: an unused

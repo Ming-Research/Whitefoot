@@ -41,7 +41,8 @@ esac
 STANDIN
 chmod +x "$work/bin/gh"
 
-groups='["static","unit","corpus"]'
+# The expected jobs, as gate-matrix.sh gives them: every group on both platforms.
+jobs_expected='["static (ubuntu-24.04)","unit (ubuntu-24.04)","corpus (ubuntu-24.04)","static (macos-15)","unit (macos-15)","corpus (macos-15)"]'
 
 # jobs FILE [NAME=CONCLUSION ...] -- write a listing with every job green,
 # except the named ones; CONCLUSION `absent` leaves the job out.
@@ -76,7 +77,7 @@ fail() {
 gate() {
     status=0
     env FAKE_DIR="$FAKE_DIR" PATH="$work/bin:$PATH" GH_TOKEN=x HEAD_SHA=abc123 \
-        GATE_GROUPS="$groups" GITHUB_REPOSITORY=org/repo RUNNER_TEMP="$work" \
+        GATE_JOBS="$jobs_expected" GITHUB_REPOSITORY=org/repo RUNNER_TEMP="$work" \
         GATE_RETRY_WAIT=0 GATE_RELIST_WAIT=0 "$@" \
         sh "$script" > "$work/out" 2> "$work/err" || status=$?
     listings=0
@@ -184,28 +185,29 @@ gate
 [ "$listings" -eq 4 ] || fail "h2: expected 4 listings, got $listings"
 want h2 '^MISSING unit (macos-15): no gate job$'
 
-# (i) GATE_PLATFORMS names the platforms a run was asked for, as gate.yml sets
-# it: with Linux alone, a run that has no macOS job passes and says nothing of
+# (i) GATE_JOBS names the jobs a run was asked for, as gate.yml sets it: with
+# the Linux jobs alone, a run that has no macOS job passes and says nothing of
 # macOS, while a missing Linux job still fails.
+linux_jobs='["static (ubuntu-24.04)","unit (ubuntu-24.04)","corpus (ubuntu-24.04)"]'
 newcase i1
 jobs "$FAKE_DIR/jobs.1" 'static (macos-15)=absent' 'unit (macos-15)=absent' 'corpus (macos-15)=absent'
-gate GATE_PLATFORMS=ubuntu-24.04
+gate GATE_JOBS="$linux_jobs"
 [ "$status" -eq 0 ] || fail 'i1: expected a pass on Linux alone'
 [ "$listings" -eq 1 ] || fail "i1: expected 1 listing, got $listings"
 want i1 '^ok      corpus (ubuntu-24.04)$'
 ! grep -q 'macos-15' "$work/out" "$work/err" || fail 'i1: macOS is not asked for and must not be read'
 newcase i2
 jobs "$FAKE_DIR/jobs.1" 'static (macos-15)=absent' 'unit (macos-15)=absent' 'corpus (macos-15)=absent' 'unit (ubuntu-24.04)=absent'
-gate GATE_PLATFORMS=ubuntu-24.04
+gate GATE_JOBS="$linux_jobs"
 [ "$status" -ne 0 ] || fail 'i2: expected a failure for a missing Linux job'
 [ "$listings" -eq 4 ] || fail "i2: expected 4 listings, got $listings"
 want i2 '^MISSING unit (ubuntu-24.04): no gate job$'
 
-# (j) With both platforms named, as for a run started with the macos input, a
-# missing macOS job fails.
+# (j) With the macOS jobs named too, as for a run started with the macos input,
+# a missing macOS job fails.
 newcase j
 jobs "$FAKE_DIR/jobs.1" 'corpus (macos-15)=absent'
-gate GATE_PLATFORMS='ubuntu-24.04 macos-15'
+gate
 [ "$status" -ne 0 ] || fail 'j: expected a failure for a missing macOS job'
 [ "$listings" -eq 4 ] || fail "j: expected 4 listings, got $listings"
 want j '^MISSING corpus (macos-15): no gate job$'
@@ -213,7 +215,7 @@ want j '^MISSING corpus (macos-15): no gate job$'
 # (k) A group name may hold spaces, as a shard's does (`unit 1 of 3`): each
 # name is one job, never split on white space. All named jobs green pass; one
 # failed, or one without an entry, fails with its whole name.
-spaced='["static","unit 1 of 3","unit 2 of 3","corpus proof receipts"]'
+spaced='["static (ubuntu-24.04)","unit 1 of 3 (ubuntu-24.04)","unit 2 of 3 (ubuntu-24.04)","corpus proof receipts (ubuntu-24.04)"]'
 spaced_jobs() { # FILE [NAME=CONCLUSION ...] -- Linux alone, every job green but the named
     file=$1
     shift
@@ -229,20 +231,20 @@ spaced_jobs() { # FILE [NAME=CONCLUSION ...] -- Linux alone, every job green but
 }
 newcase k1
 spaced_jobs "$FAKE_DIR/jobs.1"
-gate GATE_GROUPS="$spaced" GATE_PLATFORMS=ubuntu-24.04
+gate GATE_JOBS="$spaced"
 [ "$status" -eq 0 ] || fail 'k1: expected a pass for names with spaces'
 [ "$listings" -eq 1 ] || fail "k1: expected 1 listing, got $listings"
 want k1 '^ok      unit 1 of 3 (ubuntu-24.04)$'
 want k1 '^ok      corpus proof receipts (ubuntu-24.04)$'
 newcase k2
 spaced_jobs "$FAKE_DIR/jobs.1" 'unit 2 of 3 (ubuntu-24.04)=failure'
-gate GATE_GROUPS="$spaced" GATE_PLATFORMS=ubuntu-24.04
+gate GATE_JOBS="$spaced"
 [ "$status" -ne 0 ] || fail 'k2: expected a failure for a failed job with spaces in its name'
 [ "$listings" -eq 1 ] || fail "k2: expected 1 listing, got $listings"
 want k2 '^MISSING unit 2 of 3 (ubuntu-24.04): failure$'
 newcase k3
 spaced_jobs "$FAKE_DIR/jobs.1" 'corpus proof receipts (ubuntu-24.04)=absent'
-gate GATE_GROUPS="$spaced" GATE_PLATFORMS=ubuntu-24.04
+gate GATE_JOBS="$spaced"
 [ "$status" -ne 0 ] || fail 'k3: expected a failure for a missing job with spaces in its name'
 [ "$listings" -eq 4 ] || fail "k3: expected 4 listings, got $listings"
 want k3 '^MISSING corpus proof receipts (ubuntu-24.04): no gate job$'

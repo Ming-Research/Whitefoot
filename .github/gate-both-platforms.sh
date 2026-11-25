@@ -1,9 +1,9 @@
 #!/bin/sh
-# Require every correctness group green on Linux and macOS for a revision,
-# read from the jobs of gate.yml's runs for that revision. Only jobs of those
+# Require every job the gate was asked for green for a revision, read from the
+# jobs of gate.yml's runs for that revision. Only jobs of those
 # runs count (`filter=latest` drops a job superseded by a re-run attempt), and
 # the latest completed job of a name decides, so a re-run run supersedes an
-# earlier one. Each `<group> (<os>)` must have concluded success.
+# earlier one. Each expected `<name> (<os>)` must have concluded success.
 #
 # GitHub's API is sometimes flaky, and a listing taken while jobs are being
 # recorded can lack some of them, so a flaky answer must not read as a red
@@ -19,8 +19,9 @@
 #   result: it fails the step at once, with no further listing, after every
 #   group's line is printed; a cancelled job is no entry (see list).
 #
-# It reads GH_TOKEN, HEAD_SHA, GATE_GROUPS (a JSON array of group names) and
-# GITHUB_REPOSITORY, uses RUNNER_TEMP (or a fresh temporary directory) for
+# It reads GH_TOKEN, HEAD_SHA, GATE_JOBS (a JSON array of the expected job
+# names, `<name> (<os>)`, as .github/gate-matrix.sh gives them: a name may hold
+# spaces, so each is read as one) and GITHUB_REPOSITORY, uses RUNNER_TEMP (or a fresh temporary directory) for
 # scratch files, and queries GitHub with `gh`. .github/test-gate-both-platforms.sh
 # exercises it.
 set -eu
@@ -33,10 +34,10 @@ listings=4
 work=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gate-both-platforms.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 
-# One group name to a line: a name may hold spaces (`unit 1 of 3`), so it is
-# read a line at a time and never split on white space.
-printf '%s\n' "$GATE_GROUPS" | jq -er '.[]' > "$work/groups"
-test -s "$work/groups"
+# One job name to a line: a name may hold spaces (`unit 1 of 3 (ubuntu-24.04)`),
+# so it is read a line at a time and never split on white space.
+printf '%s\n' "$GATE_JOBS" | jq -er '.[]' > "$work/expected"
+test -s "$work/expected"
 
 # api LABEL ARGS...: gh api with retries; the answer goes to $work/answer.
 api() {
@@ -85,21 +86,18 @@ list() {
 judge() {
     absent=0
     failed=0
-    while IFS= read -r group; do
-        for os in ${GATE_PLATFORMS:-ubuntu-24.04 macos-15}; do
-            name="$group ($os)"
-            found=$(awk -F '\t' -v name="$name" '$2 == name && !seen { seen = 1; print "x" $3 }' "$work/sorted.tsv")
-            if [ -z "$found" ]; then
-                echo "MISSING $name: no gate job"
-                absent=$((absent + 1))
-            elif [ "$found" = xsuccess ]; then
-                echo "ok      $name"
-            else
-                echo "MISSING $name: ${found#x}"
-                failed=$((failed + 1))
-            fi
-        done
-    done < "$work/groups"
+    while IFS= read -r name; do
+        found=$(awk -F '\t' -v name="$name" '$2 == name && !seen { seen = 1; print "x" $3 }' "$work/sorted.tsv")
+        if [ -z "$found" ]; then
+            echo "MISSING $name: no gate job"
+            absent=$((absent + 1))
+        elif [ "$found" = xsuccess ]; then
+            echo "ok      $name"
+        else
+            echo "MISSING $name: ${found#x}"
+            failed=$((failed + 1))
+        fi
+    done < "$work/expected"
 }
 
 count=1

@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-11-25 The slowest gate groups run on Linux as parts, each building for itself
+
+Nodes: compiler/verification
+
+Summary: Run whole, the corpus and unit groups took 438 s and 402 s in a recorded gate run, so the slowest group set a push-to-result time that never came under six minutes. On Linux the unit group now runs as three parts by sorted test name and the corpus group as five (the conformance walk's cases in three parts, the proof-receipt test alone over every case in one process, every other test), each compiling for itself; a local run and a macOS run still run each group whole. The Makefile names the groups and parts and one script chooses the host that runs parts. A part that selects by name fails unless libtest reports the number selected, and a corpus part fails unless the walk and receipt tests are each listed once, so a rename cannot drop or double a test. The final-job decision now requires every job the inventory names for the platforms asked for. Refused: one build shared through an artifact, a cached build, hashed or nextest-partitioned parts, and the receipt test run over each walk subset as well as whole.
+
 ## 2026-10-23 A returned computed integer expression proves a postcondition as a `let` of it would
 
 Nodes: language/checks-and-proofs/automatic-facts
