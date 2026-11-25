@@ -1473,6 +1473,29 @@ jobs read the same day (26 jobs that ran it, one build per compared revision):
 not read. No workflow that runs the stage names a budget record, so an overrun
 there is printed in the log and fails no job.
 
+**The table in use (2026-11-25).** A temporary workflow built the stage three
+times on one hosted runner, an AMD EPYC 9V45 (class column 100 s), each build
+cold and with a budget record, which the workflows that run the stage do not
+set (run 45679642459 on commit a1109614a, whose logs were read; the same
+workflow on the head commit 23a294d48, run 45681749970, passed its three steps
+and its logs were not read):
+
+| Table | Build time | Wrapper's line | Verdict exit |
+|---|---:|---|---:|
+| the branch's | 77.53 s | `== BUDGET compiler/build: 77.5 s of 100 s (linux) ==` | 0 |
+| a copy giving the stage 1 s | 79.12 s | `== OVER BUDGET: enforced: compiler/build took 79.1 s, over its 1 s linux budget ==` | 1 |
+| `main`'s, with no row | 79.64 s | `== OVER BUDGET: enforced: compiler/build has no linux budget in ... ==` | 1 |
+
+A manual run of `io-hosts.yml` on the head commit (run 45682294237) passed all
+19 steps of `completion-windows`, including the final verdict step. GitHub's
+step records give whole seconds: the program-case build took 259 s of its 400 s
+budget, the cases 46 s of 65 s, the driver links 23 s of 35 s and the test
+images 11 s of 15 s. The run's logs were not read, because the account's API
+quota was spent, so its `== START` and `== END` lines are not recorded here. A
+verdict step whose record file was never written passes, so this run alone
+does not show that the steps ran under the wrapper; a run with a stage over its
+budget does.
+
 ## Daily loop
 
 One edit, measured in the local container with the new defaults: an unused
