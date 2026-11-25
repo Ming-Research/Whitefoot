@@ -2833,9 +2833,10 @@ fn entry_module_material(
         composition_material(ENTRY_MODULES, graph, selection, inputs, RecordOrder::Read);
     material.extend_from_slice(
         format!(
-            "overlap {overlap:?}\nfragments {}\npreserve-none {}\nno-capture {}\ncoro-end {}\ndarwin-stack-probe-helper {}\n",
+            "overlap {overlap:?}\nfragments {}\npreserve-none {}\nno-callee-saved-registers {}\nno-capture {}\ncoro-end {}\ndarwin-stack-probe-helper {}\n",
             selection.fragments,
             toolchain.preserve_none,
+            toolchain.no_callee_saved_registers,
             toolchain.no_capture_attribute,
             toolchain.coro_end_result,
             toolchain.darwin_stack_probe_helper,

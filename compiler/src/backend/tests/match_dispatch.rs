@@ -154,11 +154,117 @@ fn host_convention() -> (&'static str, usize) {
     }
 }
 
+/// The attribute the parts' ABI carries on this host: the host's probed
+/// facts on x86-64, nothing elsewhere.
+fn host_attribute() -> &'static str {
+    let facts = crate::toolchain::facts();
+    if cfg!(target_arch = "x86_64") && facts.preserve_none && facts.no_callee_saved_registers {
+        " \"no_callee_saved_registers\""
+    } else {
+        ""
+    }
+}
+
+/// compiler/match-dispatch-lowering: the attribute is chosen with the
+/// calling convention, only for the x86-64 targets whose host probe passed,
+/// and an absent attribute leaves every text unchanged.
+#[test]
+fn the_parts_attribute_needs_x86_64_preserve_none_and_the_probed_fact() {
+    use crate::backend::emitter::dispatch::convention_for;
+    let host = *crate::toolchain::facts();
+    for preserve_none in [false, true] {
+        for no_callee_saved_registers in [false, true] {
+            let facts = crate::toolchain::ToolchainFacts {
+                preserve_none,
+                no_callee_saved_registers,
+                ..host
+            };
+            for triple in [
+                "x86_64-unknown-linux-gnu",
+                "x86_64-apple-darwin",
+                crate::target::WINDOWS_X86_64_TRIPLE,
+                "aarch64-apple-darwin",
+            ] {
+                let abi = convention_for(&facts, triple);
+                let expected = if triple.starts_with("x86_64")
+                    && preserve_none
+                    && no_callee_saved_registers
+                {
+                    " \"no_callee_saved_registers\""
+                } else {
+                    ""
+                };
+                assert_eq!(
+                    abi.attribute, expected,
+                    "{triple}, preserve_none={preserve_none}, \
+                     no_callee_saved_registers={no_callee_saved_registers}"
+                );
+                assert_eq!(
+                    abi.convention,
+                    if preserve_none { "preserve_nonecc " } else { "" },
+                    "the attribute never changes the convention: {triple}"
+                );
+            }
+        }
+    }
+}
+
+/// The attribute is on every part's definition and on every call into or
+/// between the parts, direct or through the table or handler word, and
+/// never on the enclosing definition, which keeps the C convention and so
+/// preserves RBP once for the whole chain.
+fn assert_part_attribute(module: &str, base: &str, arms: usize) {
+    let attribute = host_attribute();
+    let enclosing = module
+        .lines()
+        .find(|line| line.starts_with("define ") && line.contains(&format!(" @{base}(")))
+        .unwrap_or_else(|| panic!("missing definition of {base}: {module}"));
+    assert!(
+        !enclosing.contains("no_callee_saved_registers"),
+        "the enclosing function keeps its ordinary ABI: {enclosing}"
+    );
+    let entry = format!("@{base}.dispatch(");
+    let entries = module
+        .lines()
+        .filter(|line| line.contains(&entry) && line.contains("call ") && !line.contains("musttail"))
+        .collect::<Vec<_>>();
+    assert!(!entries.is_empty(), "the enclosing function enters the chain: {module}");
+    for line in entries {
+        assert_eq!(
+            line.contains("no_callee_saved_registers"),
+            !attribute.is_empty(),
+            "{line}"
+        );
+        assert!(attribute.is_empty() || line.trim_end().ends_with(attribute), "{line}");
+    }
+    for symbol in std::iter::once(format!("{base}.dispatch"))
+        .chain((0..arms).map(|arm| format!("{base}.arm.{arm}")))
+    {
+        let part = definition(module, &symbol);
+        let header = part.lines().next().expect("a definition header");
+        assert_eq!(
+            header.contains("no_callee_saved_registers"),
+            !attribute.is_empty(),
+            "{header}"
+        );
+        assert!(attribute.is_empty() || header.contains(attribute), "{header}");
+        for call in part.lines().filter(|line| line.contains("musttail call ")) {
+            assert_eq!(
+                call.contains("no_callee_saved_registers"),
+                !attribute.is_empty(),
+                "each transfer matches its callee's ABI: {call}"
+            );
+            assert!(attribute.is_empty() || call.trim_end().ends_with(attribute), "{call}");
+        }
+    }
+}
+
 fn assert_split(module: &str, base: &str, arms: usize) {
     assert_split_with_table_slots(module, base, arms, arms);
 }
 
 fn assert_split_with_table_slots(module: &str, base: &str, arms: usize, table_slots: usize) {
+    assert_part_attribute(module, base, arms);
     let (convention, _) = host_convention();
     let dispatch = definition(module, &format!("{base}.dispatch"));
     assert!(

@@ -40,6 +40,16 @@ pub(super) fn reachable(function: &IrFunction) -> Result<Vec<bool>, BackendFailu
     Ok(seen)
 }
 
+/// The ABI every part shares: its calling convention, its argument
+/// registers on the target and the function attribute written on every part's
+/// definition and on every call into or between the parts.
+#[derive(Clone, Copy)]
+pub(crate) struct PartAbi {
+    pub(crate) convention: &'static str,
+    registers: ArgumentRegisters,
+    pub(crate) attribute: &'static str,
+}
+
 /// The calling convention of every part, with its argument registers on the
 /// target: the convention without callee-saved registers where the host's
 /// assembler accepts it at run time, so the values the parts pass stay in
@@ -49,10 +59,18 @@ pub(super) fn reachable(function: &IrFunction) -> Result<Vec<bool>, BackendFailu
 /// (compiler/match-dispatch-lowering): on x86-64 outside Windows that
 /// address takes one of the twelve registers `preserve_none` passes
 /// arguments in. A loop whose parts would need more is not split.
-fn convention(triple: &str) -> (&'static str, ArgumentRegisters) {
+///
+/// On x86-64 that convention still keeps RBP callee-saved, so a part that
+/// uses it as a scratch register would save and restore it on every
+/// transfer. Where the host's x86-64 backend is probed to honor
+/// `"no_callee_saved_registers"` on definitions and calls alike, the
+/// attribute removes that preservation from the chain and the enclosing
+/// function, which keeps the C convention, preserves RBP once around it.
+/// Every other target and host gets no attribute.
+pub(crate) fn convention_for(facts: &crate::toolchain::ToolchainFacts, triple: &str) -> PartAbi {
     let aarch64 = triple.starts_with("aarch64");
     let windows = triple.contains("windows");
-    if crate::toolchain::facts().preserve_none {
+    if facts.preserve_none {
         let integer = if aarch64 {
             24
         } else if windows {
@@ -60,16 +78,33 @@ fn convention(triple: &str) -> (&'static str, ArgumentRegisters) {
         } else {
             11
         };
-        (
-            "preserve_nonecc ",
-            ArgumentRegisters::Separate { integer, float: 8 },
-        )
+        PartAbi {
+            convention: "preserve_nonecc ",
+            registers: ArgumentRegisters::Separate { integer, float: 8 },
+            attribute: if triple.starts_with("x86_64") && facts.no_callee_saved_registers {
+                " \"no_callee_saved_registers\""
+            } else {
+                ""
+            },
+        }
     } else if windows {
-        ("", ArgumentRegisters::Shared(4))
+        PartAbi {
+            convention: "",
+            registers: ArgumentRegisters::Shared(4),
+            attribute: "",
+        }
     } else {
         let integer = if aarch64 { 8 } else { 6 };
-        ("", ArgumentRegisters::Separate { integer, float: 8 })
+        PartAbi {
+            convention: "",
+            registers: ArgumentRegisters::Separate { integer, float: 8 },
+            attribute: "",
+        }
     }
+}
+
+fn convention(triple: &str) -> PartAbi {
+    convention_for(crate::toolchain::facts(), triple)
 }
 
 /// How many arguments a convention passes in registers.
@@ -625,6 +660,8 @@ pub(super) struct DispatchEmission {
     destination: bool,
     result: String,
     convention: &'static str,
+    /// The attribute of [`PartAbi`], empty where the parts' ABI has none.
+    attribute: &'static str,
     /// The enum's pointer field is the dispatch source instead of the table.
     handler_word: Option<usize>,
 }
@@ -825,7 +862,11 @@ impl FunctionEmitter<'_, '_> {
         parameters.retain(|(value, _, role)| {
             !matches!(role, Role::Hoisted | Role::Invariant) || part_reads.contains(value)
         });
-        let (convention, registers) = convention(self.target.triple());
+        let PartAbi {
+            convention,
+            registers,
+            attribute,
+        } = convention(self.target.triple());
         let mut scratch = References::default();
         let mut typed: Vec<(IrValueId, String)> = Vec::new();
         for (value, ty, _) in &parameters {
@@ -1008,6 +1049,7 @@ impl FunctionEmitter<'_, '_> {
             destination,
             result: result.to_owned(),
             convention,
+            attribute,
             handler_word,
         }))
     }
@@ -1098,6 +1140,7 @@ impl FunctionEmitter<'_, '_> {
         let symbol = dispatch.symbol.clone();
         let result = dispatch.result.clone();
         let convention = dispatch.convention;
+        let attribute = dispatch.attribute;
         let cursor = dispatch.cursor.clone();
         let header = self.block(target)?;
         if header.parameters().len() != arguments.len()
@@ -1222,11 +1265,11 @@ impl FunctionEmitter<'_, '_> {
         self.output.symbol(symbol.clone());
         let call = if tail { "musttail call" } else { "call" };
         let text = if result == "void" {
-            format!("  {call} {convention}void @{symbol}({list})\n  ret void\n")
+            format!("  {call} {convention}void @{symbol}({list}){attribute}\n  ret void\n")
         } else {
             let temporary = self.next_temporary()?;
             format!(
-                "  %{temporary} = {call} {convention}{result} @{symbol}({list})\n  ret {result} %{temporary}\n"
+                "  %{temporary} = {call} {convention}{result} @{symbol}({list}){attribute}\n  ret {result} %{temporary}\n"
             )
         };
         self.output.push_str(&text);
@@ -1257,6 +1300,7 @@ impl FunctionEmitter<'_, '_> {
         let entries = dispatch.plan.table.len();
         let result = dispatch.result.clone();
         let convention = dispatch.convention;
+        let attribute = dispatch.attribute;
         let handler_word = dispatch.handler_word;
         let matched = dispatch.plan.matched;
         let cursor = dispatch.cursor.as_ref().map(|cursor| cursor.place);
@@ -1311,12 +1355,12 @@ impl FunctionEmitter<'_, '_> {
         let mut text = format!("  %{handler} = load ptr, ptr {slot}, align {align}\n");
         if result == "void" {
             text.push_str(&format!(
-                "  musttail call {convention}void %{handler}({list})\n  ret void\n"
+                "  musttail call {convention}void %{handler}({list}){attribute}\n  ret void\n"
             ));
         } else {
             let returned = self.next_temporary()?;
             text.push_str(&format!(
-                "  %{returned} = musttail call {convention}{result} %{handler}({list})\n  ret {result} %{returned}\n"
+                "  %{returned} = musttail call {convention}{result} %{handler}({list}){attribute}\n  ret {result} %{returned}\n"
             ));
         }
         self.output.push_str(&text);
@@ -1357,6 +1401,7 @@ impl FunctionEmitter<'_, '_> {
         let mut signature = Signature::new(symbol, dispatch.result.clone(), parameters);
         signature.linkage = Linkage::Internal;
         signature.convention = dispatch.convention;
+        signature.suffix.push_str(dispatch.attribute);
         signature.references = references;
         if part == Part::Header {
             signature.suffix.push_str(" alwaysinline");

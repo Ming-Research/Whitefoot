@@ -29,6 +29,12 @@ pub const fn clang_executable() -> &'static str {
 #[derive(Clone, Copy)]
 pub(crate) struct ToolchainFacts {
     pub(crate) preserve_none: bool,
+    /// The host's x86-64 backend honors `"no_callee_saved_registers"` on both
+    /// a definition and the calls into it, so that a private
+    /// `preserve_nonecc` function using RBP as a scratch register saves
+    /// nothing while the C boundary around the chain still preserves it
+    /// (compiler/match-dispatch-lowering). Always false off x86-64.
+    pub(crate) no_callee_saved_registers: bool,
     pub(crate) no_capture_attribute: &'static str,
     pub(crate) coro_end_result: &'static str,
     pub(crate) darwin_stack_probe_helper: bool,
@@ -52,6 +58,7 @@ impl ToolchainFacts {
         }
         let conservative = Self {
             preserve_none: false,
+            no_callee_saved_registers: false,
             no_capture_attribute: "nocapture",
             coro_end_result: "i1",
             darwin_stack_probe_helper: false,
@@ -73,11 +80,20 @@ impl ToolchainFacts {
             )),
             Err(_) => Ok(false),
         };
+        let preserve_none = required(
+            preserve_none_supported(toolchain, &directory.0),
+            "preserve_nonecc",
+        )?;
         Ok(Self {
-            preserve_none: required(
-                preserve_none_supported(toolchain, &directory.0),
-                "preserve_nonecc",
-            )?,
+            preserve_none,
+            // Only an x86-64 backend reads the attribute, and only a
+            // convention that keeps RBP callee-saved needs it.
+            no_callee_saved_registers: cfg!(target_arch = "x86_64")
+                && preserve_none
+                && required(
+                    no_callee_saved_registers_supported(toolchain, &directory.0),
+                    "no_callee_saved_registers",
+                )?,
             no_capture_attribute: if required(
                 no_capture_supported(toolchain, &directory.0),
                 "captures(none)",
@@ -235,6 +251,149 @@ fn preserve_none_supported(toolchain: &Toolchain, directory: &Path) -> io::Resul
         .arg(&probe)
         .output()?;
     probe_status(toolchain, accepted.status)
+}
+
+/// The private dispatch ABI of the parts, which the probe below models: an
+/// always-inlined dispatcher whose indirect `musttail` call becomes the C
+/// entry's ordinary call, handlers that clobber RBP, and the one boundary
+/// that must preserve it. `definition_attribute` and `call_attribute` are
+/// the attribute text on every definition and every call, or empty.
+fn no_callee_saved_registers_module(definition_attribute: &str, call_attribute: &str) -> String {
+    format!(
+        "@probe_targets = global ptr @probe_direct\n\
+         define internal preserve_nonecc i64 @probe_handler(ptr %targets, i64 %value) noinline{definition_attribute} {{\n  \
+         call void asm sideeffect \"\", \"~{{rbp}}\"()\n  ret i64 %value\n}}\n\
+         define internal preserve_nonecc i64 @probe_direct(ptr %targets, i64 %value) noinline{definition_attribute} {{\n  \
+         call void asm sideeffect \"\", \"~{{rbp}}\"()\n  \
+         %result = musttail call preserve_nonecc i64 @probe_handler(ptr %targets, i64 %value){call_attribute}\n  \
+         ret i64 %result\n}}\n\
+         define internal preserve_nonecc i64 @probe_indirect(ptr %targets, i64 %value) noinline{definition_attribute} {{\n  \
+         call void asm sideeffect \"\", \"~{{rbp}}\"()\n  \
+         %target = load ptr, ptr %targets\n  \
+         %result = musttail call preserve_nonecc i64 %target(ptr %targets, i64 %value){call_attribute}\n  \
+         ret i64 %result\n}}\n\
+         define internal preserve_nonecc i64 @probe_dispatch(ptr %targets, i64 %value) alwaysinline{definition_attribute} {{\n  \
+         %target = load ptr, ptr %targets\n  \
+         %result = musttail call preserve_nonecc i64 %target(ptr %targets, i64 %value){call_attribute}\n  \
+         ret i64 %result\n}}\n\
+         define i64 @probe_entry(ptr %targets, i64 %value) {{\n  \
+         %result = call preserve_nonecc i64 @probe_dispatch(ptr %targets, i64 %value){call_attribute}\n  \
+         ret i64 %result\n}}\n"
+    )
+}
+
+/// The assembly the host produces for the probe module, or `None` where it
+/// refuses the module.
+fn no_callee_saved_registers_assembly(
+    toolchain: &Toolchain,
+    directory: &Path,
+    name: &str,
+    definition_attribute: &str,
+    call_attribute: &str,
+) -> io::Result<Option<String>> {
+    let input = directory.join(format!("{name}.ll"));
+    let output = directory.join(format!("{name}.s"));
+    fs::write(
+        &input,
+        no_callee_saved_registers_module(definition_attribute, call_attribute),
+    )?;
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
+    let compiled = toolchain
+        .command()
+        .args([
+            "-x",
+            "ir",
+            "-S",
+            "-O2",
+            "-fomit-frame-pointer",
+            "-fverify-intermediate-code",
+            "-o",
+        ])
+        .arg(&output)
+        .arg(&input)
+        .output()?;
+    if !probe_status(toolchain, compiled.status)? {
+        return Ok(None);
+    }
+    fs::read_to_string(output).map(Some)
+}
+
+/// The text of one probe function, from its label to the next probe label or
+/// function end.
+fn probe_function_assembly<'a>(assembly: &'a str, name: &str) -> Option<&'a str> {
+    let mut start = None;
+    let mut offset = 0;
+    for line in assembly.split_inclusive('\n') {
+        let label = line.split('#').next()?.trim();
+        if label == format!("{name}:") || label == format!("_{name}:") {
+            start = Some(offset + line.len());
+        } else if let Some(start) = start
+            && label.ends_with(':')
+            && (label.starts_with("probe_")
+                || label.starts_with("_probe_")
+                || label.starts_with(".Lfunc_end")
+                || label.starts_with("Lfunc_end"))
+        {
+            return Some(&assembly[start..offset]);
+        }
+        offset += line.len();
+    }
+    start.map(|start| &assembly[start..])
+}
+
+/// The pushes and pops of `%rbp` in one function's assembly.
+fn rbp_preservation(assembly: &str) -> (usize, usize) {
+    let mut pushes = 0;
+    let mut pops = 0;
+    for line in assembly.lines() {
+        let mut words = line.split_whitespace();
+        let instruction = words.next();
+        if words.next() == Some("%rbp") {
+            match instruction {
+                Some("pushq" | "push") => pushes += 1,
+                Some("popq" | "pop") => pops += 1,
+                _ => {}
+            }
+        }
+    }
+    (pushes, pops)
+}
+
+/// What the probe module's assembly must show for the attribute to be
+/// honored: the handlers and the direct and indirect transfers mention
+/// `%rbp` nowhere, not as a push or as a memory save either, and the C entry
+/// that the always-inlined dispatcher joined preserves it exactly once.
+fn no_callee_saved_registers_contract(assembly: &str) -> bool {
+    ["probe_handler", "probe_direct", "probe_indirect"]
+        .into_iter()
+        .all(|name| {
+            probe_function_assembly(assembly, name).is_some_and(|body| {
+                // The empty inline asm only clobbers RBP, so no emitted
+                // instruction of a function that saves nothing names it.
+                !body.lines().any(|line| {
+                    line.split('#')
+                        .next()
+                        .is_some_and(|instruction| instruction.contains("%rbp"))
+                })
+            })
+        })
+        && probe_function_assembly(assembly, "probe_entry")
+            .is_some_and(|body| rbp_preservation(body) == (1, 1))
+}
+
+/// String attributes are ignored by a backend that does not know them, so a
+/// module that assembles proves nothing: the host must generate the code
+/// whose shape the contract describes.
+fn no_callee_saved_registers_supported(toolchain: &Toolchain, directory: &Path) -> io::Result<bool> {
+    const ATTRIBUTE: &str = " \"no_callee_saved_registers\"";
+    Ok(no_callee_saved_registers_assembly(
+        toolchain,
+        directory,
+        "callee_saved_probe",
+        ATTRIBUTE,
+        ATTRIBUTE,
+    )?
+    .is_some_and(|assembly| no_callee_saved_registers_contract(&assembly)))
 }
 
 /// Which spelling of the no-capture parameter attribute the host toolchain
@@ -407,5 +566,78 @@ mod tests {
             "runtime convention fact must agree with host code generation: {}",
             String::from_utf8_lossy(&tail.stderr)
         );
+    }
+    const ATTRIBUTE: &str = " \"no_callee_saved_registers\"";
+
+    /// The probed fact must be what the host's code generation shows for the
+    /// probe module, judged independently of the fact itself, and the
+    /// contract must reject the legacy ABI, whose handlers save RBP.
+    #[test]
+    fn no_callee_saved_registers_fact_matches_host_code_generation() {
+        prepare_toolchain().expect("prepare host toolchain before reading emission facts");
+        let facts = facts();
+        let toolchain = resolved_toolchain().expect("prepared source-build toolchain");
+        let directory = ProbeDirectory::new().expect("create assembly directory");
+        let assemble = |name: &str, definition: &str, call: &str| {
+            no_callee_saved_registers_assembly(toolchain, &directory.0, name, definition, call)
+                .unwrap_or_else(|error| {
+                    panic!("cannot run {} for the register probe: {error}", clang_executable())
+                })
+        };
+        if !(cfg!(target_arch = "x86_64") && facts.preserve_none) {
+            assert!(!facts.no_callee_saved_registers);
+            return;
+        }
+        let attributed = assemble("register_contract", ATTRIBUTE, ATTRIBUTE);
+        assert_eq!(
+            facts.no_callee_saved_registers,
+            attributed
+                .as_deref()
+                .is_some_and(no_callee_saved_registers_contract),
+            "the runtime ABI fact must match definition and call-side preservation: {attributed:?}"
+        );
+        // A backend that ignored the string would behave like this module:
+        // its handlers must save RBP, and the contract must say so.
+        let legacy = assemble("register_legacy", "", "")
+            .expect("preserve_nonecc already generated code");
+        assert!(
+            !no_callee_saved_registers_contract(&legacy),
+            "the contract must reject the legacy ABI: {legacy}"
+        );
+        if facts.no_callee_saved_registers {
+            // A definition-side attribute alone leaves the entry's call
+            // promising RBP survives, which would be wrong code.
+            let missing_call = assemble("register_missing_call", ATTRIBUTE, "");
+            assert!(
+                !missing_call
+                    .as_deref()
+                    .is_some_and(no_callee_saved_registers_contract),
+                "the contract must detect a missing call-site attribute: {missing_call:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_register_contract_needs_clean_parts_and_one_boundary_save_pair() {
+        let accepted = "probe_handler:\n\tretq\n.Lfunc_end0:\n\
+                        probe_direct:\n\tjmp probe_handler\n.Lfunc_end1:\n\
+                        probe_indirect:\n\tjmpq *%rax\n.Lfunc_end2:\n\
+                        probe_entry:\n\tpushq %rbp\n\tcallq *%rax\n\tpopq %rbp\n\tretq\n.Lfunc_end3:\n";
+        assert!(no_callee_saved_registers_contract(accepted));
+        for rejected in [
+            accepted.replace("probe_handler:\n", "probe_handler:\n\tpushq %rbp\n"),
+            accepted.replace("probe_direct:\n", "probe_direct:\n\tpopq %rbp\n"),
+            accepted.replace("probe_indirect:\n", "probe_indirect:\n\tpushq %rbp\n"),
+            accepted.replace("probe_handler:\n", "probe_handler:\n\tmovq %rbp, (%rsp)\n"),
+            accepted.replace("\tpushq %rbp\n", ""),
+            accepted.replace("\tpopq %rbp\n", ""),
+            accepted.replace("probe_entry:\n", "probe_entry:\n\tpushq %rbp\n\tpopq %rbp\n"),
+            accepted.replace("probe_handler:", "missing_handler:"),
+            accepted.replace("probe_direct:", "missing_direct:"),
+            accepted.replace("probe_indirect:", "missing_indirect:"),
+            accepted.replace("probe_entry:", "missing_entry:"),
+        ] {
+            assert!(!no_callee_saved_registers_contract(&rejected), "{rejected}");
+        }
     }
 }
