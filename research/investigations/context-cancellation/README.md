@@ -309,6 +309,27 @@ its timers must be what they were. Three arguments, `control-bound`,
 comparison and the blocking-mode probe fail on purpose, and the job requires
 each to fail through that check.
 
+Results, on windows-latest, of a temporary workflow that built and ran the
+test on the engine's pushes of the work's commits. Before the change
+([run 45610437036](https://github.com/Ming-Research/Whitefoot/actions/runs/45610437036),
+commit `af00f2346`): the helper route's first cancellation case, fired 150 ms
+into the connect, did not return until about 21 s later, at the host's own
+connect timeout, and then with `TimedOut` instead of `Cancelled` (the test
+stopped there, 24 s after it started, three of them the silent-target
+check); `CancelSynchronousIo` did not end the blocking connect. The
+completion-port route, which makes the connect with `ConnectEx`, passed every
+case: cancellation 0 ms, deadline 5 to 6 ms, 200 raced connects all connected.
+After the change ([run 45610437198](https://github.com/Ming-Research/Whitefoot/actions/runs/45610437198),
+commit `42543d469`): the helper route passed in 9 s with cancellation returning
+51 and 63 ms after the firing, deadline 12 and 0 ms after the deadline, a
+fired watch and a passed deadline 0 ms, 198 of 200 raced connects connected
+and 2 cancelled; the completion-port route passed unchanged; the existing
+send test printed the same four outcomes as before. `control-bound` failed
+with "took 20 ms, over the 0 ms bound", `control-leak` with "handle count 132
+after the cases, 131 before them" and `control-blocking` at the
+`WSAETIMEDOUT` check, each through its own check. The silent target stayed
+pending for the three-second self-check on that image.
+
 ## Cancellation conformance observations
 
 The four added runnable `cancel-run-*` cases observe PRE-2 through
