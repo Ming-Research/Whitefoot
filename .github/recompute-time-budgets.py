@@ -322,6 +322,19 @@ def self_test():
         ("check/runtime", 2185, 0, 25), ("check/corpus", 36320, 0, 360), ("compiler/lint", 500, 101, None)], found
     assert parse_log("no stages here") == (None, [])
 
+    # compute-regression logs the model as lscpu prints it ("Model name:" with
+    # a capital and padding after the colon), not as /proc/cpuinfo does; a
+    # BIOS line of a full lscpu listing is not the CPU's model.
+    lscpu = "\n".join([
+        stamp % 0 + " CPU(s):                                  4",
+        stamp % 0 + " Model name:                              AMD EPYC 7763 64-Core Processor",
+        stamp % 1 + " BIOS Model name:                          Standard PC",
+        stamp % 2 + " == END performance-candidate-compiler: 93.20 s, exit 0 ==",
+    ])
+    model, found = parse_log(lscpu)
+    assert model == "AMD EPYC 7763 64-Core Processor", model
+    assert [(r["label"], r["cs"]) for r in found] == [("performance-candidate-compiler", 9320)], found
+
     # The rule, exactly: 110.00 s is 110 s, not 115 s; 59.95 rounds to 60 and
     # 60.005 to 65; the floor is 10 s (a 1 s stage would round to 5 s).
     assert [budget_for(m) for m in (32370, 10000, 5450, 5455, 100)] == [360, 110, 60, 65, 10]
