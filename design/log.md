@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-11-25 A write selection under a read-only whole hold stops the program
+
+Nodes: compiler/waiting-contexts/concurrent-map
+
+Summary: The runtime had no defence if a statement holding a map whole and only reading was asked to select an entry for write: it locked the entry's cell, which the read-only release never unlocks, and the next statement on that key waited for ever. The node gains a decision: such a request, by one key, by a set of keys or by an empty set, stops the program with the runtime's internal error and a line naming the reason, reading the read mark the hold record already has. Unlocking at the release is refused because a plain per-key read legitimately keeps cells with its readers counted, where a writer may already wait.
+
 ## 2026-10-23 A returned computed integer expression proves a postcondition as a `let` of it would
 
 Nodes: language/checks-and-proofs/automatic-facts

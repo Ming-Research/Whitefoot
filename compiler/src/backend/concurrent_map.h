@@ -170,7 +170,9 @@ typedef struct wf_cmap_holding {
 } wf_cmap_holding;
 
 /* Selects a key under the map's whole hold. A read returns NULL for an
- * absent key; a write materializes None under that hold. */
+ * absent key; a write materializes None under that hold, which must not be
+ * a read-only one: a request to write under it stops the program, since its
+ * release unlocks no cell the write would lock. */
 void *wf_cmap_held_entry(wf_cmap *map, const unsigned char *key, uint64_t length, int write);
 /* Begins an empty hold of map's entries. */
 void wf_cmap_hold_begin(wf_cmap_holding *hold, wf_cmap *map);

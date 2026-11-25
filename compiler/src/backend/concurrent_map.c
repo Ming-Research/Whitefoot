@@ -47,6 +47,11 @@
  * `void *` place only the calling thread uses, where the memory of the last
  * key set it freed is kept for its next one, its release and its reuse
  * recorded through WF_CMAP_HEAP_CHANGE as a give and a take would be.
+ * WF_CMAP_REFUSED(reason) is the runtime's internal error for a request no
+ * accepted program makes; it does not return. Without the includer's, it
+ * writes the reason to the standard error stream and aborts: a bare abort
+ * leaves nothing to tell it from the others, and on Windows ends the
+ * process through the fast-fail path with no message at all.
  */
 #if !defined(WF_CMAP_TAKE) || !defined(WF_CMAP_GIVE) || !defined(WF_CMAP_YIELD) || !defined(WF_CMAP_EXHAUSTED)
 #error "the includer supplies WF_CMAP_TAKE, WF_CMAP_GIVE, WF_CMAP_YIELD and WF_CMAP_EXHAUSTED"
@@ -57,6 +62,16 @@
 #ifndef WF_CMAP_CURRENT_USER
 #define WF_CMAP_CURRENT_USER(map) ((wf_cmap_user *)NULL)
 #endif
+/* The reason of the refusal of a write selection under a read-only hold. */
+#define WF_CMAP_WRITE_UNDER_READ "write selection under a read-only whole hold"
+#ifndef WF_CMAP_REFUSED
+#define WF_CMAP_REFUSED(reason) wf_cmap_refuse(reason)
+static _Noreturn void wf_cmap_refuse(const char *reason) {
+    (void)fprintf(stderr, "whitefoot runtime: %s\n", reason);
+    (void)fflush(stderr);
+    abort();
+}
+#endif
 /* The size the includer's pool grants a request of `bytes`, which its heap
  * reading counts [PRE-2]; the request itself when it grants exactly. */
 #ifndef WF_CMAP_GRANTED
@@ -65,6 +80,7 @@
 
 #include <stdatomic.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #if defined(_WIN32)
@@ -1763,6 +1779,9 @@ void *wf_cmap_held_entry(wf_cmap *map, const unsigned char *key, uint64_t length
 uint64_t wf_cmap_hold_keys(wf_cmap_holding *hold, const wf_key_set *set) {
     uint64_t first = hold->count;
     if (hold->whole && hold->user != NULL) {
+        /* Also for a set with no key, which selects no cell to lock. */
+        if (hold->read)
+            WF_CMAP_REFUSED(WF_CMAP_WRITE_UNDER_READ);
         const key_store *s = set->store;
         /* Reserve all positions before selecting slots: repeated keys still
          * occupy the set's own index order in the entries reference. */
@@ -2277,6 +2296,9 @@ void *wf_cmap_held_entry(wf_cmap *map, const unsigned char *key, uint64_t length
     wf_cmap_holding *hold = map->whole_hold;
     if (hold == NULL)
         abort(); /* Accepted writes always run under a whole atomic hold. */
+    /* A read-only hold's release never unlocks a cell this would lock. */
+    if (hold->read)
+        WF_CMAP_REFUSED(WF_CMAP_WRITE_UNDER_READ);
     wf_cmap_user *u = hold->user;
     uint64_t tag = tag_of(key, length);
     table *t = use_current(u);
