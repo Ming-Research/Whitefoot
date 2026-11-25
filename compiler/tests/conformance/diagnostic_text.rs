@@ -117,13 +117,13 @@ fn probe_rejection_text_and_kinds() {
         listed.len(),
         counts.len()
     );
-    report.push_str("kind | count | smallest case | rule | repair lines\n");
-    for (kind, (_, id, rule, fixes)) in &smallest {
-        report.push_str(&format!("{kind} | {} | {id} | {rule} | {fixes:?}\n", counts[kind]));
-    }
     report.push_str(&format!("text defects ({}):\n", defects.len()));
     for defect in defects.iter().take(300) {
         report.push_str(&format!("  {defect}\n"));
+    }
+    report.push_str("kind | count | smallest case | rule | repair lines\n");
+    for (kind, (_, id, rule, fixes)) in &smallest {
+        report.push_str(&format!("{kind} | {} | {id} | {rule} | {fixes:?}\n", counts[kind]));
     }
     panic!("{report}");
 }
