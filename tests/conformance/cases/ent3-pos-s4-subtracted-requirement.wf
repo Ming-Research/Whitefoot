@@ -1,0 +1,13 @@
+fn step(i: u32, b: u32) -> out: u32 pure contract {
+  requires i < 100_u32;
+  requires b < 100_u32;
+  requires i <= b - 1_u32;
+} {
+  let j = i + 1_u32;
+  let out = b - j;
+  return out;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
