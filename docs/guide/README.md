@@ -3,7 +3,7 @@
 - [Getting started](getting-started.md)
 - Language tour — to come
 - Standard library reference — to come
-- Guide to fixing rejections — to come
+- [Fixing rejections](fixing-rejections.md)
 
 ## Writing examples
 
