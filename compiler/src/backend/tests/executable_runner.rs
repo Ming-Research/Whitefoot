@@ -86,10 +86,10 @@ const RUNNER_SYMBOLS: [&str; 2] = ["@wf__main_body", "@wf__floor_run"];
 #[test]
 fn a_main_with_an_unprovable_requirement_is_a_library_the_host_toolchain_accepts() {
     let module = compile(
-        br#"fn main() -> status: std::process::ExitStatus pure contract {
-  requires 0_u64 == 1_u64;
+        br#"fn main() -> result: unit pure contract {
+  requires 1_u64 <= 0_u64;
 } {
-  return std::process::exit_status(code: 0_u8);
+  return unit;
 }
 "#,
     );
@@ -141,8 +141,9 @@ fn a_library_of_a_real_program_is_accepted_by_the_host_toolchain() {
 }
 
 /// The fragments of a split module (`--fragments`) follow the module: a
-/// library's fragments carry neither runner symbol, a program's runner symbols
-/// are defined together in one fragment, and every fragment is accepted by the
+/// library's fragments carry neither runner symbol, a program's fragments
+/// define each of them exactly once (in one fragment or in two, as the
+/// granularity groups its definitions), and every fragment is accepted by the
 /// host toolchain on its own, as each is compiled to its own object.
 #[test]
 fn the_fragments_of_a_module_follow_its_executable_runner() {
@@ -166,22 +167,22 @@ fn the_fragments_of_a_module_follow_its_executable_runner() {
             crate::FragmentGranularity::Module,
         ] {
             let fragments = crate::split_module(&whole, granularity).expect("the module splits");
-            let mut defining_both = 0;
+            let (mut bodies, mut entries) = (0, 0);
             for fragment in &fragments {
                 if let Err(refusal) = host_code_generation(fragment) {
                     panic!("{label} {granularity:?}: a fragment was refused:\n{refusal}\n{fragment}");
                 }
-                let body = fragment.contains("define i32 @wf__main_body(");
-                let floor = fragment.contains("define weak i32 @wf__floor_run(");
-                assert_eq!(body, floor, "{label} {granularity:?}: split apart\n{fragment}");
-                defining_both += usize::from(body);
+                bodies += fragment.matches("define i32 @wf__main_body(").count();
+                entries += fragment.matches("define weak i32 @wf__floor_run(").count();
                 if !has_runner {
                     for symbol in RUNNER_SYMBOLS {
                         assert!(!fragment.contains(symbol), "{label}: {symbol}\n{fragment}");
                     }
                 }
             }
-            assert_eq!(defining_both, usize::from(has_runner), "{label} {granularity:?}");
+            let expected = usize::from(has_runner);
+            assert_eq!(bodies, expected, "{label} {granularity:?}: program bodies");
+            assert_eq!(entries, expected, "{label} {granularity:?}: floor entries");
         }
     }
 }
