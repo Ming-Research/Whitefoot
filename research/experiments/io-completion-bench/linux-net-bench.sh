@@ -18,6 +18,11 @@
 #   sh linux-net-bench.sh memory   the resident memory and mapping count each
 #                                  idle connection adds to every Whitefoot line
 #                                  in $OUT (WAITS.md, Experiment 3)
+#   sh linux-net-bench.sh scale    the correctness pass, then the core-count
+#                                  sweep: each line pinned to 1, 2, 4 and 8
+#                                  server CPUs against one fixed client, and
+#                                  echo-scale-summary.sh's verdicts over the
+#                                  samples (research/investigations/echo-scaling)
 #
 # The bar this measures against is the one
 # research/investigations/io-model/NETWORK.md section 6 sets: the reference is
@@ -215,7 +220,7 @@ ratio_of() {
 
 # --- the build ------------------------------------------------------------
 
-if [ "$MODE" = bench ]; then
+if [ "$MODE" = bench ] || [ "$MODE" = scale ]; then
     cd "$ROOT/compiler"
     cargo build --profile gate --bin whitefootc --locked --offline
     WFC=${CARGO_TARGET_DIR:-$ROOT/compiler/target}/gate/whitefootc
@@ -238,6 +243,11 @@ if [ ! -x "$OUT/netload" ]; then
 fi
 
 LINES=""
+if [ "$MODE" = scale ]; then
+    # The sweep's lines: the Whitefoot server, the io_uring reference that is
+    # also the harness control, and the epoll reference.
+    NET_LINES=${NET_LINES:-uring epoll wf}
+fi
 for name in ${NET_LINES:-uring epoll wf wf1 wfbase waiting}; do
     case $name in
         uring) binary=$OUT/uring_echo ;;
@@ -308,6 +318,192 @@ echo "every server echoes what netload sent, at 4 connections"
 
 if [ "$MODE" = verify ]; then
     exit 0
+fi
+
+# --- the core-count sweep -------------------------------------------------
+#
+# Each line runs pinned to n server CPUs, n in SCALE_CORES, against one client
+# that stays on the same CPUs whatever n is, with the same CONNECTIONS and
+# ROUNDTRIPS at every n, so the only thing that changes along a line is how
+# many cores serve the load. The Whitefoot server is started with WF_DRIVERS=n
+# and WF_SCHED_REPORT=2, whose exit report names each driver it ran; the C
+# references are given --threads n, since they size themselves from the online
+# CPU count and not from the affinity. A pass records what happened and
+# decides nothing: echo-scale-summary.sh rejects a pass whose server or load
+# generator failed, whose Whitefoot server did not run n drivers, or whose
+# busiest client CPU passed SCALE_BUSY_LIMIT percent, and prints each doubling's
+# ratio and verdict. The lines run interleaved, alternate passes in reverse.
+
+if [ "$MODE" = scale ]; then
+    if [ "$(uname -s)" != Linux ]; then
+        echo "linux-net-bench: scale mode pins CPUs with taskset and reads /proc/stat, and runs on Linux only" >&2
+        exit 2
+    fi
+    . "$BUNDLE/placement.sh"
+    . "$BUNDLE/echo-scale-row.sh"
+    SCALE_CORES=${SCALE_CORES:-1 2 4 8}
+    SCALE_CONNECTIONS=${SCALE_CONNECTIONS:-1024}
+    SCALE_ROUNDTRIPS=${SCALE_ROUNDTRIPS:-2000}
+    SCALE_BYTES=${SCALE_BYTES:-64}
+    SCALE_BUSY_LIMIT=${SCALE_BUSY_LIMIT:-80}
+    SCALE_STEP=${SCALE_STEP:-1.6}
+    SCALE_MIN_PASSES=${SCALE_MIN_PASSES:-$ROUNDS}
+    SCALE_CLIENT_THREADS=${SCALE_CLIENT_THREADS:-}
+
+    # The client's CPUs, one list for every n: the efficiency cores where the
+    # host lists them, else the CPUs the largest n leaves over.
+    most=1
+    for n in $SCALE_CORES; do
+        [ "$n" -gt "$most" ] && most=$n
+    done
+    if [ -z "${CLIENT_CPU_LIST:-}" ]; then
+        if [ -r /sys/devices/cpu_atom/cpus ]; then
+            CLIENT_CPU_LIST=$(cat /sys/devices/cpu_atom/cpus)
+        else
+            PLACE_KEEP_CPU0=1
+            place "$most" 64 >/dev/null || {
+                echo "linux-net-bench: the host has no CPUs for a client beside $most server cores" >&2
+                exit 1
+            }
+            PLACE_KEEP_CPU0=
+            CLIENT_CPU_LIST=$CLIENT_CPUS
+        fi
+    fi
+    export CLIENT_CPU_LIST
+
+    # Server CPUs per n: the performance cores one to a physical core, leaving
+    # CPU 0's core to the OS while that leaves enough, and taking it only when
+    # n needs every core. A client CPU that shares a physical core with a
+    # server CPU is refused by `place`.
+    : > "$OUT/placements.txt"
+    for n in $SCALE_CORES; do
+        status=0
+        place "$n" 64 >/dev/null 2>&1 || status=$?
+        if [ "$status" != 0 ]; then
+            PLACE_KEEP_CPU0=1
+            place "$n" 64 >/dev/null || {
+                echo "linux-net-bench: no placement of $n server CPUs with client CPUs $CLIENT_CPU_LIST" >&2
+                exit 1
+            }
+            PLACE_KEEP_CPU0=
+        fi
+        threads=${SCALE_CLIENT_THREADS:-$CLIENT_THREADS}
+        printf '%s\t%s\t%s\t%s\n' "$n" "$SERVER_CPUS" "$CLIENT_CPUS" "$threads" >> "$OUT/placements.txt"
+    done
+    {
+        echo "host: kernel $(uname -srvm)"
+        echo "host: model $(awk -F': ' '/^model name/ {print $2; exit}' /proc/cpuinfo)"
+        echo "host: cpus $(nproc)"
+        for list in cpu_core cpu_atom; do
+            if [ -r "/sys/devices/$list/cpus" ]; then
+                echo "host: $list $(cat /sys/devices/$list/cpus)"
+            else
+                echo "host: $list not listed by this host"
+            fi
+        done
+        if command -v lscpu >/dev/null 2>&1; then
+            lscpu -e=CPU,CORE,SOCKET,MAXMHZ | sed 's/^/host: lscpu /'
+        fi
+        while IFS='	' read -r n servers clients threads; do
+            echo "placement: $n server CPUs $servers, client CPUs $clients, $threads client threads"
+        done < "$OUT/placements.txt"
+        echo "plan: $SCALE_CONNECTIONS connections, $SCALE_ROUNDTRIPS round trips of $SCALE_BYTES bytes each, $WARMUP warm-up and $ROUNDS recorded passes, busy limit $SCALE_BUSY_LIMIT percent, step $SCALE_STEP per doubling"
+        echo "lines: $(echo "$LINES" | awk 'NF {printf "%s ", $1}')"
+    } | tee "$OUT/scale-host.txt"
+
+    # A field of the generator's line, or a dash where it printed none.
+    cell() {
+        value=$(field "$1" "$2")
+        echo "${value:--}"
+    }
+
+    # One case: a fresh port, the server pinned to its CPUs and started for
+    # exactly the connection count, the generator pinned to the client CPUs,
+    # and a row of facts for the summary. A server that outlives a failed
+    # generator is one this function started, and stops it.
+    scale_case() {
+        name=$1
+        binary=$2
+        n=$3
+        recording=$4
+        placement=$(awk -F'\t' -v n="$n" '$1 == n' "$OUT/placements.txt")
+        servers=$(echo "$placement" | cut -f2)
+        clients=$(echo "$placement" | cut -f3)
+        threads=$(echo "$placement" | cut -f4)
+
+        port=$(free_port)
+        : > "$OUT/server.err"
+        case $name in
+            wf)
+                env WF_DRIVERS="$n" WF_SCHED_REPORT=2 taskset -c "$servers" "$binary" \
+                    "$port" "$SCALE_CONNECTIONS" >"$OUT/server.out" 2>"$OUT/server.err" &
+                ;;
+            *)
+                taskset -c "$servers" "$binary" "$port" "$SCALE_CONNECTIONS" --threads "$n" \
+                    >"$OUT/server.out" 2>"$OUT/server.err" &
+                ;;
+        esac
+        server=$!
+        wait_for_listener "$port" "$server" "$name.$n"
+
+        load_status=0
+        line=$(taskset -c "$clients" "$OUT/netload" "$port" "$SCALE_CONNECTIONS" \
+            "$SCALE_ROUNDTRIPS" "$SCALE_BYTES" --threads "$threads") || load_status=$?
+        if [ "$load_status" != 0 ]; then
+            kill "$server" 2>/dev/null || true
+        fi
+        server_status=0
+        wait "$server" || server_status=$?
+
+        drivers=-
+        if [ "$name" = wf ]; then
+            drivers=$(grep -c '^driver: index=' "$OUT/server.err" || true)
+        fi
+        if [ "$recording" = 1 ]; then
+            scale_row \
+                "$name" "$n" "$pass" \
+                "$(cell "$line" rt_per_s)" "$(cell "$line" p50_us)" "$(cell "$line" p99_us)" \
+                "$(cell "$line" connect_us)" "$(cell "$line" client_busy_max_pct)" \
+                "$drivers" "$server_status" "$load_status" "$servers" >> "$OUT/raw.tsv"
+        fi
+    }
+
+    : > "$OUT/plan.txt"
+    for n in $SCALE_CORES; do
+        echo "$LINES" | while read -r name binary; do
+            [ -n "$name" ] || continue
+            printf '%s\t%s\t%s\n' "$name" "$binary" "$n" >> "$OUT/plan.txt"
+        done
+    done
+    sed '1!G;h;$!d' "$OUT/plan.txt" > "$OUT/plan-reversed.txt"
+
+    : > "$OUT/raw.tsv"
+    passes=$((WARMUP + ROUNDS))
+    pass=0
+    while [ "$pass" -lt "$passes" ]; do
+        recording=0
+        order="$OUT/plan.txt"
+        if [ "$pass" -ge "$WARMUP" ]; then
+            recording=1
+        fi
+        if [ $((pass % 2)) = 1 ]; then
+            order="$OUT/plan-reversed.txt"
+        fi
+        echo "pass $((pass + 1)) of $passes (recording $recording, $(basename "$order"))" >&2
+        while IFS='	' read -r name binary n; do
+            [ -n "$name" ] || continue
+            scale_case "$name" "$binary" "$n" "$recording"
+        done < "$order"
+        pass=$((pass + 1))
+    done
+
+    echo
+    echo "raw samples: $OUT/raw.tsv"
+    summary=0
+    WF_SCALE_STEP=$SCALE_STEP WF_SCALE_BUSY_LIMIT=$SCALE_BUSY_LIMIT \
+        WF_SCALE_MIN_PASSES=$SCALE_MIN_PASSES \
+        sh "$BUNDLE/echo-scale-summary.sh" "$OUT/raw.tsv" || summary=$?
+    exit "$summary"
 fi
 
 # --- the timed passes -----------------------------------------------------
