@@ -1,0 +1,216 @@
+# Two sources of the wasm interpreter v2h against each other, built by one
+# compiler, on a hosted runner or the owner's i9-14900K: the base commit's
+# generator and templates (research/experiments/match-dispatch/wasm) and the
+# candidate's, both compiled by the candidate's compiler, so that what differs
+# is the interpreter's source and nothing else. Mode `time` runs CoreMark on
+# the base, a twin of the base (a byte copy of its image) and the candidate in
+# interleaved rounds pinned to one CPU and prints the ratios, the twin's noise,
+# the 95% intervals and the wall time's residual over user+sys CPU time. Mode
+# `sample` runs CoreMark under `perf record -e cpu-clock` once per source and
+# prints each instruction handler's share of the samples. `compiler-compare`
+# answers the other question, one program under two compilers. The README
+# beside research/experiments/interpreter-compare gives the stages, the
+# decision rule and the controls; the stages are research/experiments/
+# interpreter-compare/run.sh, which a temporary workflow on a work branch can
+# run too.
+#
+# NOISE FLOOR. None is recorded yet: the first run on the 14900K measures it
+# (the `floor` line of its summary), and research/experiments/
+# interpreter-compare/RESULTS.md records the value with its run. A floor from
+# another workflow or setting does not carry over; it holds for one launcher,
+# one image kind, one CPU and one iteration count.
+#
+# research-boundary: manual-only
+# Explicitly requested comparison; no push or pull-request trigger. GitHub
+# dispatches only a workflow present on the default branch, which is why this
+# file lives on main; the instrument (this checkout) is the dispatch ref's, and
+# the interpreter sources and the compiler come from the candidate and base
+# commits.
+#
+# FAILURE POLICY. The job fails when an input is malformed, when the compiler
+# or an image does not build, when a commit lacks the interpreter generator,
+# when a self-test fails, when a process fails or its CoreMark CRCs are wrong
+# (the final CRC is checked against its known value at 2000 and 20000
+# iterations, and at another count must equal across launches), when the
+# workload's residual is above a given `residual_limit`, when a floor is
+# given that is malformed, and in `sample` mode when perf cannot sample. No
+# verdict of an ordinary run fails it. `timeout-minutes` bounds a stuck
+# runner.
+#
+# The summary a decision relies on is copied by hand into the consuming
+# item's research record with its run id, because artifacts expire.
+name: interpreter-compare
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate:
+        description: Candidate commit or branch; its compiler builds both sources, and its interpreter source is the one measured
+        type: string
+        required: true
+      base:
+        description: Base commit or branch, whose interpreter source is the reference; empty means the candidate's merge base with main
+        type: string
+        default: ""
+      runner:
+        description: Where it runs, the owner's i9-14900K runner or GitHub
+        type: choice
+        options: [14900k, github]
+        default: 14900k
+      cpu:
+        description: The CPU every timed process is pinned to; empty means 2 on the 14900K and 1 on GitHub
+        type: string
+        default: ""
+      mode:
+        description: time (interleaved timing against a twin of the base) or sample (per-instruction CPU sample shares)
+        type: choice
+        options: [time, sample]
+        default: time
+      iterations:
+        description: CoreMark iterations; 2000 and 20000 have a known final CRC, any other count only checks that the launches agree
+        type: string
+        default: "2000"
+      rounds:
+        description: Timed rounds (mode time); fewer than 6 is a trial that judges nothing, 6 or more judge
+        type: string
+        default: "10"
+      floor:
+        description: The noise floor, coremark=spread as an earlier run's summary printed it; empty means this run only measures the floor
+        type: string
+        default: ""
+      residual_limit:
+        description: Seconds; a workload whose median wall time minus user+sys CPU time is above it is invalid data. Empty means the residual is printed and not checked
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+# A 14900K run waits for the one before it.
+concurrency:
+  group: interpreter-compare-${{ inputs.runner }}${{ inputs.runner == 'github' && format('-{0}', github.run_id) || '' }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  compare:
+    name: compare (${{ inputs.runner }}, ${{ inputs.mode }})
+    runs-on: ${{ inputs.runner == '14900k' && fromJSON('["self-hosted", "14900k"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 240
+    env:
+      CANDIDATE: ${{ inputs.candidate }}
+      BASE: ${{ inputs.base }}
+      RUNNER_KIND: ${{ inputs.runner }}
+      CPU: ${{ inputs.cpu }}
+      MODE: ${{ inputs.mode }}
+      ITERATIONS: ${{ inputs.iterations }}
+      ROUNDS: ${{ inputs.rounds }}
+      FLOOR: ${{ inputs.floor }}
+      RESIDUAL_LIMIT: ${{ inputs.residual_limit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # A malformed input would end in a late failure or in a run that
+      # measures something else: stop before any build.
+      - name: Check the inputs
+        env:
+          OUT: ${{ runner.temp }}/out
+        run: bash research/experiments/interpreter-compare/run.sh inputs
+
+      # The hosted image's clang predates the calling convention the
+      # compiler emits; take the pinned LLVM major as the gate does. The
+      # 14900K carries the latest stable release at /usr/bin/clang.
+      - name: Install the host toolchain (GitHub)
+        if: inputs.runner == 'github'
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+
+      # A hosted runner has no perf for its kernel and keeps profiling closed.
+      - name: Install perf (GitHub, sample)
+        if: inputs.runner == 'github' && inputs.mode == 'sample'
+        env:
+          OUT: ${{ runner.temp }}/out
+        run: bash research/experiments/interpreter-compare/run.sh perf-setup
+
+      # Stop what a cancelled run left behind and remove a stale host lock,
+      # as the other 14900K timing workflows do, before looking at the load.
+      - name: Stop leftovers of a cancelled run (14900K)
+        if: inputs.runner == '14900k'
+        run: |
+          set -uo pipefail
+          pids=$(pgrep -f 'interpreter-compare/(handler_samples|run)|compiler-compare/interp\.py' || true)
+          echo "leftover processes: ${pids:-none}"
+          # shellcheck disable=SC2086
+          if [ -n "$pids" ]; then kill $pids 2>/dev/null || true; fi
+          sleep 2
+          lock=/tmp/whitefoot-check-$(id -u).lock
+          if [ -e "$lock" ]; then
+            owner=$(head -1 "$lock/pid" 2>/dev/null)
+            if [ -z "$owner" ] || ! kill -0 "$owner" 2>/dev/null; then
+              echo "removing stale lock of $owner"
+              rm -rf "$lock"
+            fi
+          fi
+
+      - name: Check the host's tools
+        run: |
+          echo "OUT=$RUNNER_TEMP/out" >> "$GITHUB_ENV"
+          OUT="$RUNNER_TEMP/out" bash research/experiments/interpreter-compare/run.sh tools
+
+      - name: Self-test
+        run: OUT="$RUNNER_TEMP/out" bash research/experiments/interpreter-compare/run.sh selftest
+
+      - name: Build the compiler and both interpreters
+        id: build
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "3600"
+        run: perl .github/run-check.pl interpreter-compare/build bash research/experiments/interpreter-compare/run.sh build
+
+      - name: Time the base, its twin and the candidate
+        id: time
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.mode == 'time' }}
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "14400"
+        run: perl .github/run-check.pl interpreter-compare/time bash research/experiments/interpreter-compare/run.sh time
+
+      - name: Sample the instructions' CPU time
+        id: sample
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && inputs.mode == 'sample' }}
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "3600"
+        run: perl .github/run-check.pl interpreter-compare/sample bash research/experiments/interpreter-compare/run.sh sample
+
+      - name: Publish
+        if: ${{ !cancelled() }}
+        run: bash research/experiments/interpreter-compare/run.sh summary
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: interpreter-compare-${{ inputs.runner }}-${{ inputs.mode }}-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/out/manifest.txt
+            ${{ runner.temp }}/out/time.tsv
+            ${{ runner.temp }}/out/summary.txt
+            ${{ runner.temp }}/out/sample-summary.txt
+            ${{ runner.temp }}/out/handler-shares.tsv
+            ${{ runner.temp }}/out/*-stdout.txt
+            ${{ runner.temp }}/out/*-nm.txt
+            ${{ runner.temp }}/out/*-script.txt
+            ${{ runner.temp }}/out/*.perf.data
+            ${{ runner.temp }}/out/inputs/v2h-*.wf

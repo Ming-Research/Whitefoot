@@ -1,0 +1,114 @@
+# Temporary: runs the interpreter-compare stages and the compiler-compare launch
+# self-test on a hosted runner for this work's branch, with fixed inputs, before
+# the manual workflows can be dispatched from main. Remove this file before the
+# full check (the gate's `No temporary workflow` job fails while it exists).
+name: tmp-interpreter-compare
+
+on:
+  push:
+    branches: [work-236-26e0fade]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  hosted:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      CANDIDATE: ${{ github.ref_name }}
+      BASE: ""
+      RUNNER_KIND: github
+      CPU: ""
+      ITERATIONS: "20"
+      ROUNDS: "2"
+      FLOOR: ""
+      RESIDUAL_LIMIT: ""
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          echo "OUT=$RUNNER_TEMP/out" >> "$GITHUB_ENV"
+
+      - name: Check the inputs, then the hosted self-tests
+        env:
+          MODE: time
+        run: |
+          perl .github/run-check.pl tmp-interpreter-compare/inputs bash research/experiments/interpreter-compare/run.sh inputs
+          perl .github/run-check.pl tmp-interpreter-compare/selftest bash research/experiments/interpreter-compare/run.sh selftest
+          # The wall clock probe's own stage, on this host, a few runs.
+          WALLCLOCK_RUNS=3 RUNNER_KIND=github bash research/experiments/compiler-compare/run.sh wallclock
+
+      # The self-test must fail when the launch goes through `timeout` again:
+      # the same file with the old launch command line restored.
+      - name: The launch self-test is red with the old launch
+        run: |
+          python3 - <<'PY'
+          path = "research/experiments/compiler-compare/interp.py"
+          text = open(path).read()
+          old = '["taskset", "-c", str(cpu)] + list(wrapper) + argv'
+          new = ('["taskset", "-c", str(cpu), "timeout", "--foreground", "--signal=TERM", '
+                 '"--kill-after=10s", "600s"] + list(wrapper) + argv')
+          assert text.count(old) == 1
+          open("research/experiments/compiler-compare/interp_red.py", "w").write(text.replace(old, new))
+          PY
+          if python3 -B research/experiments/compiler-compare/interp_red.py self-test; then
+            echo "the self-test passed with the old launch: it does not detect the timeout helper"
+            exit 1
+          fi
+          echo "the self-test fails with the old launch, as it must"
+          rm research/experiments/compiler-compare/interp_red.py
+
+      - name: Build the compiler and both interpreters
+        run: |
+          MODE=time perl .github/run-check.pl tmp-interpreter-compare/build bash research/experiments/interpreter-compare/run.sh build
+
+      - name: Time, trial of two rounds
+        env:
+          MODE: time
+        run: |
+          perl .github/run-check.pl tmp-interpreter-compare/time bash research/experiments/interpreter-compare/run.sh time
+          bash research/experiments/interpreter-compare/run.sh summary
+
+      - name: Install perf
+        env:
+          MODE: sample
+        run: bash research/experiments/interpreter-compare/run.sh perf-setup
+
+      - name: Sample the instructions' CPU time
+        env:
+          MODE: sample
+        run: |
+          bash research/experiments/interpreter-compare/run.sh tools
+          perl .github/run-check.pl tmp-interpreter-compare/sample bash research/experiments/interpreter-compare/run.sh sample
+          bash research/experiments/interpreter-compare/run.sh summary
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tmp-interpreter-compare-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/out/manifest.txt
+            ${{ runner.temp }}/out/time.tsv
+            ${{ runner.temp }}/out/summary.txt
+            ${{ runner.temp }}/out/sample-summary.txt
+            ${{ runner.temp }}/out/handler-shares.tsv
+            ${{ runner.temp }}/out/*-stdout.txt
