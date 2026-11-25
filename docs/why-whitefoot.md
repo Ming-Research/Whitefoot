@@ -7,7 +7,7 @@ language ideas with measurements from the retired democ compiler and proposed
 mechanisms. Its historical performance, architecture, and status claims are
 not a description of the current compiler or a promise of global optimality.
 
-For current objectives and tradeoffs, read the [constitution](constitution.md).
+For current objectives and tradeoffs, read the [constitution](../design/constitution.md).
 The conformance report owns implementation status and the
 [active specification](../spec/kernel-spec.md) owns language semantics.
 [Research ideas](ideas.md) collect open questions and links to their evidence.
