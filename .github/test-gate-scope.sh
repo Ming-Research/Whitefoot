@@ -125,10 +125,11 @@ refuses() {
 }
 
 dispatch='{}'
-# pr_event ACTION DRAFT [HEAD-REPOSITORY]: a pull request whose head is head_a.
+# pr_event ACTION DRAFT [HEAD-REPOSITORY] [HEAD-BRANCH]: a pull request whose
+# head is head_a.
 pr_event() {
-    printf '{"action":"%s","pull_request":{"number":5,"draft":%s,"head":{"sha":"%s","ref":"claude/topic","repo":{"full_name":"%s"}}}}' \
-        "$1" "$2" "$head_a" "${3:-org/repo}"
+    printf '{"action":"%s","pull_request":{"number":5,"draft":%s,"head":{"sha":"%s","ref":"%s","repo":{"full_name":"%s"}}}}' \
+        "$1" "$2" "$head_a" "${4:-claude/topic}" "${3:-org/repo}"
 }
 opened_draft=$(pr_event opened true)
 opened_ready=$(pr_event opened false)
@@ -232,6 +233,21 @@ grep -qxF -- "head=org:$odd" "$FAKE_GH_ARGV" || fail 'branch name with separator
 if grep -q 'pulls?' "$FAKE_GH_ARGV"; then
     fail 'branch name with separators: the query was written into the URL'
 fi
+
+# A branch of a work of the wf-agents engine skips without a query, pushed to
+# or with its pull request opened, reopened or marked ready, whatever its pull
+# requests are; a fork's branch of that name is decided as any other.
+engine=work-12-0a1b2c3d
+decides 'push to an engine work' push "refs/heads/$engine" '{}' "[$early_ready]" refuse
+expect 'push to an engine work' false "push to $engine, a work of the wf-agents engine"
+for action in opened reopened ready_for_review; do
+    decides "engine work $action" pull_request refs/pull/5/merge "$(pr_event "$action" false org/repo "$engine")" '[]' refuse
+    expect "engine work $action" false "pull request 5 from $engine, a work of the wf-agents engine"
+done
+decides 'engine-named branch of a fork' pull_request refs/pull/5/merge "$(pr_event opened false fork/repo "$engine")" '[]' refuse
+expect 'engine-named branch of a fork' true 'opened, ready'
+decides 'branch named work/ is no engine work' push refs/heads/work/topic '{}' "[$early_ready]"
+expect 'branch named work/ is no engine work' true 'ready pull request 12'
 
 refuses 'failed query' push refs/heads/claude/topic '{}' "[$early_ready]" refuse
 run_time=null

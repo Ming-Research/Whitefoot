@@ -105,7 +105,8 @@ structure State where
   goals : List (Bool × GExpr) := []
   /-- Each live integer binding's current image [ENT-6]. -/
   images : List (Nat × Form) := []
-  /-- The immutable images of call datums [ENT-3.S13]. -/
+  /-- The immutable images of call datums [ENT-3.S13] and returned values
+  [FN-9]. -/
   data : List (Term × Form) := []
   /-- The automatic affine premises, in establishment order [ENT-6]. -/
   premises : List Ineq := []
@@ -321,17 +322,17 @@ structure Query where
   /-- A multiplication of two nonconstant operands, for the interval product. -/
   product : Option (Val × Val × IntTy) := none
 
--- spec ENT-6 b0c893b1333c8c67
+-- spec ENT-6 9a642fe1c072d49d
 -- spec ENT-6 4cf43ddaabc5ce74
 /-- The candidates of the closed L0-to-affine index [ENT-6]: Z, each call
-datum with its captured image, each sum term with its operands' images, and
-each live integer binding with its current image. -/
+datum or returned value with its captured image, each sum term with its
+operands' images, and each live integer binding with its current image. -/
 def candidates (env : Env) (st : State) : List (Term × Form) :=
   let sums := (st.l0.terms.filter fun t => match t with | .sum _ _ => true | _ => false)
   let imageOf (t : Term) : Option Form :=
     match t with
     | .place id _ => st.image? id
-    | .datum _ _ => (st.data.find? (·.1 == t)).map (·.2)
+    | .datum _ _ | .commit _ _ => (st.data.find? (·.1 == t)).map (·.2)
     | _ => none
   let sumImages : List (Term × Form) := sums.filterMap fun t => match t with
     | .sum a b => do return (t, (← imageOf a).add (← imageOf b))
@@ -520,21 +521,23 @@ def ineqs (op : CmpOp) (a b : Form) : List Ineq :=
   | .eq => [Ineq.le a b, Ineq.le b a]
   | .ne => []
 
-/-- The right-hand L0 term of each component of a relation, for the bridge:
-the side a component bounds from above. -/
+/-- The affine components of a relation with the right-hand L0 term of each,
+for the bridge: the side a component bounds from above. A disequality has no
+affine component [ENT-6]: `DIRECT` and `AUTO` decide inequalities only, so it
+is proved by its L0 facts alone. -/
 def bridges (op : CmpOp) (a b : Form) (ta tb : Option (Term × Int)) :
-    List (Ineq × Option (Form × Term)) :=
+    Option (List (Ineq × Option (Form × Term))) :=
   let up (lhs : Form) (rhs : Option (Term × Int)) : Option (Form × Term) :=
     match rhs with
     | some (t, k) => if t == .z then none else some (lhs.sub (Form.const k), t)
     | none => none
   match op with
-  | .le => [(Ineq.le a b, up a tb)]
-  | .lt => [(Ineq.le (a.add (Form.const 1)) b, up (a.add (Form.const 1)) tb)]
-  | .ge => [(Ineq.le b a, up b ta)]
-  | .gt => [(Ineq.le (b.add (Form.const 1)) a, up (b.add (Form.const 1)) ta)]
-  | .eq => [(Ineq.le a b, up a tb), (Ineq.le b a, up b ta)]
-  | .ne => []
+  | .le => some [(Ineq.le a b, up a tb)]
+  | .lt => some [(Ineq.le (a.add (Form.const 1)) b, up (a.add (Form.const 1)) tb)]
+  | .ge => some [(Ineq.le b a, up b ta)]
+  | .gt => some [(Ineq.le (b.add (Form.const 1)) a, up (b.add (Form.const 1)) ta)]
+  | .eq => some [(Ineq.le a b, up a tb), (Ineq.le b a, up b ta)]
+  | .ne => none
 
 -- spec ENT-3.S16 7a32ea60acd3b2d3
 /-- A relation's L0 facts when its normalized source-term form `lhs - rhs`
@@ -571,7 +574,7 @@ def relQuery (goal : Option GExpr) (r : Relation) (looks : String → Option (Te
     let affine : Option (List (Ineq × Option (Form × Term))) := do
       let fa ← linImage looki la
       let fb ← linImage looki lb
-      return bridges r.op fa fb ta tb
+      bridges r.op fa fb ta tb
     { goal, l0, affine }
   | _, _ => { goal }
 
@@ -1092,7 +1095,7 @@ def evalAtom (env : Env) (st : State) : Atom → M Val
 -- spec ENT-2 0e27fe800260cf2b
 -- spec ENT-2 e11cbbcd85c47967
 -- spec ENT-2 d5556f18a6f48ee5
--- spec ENT-3.S7 f67ebb7f05318e7a
+-- spec ENT-3.S7 af0f36d4c6e5d834
 -- spec ENT-3.S7 40e26c2878b16470
 -- spec ENT-6 d1378741f39efa4a
 -- spec ENT-6 cd9fd0a5557996ea

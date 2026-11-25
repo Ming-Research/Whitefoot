@@ -755,6 +755,7 @@ impl Vocabulary {
                 | TermKind::IndexCapture { .. }
                 | TermKind::ResultPayload { .. }
                 | TermKind::CommitValue { .. }
+                | TermKind::ReturnedValue { .. }
                 | TermKind::CallDatum { .. }
         )
     }
@@ -1506,7 +1507,11 @@ impl Reasoning<'_, '_, '_> {
                 && measure.is_none())
             .then(|| self.postcondition_constant_term(value))
             .flatten(),
-            PostconditionReturnDatum::Measure(..) => None,
+            // An evaluated value is one fragment integer, below which no
+            // projection reaches; the return supplies it whole [FN-9].
+            PostconditionReturnDatum::Measure(..) | PostconditionReturnDatum::Evaluated { .. } => {
+                None
+            }
         }
     }
 
@@ -1525,6 +1530,9 @@ impl Reasoning<'_, '_, '_> {
             PostconditionReturnDatum::Literal { value, .. } => {
                 self.postcondition_constant_term(value)
             }
+            // Its term is named by its return statement, which the selected
+            // return supplies [FN-9].
+            PostconditionReturnDatum::Evaluated { .. } => None,
             PostconditionReturnDatum::Measure(measure, place) => {
                 let root = self.input.postcondition_return_place_root(place.root)?;
                 self.postcondition_measure_term(
@@ -1666,6 +1674,7 @@ impl Reasoning<'_, '_, '_> {
             | TermKind::IndexCapture { .. }
             | TermKind::ResultPayload { .. }
             | TermKind::CommitValue { .. }
+            | TermKind::ReturnedValue { .. }
             | TermKind::CallDatum { .. }
             | TermKind::EntryDatum { .. }
             | TermKind::MeasureDatum { .. } => {}
@@ -2735,13 +2744,17 @@ impl Judging<'_, '_, '_> {
             let conditional_facts =
                 selected_return_facts(&selected, states, forwarded, &self.vocabulary.derivations);
             // [CALL-4] one term per declared result ordinal, in written order.
+            // [FN-9] a computed expression supplies this return's evaluated
+            // value, on which the walk established its let image.
             let results = selected
                 .values
                 .iter()
-                .map(|value| {
-                    value
-                        .as_ref()
-                        .and_then(|value| self.reasoning().postcondition_return_term(value))
+                .map(|value| match value.as_ref()? {
+                    PostconditionReturnDatum::Evaluated { ordinal, ty } => Some(
+                        self.vocabulary
+                            .returned_value_term(statement, *ordinal, *ty),
+                    ),
+                    value => self.reasoning().postcondition_return_term(value),
                 })
                 .collect::<Vec<_>>();
             // [CALL-4] an ordinal whose destination is no [ENT-2] place

@@ -1,0 +1,11 @@
+fn first() -> result: u8 pure contract {
+  ensures result <= 255_u8;
+} {
+  doc "A subscripted element read is no computed integer expression: it evaluates to no term, so even a clause the result type's own bounds satisfy rejects at this return.";
+  let table = array_filled::<u8, 4>(value: 7_u8);
+  return table[0_u64];
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -1,0 +1,16 @@
+fn same(value: u64) -> result: u64 pure contract {
+  ensures result == value;
+} {
+  return value;
+}
+
+fn relay(value: u64) -> result: u64 pure contract {
+  ensures result == value;
+} {
+  doc "A call is no computed integer expression: a returned call result evaluates to no term, so the clause naming the result rejects at this return.";
+  return same(value: value);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

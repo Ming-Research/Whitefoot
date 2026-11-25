@@ -3513,21 +3513,19 @@ impl<'unit> TypeContext<'unit> {
             .tree
             .first_child_with(node, Production::Cvalue)?
             .ok_or(SemanticCompilerFailure::InvalidCanonicalTree)?;
-        if self.declarations.tree.direct_token_indices(value)?.len() == 1
-            && self
-                .declarations
-                .tree
-                .direct_token_with(value, crate::TerminalPredicate::Identifier)?
-                .is_some()
-            && !self
-                .declarations
-                .resolved
-                .lexical_uses_at(value)
-                .any(|usage| usage.role() == crate::LexicalUseRole::ConstValue)
-        {
-            return Ok(false);
-        }
-        Ok(true)
+        Ok(
+            !(self.declarations.tree.direct_token_indices(value)?.len() == 1
+                && self
+                    .declarations
+                    .tree
+                    .direct_token_with(value, crate::TerminalPredicate::Identifier)?
+                    .is_some()
+                && !self
+                    .declarations
+                    .resolved
+                    .lexical_uses_at(value)
+                    .any(|usage| usage.role() == crate::LexicalUseRole::ConstValue)),
+        )
     }
     /// [FN-2, MOD-8] names the call that requested `function` on a rejection
     /// raised while checking it, when `function` is a requested concrete

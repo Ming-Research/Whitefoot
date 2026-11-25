@@ -348,6 +348,14 @@ pub(crate) enum PostconditionReturnDatum {
     Construct {
         fields: Vec<Option<PostconditionReturnDatum>>,
     },
+    /// A returned fragment-integer expression that [ENT-3] relates to its
+    /// operands as the initializer of an ordinary `let` [FN-9]: the return's
+    /// evaluated value for this result ordinal, one compiler-owned term on
+    /// which the return establishes that expression's let image [ENT-2].
+    Evaluated {
+        ordinal: u32,
+        ty: super::model::IntegerType,
+    },
 }
 
 /// Complete checked place identity for a selected result term or `len_of(P)`.

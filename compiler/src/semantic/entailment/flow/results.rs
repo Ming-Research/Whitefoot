@@ -212,6 +212,20 @@ impl Input<'_, '_> {
         self.payload_routes(ty).iter().any(|route| route.eager)
     }
 
+    /// [FN-9] whether some clause selecting this return reads one result
+    /// ordinal through the return's evaluated value.
+    pub(super) fn evaluated_return(&self, statement: &crate::NodePath, ordinal: u32) -> bool {
+        self.function.postconditions.iter().any(|postcondition| {
+            postcondition.selected_returns.iter().any(|selected| {
+                selected.statement == *statement
+                    && matches!(
+                        selected.values.get(ordinal as usize),
+                        Some(Some(PostconditionReturnDatum::Evaluated { .. }))
+                    )
+            })
+        })
+    }
+
     pub(super) fn needs_return_result(&self, ty: CheckedType) -> bool {
         self.eager_result(ty)
             || self
@@ -1122,7 +1136,7 @@ impl Reasoning<'_, '_, '_> {
         let mut held = std::mem::take(&mut state.results);
         held.retain(|binding, _| {
             let place = bound_place(*binding);
-            if events.iter().any(|event| match event {
+            !events.iter().any(|event| match event {
                 KillEvent::Rebind {
                     binding: source, ..
                 }
@@ -1144,10 +1158,7 @@ impl Reasoning<'_, '_, '_> {
                 } => self
                     .input
                     .write_kills_support(separations, &place, written, *relocation),
-            }) {
-                return false;
-            }
-            true
+            })
         });
         if held
             .values()

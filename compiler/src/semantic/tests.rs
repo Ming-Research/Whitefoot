@@ -75,6 +75,7 @@ mod recursive_postconditions;
 mod references;
 mod reinterpret;
 mod requires;
+mod returned_values;
 mod source_proofs;
 mod struct_equality;
 mod value_equality;

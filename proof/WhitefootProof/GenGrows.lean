@@ -334,6 +334,14 @@ theorem checkReturn_onlyGrows {env : Env} {st : State} {ret : Val} :
 macro_rules
   | `(tactic| grows_lemma) => `(tactic| exact checkReturn_onlyGrows)
 
+theorem returnedValue_onlyGrows {env : Env} {st : State} {e : Expr} {r : Rhs} :
+    OnlyGrows (returnedValue env st e r) := by
+  unfold returnedValue
+  grows
+
+macro_rules
+  | `(tactic| grows_lemma) => `(tactic| exact returnedValue_onlyGrows)
+
 theorem loopHead_onlyGrows {env : Env} {st : State} {killed : List String}
     {invs : List (String × Relation)} : OnlyGrows (loopHead env st killed invs) := by
   unfold loopHead

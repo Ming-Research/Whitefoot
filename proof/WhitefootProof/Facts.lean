@@ -16,12 +16,12 @@ namespace Whitefoot
 namespace Fact
 
 -- spec ENT-2 6d7c00a90d650dc8
--- spec ENT-2 7e200513270293b8
+-- spec ENT-2 2ee0c58e4df361d7
 -- spec ENT-2 b9d2de7c65d7a579
 -- spec ENT-2 19149e7a56339ac4
 -- spec ENT-2 49ee19c7462f77c7
 -- spec ENT-2 16ba176d2f3cf6d5
--- spec ENT-2 a7c70533c83dddd0
+-- spec ENT-2 cd7976ae15f2eac4
 -- spec ENT-2 9a47aa6d2ff78baa
 /-- A term [ENT-2] of the fragment. Each carries the fragment type that gives it
 its implicit bounds, except Z and a sum, which have none. -/
@@ -31,7 +31,9 @@ inductive Term where
   /-- A tracked place (a): one integer binding, by its declaration event, so a
   later binding reusing an expired spelling is another term. -/
   | place (id : Nat) (t : IntTy)
-  /-- The commit value (f) of one `set` occurrence. -/
+  /-- The commit value (f) of one `set` occurrence, or the returned value (f)
+  of one return's computed integer expression [FN-9]: each is one fresh
+  compiler-owned identity the walk mints, which no event kills. -/
   | commit (id : Nat) (t : IntTy)
   /-- A call datum [ENT-3.S13]: one operand's pre-transfer value. -/
   | datum (id : Nat) (t : IntTy)

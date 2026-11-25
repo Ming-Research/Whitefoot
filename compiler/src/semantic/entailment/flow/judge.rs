@@ -371,6 +371,10 @@ impl Judging<'_, '_, '_> {
                         }
                     })
                 }
+                CheckedCallSeparationPositions::PageWithinLength(extent) => separation
+                    .window
+                    .as_ref()
+                    .and_then(|window| self.reasoning().page_bound_proof(window, extent, state)),
             };
             proof.map(|proof| (positions, proof))
         });
@@ -390,7 +394,8 @@ impl Judging<'_, '_, '_> {
                 // A bound by the window's length holds at this call's entry
                 // alone and is never carried along the edge [WIN-2].
                 CheckedCallSeparationPositions::Live(_)
-                | CheckedCallSeparationPositions::RangeWithinLength(_) => {}
+                | CheckedCallSeparationPositions::RangeWithinLength(_)
+                | CheckedCallSeparationPositions::PageWithinLength(_) => {}
             }
         }
         let derivation = proof.and_then(|proof| proof.derivation);
@@ -444,6 +449,11 @@ impl Judging<'_, '_, '_> {
                         "{} requires its captured end at or below {}.len after the call",
                         separation.left_spelling, separation.right_spelling
                     ),
+                Some(CheckedCallSeparationPositions::PageWithinLength(_))
+                    if separation.occasion == CheckedSeparationOccasion::WindowBound => format!(
+                        "{} requires the length its formation read at or below {}.len after the call",
+                        separation.left_spelling, separation.right_spelling
+                    ),
                 Some(CheckedCallSeparationPositions::Indices(..)) => format!(
                     "{} and {} require their captured indices to be distinct",
                     separation.left_spelling, separation.right_spelling
@@ -462,6 +472,10 @@ impl Judging<'_, '_, '_> {
                 ),
                 Some(CheckedCallSeparationPositions::RangeWithinLength(..)) => format!(
                     "{} and {} select different storage (the range ends at or below the window's length, or is empty)",
+                    separation.left_spelling, separation.right_spelling
+                ),
+                Some(CheckedCallSeparationPositions::PageWithinLength(..)) => format!(
+                    "{} and {} select different storage (the page's extent ends at or below the window's length)",
                     separation.left_spelling, separation.right_spelling
                 ),
                 None => unreachable!("checker hands off at least one position candidate"),
@@ -763,6 +777,9 @@ impl Analyzer<'_, '_> {
                                 Positions::RangeWithinLength(range) => {
                                     vec![range.start.capture, range.end.capture]
                                 }
+                                // The formation's own length image is filed
+                                // at the formation, not read from an actual.
+                                Positions::PageWithinLength(_) => Vec::new(),
                             }
                         })
                         .collect::<HashSet<_>>();
@@ -1229,6 +1246,34 @@ impl Analyzer<'_, '_> {
                         &mut self.vocabulary.derivations,
                         event,
                     );
+                    // [OP-10, REF-4] the page's captured extent ends at or
+                    // below the length this formation read. File that
+                    // length's image under the formation, so a later call's
+                    // window-bound question reads exactly the length this
+                    // formation read, never a rereading of the live word.
+                    if let Some(extent) = index.captured.page_extent() {
+                        let length = match root {
+                            crate::semantic::CheckedSegmentSource::Storage(root) => {
+                                CheckedExpression::ContainerMeasure {
+                                    measure: CheckedMeasure::Length,
+                                    root: root.clone(),
+                                }
+                            }
+                            crate::semantic::CheckedSegmentSource::Element(place) => {
+                                CheckedExpression::RangeElementMeasure {
+                                    carrier: carrier.clone(),
+                                    measure: CheckedMeasure::Length,
+                                    place: place.clone(),
+                                }
+                            }
+                        };
+                        if let Some(image) = self
+                            .reasoning()
+                            .affine_expression_form(&length, &mut states.affine)
+                        {
+                            states.affine.indices.insert(extent.capture, image);
+                        }
+                    }
                 }
                 ExpressionJudgment {
                     prepared_call: None,

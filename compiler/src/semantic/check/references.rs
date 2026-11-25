@@ -2670,9 +2670,18 @@ impl<'unit> TypeContext<'unit> {
                         CheckedCallSeparationPositions::RangeWithinLength(*range)
                     }
                     Some(PlaceStep::Measure(_)) => continue,
-                    // Page extents and descendant covers do not supply a
-                    // captured endpoint here. Keep their prior conservative
-                    // invalidation instead of proving another bound for them.
+                    // A page's captured extent ends at or below the length its
+                    // formation read, so that length is the page's bound.
+                    Some(PlaceStep::Page(page)) => match page.page_extent() {
+                        Some(extent) => CheckedCallSeparationPositions::PageWithinLength(extent),
+                        None => {
+                            reference.invalidate(InvalidationEvent::WindowBoundaryMoved);
+                            break;
+                        }
+                    },
+                    // Descendant covers do not supply a captured endpoint
+                    // here. Keep their prior conservative invalidation
+                    // instead of proving another bound for them.
                     _ => {
                         reference.invalidate(InvalidationEvent::WindowBoundaryMoved);
                         break;
