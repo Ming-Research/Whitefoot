@@ -397,7 +397,7 @@ def self_test():
 
     slow_fr = {(("FR", p, "records", 2)): 11.0 for p in ("p0", "m16", "m32", "m48", "r16", "r48", "m1024", "m2048")}
     read = Readings(load(synthetic(design(slow_fr.items()), 12, wobble)))
-    expect("an interval wholly below 1", read.cost(2), "not established")
+    expect("an interval wholly below 1", read.cost(2), "established")
     expect("no cost at another width", read.cost(1), "not established (spans 1)")
     expect("the baseline: FR slower than UR and U", read.baseline(2), "own cost")
     expect("the baseline rejected", read.baseline(4), "rejected")

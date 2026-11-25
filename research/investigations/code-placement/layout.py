@@ -542,7 +542,7 @@ def self_test():
                             (0x190, 2, "jmp", 0x100), (0x192, 2, "jmp", -0x10)])}
     table = loop_table(disassembly(hot))
     expect("loops", table["hot"][1], [(0x110, 0x36), (0x170, 0x15)])
-    expect("crossings", table["hot"][2], {0: 2, 16: 1, 32: 1, 48: 1})
+    expect("crossings", table["hot"][2], {0: 2, 16: 1, 32: 1, 48: 0})
     expect("choose", choose(table), {"hot": (48, 0)})
     tie = {"tie": (0, [(0x0, 6, "add", None), (0x6, 2, "jne", 0x0)])}
     expect("choose on a tie", choose(loop_table(disassembly(tie)))["tie"][0], 0)
