@@ -1510,6 +1510,19 @@ and `sys` before `== END cpu:`; the wrapper without the `cygwin` host name
 (1dd59da81) fails at the grep for the Windows budget; and the wrapper without
 the up-front creation of the record fails at the new `test -e` on the record.
 
+The same workflow ran again with the test as commit af527d5ca extended it: 153
+lines that read `io-hosts.yml`, the table and `compiler/Makefile`, run the job's
+default shell and run its last step (run 45690894835 on commit b7d4fee92, which
+adds the workflow to af527d5ca). All 14 steps passed. The runner's `awk` was GNU
+Awk 5.2.1 (`/usr/bin/gawk`) and its `sh` was dash; the test passes there as it
+does under the awk and `sh` of macOS. Nine probes made the test fail at the line
+each is meant to reach, read from the shell's trace: the four above; a step of
+the job without an id (`grep -qx noid`); a default shell that does not run the
+wrapper (the `grep` for `run-check.pl "$GITHUB_ACTION"`); a step with no row in
+the table (the `cmp` of the step ids and the rows); a verdict step whose message
+is not the guard's (the `grep` on `verdict-unset.log`); and no `compiler/build`
+row (the awk that ends `exit (!found || bad)`).
+
 **The Windows job under four probes (2026-11-25).** The REST quota of the
 account was spent, so no manual run was possible; four temporary workflows,
 each started by the push of its commit at 19:37 UTC, ran a copy of the
