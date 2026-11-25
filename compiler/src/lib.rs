@@ -34,9 +34,11 @@ mod syntax;
 mod target;
 mod toolchain;
 
-pub use toolchain::clang_executable;
 #[doc(hidden)]
-pub use toolchain::{Toolchain, prepare_toolchain, resolved_toolchain};
+pub use toolchain::{
+    Toolchain, ToolchainFactsReport, prepare_toolchain, resolved_toolchain, toolchain_facts_report,
+    toolchain_probe_note,
+};
 
 /// The stack each worker of [`in_parallel`] runs on, as large as the
 /// compiler driver's own: a worker runs the same recursive checks.

@@ -6,7 +6,16 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-use super::clang_executable;
+/// The source-build default clang: where a compiler with no package beside it
+/// looks. Only this file names it; every other step takes the resolved
+/// toolchain.
+const fn clang_executable() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "clang"
+    } else {
+        "/usr/bin/clang"
+    }
+}
 
 /// Internal driver integration, not a command-line toolchain override.
 #[doc(hidden)]
@@ -16,6 +25,8 @@ pub struct Toolchain {
     linker: Option<PathBuf>,
     sdk: Option<PathBuf>,
     pub(super) packaged: bool,
+    /// The package's `toolchain-manifest.json`, above the `bin/` holding clang.
+    manifest: Option<PathBuf>,
     version: OnceLock<Result<Vec<u8>, String>>,
 }
 
@@ -49,6 +60,7 @@ impl Toolchain {
                     linker: None,
                     sdk: None,
                     packaged: false,
+                    manifest: None,
                     version: OnceLock::new(),
                 });
             }
@@ -71,6 +83,9 @@ impl Toolchain {
             linker: None,
             sdk: None,
             packaged: true,
+            manifest: directory
+                .parent()
+                .map(|root| root.join("toolchain-manifest.json")),
             version: OnceLock::new(),
         };
         configure(&mut toolchain, &directory)?;
@@ -120,39 +135,54 @@ impl Toolchain {
         command
     }
 
+    /// The package's `toolchain-manifest.json`, whose recorded clang answers a
+    /// packaged compiler may take in place of probing. `None` for a source
+    /// build, which has no package.
+    pub(super) fn manifest(&self) -> Option<&Path> {
+        self.manifest.as_deref()
+    }
+
+    /// The first line `clang --version` prints, read once per process.
+    pub(super) fn version_line(&self) -> Result<&[u8], String> {
+        self.version
+            .get_or_init(|| {
+                #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
+                let output = Command::new(&self.clang)
+                    .arg("--version")
+                    .output()
+                    .map_err(|error| {
+                        format!("cannot start {} --version: {error}", self.clang.display())
+                    })?;
+                if !output.status.success() {
+                    return Err(format!(
+                        "{} --version exited with {}: {}",
+                        self.clang.display(),
+                        output.status,
+                        String::from_utf8_lossy(&output.stderr)
+                    ));
+                }
+                let line = output
+                    .stdout
+                    .split(|byte| *byte == b'\n')
+                    .next()
+                    .unwrap_or_default();
+                if line.is_empty() {
+                    return Err(format!(
+                        "{} --version returned no version line",
+                        self.clang.display()
+                    ));
+                }
+                Ok(line.to_vec())
+            })
+            .as_ref()
+            .map(Vec::as_slice)
+            .map_err(Clone::clone)
+    }
+
     /// Native product identity includes the selected paths and clang's first
     /// version line. Length prefixes preserve native OS path bytes unambiguously.
     pub fn cache_identity(&self) -> Result<[u8; 32], String> {
-        let version = self.version.get_or_init(|| {
-            #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
-            let output = Command::new(&self.clang)
-                .arg("--version")
-                .output()
-                .map_err(|error| {
-                    format!("cannot start {} --version: {error}", self.clang.display())
-                })?;
-            if !output.status.success() {
-                return Err(format!(
-                    "{} --version exited with {}: {}",
-                    self.clang.display(),
-                    output.status,
-                    String::from_utf8_lossy(&output.stderr)
-                ));
-            }
-            let line = output
-                .stdout
-                .split(|byte| *byte == b'\n')
-                .next()
-                .unwrap_or_default();
-            if line.is_empty() {
-                return Err(format!(
-                    "{} --version returned no version line",
-                    self.clang.display()
-                ));
-            }
-            Ok(line.to_vec())
-        });
-        let version = version.as_ref().map_err(Clone::clone)?;
+        let version = self.version_line()?;
         Ok(identity(
             &self.clang,
             version,
@@ -662,6 +692,125 @@ mod tests {
         let error = Toolchain::with_prerequisites(&directory.0, |_, _| Ok(()))
             .expect_err("broken sibling must be a package error");
         assert!(error.contains("packaged clang"), "{error}");
+    }
+
+    /// A package whose clang records every call's arguments and answers
+    /// `--version`, and whose manifest is `manifest` when given. The clang
+    /// accepts every probe, so a probed answer is `preserve_nonecc` taken,
+    /// `captures(none)` and a `void` `llvm.coro.end`; `manifest_recording`
+    /// records the opposite answers, so a taken record cannot be told from a
+    /// probe only by being equal.
+    #[cfg(unix)]
+    fn recording_package(manifest: Option<&str>) -> (super::super::ProbeDirectory, PathBuf, Toolchain) {
+        let root = super::super::ProbeDirectory::new().expect("scratch directory");
+        let bin = root.0.join("bin");
+        fs::create_dir(&bin).expect("package bin directory");
+        let log = root.0.join("clang-calls.log");
+        write_executable(
+            &bin.join("clang"),
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = --version ]; then printf '%s\\n' 'clang version 22.1.8'; fi\nexit 0\n",
+                log.display()
+            ),
+        );
+        // Waiting for the script to become startable ran it once.
+        let _ = fs::remove_file(&log);
+        if let Some(text) = manifest {
+            fs::write(root.0.join("toolchain-manifest.json"), text).expect("manifest");
+        }
+        let toolchain =
+            Toolchain::with_prerequisites(&bin, |_, _| Ok(())).expect("fake package");
+        (root, log, toolchain)
+    }
+
+    #[cfg(unix)]
+    fn manifest_recording(version: &str) -> String {
+        format!(
+            "{{\"llvm_version\":\"22.1.8\",\"files\":[],\"clang_facts\":{{\"clang_version\":\"{version}\",\
+             \"preserve_none\":false,\"no_capture_attribute\":\"nocapture\",\"coro_end_result\":\"i1\",\
+             \"darwin_stack_probe_helper\":false}}}}"
+        )
+    }
+
+    #[cfg(unix)]
+    fn calls(log: &Path) -> Vec<String> {
+        fs::read_to_string(log)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[cfg(unix)]
+    const PROBES_ASKED: usize = if cfg!(target_os = "macos") { 4 } else { 3 };
+
+    #[cfg(unix)]
+    #[test]
+    fn recorded_answers_for_this_clang_are_taken_without_a_probe() {
+        use super::super::{FactsSource, resolve};
+        let (_root, log, toolchain) =
+            recording_package(Some(&manifest_recording("clang version 22.1.8")));
+        let resolved = resolve(&toolchain).expect("resolve the package's facts");
+        assert_eq!(resolved.source, FactsSource::Manifest);
+        assert_eq!(resolved.probes_run, 0);
+        assert_eq!(resolved.clang_version.as_deref(), Some("clang version 22.1.8"));
+        // The record says what this clang's probes would not, so these are the
+        // record's answers, not the probes'.
+        assert!(!resolved.facts.preserve_none);
+        assert_eq!(resolved.facts.no_capture_attribute, "nocapture");
+        assert_eq!(resolved.facts.coro_end_result, "i1");
+        assert_eq!(calls(&log), ["--version"], "only the version line is asked");
+    }
+
+    #[cfg(unix)]
+    fn assert_probed_for(
+        manifest: Option<&str>,
+        reason_names: &[&str],
+    ) {
+        use super::super::{FactsSource, resolve};
+        let (_root, log, toolchain) = recording_package(manifest);
+        let resolved = resolve(&toolchain).expect("resolve the package's facts");
+        let FactsSource::Probed { reason } = &resolved.source else {
+            panic!("the record must not be taken");
+        };
+        let reason = reason.as_deref().expect("a package says why it probed");
+        for name in reason_names {
+            assert!(reason.contains(name), "{reason:?} does not name {name:?}");
+        }
+        assert_eq!(resolved.probes_run, PROBES_ASKED);
+        assert!(resolved.facts.preserve_none, "the probes' answers");
+        assert_eq!(resolved.facts.no_capture_attribute, "captures(none)");
+        assert_eq!(resolved.facts.coro_end_result, "void");
+        let calls = calls(&log);
+        assert_eq!(calls.first().map(String::as_str), Some("--version"));
+        assert_eq!(
+            calls.iter().filter(|call| call.starts_with("-x ir")).count(),
+            PROBES_ASKED,
+            "{calls:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn another_recorded_clang_version_falls_back_to_probing_and_says_why() {
+        assert_probed_for(
+            Some(&manifest_recording("clang version 21.0.0")),
+            &["clang version 21.0.0", "clang version 22.1.8"],
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_missing_recorded_answer_falls_back_to_probing_and_names_it() {
+        let without =
+            manifest_recording("clang version 22.1.8").replace("\"preserve_none\":false,", "");
+        assert_probed_for(Some(&without), &["preserve_none"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_package_with_no_manifest_probes_and_says_so() {
+        assert_probed_for(None, &["toolchain-manifest.json"]);
     }
 
     #[test]
