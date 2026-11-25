@@ -118,9 +118,15 @@ def references(path, root, text):
     return findings
 
 
+# The wf-agents engine's declaration names the directory where its agents keep
+# what they make for research (`project.research`): a place they write to,
+# which no build, test or workflow reads as an input.
+DECLARATION = Path("wf-agents.toml")
+
+
 def selected(path):
     parts = path.parts
-    return (path.name == "Makefile" or path.suffix in SUFFIXES) and (
+    return path != DECLARATION and (path.name == "Makefile" or path.suffix in SUFFIXES) and (
         len(parts) == 1 or parts[0] in {"compiler", "tests", "lib", ".github"})
 
 
@@ -185,6 +191,11 @@ class ReferenceTests(unittest.TestCase):
         self.assertFalse(references(path, root, "on:\n  workflow_dispatch:\n" + command))
         self.assertTrue(references(path, root, "on:\n  push:\n  workflow_dispatch:\n" + command))
         self.assertTrue(references(path, root, "on: [pull_request, workflow_dispatch]\n" + command))
+
+    def test_the_engines_declaration_is_no_input(self):
+        self.assertFalse(selected(Path("wf-agents.toml")))
+        self.assertTrue(selected(Path("other.toml")))
+        self.assertTrue(selected(Path("compiler/wf-agents.toml")))
 
     def test_mixed_make_and_manual_target_call(self):
         root = Path("/tmp/reference-check-fixture")
