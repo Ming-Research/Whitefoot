@@ -82,6 +82,13 @@ static void test_heap_change(int64_t delta) {
 struct wf_cmap;
 static void finishing(struct wf_cmap *map);
 #define WF_CMAP_FINISHING(map) finishing(map)
+/* Run by a swap that holds both maps' locks, before it exchanges anything. */
+static void (*at_swap)(struct wf_cmap *a, struct wf_cmap *b);
+#define WF_CMAP_SWAPPING(a, b) \
+    do { \
+        if (at_swap != NULL) \
+            at_swap((a), (b)); \
+    } while (0)
 struct table;
 struct cell;
 static void before_claim(struct table *t, unsigned long long index);
@@ -238,6 +245,35 @@ static uint64_t mix64(uint64_t z) {
 static void fail(const char *what, unsigned long long a, unsigned long long b) {
     printf("concurrent-map-test: %s (%llu, %llu)\n", what, a, b);
     exit(1);
+}
+
+/* What a thread that has run its quota owes another thread's first act:
+ * `seen` counts the acts the other thread has made, and the thread goes on
+ * with its own statements, which are what the act is to meet, until `seen`
+ * reaches `want`. That the act comes at all is not left to the scheduler, as
+ * a host with fewer processors than threads may run the other thread only
+ * after this one has finished; but a thread that never acts must fail the
+ * test with its message, not leave it to the alarm, so the wait ends in 10 s
+ * (a scheduler's delay is milliseconds), read from the clock every 1024th
+ * call. `since` is the caller's own, zeroed. */
+typedef struct {
+    uint64_t calls;
+    struct timespec start;
+} owed_since;
+
+static int owed(_Atomic uint64_t *seen, uint64_t want, owed_since *since, const char *what) {
+    uint64_t now = atomic_load(seen);
+    if (now >= want)
+        return 0;
+    if (since->calls++ == 0)
+        clock_gettime(CLOCK_MONOTONIC, &since->start);
+    if (since->calls % 1024 == 0) {
+        struct timespec at;
+        clock_gettime(CLOCK_MONOTONIC, &at);
+        if (at.tv_sec - since->start.tv_sec >= 10)
+            fail(what, now, want);
+    }
+    return 1;
 }
 
 static uint64_t next(uint64_t *state) {
@@ -1254,7 +1290,6 @@ typedef struct {
     unsigned index;
     _Atomic uint64_t *total;
     _Atomic int *stop;
-    uint64_t holds;
 } counter_t;
 
 static uint64_t counted_key(uint64_t k, unsigned char *bytes) {
@@ -1264,12 +1299,17 @@ static uint64_t counted_key(uint64_t k, unsigned char *bytes) {
     return 12;
 }
 
+/* The holds the holder has made, which the counting threads go on until at
+ * least one has been made, so that a hold meets running statements. */
+static _Atomic uint64_t held_holds;
+
 static void *count_entries(void *arg) {
     counter_t *c = arg;
     wf_cmap_user *user = wf_cmap_user_at(c->map, c->index);
     unsigned char bytes[16];
     uint64_t state = mix64(c->index + 99);
-    for (uint64_t i = 0; i < statements; i++) {
+    owed_since since = {0};
+    for (uint64_t i = 0; i < statements || owed(&held_holds, 1, &since, "the holder never held the map"); i++) {
         uint64_t k = next(&state) % COUNTED_KEYS;
         uint64_t length = counted_key(k, bytes);
         wf_cmap_entry entry;
@@ -1305,7 +1345,7 @@ static void *hold_entries(void *arg) {
         if (sum != total || wf_cmap_count(c->map) > COUNTED_KEYS)
             fail("a hold saw a keyed statement half done (sum, total)", sum, total);
         wf_cmap_unhold(user);
-        c->holds++;
+        atomic_fetch_add(&held_holds, 1);
     }
     return NULL;
 }
@@ -1316,24 +1356,23 @@ static void entries_held(uint64_t capacity, uint64_t patient) {
     wf_cmap *map = wf_cmap_create_entries(8, 8, capacity);
     set_patience(patient, patient);
     statements = patient == 0 ? COUNTING / 4 : COUNTING;
+    atomic_store(&held_holds, 0);
     _Atomic uint64_t total = 0;
     _Atomic int stop = 0;
     pthread_t t[THREADS + 1];
     counter_t c[THREADS + 1];
     for (unsigned i = 0; i <= THREADS; i++) {
-        c[i] = (counter_t){map, i, &total, &stop, 0};
+        c[i] = (counter_t){map, i, &total, &stop};
         pthread_create(&t[i], NULL, i == THREADS ? hold_entries : count_entries, &c[i]);
     }
     for (unsigned i = 0; i < THREADS; i++)
         pthread_join(t[i], NULL);
     atomic_store(&stop, 1);
     pthread_join(t[THREADS], NULL);
-    if (c[THREADS].holds == 0)
-        fail("the holder never held the map", 0, 0);
     uint64_t sum = 0;
     for (uint64_t *slot; (slot = wf_cmap_drain(map)) != NULL;)
         sum += slot[0];
-    if (sum != THREADS * statements)
+    if (sum != atomic_load(&total))
         fail("a keyed statement's count was lost (sum, patience)", sum, patient);
     set_patience(PATIENCE, PATIENCE);
     wf_cmap_destroy(map);
@@ -1411,7 +1450,7 @@ static void entries_churn(int crowded, uint64_t patient) {
     pthread_t threads[THREADS];
     counter_t c[THREADS];
     for (unsigned i = 0; i < THREADS; i++) {
-        c[i] = (counter_t){map, i, NULL, NULL, 0};
+        c[i] = (counter_t){map, i, NULL, NULL};
         pthread_create(&threads[i], NULL, churn_entries, &c[i]);
     }
     for (unsigned i = 0; i < THREADS; i++)
@@ -1442,12 +1481,20 @@ static unsigned char read_key[16];
 static uint64_t read_length;
 static _Atomic int read_writing, read_readers, read_most, read_done;
 static _Atomic uint64_t read_writes;
+/* The reads each reader has completed, which the writers go on until each
+ * reader has made one, so that a read meets running writers. */
+static _Atomic uint64_t read_by[2];
 
 static void *write_shared(void *arg) {
     counter_t *c = arg;
     wf_cmap_user *user = wf_cmap_user_at(c->map, c->index);
     unsigned char bytes[16];
-    for (uint64_t i = 0; i < statements; i++) {
+    owed_since first = {0}, second = {0};
+    /* Both are asked, so that each is bounded. */
+    for (uint64_t i = 0; i < statements ||
+                        (owed(&read_by[0], 1, &first, "no reader read the key (reader 0)") |
+                         owed(&read_by[1], 1, &second, "no reader read the key (reader 1)"));
+         i++) {
         wf_cmap_entry entry;
         uint64_t *slot = wf_cmap_lock_entry(user, read_key, read_length, 0, &entry);
         if (atomic_exchange(&read_writing, 1) || atomic_load(&read_readers) != 0)
@@ -1458,7 +1505,9 @@ static void *write_shared(void *arg) {
         atomic_store(&read_writing, 0);
         atomic_fetch_add(&read_writes, 1);
         wf_cmap_unlock_entry(user, &entry, 0, 1);
-        if (c->total != NULL && i % 8 == 0) {
+        /* The moves come within the quota; the statements past it write the
+         * read key alone. */
+        if (c->total != NULL && i < statements && i % 8 == 0) {
             uint64_t length = counted_key(1000 + c->index * statements + i, bytes);
             uint64_t *other = wf_cmap_lock_entry(user, bytes, length, 0, &entry);
             other[0] = i;
@@ -1500,7 +1549,7 @@ static void *read_shared(void *arg) {
             if (none[w] != 0)
                 fail("an absent key's slot did not read None (word, value)", (uint64_t)w, none[w]);
         wf_cmap_unread_entry(user, &entry, 0);
-        c->holds++;
+        atomic_fetch_add(&read_by[c->index - 2], 1);
     }
     return NULL;
 }
@@ -1512,6 +1561,8 @@ static void entries_shared_reads(int moves) {
     atomic_store(&read_writes, 0);
     atomic_store(&read_most, 0);
     atomic_store(&read_done, 0);
+    atomic_store(&read_by[0], 0);
+    atomic_store(&read_by[1], 0);
     wf_cmap_entry entry;
     uint64_t *slot = wf_cmap_lock_entry(wf_cmap_user_at(map, 0), read_key, read_length, 0, &entry);
     for (int w = 0; w < READ_WORDS; w++)
@@ -1521,7 +1572,7 @@ static void entries_shared_reads(int moves) {
     pthread_t t[THREADS];
     counter_t c[THREADS];
     for (unsigned i = 0; i < THREADS; i++) {
-        c[i] = (counter_t){map, i, moves ? &marker : NULL, NULL, 0};
+        c[i] = (counter_t){map, i, moves ? &marker : NULL, NULL};
         pthread_create(&t[i], NULL, i < 2 ? write_shared : read_shared, &c[i]);
     }
     for (unsigned i = 0; i < 2; i++)
@@ -1533,11 +1584,9 @@ static void entries_shared_reads(int moves) {
     if (slot[0] != atomic_load(&read_writes))
         fail("a write to a read key was lost (value, writes)", slot[0], atomic_load(&read_writes));
     wf_cmap_unlock_entry(wf_cmap_user_at(map, 0), &entry, 0, 1);
-    if (c[2].holds + c[3].holds == 0)
-        fail("no reader read the key", moves, 0);
     if (getenv("CMAP_SHARED_VERBOSE"))
         printf("shared reads (moves %d): %llu reads, at most %d readers at once\n", moves,
-               (unsigned long long)(c[2].holds + c[3].holds), atomic_load(&read_most));
+               (unsigned long long)(atomic_load(&read_by[0]) + atomic_load(&read_by[1])), atomic_load(&read_most));
     wf_cmap_destroy(map);
 }
 
@@ -1593,7 +1642,7 @@ static void entries_bounded(void) {
     pthread_t threads[THREADS];
     counter_t c[THREADS];
     for (unsigned i = 0; i < THREADS; i++) {
-        c[i] = (counter_t){map, i, NULL, NULL, 0};
+        c[i] = (counter_t){map, i, NULL, NULL};
         pthread_create(&threads[i], NULL, hot_statements, &c[i]);
     }
     struct timespec pause = {0, 1000000};
@@ -1685,7 +1734,7 @@ static void holds_in_turn(void) {
     pthread_t threads[2];
     counter_t c[2];
     for (unsigned i = 0; i < 2; i++) {
-        c[i] = (counter_t){map, i, NULL, NULL, 0};
+        c[i] = (counter_t){map, i, NULL, NULL};
         pthread_create(&threads[i], NULL, hold_again, &c[i]);
     }
     for (unsigned i = 0; i < 2; i++)
@@ -4188,10 +4237,11 @@ static void *release_reserves(void *arg) {
 /* A release needs no statement, so it can meet a swap, which only needs no
  * statement inside either map: each reserve moves with its map or is
  * released, never both, so destroying both maps frees each array once.
- * Without the swap's locks, 2,000 rounds fail 5 of 5 runs under ASan and
- * under TSan (map-sanitizers.yml) but about 1 in 5 in a plain build, which
- * takes 20,000 rounds to fail reliably; the sanitizer builds are the ones
- * this race is left to, and the plain builds keep the shorter run. */
+ * The releasing thread is not left to meet a swap by luck of the scheduler:
+ * the swaps go on past their 2,000 rounds until a release has freed bytes.
+ * Whether a release falls inside a swap is still the scheduler's, which is
+ * why reserves_refused_inside_a_swap puts one there; this run is the race
+ * itself under ASan and under TSan (map-sanitizers.yml). */
 static void reserves_release_beside_swaps(void) {
     wf_cmap *maps[2] = {wf_cmap_create(1), wf_cmap_create(1)};
     wf_cmap_user *users[2] = {wf_cmap_enter(maps[0]), wf_cmap_enter(maps[1])};
@@ -4203,7 +4253,10 @@ static void reserves_release_beside_swaps(void) {
     atomic_store(&released_bytes, 0);
     pthread_t releaser;
     pthread_create(&releaser, NULL, release_reserves, maps);
-    for (unsigned round = 0; round < 2000; round++) {
+    owed_since since = {0};
+    for (unsigned round = 0;
+         round < 2000 || owed(&released_bytes, 1, &since, "no release met a reserve beside the swaps (rounds)");
+         round++) {
         for (int m = 0; m < 2; m++)
             for (unsigned step = 0; step < 16; step++, next[m]++) {
                 wf_cmap_remove(users[m], key_of(next[m] - 64));
@@ -4214,8 +4267,6 @@ static void reserves_release_beside_swaps(void) {
     }
     atomic_store(&releasing_stop, 1);
     pthread_join(releaser, NULL);
-    if (atomic_load(&released_bytes) == 0)
-        fail("no release met a reserve beside the swaps (rounds)", 2000, 0);
     for (int m = 0; m < 2; m++)
         if (wf_cmap_count(maps[m]) != 64)
             fail("a map lost or gained keys beside releases and swaps (count, expected)", wf_cmap_count(maps[m]), 64);
@@ -4223,6 +4274,39 @@ static void reserves_release_beside_swaps(void) {
         wf_cmap_leave(users[m]);
         wf_cmap_destroy(maps[m]);
     }
+}
+
+/* What the release inside the swap freed. */
+static uint64_t freed_inside_swap;
+
+static void release_inside_swap(struct wf_cmap *a, struct wf_cmap *b) {
+    freed_inside_swap = wf_cmap_release_reserve(a) + wf_cmap_release_reserve(b);
+}
+
+/* A release that meets a swap, which holds both maps' locks from before it
+ * exchanges anything, is refused, and each reserve is still there after the
+ * swap, in the map it moved to. The release is made from inside the swap,
+ * on its thread, so the two overlap on every run. Each map is given a spare
+ * of its table's size to release; a zero inside the swap then means the
+ * release was refused, and a release after it frees what the swap left. */
+static void reserves_refused_inside_a_swap(void) {
+    wf_cmap *maps[2] = {wf_cmap_create(1), wf_cmap_create(1)};
+    for (int m = 0; m < 2; m++) {
+        uint64_t capacity = atomic_load(&maps[m]->current)->capacity;
+        maps[m]->spare = new_cells(capacity);
+        maps[m]->spare_capacity = capacity;
+    }
+    freed_inside_swap = 0;
+    at_swap = release_inside_swap;
+    wf_cmap_swap(maps[0], maps[1], VALUE_TAG);
+    at_swap = NULL;
+    if (freed_inside_swap != 0)
+        fail("a release inside a swap freed a reserve (bytes)", freed_inside_swap, 0);
+    for (int m = 0; m < 2; m++)
+        if (wf_cmap_release_reserve(maps[m]) == 0)
+            fail("a swap did not leave a map its reserve (map)", (uint64_t)m, 0);
+    for (int m = 0; m < 2; m++)
+        wf_cmap_destroy(maps[m]);
 }
 
 /* A clear under a whole hold empties the map at once, its own entries
@@ -4571,6 +4655,16 @@ int main(int argc, char **argv) {
         puts("concurrent-map-test: retired reserve checks passed");
         return 0;
     }
+    if (argc == 2 && strcmp(argv[1], "release-beside-swaps") == 0) {
+        reserves_release_beside_swaps();
+        puts("concurrent-map-test: release beside swaps checks passed");
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "release-inside-swap") == 0) {
+        reserves_refused_inside_a_swap();
+        puts("concurrent-map-test: release inside swap checks passed");
+        return 0;
+    }
     if (argc == 2 && strcmp(argv[1], "selection") == 0) {
         tables_held_selection();
         tables_read_selection();
@@ -4657,6 +4751,7 @@ int main(int argc, char **argv) {
     reserves_collect_retired();
     reserves_release_on_request();
     reserves_release_beside_swaps();
+    reserves_refused_inside_a_swap();
     spares_match_the_current_size();
     if (atomic_load(&mapped_bytes_out) != 0)
         fail("map checks leaked counted map storage", atomic_load(&mapped_bytes_out), 0);
