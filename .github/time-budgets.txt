@@ -1,9 +1,9 @@
 # Wall-time budgets in seconds, one row per labeled verification stage.
 # Linux columns name CPU classes mapped below to exact /proc/cpuinfo model
 # names. Each stage/class budget is 1.1 times the maximum of at least its 20 most
-# recent recorded runs (the newest 50 when there are more) plus the spread of
-# those runs above their median (maximum minus median), rounded up to 5 s, with
-# a 10 s floor. A class whose runs vary little keeps a margin near 10%; a class
+# recent recorded runs (the newest 50 when there are more), plus that maximum's
+# distance above the median of those runs, rounded up to 5 s, with a 10 s
+# floor. A class whose runs vary little keeps a margin near 10%; a class
 # seen to vary gets that variation on top, so one run on a slow host does not
 # turn the gate red while a stage that has really slowed does. The 10 s floor
 # is older than the 2026-10-13 ruling and can affect only stages whose measured

@@ -3,8 +3,8 @@
 
 The rule is the one AGENTS.md "Checks" states: for each stage and CPU class,
 the budget is 1.1 times the maximum of its most recent recorded runs (at least
-20) plus the spread of those runs above their median (maximum minus median),
-rounded up to 5 s, with a 10 s floor. This tool applies it to the stage times
+20), plus that maximum's distance above the median of those runs, rounded up
+to 5 s, with a 10 s floor. This tool applies it to the stage times
 that `run-check.pl` prints (`== END <label>: <s> s, exit <n> ==`) in the logs
 of CI runs; it changes neither who approves a raise nor the host's own
 comparison in `run-check.pl`.
