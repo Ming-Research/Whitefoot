@@ -1081,6 +1081,43 @@ def rounds_error(min_rounds, max_rounds, trial):
     return None if min_rounds >= 6 else "rounds need 6 <= min-rounds <= max-rounds (--trial allows fewer)"
 
 
+def wall_is_own(walls, seconds=0.21):
+    """Whether launches of a SECONDS sleeper read as the sleeper's own time. A
+    waiter that polls for the exit in steps of 0.1 s puts every reading at the
+    next step, 0.30 s for a 0.21 s sleeper, so the fastest reading decides: one
+    late reading from a loaded host does not."""
+    return seconds <= min(walls) < seconds + 0.07
+
+
+def polled_wall(command, step):
+    """The wall time of COMMAND as a helper that looks for its exit every STEP
+    seconds would read it: the grid the first 14900K rounds showed."""
+    start = time.perf_counter_ns()
+    child = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    while child.poll() is None:
+        time.sleep(step)
+    return (time.perf_counter_ns() - start) / 1e9
+
+
+def spawn_test(expect):
+    """`spawn` on a 0.21 s sleeper, on any POSIX host: its wall time is the
+    sleeper's own, the same sleeper read through a polling waiter is not, and a
+    run past its bound is killed."""
+    global RUN_BOUND
+    sleeper = ["sh", "-c", "sleep 0.21"]
+    own = [spawn(sleeper, ".")[0] / 1e9 for _ in range(3)]
+    polled = [polled_wall(sleeper, 0.1) for _ in range(3)]
+    expect("spawn reads the sleeper's own time", wall_is_own(own), True)
+    expect("a polling waiter's readings are not the sleeper's own", wall_is_own(polled), False)
+    bound, RUN_BOUND = RUN_BOUND, 0.3
+    try:
+        started = time.monotonic()
+        expired = spawn(["sh", "-c", "sleep 30"], ".")[5]
+        expect("spawn kills a run past its bound", (expired, time.monotonic() - started < 10), (True, True))
+    finally:
+        RUN_BOUND = bound
+
+
 def launch_path_test(expect, expect_invalid):
     """The launch path on stand-in images, with a `timeout` first on PATH that
     fails when run: a launch that goes through `timeout` fails the test. An
@@ -1119,7 +1156,7 @@ def launch_path_test(expect, expect_invalid):
     except (Invalid, subprocess.CalledProcessError, OSError) as error:
         expect("launch path runs", f"failed: {error}", "ran")
         return
-    expect("wall time is the image's own, with no waiter's step", all(0.21 <= w < 0.28 for w in walls), True)
+    expect("wall time is the image's own, with no waiter's step", wall_is_own(walls), True)
     expect("time rows written for both workloads", len(rows), 2 * len(WORKLOADS) * len(ARMS))
     expect("time rows hold CPU time", all(r["user_ns"] + r["sys_ns"] < r["ns"] for r in rows), True)
 
@@ -1144,7 +1181,7 @@ def wallclock_test(expect):
                                         if l.split()[:1] in (["sleep"], ["count"])]),
            len(stand_ins) * len(WALLCLOCK_CHAINS))
     sleeper = [w for (l, c, w, _) in rows if l == "sleep" and c == "taskset"]
-    expect("wallclock sleeper under taskset", all(WALLCLOCK_SECONDS <= w < 0.28 for w in sleeper), True)
+    expect("wallclock sleeper under taskset", wall_is_own(sleeper, WALLCLOCK_SECONDS), True)
     counter = [(w, c) for (l, ch, w, c) in rows if l == "count" and ch == "taskset"]
     expect("wallclock counter's CPU time is most of its wall time", all(c > 0.5 * w for w, c in counter), True)
 
@@ -1351,6 +1388,7 @@ def self_test():
     expect("a trial of two rounds", rounds_error(2, 2, True), None)
     expect("a trial of six rounds", rounds_error(6, 6, True) is not None, True)
     expect("rounds out of order", rounds_error(8, 6, False) is not None, True)
+    spawn_test(expect)
     timing_harness_test(expect)
     usage_harness_test(expect)
     launch_path_test(expect, expect_invalid)
