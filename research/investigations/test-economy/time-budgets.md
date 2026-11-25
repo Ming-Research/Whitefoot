@@ -1304,7 +1304,7 @@ keeps, and the listing holds at most 1,000 runs per query, so collect in parts
 with `--until`. With a shorter window, a class with fewer than 20 runs keeps its
 value, and the Xeon column takes the row's largest class value.
 
-### The margin of the budget rule (2026-11-25)
+### The margin of the budget rule
 
 **Question.** From 2026-10-20 the gate's first attempt on `main` turned red
 in 22 jobs of 20 runs, every test passing, on overruns of the time budget
