@@ -576,4 +576,68 @@ fn main() -> status: ExitStatus pure {
 "#,
         )]],
     },
+    ModulePair {
+        name: "probe-qualified-name-not-found",
+        case: "mod1-pos-ordered-graph-and-entries",
+        rejected: &[(
+            "main.wf",
+            br#"alias ExitStatus = std::process::ExitStatus;
+alias data = pkg::data;
+alias exit_status = std::process::exit_status;
+alias report = pkg::report;
+
+fn main() -> status: ExitStatus pure {
+  let sign = data::sign_off(value: 5_i32);
+  let code = report::code_of(sign: sign);
+  return exit_status(code: code);
+}
+"#,
+        )],
+        rule: "MOD-5",
+        sentences: &[],
+        repaired: &[&[]],
+    },
+    ModulePair {
+        name: "probe-unresolved-callee",
+        case: "mod1-pos-ordered-graph-and-entries",
+        rejected: &[(
+            "main.wf",
+            br#"alias ExitStatus = std::process::ExitStatus;
+alias data = pkg::data;
+alias exit_status = std::process::exit_status;
+alias report = pkg::report;
+
+fn main() -> status: ExitStatus pure {
+  let sign = sign_of(value: 5_i32);
+  let code = report::code_of(sign: sign);
+  return exit_status(code: code);
+}
+"#,
+        )],
+        rule: "MOD-5",
+        sentences: &[],
+        repaired: &[&[]],
+    },
+    ModulePair {
+        name: "probe-unknown-module-alias",
+        case: "mod1-pos-ordered-graph-and-entries",
+        rejected: &[(
+            "main.wf",
+            br#"alias ExitStatus = std::process::ExitStatus;
+alias data = pkg::data;
+alias exit_status = std::process::exit_status;
+alias report = pkg::report;
+alias nowhere = pkg::nowhere;
+
+fn main() -> status: ExitStatus pure {
+  let sign = data::sign_of(value: 5_i32);
+  let code = report::code_of(sign: sign);
+  return exit_status(code: code);
+}
+"#,
+        )],
+        rule: "MOD-4",
+        sentences: &[],
+        repaired: &[&[]],
+    },
 ];
