@@ -360,7 +360,9 @@ whose server or generator failed, whose Whitefoot server ran another driver
 count, or whose busiest client CPU passed 80 percent, prints the median, the
 range and the ratio of each doubling, and ends with `RESULT: reached`,
 `harness-limited`, `miss` or `invalid`. `echo-scale-summary-check.sh` feeds it
-fabricated samples and is run first (`make net-scale-check`). The
+fabricated samples, rows written by the sweep's own row writer included, and
+`placement-check.sh` runs the placement rule on a fabricated host shaped like
+the i9-14900K; both run first (`make net-scale-check`). The
 `scale_echo` input of the `io-bench` workflow runs the sweep on the runner
 `compare_runner` names.
 

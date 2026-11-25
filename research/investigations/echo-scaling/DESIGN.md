@@ -93,7 +93,11 @@ Nothing is judged from an invalid pass, and the summary
 1.9 per doubling reaches, one of 1.3 beside a control of 1.9 is a miss, one of
 1.3 beside a control of 1.3 is limited by the harness, and a busy client, a
 nonzero exit, a wrong driver count, too few passes, a missing control line and
-a short row are each rejected for their own reason.
+a short row are each rejected for their own reason; its rows are the ones the
+sweep's own row writer produces, so the writer and the reader agree on the
+twelve columns. `placement-check.sh` runs the placement rule on a fabricated
+host shaped like the machine and checks the placements it must give and the
+ones it must refuse.
 
 **What the result can be.** For each doubling of the subject:
 

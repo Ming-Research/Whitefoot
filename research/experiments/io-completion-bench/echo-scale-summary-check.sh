@@ -10,6 +10,7 @@
 set -e
 
 HERE=$(cd "$(dirname "$0")" && pwd)
+. "$HERE/echo-scale-row.sh"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
@@ -95,5 +96,36 @@ expect "a missing control is rejected" 2 "no uring control line" "$WORK/no-contr
 # A row cut short is rejected, not read as zeros.
 awk -F'\t' -v OFS='\t' 'NR == 5 { print $1, $2, $3; next } { print }' "$WORK/server.tsv" > "$WORK/short.tsv"
 expect "a short row is rejected" 2 "has 3 fields" "$WORK/short.tsv"
+
+# The rows the sweep itself writes (scale_row, which linux-net-bench.sh calls)
+# are the ones the summary reads: twelve columns, in the summary's order. A
+# sweep written through scale_row reaches; the row of a pass whose server
+# exited nonzero and whose load generator printed nothing is rejected for the
+# server's exit, whatever the dashes say.
+columns=$(scale_row wf 4 2 100 5 6 7 40 4 0 0 2,4,6,8 | awk -F'\t' '{ print NF }')
+if [ "$columns" != 12 ]; then
+    echo "FAIL scale_row writes $columns columns, not 12" >&2
+    exit 1
+fi
+echo "ok   scale_row writes 12 columns"
+
+: > "$WORK/written.tsv"
+for line in wf uring epoll; do
+    for cores in 1 2 4 8; do
+        rate=100000
+        c=1
+        while [ "$c" -lt "$cores" ]; do rate=$((rate * 19 / 10)); c=$((c * 2)); done
+        drivers=-
+        [ "$line" = wf ] && drivers=$cores
+        for pass in 1 2 3 4 5; do
+            scale_row "$line" "$cores" "$pass" "$rate" 50 200 90000 40 "$drivers" 0 0 2 >> "$WORK/written.tsv"
+        done
+    done
+done
+expect "a sweep written through scale_row reaches" 0 "RESULT: reached" "$WORK/written.tsv"
+
+cp "$WORK/written.tsv" "$WORK/written-bad.tsv"
+scale_row wf 2 1 - - - - - 2 1 143 2,4 >> "$WORK/written-bad.tsv"
+expect "a failed pass written through scale_row is rejected" 2 "server exit 1" "$WORK/written-bad.tsv"
 
 echo "echo-scale-summary-check: every case behaved"

@@ -533,7 +533,7 @@ chain: $(BUILD)/chain $(BUILD)/gen
 #   make uring-check  the io_uring reference's own deterministic traces
 #   make net-verify   every server against netload at 4 connections
 #   make linux-net    the protocol, here
-#   make net-scale-check  the sweep's summary against fabricated samples
+#   make net-scale-check  the sweep's summary and the CPU placement against fabricated input
 #   make net-scale    the core-count sweep, here (SCALE_CORES, SCALE_CONNECTIONS,
 #                     SCALE_ROUNDTRIPS, CLIENT_CPU_LIST, ... in linux-net-bench.sh)
 NET_OUT := $(WORK)/net
@@ -601,6 +601,7 @@ linux-net:
 # investigation says (the io-bench workflow's scale_echo job).
 net-scale-check:
 	sh echo-scale-summary-check.sh
+	sh placement-check.sh
 
 net-scale: net-scale-check
 	@mkdir -p $(NET_OUT)

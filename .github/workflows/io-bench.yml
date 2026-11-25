@@ -331,9 +331,11 @@ jobs:
 
       # The summary's own check first: it feeds fabricated samples, and the
       # sweep is worth running only if the summary still rejects what it
-      # must.
-      - name: Check the summary against fabricated samples
-        run: sh research/experiments/io-completion-bench/echo-scale-summary-check.sh
+      # must. The placement rule is checked on a fabricated host the same way.
+      - name: Check the summary and the placement against fabricated input
+        run: |
+          sh research/experiments/io-completion-bench/echo-scale-summary-check.sh
+          sh research/experiments/io-completion-bench/placement-check.sh
 
       - name: Run the core-count sweep
         env:

@@ -14,6 +14,8 @@
 # core, is refused. Each placement is printed as a placement line. The rule is
 # Firn-wf's benchmark placement (its design node firn/measurement-sessions).
 #
+# PLACE_SYSFS_DEVICES names another directory in place of /sys/devices, for
+# placement-check.sh's fabricated host.
 # PLACE_KEEP_CPU0=1 keeps the physical core of CPU 0 eligible, for a run that
 # needs every performance core (n = 8 on the i9-14900K, which has eight).
 
@@ -21,6 +23,7 @@
 # the given client count; returns 2 when the host has too few cores for n.
 place() {
     lists=$(python3 - "$1" "$2" "${SERVER_CPU_LIST:-}" "${CLIENT_CPU_LIST:-}" "${PLACE_KEEP_CPU0:-}" <<'PY'
+import os
 import sys
 from pathlib import Path
 n, wanted, server_list, client_list = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3], sys.argv[4]
@@ -32,7 +35,7 @@ def parse(text):
             first, _, last = part.partition("-")
             cpus.extend(range(int(first), int(last or first) + 1))
     return cpus
-root = Path("/sys/devices")
+root = Path(os.environ.get("PLACE_SYSFS_DEVICES", "/sys/devices"))
 listed = root / "cpu_core" / "cpus"
 online = root / "system" / "cpu" / "online"
 eligible = parse(listed.read_text()) if listed.exists() else parse(online.read_text())

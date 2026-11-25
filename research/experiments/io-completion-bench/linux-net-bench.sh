@@ -340,6 +340,7 @@ if [ "$MODE" = scale ]; then
         exit 2
     fi
     . "$BUNDLE/placement.sh"
+    . "$BUNDLE/echo-scale-row.sh"
     SCALE_CORES=${SCALE_CORES:-1 2 4 8}
     SCALE_CONNECTIONS=${SCALE_CONNECTIONS:-1024}
     SCALE_ROUNDTRIPS=${SCALE_ROUNDTRIPS:-2000}
@@ -459,7 +460,7 @@ if [ "$MODE" = scale ]; then
             drivers=$(grep -c '^driver: index=' "$OUT/server.err" || true)
         fi
         if [ "$recording" = 1 ]; then
-            printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+            scale_row \
                 "$name" "$n" "$pass" \
                 "$(cell "$line" rt_per_s)" "$(cell "$line" p50_us)" "$(cell "$line" p99_us)" \
                 "$(cell "$line" connect_us)" "$(cell "$line" client_busy_max_pct)" \
