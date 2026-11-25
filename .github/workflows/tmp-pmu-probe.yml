@@ -37,37 +37,44 @@ jobs:
         env:
           HOST: ${{ matrix.host }}
         run: |
+          # A missing flag, event or tool is a finding here, not a failure.
+          set +e +o pipefail
           set -u
           model=$(lscpu | sed -n 's/^Model name: *//p')
+          family=$(lscpu | sed -n 's/^CPU family: *//p')
+          number=$(lscpu | sed -n 's/^Model: *//p')
           lscpu | grep -E '^(Model name|CPU family|Model|Stepping|Hypervisor vendor|CPU\(s\)):'
           uname -r
           flags=$(grep -m1 '^flags' /proc/cpuinfo | tr ' ' '\n' |
             grep -x -E 'perfctr_core|perfctr_nb|perfctr_llc|perfmon_v2|arch_perfmon|ibs|pdcm|arch_lbr|amd_lbr_v2' | tr '\n' ' ')
           echo "counter flags: ${flags:-none}"
-          devices=$(ls /sys/bus/event_source/devices | tr '\n' ' ')
-          echo "event sources: $devices"
+          sources=$(ls /sys/bus/event_source/devices | grep -v -E '^(uncore|cstate|power|i915|intel_bts)' | tr '\n' ' ')
+          echo "event sources: $sources"
+          kernel_line=
           if [ "$HOST" = github ]; then
-            sudo dmesg | grep -i -E 'performance events|pmu' | head -5 || true
-            sudo sysctl -w kernel.perf_event_paranoid=-1 || true
+            kernel_line=$(sudo dmesg | grep -i -m1 'performance events' | sed 's/^\[[^]]*\] *//')
+            echo "kernel: $kernel_line"
+            sudo sysctl -w kernel.perf_event_paranoid=-1
           fi
           echo "perf_event_paranoid=$(cat /proc/sys/kernel/perf_event_paranoid)"
-          perf=$(command -v perf || true)
+          perf=$(command -v perf)
           if [ -z "$perf" ] || ! "$perf" --version >/dev/null 2>&1; then
             perf=$(ls /usr/lib/linux-tools/*/perf /usr/lib/linux-tools-*/perf 2>/dev/null | head -1)
           fi
           if [ -z "$perf" ]; then
-            echo "::notice title=pmu-probe::model=$model; no perf binary; flags=${flags:-none}; sources=$devices"
+            echo "::notice title=pmu-probe::model=$model ($family/$number); no perf binary; flags=${flags:-none}; sources=$sources; kernel=$kernel_line"
             exit 0
           fi
           "$perf" --version
-          generic=$("$perf" stat -x, -e cycles:u,instructions:u,branches:u,branch-misses:u -- sleep 0.2 2>&1 || true)
-          echo "$generic"
-          echo "--- AMD branch and op-cache events"
-          "$perf" stat -x, -e ex_ret_brn:u,ex_ret_brn_misp:u,bp_de_redirect:u,bp_l1_btb_correct:u,bp_l2_btb_correct:u -- sleep 0.2 2>&1 || true
-          "$perf" stat -x, -e op_cache_hit_miss.op_cache_hit:u,op_cache_hit_miss.op_cache_miss:u,de_src_op_disp.decoder:u,de_src_op_disp.op_cache:u -- sleep 0.2 2>&1 || true
-          "$perf" stat -x, -e r00c2:u,r00c3:u,r038f:u,r048f:u -- sleep 0.2 2>&1 || true
-          echo "--- Intel front-end events"
-          "$perf" stat -x, -e idq.dsb_uops:u,idq.mite_uops:u,frontend_retired.dsb_miss:u,baclears.any:u,br_misp_retired.all_branches:u -- sleep 0.2 2>&1 || true
-          cycles=$(printf '%s\n' "$generic" | awk -F, '$3 ~ /cycles/ { print $1; exit }')
-          misses=$(printf '%s\n' "$generic" | awk -F, '$3 ~ /branch-misses/ { print $1; exit }')
-          echo "::notice title=pmu-probe::model=$model; cycles=${cycles:-no row}; branch-misses=${misses:-no row}; flags=${flags:-none}; sources=$devices"
+          counts() { # EVENTS: "event=count ..." of one perf stat, or its message
+            "$perf" stat -x, -e "$1" -- sleep 0.2 2>&1 |
+              awk -F, 'NF >= 3 { printf "%s=%s ", $3, $1; next } NF { printf "[%s] ", substr($0, 1, 80) }' | cut -c1-400
+          }
+          generic=$(counts cycles:u,instructions:u,branches:u,branch-misses:u)
+          amd_branch=$(counts ex_ret_brn:u,ex_ret_brn_misp:u,bp_de_redirect:u,bp_l1_btb_correct:u,bp_l2_btb_correct:u)
+          amd_opcache=$(counts op_cache_hit_miss.op_cache_hit:u,op_cache_hit_miss.op_cache_miss:u,de_src_op_disp.decoder:u,de_src_op_disp.op_cache:u)
+          amd_raw=$(counts r00c2:u,r00c3:u,r038f:u,r048f:u)
+          intel=$(counts idq.dsb_uops:u,idq.mite_uops:u,frontend_retired.dsb_miss:u,baclears.any:u,br_misp_retired.all_branches:u)
+          printf 'generic: %s\namd branch: %s\namd op cache: %s\namd raw: %s\nintel front end: %s\n' \
+            "$generic" "$amd_branch" "$amd_opcache" "$amd_raw" "$intel"
+          echo "::notice title=pmu-probe::model=$model ($family/$number); flags=${flags:-none}; sources=$sources; kernel=$kernel_line; generic: $generic; amd raw: $amd_raw; amd named: $amd_branch $amd_opcache; intel: $intel"
