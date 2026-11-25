@@ -9,7 +9,7 @@ authority. Open questions and evidence links live in [ideas](../docs/ideas.md),
 and known compiler defects and implementation costs on the
 [status board](https://claude.ai/artifact/7tocXS3iUdthCLCQCMd3ip).
 The [active specification](../spec/kernel-spec.md) defines the language,
-the [constitution](../docs/constitution.md) defines project objectives and
+the [constitution](../design/constitution.md) defines project objectives and
 principles, and [AGENTS.md](../AGENTS.md) owns the workflow.
 
 The archived originals remain in place as provenance. Promotion means moving a
@@ -64,7 +64,7 @@ crosswalk does not make the old language or approval vocabulary current.
 
 | Archived material | Audited disposition | Successor or reason |
 |---|---|---|
-| D0-D3 and D2a founding constraints | **Absorbed** | The priority structure, AI-writer premise, safety floor, compact/regular specification, and no writer trust are in the [Constitution](../docs/constitution.md) and active specification. |
+| D0-D3 and D2a founding constraints | **Absorbed** | The priority structure, AI-writer premise, safety floor, compact/regular specification, and no writer trust are in the [Constitution](../design/constitution.md) and active specification. |
 | D4 rewrite-first, FFI-narrow policy | **Owner decision** | The active specification has a gated boundary skeleton, but no live authority currently commits to the old rule that source-available foreign code must normally be rewritten or that rich/inbound interop stays out. |
 | D6 closed, taught pattern doctrine | **Seeded; not ratified** | [`docs/patterns.md`](../docs/patterns.md) is the live writer-form owner and states the current status. This audit corrects explanatory overclaims; promotion to normative doctrine would require owner ratification. |
 | D7-family artifact and `secret` directions | **Absorbed as deferred** | [Reproducibility](../docs/ideas.md#reproducible-compiler-outputs) and [constant-time](../docs/ideas.md#constant-time-preservation) questions remain open without reviving the old artifact ladder or `secret` protocol. Their old targets and protocols remain historical. |
@@ -257,7 +257,7 @@ historical result bundles whose runners still name the retired democ toolchain.
 The live entry points are [`research/README.md`](README.md),
 [ideas](../docs/ideas.md), the [status board](https://claude.ai/artifact/7tocXS3iUdthCLCQCMd3ip), the
 [active specification](../spec/kernel-spec.md), the
-[constitution](../docs/constitution.md), and [AGENTS.md](../AGENTS.md).
+[constitution](../design/constitution.md), and [AGENTS.md](../AGENTS.md).
 If a future audit finds another valuable archived conclusion, add the smallest
 status-bearing summary to its actual live owner and update this file; do not
 grow a second archive index or restore an old subtree.
