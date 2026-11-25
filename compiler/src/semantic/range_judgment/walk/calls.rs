@@ -162,11 +162,30 @@ impl Walker<'_> {
             if written || reads.iter().any(|path| path.root == parameter.declaration) {
                 self.unplaced_view(&view, written, call, state);
             }
-            for path in writes
+            let rows = writes
                 .iter()
-                .filter(|path| path.root == parameter.declaration)
-            {
-                targets.push(self.call_write(state, callee, &values, position, &path.steps));
+                .filter(|path| path.root == parameter.declaration);
+            let View::Either(members) = view else {
+                for path in rows {
+                    targets.push(self.call_write(state, callee, &values, position, &path.steps));
+                }
+                continue;
+            };
+            // [EFF-5, REF-1] An argument that names several places has the
+            // row's writes substituted at each of them.
+            let rows: Vec<_> = rows.collect();
+            for member in members {
+                let mut member_values = values.clone();
+                member_values[position] = Value::Ref(member);
+                for path in &rows {
+                    targets.push(self.call_write(
+                        state,
+                        callee,
+                        &member_values,
+                        position,
+                        &path.steps,
+                    ));
+                }
             }
         }
         for target in targets {

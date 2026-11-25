@@ -672,7 +672,37 @@ pub(super) enum View {
     },
     /// A whole place.
     Place(Location),
+    /// [REF-1] Any one of these, as a join of arms that delivered different
+    /// references names: a read through it is unknown, and a write or a call
+    /// through it forgets what it overlaps at each member [RANGE-2].
+    Either(Vec<View>),
     Unknown,
+}
+
+impl View {
+    /// The view naming any one of `views`: nested alternatives flatten,
+    /// repeated members count once, and one unknown member leaves nothing
+    /// known about where the reference points.
+    pub(super) fn either(views: impl IntoIterator<Item = View>) -> View {
+        let mut members: Vec<View> = Vec::new();
+        for view in views {
+            let nested = match view {
+                View::Either(nested) => nested,
+                View::Unknown => return View::Unknown,
+                other => vec![other],
+            };
+            for member in nested {
+                if !members.contains(&member) {
+                    members.push(member);
+                }
+            }
+        }
+        match members.len() {
+            0 => View::Unknown,
+            1 => members.pop().unwrap_or(View::Unknown),
+            _ => View::Either(members),
+        }
+    }
 }
 
 /// One value a binding holds.
@@ -1379,6 +1409,21 @@ pub(super) fn join_values(
             _ => Cond::Unknown,
         };
         return Value::Bool(condition, world.joined(join, tags, Some(IntegerType::U8)));
+    }
+    // [REF-1] A reference the arms rebound names every place an incoming
+    // edge delivered; it is never storage of its own.
+    if let Some(views) = all
+        .iter()
+        .map(|value| match value {
+            Value::Ref(view) => Some(view.clone()),
+            _ => None,
+        })
+        .collect::<Option<Vec<_>>>()
+    {
+        return Value::Ref(View::either(views));
+    }
+    if all.iter().any(|value| matches!(value, Value::Ref(_))) {
+        return Value::Ref(View::Unknown);
     }
     if all.iter().all(|value| {
         matches!(
