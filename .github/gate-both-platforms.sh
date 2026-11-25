@@ -50,7 +50,7 @@ listings=4
 groups=$(printf '%s\n' "$GATE_GROUPS" | jq -er '.[]')
 test -n "$groups"
 
-if [ -n "${GATE_RUN_RESULT:-}" ]; then
+if [ "${GATE_RUN_RESULT:-}" = success ]; then
     for group in $groups; do
         for os in ${GATE_PLATFORMS:-ubuntu-24.04 macos-15}; do
             echo "ok      $group ($os)"
