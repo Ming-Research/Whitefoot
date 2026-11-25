@@ -408,4 +408,190 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#],
     },
+    // [GRAM-8] a construction that names its fields out of declared order.
+    RepairPair {
+        name: "x-struct-neg-field-order.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/x-struct-neg-field-order.wf"
+        ),
+        rule: "GRAM-8",
+        sentences: &[],
+        repaired: &[br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Pair {
+  a: i32;
+  b: i32;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "GRAM-8: constructing a struct with out-of-order field names is rejected; declared order is the one legal byte sequence.";
+  let p = Pair(a: 1_i32, b: 2_i32);
+  return exit_status(code: 0_u8);
+}
+"#],
+    },
+    // [GRAM-10] an arm that binds a variant's fields out of declared order.
+    RepairPair {
+        name: "x-match-gram10-out-of-order-fields.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/x-match-gram10-out-of-order-fields.wf"
+        ),
+        rule: "GRAM-10",
+        sentences: &[],
+        repaired: &[br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Pair {
+  Both(a: i32, b: i32);
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "GRAM-10 declared order: a two-field variant bound out of declared order (b before a) is a hard error citing GRAM-10 and Both's declared field list.";
+  let p = Pair::Both(a: 1_i32, b: 2_i32);
+  let v = match p {
+    Both(a: x, b: y) => {
+      give x;
+    }
+  }
+  return exit_status(code: 0_u8);
+}
+"#],
+    },
+    // [TYPE-6] a struct that declares one field label twice.
+    RepairPair {
+        name: "probe-duplicate-field-label.wf",
+        rejected: br#"struct Pair {
+  x: i32;
+  x: i32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "TYPE-6",
+        sentences: &[],
+        repaired: &[br#"struct Pair {
+  x: i32;
+  y: i32;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    // [GIVE-1] a branch of a value conditional that gives nothing.
+    RepairPair {
+        name: "probe-give-missing-in-branch.wf",
+        rejected: br#"fn main() -> status: std::process::ExitStatus pure {
+  let flag = True();
+  let result = if flag {
+  } else {
+    give 0_i32;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "GIVE-1",
+        sentences: &[],
+        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure {
+  let flag = True();
+  let result = if flag {
+    give 1_i32;
+  } else {
+    give 0_i32;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    // [FN-1] a returned value of a type other than the declared result.
+    RepairPair {
+        name: "probe-return-type-mismatch.wf",
+        rejected: br#"fn main() -> status: std::process::ExitStatus pure {
+  return 0_i32;
+}
+"#,
+        rule: "FN-1",
+        sentences: &[],
+        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    // [FN-8] a user function called in a requirement clause.
+    RepairPair {
+        name: "fn8-neg-requires-user-call.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/fn8-neg-requires-user-call.wf"
+        ),
+        rule: "FN-8",
+        sentences: &[],
+        repaired: &[br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn identity(x: i32) -> result: i32 pure {
+  return x;
+}
+
+fn user_call(x: i32) -> result: i32 pure {
+  doc "User-function calls are forbidden in a requirement clause even when the callee is pure [FN-8].";
+  return identity(x: x);
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
+"#],
+    },
+    // [GRAM-12] an integer match whose label is no integer.
+    RepairPair {
+        name: "gram12-neg-float-label.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/gram12-neg-float-label.wf"
+        ),
+        rule: "GRAM-12",
+        sentences: &[],
+        repaired: &[br#"fn selected(value: u64) -> result: unit pure {
+  match value {
+    1_u64 => {
+      return unit;
+    }
+    else => {
+      return unit;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    // [GRAM-12] an integer match with an else arm alone.
+    RepairPair {
+        name: "gram12-neg-else-only.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/gram12-neg-else-only.wf"
+        ),
+        rule: "GRAM-12",
+        sentences: &[],
+        repaired: &[br#"fn selected(value: u64) -> result: unit pure {
+  match value {
+    1_u64 => {
+      return unit;
+    }
+    else => {
+      return unit;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
 ];
