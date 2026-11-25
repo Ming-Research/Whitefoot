@@ -1364,8 +1364,17 @@ list no step at all (the runner never reported one), and `unit` lists every
 step as succeeded, the last ending at 17:19:42. The final job ran (it runs on `!cancelled()`, so the run itself was not
 cancelled) and its log shows
 `list jobs of run 40115097375` failing five times with HTTP 502 from 17:33:45
-to 17:35:42. The cause is on GitHub's side (the runner's step results and the
-job's completion never reached the service), and the jobs ended with no
+to 17:35:42. The fourth group job of that attempt shows the same delay without losing
+its result: `runtime (ubuntu-24.04)` has every step ended by 17:14:20, a
+minute after it began, and was recorded complete, with `success`, only at
+17:24:40. So GitHub recorded job completions about ten minutes late in that
+run (the `unit` job's last step ended 17:19:42 and the job was cancelled at
+17:30:34, `corpus` and `static` at 17:33:21, twenty minutes after they began
+and so past the 15 minutes their `timeout-minutes` allows), and a job whose
+completion had not been recorded by the time limit was stopped by it. The
+jobs did not run too long. The cause is on GitHub's side (the runner's step
+results and the job's completion reached the service late or never), and the
+jobs ended with no
 conclusion that says the group passed, so nothing in the run can show them
 green; attempt 2 of the same run, started 2026-10-29, passed every group.
 Only a re-run settles such a run.
