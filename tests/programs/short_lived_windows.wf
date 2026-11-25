@@ -49,6 +49,108 @@ fn inspect(observed: Held, expected: u64) -> result: Bool pure {
   }
 }
 
+fn holder_of(seed: u64) -> result: Holder pure {
+  doc "A holder with one live element in each window.";
+  let slots = slots_new::<Box<u64>, 64>();
+  let first = box_new::<u64>(value: seed);
+  place_back(window: &slots, value: move first);
+  let ring = ring_new::<Box<u64>, 4>();
+  let back = box_new::<u64>(value: seed);
+  place_back(window: &ring, value: move back);
+  let after = array_filled::<u64, 3>(value: seed);
+  return Holder(before: seed, slots: move slots, ring: move ring, after: after);
+}
+
+fn holds(observed: &Held, windows: Bool, expected: u64) -> result: Bool reads(observed) {
+  doc "Whether a held value is the expected variant carrying the expected value, read through a reference.";
+  match observed^ {
+    Windows(value: holder) => {
+      if windows {
+      } else {
+        return False();
+      }
+      if holder^.before != expected {
+        return False();
+      }
+      if holder^.slots.len != 1_u64 {
+        return False();
+      }
+      if holder^.ring.len != 1_u64 {
+        return False();
+      }
+      if holder^.slots[0_u64].inner != expected {
+        return False();
+      }
+      if holder^.ring[0_u64].inner != expected {
+        return False();
+      }
+      return True();
+    }
+    Cell(value: cell) => {
+      if windows {
+        return False();
+      }
+      if cell^.inner != expected {
+        return False();
+      }
+      return True();
+    }
+  }
+}
+
+fn exchange_held(seed: u64) -> result: Bool pure {
+  doc "Held is larger than 128 bytes, so building its Cell variant leaves the Windows view's storage unwritten, holding whatever the reused frame held before. Overwrites, an exchange, a take and scope cleanup of such values must each release every Box once and read only the held variant.";
+  let yes = True();
+  let no = False();
+  let next = seed +wrap 1_u64;
+  let third = seed +wrap 2_u64;
+  let held = slots_new::<Held, 2>();
+  let first = box_new::<u64>(value: next);
+  let cell = Held::Cell(value: move first);
+  place_back(window: &held, value: move cell);
+  let built = holder_of(seed: seed);
+  let windows = Held::Windows(value: move built);
+  place_back(window: &held, value: move windows);
+  let second = box_new::<u64>(value: third);
+  let replacing = Held::Cell(value: move second);
+  set held[1_u64] = move replacing;
+  let rebuilt = holder_of(seed: seed);
+  let wide = Held::Windows(value: move rebuilt);
+  set held[0_u64] = move wide;
+  let overwritten = holds(observed: &held[1_u64], windows: no, expected: third);
+  let overwrite_failed = bnot(overwritten);
+  if overwrite_failed {
+    return False();
+  }
+  let exchanged_box = box_new::<u64>(value: next);
+  let exchanged = Held::Cell(value: move exchanged_box);
+  swap(first: &held[0_u64], second: &exchanged);
+  let moved_out = holds(observed: &exchanged, windows: yes, expected: seed);
+  let out_failed = bnot(moved_out);
+  if out_failed {
+    return False();
+  }
+  let moved_in = holds(observed: &held[0_u64], windows: no, expected: next);
+  let into_failed = bnot(moved_in);
+  if into_failed {
+    return False();
+  }
+  let last = take_back(window: &held);
+  match move last {
+    Windows(value: lost) => {
+      return False();
+    }
+    Cell(value: taken) => {
+      if taken.inner != third {
+        return False();
+      }
+    }
+  }
+  let leftover = box_new::<u64>(value: third);
+  let left = Held::Cell(value: move leftover);
+  return holds(observed: &left, windows: no, expected: third);
+}
+
 fn churn(seed: u64) -> result: Bool pure {
   doc "Reuse short-lived frame storage, including empty windows, partial windows and a wrapped Ring with releasing elements.";
   let empty = slots_new::<Box<u64>, 64>();
@@ -80,7 +182,12 @@ fn churn(seed: u64) -> result: Bool pure {
   let after = array_filled::<u64, 3>(value: seed);
   let holder = Holder(before: seed, slots: move slots, ring: move ring, after: after);
   let observed = Held::Windows(value: move holder);
-  return inspect(observed: move observed, expected: seed);
+  let inspected = inspect(observed: move observed, expected: seed);
+  let inspect_failed = bnot(inspected);
+  if inspect_failed {
+    return False();
+  }
+  return exchange_held(seed: seed);
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {

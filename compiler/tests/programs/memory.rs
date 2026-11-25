@@ -3,8 +3,10 @@ use super::support::{build_program, compile_and_run, compile_program, emitted_fu
 #[test]
 fn short_lived_inline_windows_preserve_values_and_release_only_live_elements() {
     // One native build/run checks frame reuse, take/reinsert, wrapped Ring
-    // cleanup, struct/enum transport and Array fill. The program checks the
-    // heap baseline after every call, with stale freed pointers in raw slots.
+    // cleanup, struct/enum transport and Array fill, and a large enum built
+    // as its window-less variant beside unwritten window storage, then
+    // overwritten, exchanged, taken and dropped. The program checks the heap
+    // baseline after every call, with stale freed pointers in raw slots.
     let program = build_program(&compile_program("short_lived_windows.wf"));
     let output = program.run_with_settings(None, &[("WF_DRIVERS", "1")]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
