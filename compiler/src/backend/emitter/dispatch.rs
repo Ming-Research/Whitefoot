@@ -81,7 +81,7 @@ pub(crate) fn convention_for(facts: &crate::toolchain::ToolchainFacts, triple: &
         PartAbi {
             convention: "preserve_nonecc ",
             registers: ArgumentRegisters::Separate { integer, float: 8 },
-            attribute: if triple.starts_with("x86_64") && facts.no_callee_saved_registers {
+            attribute: if false && triple.starts_with("x86_64") && facts.no_callee_saved_registers {
                 " \"no_callee_saved_registers\""
             } else {
                 ""
