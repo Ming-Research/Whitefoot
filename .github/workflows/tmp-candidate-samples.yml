@@ -9,8 +9,13 @@
 # names after "skip:", builds nothing. The engine pushes each commit it checks
 # to its own branch under wf-try/work-289-26e0fade/, and a push runs the jobs
 # only when its tip commit's message holds the marker in the job's condition,
-# so one commit starts one batch of 40 jobs, 20 at a time. Deleted before the
-# full check, which fails while a tmp- workflow exists.
+# so one commit starts one batch of 40 jobs, 20 at a time. Each job also
+# pushes one empty commit to the branch tmp-289-result/<run id>-<job number>
+# whose subject is its sample (class, model, the stage's END line, the
+# "Compiling" lines of the build), so the samples can be read with git when the
+# API's rate limit stops reading the logs; the branches are deleted with the
+# workflow. Deleted before the full check, which fails while a tmp- workflow
+# exists.
 name: tmp candidate samples
 
 on:
@@ -38,6 +43,8 @@ jobs:
             21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -83,4 +90,23 @@ jobs:
         run: |
           test ! -e compiler/target
           WHITEFOOT_CHECK_TIMEOUT=300 perl .github/run-check.pl performance-candidate-compiler \
-            cargo build --manifest-path compiler/Cargo.toml --locked --profile gate --bin whitefootc
+            cargo build --manifest-path compiler/Cargo.toml --locked --profile gate --bin whitefootc \
+            2>&1 | tee "$RUNNER_TEMP/build.log"
+      - name: Publish the sample
+        if: always()
+        continue-on-error: true
+        env:
+          BUILD: ${{ steps.host.outputs.build }}
+          N: ${{ matrix.n }}
+        run: |
+          model=$(lscpu | sed -n 's/^Model name:[[:space:]]*//p')
+          end=none
+          compiling=0
+          if [ "$BUILD" = true ] && [ -f "$RUNNER_TEMP/build.log" ]; then
+            end=$(sed -n 's/^== \(END performance-candidate-compiler: .* s, exit [0-9]*\) ==$/\1/p' "$RUNNER_TEMP/build.log")
+            compiling=$(grep -cE '^ *Compiling ' "$RUNNER_TEMP/build.log" || true)
+          fi
+          git config user.name tmp-289
+          git config user.email tmp-289@users.noreply.github.com
+          git commit -q --allow-empty -m "SAMPLE run=$GITHUB_RUN_ID n=$N build=$BUILD model=[$model] end=[${end:-none}] compiling=$compiling"
+          git push -q origin "HEAD:refs/heads/tmp-289-result/$GITHUB_RUN_ID-$N"
