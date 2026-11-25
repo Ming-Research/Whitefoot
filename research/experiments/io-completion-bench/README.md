@@ -314,6 +314,11 @@ whole result is one line of tab-separated `key=value` fields, and the latency
 samples live in one array of `CONNECTIONS*ROUNDTRIPS` 32-bit microsecond
 values allocated before the first connect.
 
+`netload` also prints `client_busy_max_pct`: the largest share of the exchange
+phase that any CPU it may run on spent busy, read from `/proc/stat`, or -1 when
+it could not read the counters. A client whose busiest CPU is nearly saturated
+limits the rate it reports.
+
 `linux-net-bench.sh` is the protocol, and one protocol for every host that can
 run it, as `read-bench.sh` is for the read tables. It builds the compiler and
 the three tools from one worktree, checks that every server echoes what the
@@ -337,6 +342,29 @@ and the ratio of each line's round-trip rate to the io_uring reference and to
 the epoll one. `NET_LINES` names a subset of `uring epoll wf` when one server
 cannot complete a run yet and the others still owe a table; the table names
 the lines it holds.
+
+`linux-net-bench.sh scale` is the same protocol as a core-count sweep
+(`research/investigations/echo-scaling/DESIGN.md` states its question and its
+criteria). Each line runs pinned with `taskset` to 1, 2, 4 and 8 server CPUs
+(`SCALE_CORES`), one logical CPU to a physical core and one performance level,
+against one client that stays on the same CPUs whatever the server's count is
+(by default the efficiency cores, `CLIENT_CPU_LIST` to choose). The connection
+count (`SCALE_CONNECTIONS`, 1,024), the round trips (`SCALE_ROUNDTRIPS`, 2,000)
+and the message (64 bytes) are the same at every count. The Whitefoot server
+runs with `WF_DRIVERS=n` and `WF_SCHED_REPORT=2`, so that its exit report shows
+how many drivers it ran; the C references get `--threads n`, since they size
+themselves from the online CPU count and not from the affinity. The placement
+is `placement.sh`, shared with `redis-bench.sh`. A pass writes one row of facts
+to the raw samples and decides nothing; `echo-scale-summary.sh` rejects a pass
+whose server or generator failed, whose Whitefoot server ran another driver
+count, or whose busiest client CPU passed 80 percent, prints the median, the
+range and the ratio of each doubling, and ends with `RESULT: reached`,
+`harness-limited`, `miss` or `invalid`. `echo-scale-summary-check.sh` feeds it
+fabricated samples, rows written by the sweep's own row writer included, and
+`placement-check.sh` runs the placement rule on a fabricated host shaped like
+the i9-14900K; both run first (`make net-scale-check`). The
+`scale_echo` input of the `io-bench` workflow runs the sweep on the runner
+`compare_runner` names.
 
 `redis-bench.sh` measures firn, the server of Redis's protocol in
 `apps/firn`, against `redis-server` and its competitors, all driven by
@@ -425,6 +453,8 @@ experiments' records.
     make -C research/experiments/io-completion-bench uring-check  # the reference's own traces
     make -C research/experiments/io-completion-bench net-verify   # bytes only
     make -C research/experiments/io-completion-bench linux-net    # the TCP table
+    make -C research/experiments/io-completion-bench net-scale-check  # the sweep's summary on fabricated samples
+    make -C research/experiments/io-completion-bench net-scale    # the TCP core-count sweep
     sh research/experiments/io-completion-bench/redis-bench.sh        # firn, Experiments 7 and 8
     sh research/experiments/io-completion-bench/redis-bench.sh suite  # firn, its criteria
     sh research/experiments/io-completion-bench/redis-bench.sh scale  # firn on more server CPUs
