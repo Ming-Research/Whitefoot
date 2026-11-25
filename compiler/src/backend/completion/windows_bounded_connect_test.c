@@ -89,7 +89,7 @@ static void check_silent_target(void) {
     struct sockaddr_in address;
     u_long nonblocking = 1;
     fd_set writable, failed;
-    struct timeval wait = {3, 0};
+    struct timeval limit = {3, 0};
     int ready;
     CHECK(probe != INVALID_SOCKET);
     CHECK(ioctlsocket(probe, FIONBIO, &nonblocking) == 0);
@@ -103,7 +103,7 @@ static void check_silent_target(void) {
     FD_ZERO(&failed);
     FD_SET(probe, &writable);
     FD_SET(probe, &failed);
-    ready = select(0, NULL, &writable, &failed, &wait);
+    ready = select(0, NULL, &writable, &failed, &limit);
     if (ready != 0) {
         int error = 0, length = (int)sizeof(error);
         (void)getsockopt(probe, SOL_SOCKET, SO_ERROR, (char *)&error, &length);
