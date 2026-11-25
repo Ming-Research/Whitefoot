@@ -31,7 +31,6 @@ ENTRY_STACK = 1024 * MIB + PAGE
 ORDERS = {
     "entry": ["entry", "heap"],
     "thread-then-entry": ["thread", "entry", "heap"],
-    "two-threads-then-entry": ["thread", "thread", "entry", "heap"],
     "entry-one-heap": ["entry"],
     "thread-then-entry-one-heap": ["thread-no-heap", "entry"],
 }

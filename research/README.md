@@ -177,6 +177,11 @@ the work-branch and merge boundary.
   repaired the change log each time another merged (112 of 307 merges of main
   over 62 amendments), the alternatives compared, and what would reject the
   version derived from the log.
+- [Data placement and the regression comparison](investigations/data-placement/README.md):
+  why `stencil` runs 26 to 43 percent slower on Zen 3 and Zen 4 hosts when
+  its two grids lie 128 MiB less 4 KiB apart, how a program's startup order
+  decides how often that happens, which moves of data alone show it, and the
+  control proposed for `compute-regression`.
 
 Open research questions and evidence links are in [ideas](../docs/ideas.md);
 known compiler defects and implementation costs are on the

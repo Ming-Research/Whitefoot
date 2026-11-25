@@ -6,13 +6,18 @@ usage: reduce.py RESULTS
 For every campaign it prints each kernel and width's paired ratio with the
 regression rule applied in both directions, and stencil's process medians at
 one worker per arm. For every traced series it prints, per distance between
-the two grids of a timed call, how many launches got it and their times.
+the two grids of a timed call, how many launches got it and their times. Then
+it pools the launches made with address randomization by distance class,
+applies the position rule to the launches made without it, and compares the
+revisions' mapping calls in those launches.
 """
 
 import os
 import re
 import statistics
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 KERNELS = ["mandelbrot", "records", "fir", "quadrature", "stencil"]
 GRID_LOW, GRID_HIGH = 32 << 20, (32 << 20) + (1 << 16)
@@ -134,6 +139,142 @@ def traces(results):
                 print(f"  k={k:2d} not read")
 
 
+def distance_class(distance):
+    if distance == 0x2001000:
+        return "adjacent, +0x2001000"
+    if abs(distance) == 0x7FFF000:
+        return "0x7fff000 either way"
+    if 0x6000000 <= distance < 0x7FFF000:
+        return "+0x61ff000 to +0x7dff000"
+    if 0x46000000 <= distance <= 0x49000000:
+        return "+0x46000000 to +0x49000000"
+    return "another distance"
+
+
+def pooled(results):
+    """Every launch made with address randomization, by distance class."""
+    directory = os.path.join(results, "trace")
+    classes = {}
+    for entry in sorted(os.listdir(directory)):
+        m = re.match(r"([a-z]+-(?:none|thread|arena1))-(\d+)\.tsv$", entry)
+        row = launch(results, entry[:-4]) if m else None
+        if row:
+            classes.setdefault(distance_class(row[0]), []).append(row[1])
+    print("launches with address randomization, all series, by distance class")
+    for name, times in sorted(classes.items(), key=lambda item: -len(item[1])):
+        times.sort()
+        print(f"  {name:28s} n={len(times):3d} min={times[0]:6.1f} "
+              f"median={statistics.median(times):6.1f} max={times[-1]:6.1f} ms")
+
+
+def positions(results):
+    """The position rule: a position is off when its launch is 10 percent or
+    more from the median position; b and h, which map alike, act as two rounds."""
+    off = {}
+    print("positions without address randomization, 10 percent or more from the median position")
+    for revision in "bhs":
+        times = {}
+        for k in range(32):
+            row = launch(results, f"{revision}-fixed-{k}-0") \
+                if os.path.exists(os.path.join(results, "trace", f"{revision}-fixed-{k}-0.tsv")) else None
+            if row:
+                times[k] = row[1]
+        if not times:
+            continue
+        middle = statistics.median(times.values())
+        off[revision] = {k: t / middle for k, t in times.items() if t >= 1.10 * middle or t <= 0.90 * middle}
+        rest = [t / middle for k, t in times.items() if k not in off[revision]]
+        print(f"  {revision}: {len(times)} positions read, off: "
+              + (" ".join(f"{k}:{ratio:.2f}" for k, ratio in sorted(off[revision].items())) or "none")
+              + f"; the others {min(rest):.3f} to {max(rest):.3f}")
+    if "b" in off and "h" in off:
+        both = sorted(k for k in off["b"] if k in off["h"] and (off["b"][k] > 1) == (off["h"][k] > 1))
+        print(f"  off the same way in b and in h: {both or 'none'}")
+
+
+def own_calls(path):
+    """A launch's own mapping calls without address randomization: the mmap and
+    munmap calls whose addresses lie in 0x7fff00000000 and above, joined across
+    interrupted lines, up to the last grid mapped; the launcher tools' own calls
+    before it are randomized and lie elsewhere."""
+    calls, pending = [], {}
+    with open(path) as lines:
+        for line in lines:
+            m = re.match(r"(\d+)\s+(.*)", line.rstrip("\n"))
+            if not m:
+                continue
+            pid, rest = m.groups()
+            if rest.endswith("<unfinished ...>"):
+                pending[pid] = rest[:-len("<unfinished ...>")]
+                continue
+            resumed = re.match(r"<\.\.\. \w+ resumed>(.*)", rest)
+            if resumed and pid in pending:
+                rest = pending.pop(pid) + resumed.group(1)
+            if re.match(r"(mmap|munmap)\(", rest) and re.search(r"0x7fff[0-9a-f]{8}", rest):
+                calls.append(re.sub(r"\s+", " ", rest))
+    last = max((i for i, call in enumerate(calls) if call.startswith("mmap(NULL, 3355")), default=-1)
+    return calls[:last + 1]
+
+
+def layouts(results):
+    counts = {"b and h": [0, 0], "b and s": [0, 0]}
+    for k in range(32):
+        paths = {r: os.path.join(results, "trace", f"{r}-fixed-{k}-0.strace") for r in "bhs"}
+        if not all(os.path.exists(path) for path in paths.values()):
+            continue
+        calls = {r: own_calls(path) for r, path in paths.items()}
+        for pair, other in (("b and h", "h"), ("b and s", "s")):
+            counts[pair][calls["b"] == calls[other] and bool(calls["b"])] += 1
+    print("mapping calls without address randomization, position by position")
+    for pair, (differ, same) in counts.items():
+        print(f"  {pair}: identical at {same} positions, different at {differ}")
+
+
+MODELLED = {"b-none": "entry", "h-none": "entry", "s-none": "thread-then-entry",
+            "b-thread": "thread-then-entry", "h-thread": "thread-then-entry",
+            "b-arena1": "entry-one-heap", "h-arena1": "entry-one-heap",
+            "s-arena1": "thread-then-entry-one-heap"}
+
+
+def model(results):
+    """layout.py against each launch made with address randomization: given the
+    launch's C library base and thread stack size, does it give the traced
+    distance between the grids to within 256 KiB? Per startup order, with the
+    traced distance classes."""
+    import layout
+    agree, classes = {}, {}
+    directory = os.path.join(results, "trace")
+    for entry in sorted(os.listdir(directory)):
+        m = re.match(r"([a-z]+-(?:none|thread|arena1))-(\d+)\.strace$", entry)
+        if not m or m.group(1) not in MODELLED:
+            continue
+        order = MODELLED[m.group(1)]
+        library, stacks = None, []
+        with open(os.path.join(directory, entry)) as lines:
+            for line in lines:
+                file_map = re.search(r"mmap\(NULL, (\d+), PROT_READ, MAP_PRIVATE\|MAP_DENYWRITE, \d+, 0\) = (0x[0-9a-f]+)", line)
+                # The last such mapping is the program's own C library: a
+                # launch through env maps env's first, elsewhere.
+                if file_map and int(file_map.group(1)) >= 2 << 20:
+                    library = int(file_map.group(2), 16)
+                stack = re.search(r"mmap\(NULL, (\d+), PROT_NONE, MAP_PRIVATE\|MAP_ANONYMOUS\|MAP_STACK", line)
+                if stack and int(stack.group(1)) < 1 << 30:
+                    stacks.append(int(stack.group(1)))
+        found = grids(os.path.join(directory, entry))
+        if library is None or len(found) < 5:
+            continue
+        traced = found[3] - found[4]
+        a, b = layout.launch(library, order, **({"thread_stack": stacks[0]} if stacks else {}))
+        agree.setdefault(order, [0, 0])[abs(a - b - traced) <= 0x40000] += 1
+        classes.setdefault(order, {}).setdefault(distance_class(traced), 0)
+        classes[order][distance_class(traced)] += 1
+    print("layout.py against the launches with address randomization, per startup order")
+    for order, (wrong, right) in agree.items():
+        shares = ", ".join(f"{name} {count}" for name, count in
+                           sorted(classes[order].items(), key=lambda item: -item[1]))
+        print(f"  {order}: distance given in {right} of {right + wrong} launches; traced: {shares}")
+
+
 def main():
     results = sys.argv[1]
     for name in ("host.txt", "statuses.txt", "alias.txt", "datapad.txt"):
@@ -146,6 +287,11 @@ def main():
     for name in names:
         campaign(results, name)
     traces(results)
+    if os.path.isdir(os.path.join(results, "trace")):
+        pooled(results)
+        model(results)
+        positions(results)
+        layouts(results)
 
 
 if __name__ == "__main__":
