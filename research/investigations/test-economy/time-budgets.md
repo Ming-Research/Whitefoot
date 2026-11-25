@@ -1397,9 +1397,12 @@ annotations, exit statuses 2, 17, 1 and 1.
 - *CPU times.* After a CPU-bound native child (`powershell` summing three
   million integers) Perl's `times` gave children's user and system time 0 and
   0; after a CPU-bound msys child (`sh` counting to 100,000) it gave 0.687 and
-  0.061. The wrapper's `user` and `sys` lines therefore count msys processes
-  only on this host: a native child such as `cargo`, `clang` or a test image
-  shows 0.
+  0.061. Under this perl the wrapper's `user` and `sys` lines would count msys
+  processes only: a native child such as `cargo`, `clang` or a test image would
+  show 0. The wrapper therefore prints no `real`, `user` or `sys` line on a
+  Windows host, and the `== END` line gives the wall time there. A job-object
+  count of the native children would give real CPU times; it needs a native
+  helper, and the budgets read wall time only.
 
 **Seven wrapped samples.** The same run's seven `windows-wrapped` jobs
 (139235248500, 139235248315, 139235248002, 139235248029, 139235248120,

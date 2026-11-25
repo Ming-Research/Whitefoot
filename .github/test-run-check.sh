@@ -21,10 +21,11 @@ test ! -e "$work/lock"
 perl "$runner" parent perl "$runner" nested true > "$work/nested.log" 2>&1
 test ! -e "$work/lock"
 
-# The wrapper itself prints the command's CPU times in the format of `time -p`,
-# before the END line, because Git for Windows has no /usr/bin/time: a command
-# that computes for a second must show most of it as user time, which the
-# wrapper's own CPU time, spent only in its polling loop, would not.
+# On Linux and macOS the wrapper itself prints the command's real, user and sys
+# time in the format of `time -p`, before the END line, because Git for
+# Windows has no /usr/bin/time: a command that computes for a second must show
+# most of it as user time, which the wrapper's own CPU time, spent only in its
+# polling loop, would not.
 perl "$runner" cpu perl -MTime::HiRes=time -e '$t = time; 1 while time - $t < 1' > "$work/cpu.log" 2>&1
 awk '/^real [0-9.]+$/ { real = 1 }
      /^user [0-9.]+$/ { if ($2 >= 0.3) user = 1 }
@@ -229,7 +230,9 @@ for platform in linux windows; do
 done
 
 # Git for Windows' perl, which runs the wrapper in the Windows I/O host job,
-# reports its host as cygwin; it reads the windows column.
+# reports its host as cygwin; it reads the windows column. That perl counts no
+# native descendant's CPU time, so a Windows host prints no real, user or sys
+# line, and the END line gives the wall time.
 WHITEFOOT_TIME_BUDGET_RECORD=$work/cygwin-record \
     perl "$work/run-host.pl" cygwin "$runner" host-over true > "$work/cygwin.log" 2>&1
 grep -q "== OVER BUDGET: enforced: host-over took [0-9.]* s, over its 0 s windows budget ==" "$work/cygwin.log"
@@ -238,6 +241,8 @@ WHITEFOOT_TIME_BUDGET_RECORD=$work/cygwin-within-record \
     perl "$work/run-host.pl" cygwin "$runner" host-within true > "$work/cygwin-within.log" 2>&1
 grep -q '== BUDGET host-within: [0-9.]* s of 600 s (windows) ==' "$work/cygwin-within.log"
 test ! -s "$work/cygwin-within-record"
+grep -q '^== END host-within: ' "$work/cygwin-within.log"
+if grep -qE '^(real|user|sys) ' "$work/cygwin.log" "$work/cygwin-within.log"; then exit 1; fi
 
 # WHITEFOOT_BUDGET_REPORT_ONLY reports only the labels it names, on Linux too;
 # an unnamed label stays enforced, and so does a named label with no budget.

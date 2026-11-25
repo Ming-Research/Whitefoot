@@ -307,8 +307,8 @@ CI runs heavy commands under `perl .github/run-check.pl <label> <command> ...`,
 as the `make` targets do. It holds one host-wide lock,
 leaves Cargo and the test harness at every available processor unless
 `CARGO_BUILD_JOBS` or `RUST_TEST_THREADS` names fewer, prints the wall time
-every 30 seconds and the wall, user and system time when the command ends, and
-stops a command after 30 minutes unless
+every 30 seconds and when the command ends, with the command's user and system
+time on Linux and macOS, and stops a command after 30 minutes unless
 `WHITEFOOT_CHECK_TIMEOUT` gives another limit in seconds. It compares each
 labeled stage with its budget in `.github/time-budgets.txt` without changing
 the command's status. Linux budgets are per CPU model: the maximum of at least
