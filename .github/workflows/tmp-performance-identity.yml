@@ -3,7 +3,7 @@
 name: tmp-performance-identity
 on:
   push:
-    branches: ['work-285-**']
+    branches: ['work-285-**', 'wf-try/work-285-**']
     paths:
       - tests/performance/**
       - .github/workflows/tmp-performance-identity.yml
