@@ -28,8 +28,13 @@ comparison in `run-check.pl`.
             each job that went red as it ran and says whether the rule would
             have kept it green, with --branch and --attempt narrowing the
             jobs judged
-  --self-test   check the parsing, the rules, the table rewrite and the
-            replay on synthetic data (no network)
+  against   hold each job that went red as it ran to the budgets the table
+            itself gives its CPU model (the largest Linux cell of the stage
+            for a model with no column, as run-check.pl does), where `replay`
+            judges it by the runs before it; --branch and --attempt narrow
+            the jobs judged
+  --self-test   check the parsing, the rules, the table rewrite, the replay
+            and the judgment against a table on synthetic data (no network)
 
 Cells and columns:
   * A class column with at least 20 recorded runs of a stage is recomputed.
@@ -391,6 +396,61 @@ def red_jobs(judgment):
     return found
 
 
+def table_budget(table, label, model):
+    """What the table holds a stage to on a CPU model, in seconds, as run-check.pl reads it.
+
+    The cell of the model's column; the largest cell of the Linux columns in
+    the stage's row for a model with no column. None for a stage with no row
+    and for a stage whose cell, or whose every Linux cell, is `-`.
+    """
+    if label not in table.rows:
+        return None
+    cells = table.cells(label)
+    column = next((c for c, m in table.classes.items() if m == model), None)
+    if column is not None:
+        return None if cells.get(column, "-") == "-" else int(cells[column])
+    linux = [int(cells[c]) for c in table.classes if cells.get(c, "-") != "-"]
+    return max(linux) if linux else None
+
+
+def against_table(rows, table, since, branch=None, attempt=None):
+    """The jobs that went red as they ran, judged by the table's own budgets.
+
+    A job went red when a stage of it took longer than the budget its log
+    records. It is "within" the table when every red stage is within the
+    table's budget for its model, "over" when one is over it and "not
+    judgeable" when the table has none for a stage. Returns [(job, status,
+    run, attempt, branch, cpu, [one line per red stage])], jobs finishing from
+    the day `since` on, of `branch` and `attempt` where given.
+    """
+    jobs = collections.defaultdict(list)
+    for r in rows:
+        if r["day"] >= since and r["exit"] == 0 and (branch is None or r["branch"] == branch) \
+                and (attempt is None or r.get("attempt") == attempt):
+            jobs[r["job"]].append(r)
+    found = []
+    for job, stages in sorted(jobs.items()):
+        red = [r for r in stages if r["budget"] is not None and r["cs"] > 100 * r["budget"]]
+        if not red:
+            continue
+        details, over, blind = [], False, False
+        for r in red:
+            budget = table_budget(table, r["label"], r["cpu"])
+            if budget is None:
+                blind = True
+                details.append(f"{r['label']}: {r['cs'] / 100:.1f} s over its logged {r['budget']} s; "
+                               "the table has no budget for it")
+            else:
+                over = over or r["cs"] > 100 * budget
+                details.append(f"{r['label']}: {r['cs'] / 100:.1f} s over its logged {r['budget']} s, "
+                               f"{r['cs'] / budget:.0f}% of the table's {budget} s"
+                               + (" (over it)" if r["cs"] > 100 * budget else ""))
+        first = red[0]
+        found.append((job, "over" if over else "not judgeable" if blind else "within",
+                      first["run"], first.get("attempt"), first["branch"], first["cpu"], details))
+    return found
+
+
 def gh(*args, binary=False):
     """Output of `gh api` (bytes when `binary`); a server error (HTTP 5xx) is retried a few times."""
     for attempt in range(1, 5):
@@ -564,7 +624,7 @@ def print_headroom(found, rules):
               + " | ".join(f"{by_rule[name][0]} (+{100 * by_rule[name][1]:.0f}%)" for name in rules) + " |")
 
 
-def print_red_jobs(found):
+def print_red_jobs(found, statuses=("cleared", "still red", "not judgeable")):
     print("jobs that went red as they ran (a stage over the budget its log records):")
     for job, status, run, attempt, branch, cpu, details in found:
         print(f"  {status}: job {job}, run {run}, attempt {attempt if attempt is not None else '?'}, "
@@ -572,8 +632,7 @@ def print_red_jobs(found):
         for line in details:
             print(f"      {line}")
     counts = collections.Counter(status for _, status, *_ in found)
-    print(f"  {len(found)} jobs: {counts['cleared']} cleared, {counts['still red']} still red, "
-          f"{counts['not judgeable']} not judgeable")
+    print(f"  {len(found)} jobs: " + ", ".join(f"{counts[status]} {status}" for status in statuses))
 
 
 def self_test():
@@ -794,6 +853,52 @@ def self_test():
     assert [status for _, status, *_ in reds(12600)] == ["still red"], reds(12600)
     assert [status for _, status, *_ in reds(11200, "Small CPU")] == ["not judgeable"], reds(11200, "Small CPU")
     assert reds(10100) == [], "a stage within its logged budget is not a red job"
+    # Judging the red jobs by the table's own budgets. Every stage below was
+    # logged against 40 s. The table gives `stage/a` 50 s on the big class and
+    # 70 s on the small one, so an unmapped model is held to 70 s, the largest;
+    # `stage/b` has only the small class's 15 s, so the big class has no
+    # budget for it and cannot be judged. A stage exactly at its budget is
+    # within it, a stage within its logged budget is no red job, and the day,
+    # branch and attempt narrow the jobs judged.
+    against_text = "\n".join([
+        "cpu big-1  Big CPU", "cpu small-2  Small CPU", "",
+        "label    big-1  small-2  macos  windows",
+        "stage/a  50     70       100    -",
+        "stage/b  -      15       100    -",
+        ""])
+    against_rows = [("stage/a", "Big CPU", 5000, 20, 0),      # 0: exactly its 50 s: within
+                    ("stage/a", "Big CPU", 5001, 20, 0),      # 1: over
+                    ("stage/a", "Small CPU", 6900, 20, 0),    # 2: within its 70 s
+                    ("stage/a", "Small CPU", 7001, 20, 0),    # 3: over
+                    ("stage/a", "Odd CPU", 7000, 20, 0),      # 4: unmapped, held to the largest, 70 s: within
+                    ("stage/a", "Odd CPU", 7001, 20, 0),      # 5: over it
+                    ("stage/b", "Big CPU", 4500, 20, 0),      # 6: no budget for it: not judgeable
+                    ("stage/a", "Big CPU", 3999, 20, 0),      # 7: within its logged 40 s: no red job
+                    ("stage/a", "Small CPU", 9000, 20, 1),    # 8: a failed stage is not judged
+                    ("stage/a", "Small CPU", 7001, 19, 0),    # 9: before the day judged
+                    ("stage/a", "Small CPU", 7001, 21, 0),    # 10: another branch, and a rerun
+                    ("stage/a", "Big CPU", 4000, 20, 0)]      # 11: exactly its logged 40 s: no red job
+    against_data = sample(against_rows, budget=40)
+    against_data["jobs"]["10"].update(branch="other", attempt=2)
+    # A second red stage with no budget in the table (the big class has none for
+    # `stage/b`): it leaves an over job over and makes a within job not judgeable.
+    for job in ("0", "1"):
+        against_data["jobs"][job]["rows"].append({"label": "stage/b", "cs": 4500, "exit": 0, "budget": 40,
+                                                  "ts": "2026-10-20T00:30:00.0000000Z"})
+    against_found = against_table(flatten(against_data), Table(against_text), "2026-10-20")
+    judged = {job: status for job, status, *_ in against_found}
+    assert judged == {"0": "not judgeable", "1": "over", "2": "within", "3": "over", "4": "within", "5": "over",
+                      "6": "not judgeable", "10": "over"}, judged
+    assert dict((job, details) for job, *_, details in against_found)["5"] == [
+        "stage/a: 70.0 s over its logged 40 s, 100% of the table's 70 s (over it)"], against_found
+    assert dict((job, details) for job, *_, details in against_found)["4"] == [
+        "stage/a: 70.0 s over its logged 40 s, 100% of the table's 70 s"], against_found
+    narrowed = against_table(flatten(against_data), Table(against_text), "2026-10-20", "other", 2)
+    assert [(job, status) for job, status, *_ in narrowed] == [("10", "over")], narrowed
+    assert against_table(flatten(against_data), Table(against_text), "2026-10-20", "main", 2) == []
+    assert [table_budget(Table(against_text), "stage/a", model) for model in ("Big CPU", "Small CPU", "Odd CPU")] == [50, 70, 70]
+    assert [table_budget(Table(against_text), label, "Big CPU") for label in ("stage/b", "stage/none")] == [None, None]
+    assert table_budget(Table(against_text), "stage/b", "Odd CPU") == 15
     # `collect` leaves the reserve of the hour's requests to others: at 10
     # requests a run, 1,000 left with 920 kept back is 8 runs, and nothing
     # is fetched at or below the reserve.
@@ -883,6 +988,12 @@ def main():
                        help="requests of the hour's 5,000 to leave for others (default 1000); fetching"
                             " stops before the quota falls to it")
     fetch.add_argument("--samples", required=True)
+    judge = sub.add_parser("against")
+    judge.add_argument("--samples", required=True, nargs="+", help="samples files from collect")
+    judge.add_argument("--budgets", default=BUDGETS)
+    judge.add_argument("--from", dest="since", required=True, help="first day judged, YYYY-MM-DD")
+    judge.add_argument("--branch", help="judge the jobs of this branch only")
+    judge.add_argument("--attempt", type=int, help="judge the jobs of this run attempt only")
     for name in ("table", "headroom", "replay"):
         command = sub.add_parser(name)
         command.add_argument("--samples", required=True, nargs="+", help="samples files from collect")
@@ -916,6 +1027,10 @@ def main():
     rows = flatten(load(args.samples))
     with open(args.budgets) as handle:
         table = Table(handle.read())
+    if args.command == "against":
+        print_red_jobs(against_table(rows, table, args.since, args.branch, args.attempt),
+                       ("within", "over", "not judgeable"))
+        return
     if args.command == "headroom":
         rules = args.rule or list(RULES)
         print_headroom(headroom(rows, table, args.label, args.window, rules), rules)

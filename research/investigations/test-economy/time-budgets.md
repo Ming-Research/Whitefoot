@@ -1371,6 +1371,34 @@ are within the budgets the table now holds (25.1 s against 35 s on EPYC 7763;
 140.1 s and 224.2 s against 215 s and 315 s on EPYC 9V45), which says nothing
 about the table of that day.
 
+**Judging them by the new table.** The replay asks what a table made by the
+rule from the runs before each stage would have said. The gate's question is
+simpler: would the table now in `.github/time-budgets.txt` have turned these
+jobs red? `against` holds each job that went red as it ran to the budget the
+table gives its CPU model (the largest Linux cell of the row for a model with no
+column, as `run-check.pl` does) and needs no earlier runs. On 2026-11-25, over
+the 101 runs of `main` created since 2026-10-20 (882 jobs, 733 of them first
+attempts; collected that day, the samples are scratch):
+
+    python3 .github/recompute-time-budgets.py against --samples <file> \
+        --from 2026-10-20 --branch main --attempt 1
+
+Result: 23 jobs went red as they ran, the 22 above and one of 2026-11-25 (run
+45604849371, `compiler/test-unit` 161.4 s against 160 s on the Xeon), and all
+23 are within the table: none is over a budget and none cannot be judged. The
+largest share of a budget a red stage takes is 84% on EPYC 7763
+(`compiler/test-build-unit` 193.7 s of 230 s, run 39521731772), 78% on EPYC 9V45
+(`check/unit` 230.5 s of 295 s), 74% on EPYC 9V74 (`compiler/test-build-unit`
+178.8 s of 240 s) and 79% on the Xeon (`compiler/test-unit` 161.4 s of 205 s).
+This covers the two jobs the replay could not judge (72% of 35 s, and 65% and
+71% of 215 s and 315 s). The new table was made from each class's newest 50 runs
+of 2026-11-25, not from the runs before these jobs, so this does not say that a
+table recomputed by the rule on those days would have held them; the replay
+does, for the 20 jobs it judged. With the same 101 runs the replay (`replay
+--from 2026-10-20 --every 0 --branch main --attempt 1 --list`) judges only 5 of
+the 23 jobs, all cleared and the same five `against` shows within, the other 18
+having fewer than 20 earlier runs of their class among the runs of `main`.
+
 **The rules compared.** Replay from 2026-10-22 on (`--every 0`, window 50),
 756 judged jobs (62 for a table 7 days old, `--age 7`); a slowdown multiplies
 the times of every stage of a job. Jobs red:
@@ -1476,7 +1504,8 @@ HTTP 403, and with 1,038 left after the last batch the quota was gone within
 minutes, so a reserve protects the engine only while nobody else spends it.
 `replay` takes `--rule` (`spread`, `max+10`, `max+25`, `max+30`), `--every 0`,
 `--age`, `--branch`, `--attempt` and `--list`; `headroom` prints the headroom
-table; `table` and `replay` take every samples file at once. The runs of the
+table; `against` takes `--from`, `--branch` and `--attempt`; `table`, `replay`
+and `against` take every samples file at once. The runs of the
 comparison are those named under Sources; the samples are scratch.
 
 **Limits.** The data are those of one month, mostly of one week, so the
@@ -1489,7 +1518,8 @@ concurrent map's sanitizers and compute-regression), which keep the values of
 the former rule or their provisional ones, each raised by a tenth in the
 owner's raise of 2026-11-25; the sanitizer rows have the most
 jobs and, unlike the gate's, a merge needs them green too. Two of the 22 jobs
-are not judged (above). A stage made 30% slower than its budget is shown to
+are not judged by the replay (above); `against` holds them to the table, as it
+does the others. A stage made 30% slower than its budget is shown to
 fail by a run of the verdict, not by this replay: see the next paragraph.
 
 **A stage that has slowed.** The owner's second criterion is that a stage 30%
