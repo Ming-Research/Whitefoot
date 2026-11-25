@@ -148,10 +148,11 @@ jobs:
           fi
           echo "platforms=$platforms" >> "$GITHUB_OUTPUT"
           echo "Platforms: $platforms" >> "$GITHUB_STEP_SUMMARY"
-      # The jobs of the run: the Makefile's group inventory (`make
-      # check-groups`) on the chosen platforms. .github/gate-matrix.sh is the
-      # one place that decides which host runs a group in parts and which runs
-      # it whole; the final job requires the jobs it names.
+      # The jobs of the run: the Makefile's inventory of the groups and their
+      # parts (`make check-parts`) on the chosen platforms.
+      # .github/gate-matrix.sh is the one place that decides which host runs a
+      # group in parts and which runs it whole; the final job requires the
+      # jobs it names.
       - name: Select the jobs
         id: select
         env:

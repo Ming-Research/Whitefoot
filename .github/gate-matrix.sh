@@ -8,7 +8,7 @@
 #   matrix=<JSON array of {group, shard, name, os}, one object a job>
 #   jobs=<JSON array of "<name> (<os>)", the jobs the final job requires>
 #
-# The groups and their parts come from the root Makefile's `check-groups`,
+# The groups and their parts come from the root Makefile's `check-parts`,
 # which names no host. The Linux host runs every part the inventory lists; any
 # other host runs each group once, whole (`all`), under the group's name. The
 # job name is what gate-both-platforms.sh looks for and what compiler-release.yml
@@ -18,7 +18,7 @@ set -eu
 split_hosts='["ubuntu-24.04"]'
 platforms=${1:?usage: gate-matrix.sh PLATFORMS_JSON}
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-inventory=$(make -C "$root" --no-print-directory --silent check-groups)
+inventory=$(make -C "$root" --no-print-directory --silent check-parts)
 
 matrix=$(jq -cn --argjson platforms "$platforms" --argjson inventory "$inventory" \
     --argjson split "$split_hosts" '

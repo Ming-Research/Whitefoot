@@ -2,7 +2,9 @@
 # Check .github/gate-matrix.sh against the real Makefile inventory and against a
 # stand-in inventory: which host runs parts and which runs groups whole, the
 # names the final job requires, and that every job name is one a file or
-# artifact may carry. It runs `make check-groups` and jq, nothing heavier.
+# artifact may carry, and that `make check-groups` is still the list of group
+# names that main's gate.yml reads when the engine checks a commit with it. It
+# runs `make` for the two inventories and jq, nothing heavier.
 set -eu
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 script=$here/gate-matrix.sh
@@ -31,8 +33,14 @@ macos='["macos-15"]'
 both='["ubuntu-24.04","macos-15"]'
 
 # The real inventory: Linux runs every part, macOS each group once, whole.
-inventory=$(make -C "$here/.." --no-print-directory --silent check-groups)
+inventory=$(make -C "$here/.." --no-print-directory --silent check-parts)
 has "$inventory" 'length > 0 and all(.[]; (.group | length) > 0 and (.shard | length) > 0)' 'the inventory is empty or malformed'
+# The group list is the parts' groups once each, in order, and only names: the
+# engine runs main's gate.yml against a commit's Makefile, whose matrix takes
+# each element of `check-groups` as a group name.
+groups=$(make -C "$here/.." --no-print-directory --silent check-groups)
+has "$groups" 'length > 0 and all(.[]; type == "string")' 'check-groups is not a list of group names'
+has "$groups" "(. | length) == (. | unique | length) and . == ($inventory | map(.group) | reduce .[] as \$g ([]; if index(\$g) then . else . + [\$g] end))" 'check-groups differs from the groups of check-parts'
 output "$linux"
 has "$matrix" "length == ($inventory | length) and all(.[]; .os == \"ubuntu-24.04\")" 'Linux does not run every part of the inventory'
 has "$jobs" 'length == (unique | length)' 'two Linux jobs have one name'

@@ -19,7 +19,8 @@ RESEARCH_CARGO_TARGET := $(WHITEFOOT_SCRATCH_ROOT)/whitefoot-research-tests-targ
 
 # One group inventory for local execution and the hosted correctness matrix.
 # The _check-<group> recipes below own the commands on both paths. CI reads
-# check-groups and invokes check-group; it keeps no second command inventory.
+# check-groups (and check-parts, for the groups it runs in parts) and invokes
+# check-group; it keeps no second command inventory.
 CHECK_GROUPS := static unit corpus runtime
 
 # A group may also be run as parts that together run what the whole group runs
@@ -66,13 +67,22 @@ _check:
 	@echo "== WHITEFOOT ALL TESTS GREEN =="
 
 # JSON is consumed directly by the GitHub Actions matrix. This is a view of
-# CHECK_GROUPS and CHECK_SHARDS_*, not generated source or another list to
-# maintain.
-#
-# One object for each part of a split group and one `all` object for each group
-# that is not split, in the group order; a part's job name is the group and the
-# part with no `/`, which no file or artifact name may hold.
+# CHECK_GROUPS, not generated source or another list to maintain. It stays a
+# list of group names: the wf-agents engine runs main's gate.yml against a
+# commit's Makefile, so a change to this output would break the check of the
+# very commit that makes it.
 check-groups:
+	@printf '['; separator=''; \
+	for group in $(CHECK_GROUPS); do \
+		printf '%s"%s"' "$$separator" "$$group"; separator=,; \
+	done; printf ']\n'
+
+# The parts of the groups, for the workflow that runs a group in parts (a view
+# of CHECK_GROUPS and CHECK_SHARDS_*, as check-groups is of CHECK_GROUPS): one
+# object for each part of a split group and one `all` object for each group
+# that is not split, in the group order. A part's job name is the group and the
+# part with no `/`, which no file or artifact name may hold.
+check-parts:
 	@printf '['; separator=''; \
 	for entry in $(foreach group,$(CHECK_GROUPS),$(if $(CHECK_SHARDS_$(group)),$(foreach shard,$(CHECK_SHARDS_$(group)),$(group):$(shard)),$(group):all)); do \
 		group=$${entry%%:*}; shard=$${entry#*:}; name=$$group; \
@@ -332,4 +342,4 @@ install-hooks:
 	git config core.hooksPath governance/hooks
 	@echo "installed governance/hooks (pre-commit, pre-merge-commit)"
 
-.PHONY: historical-tool-tests _historical-tool-tests check _check check-groups check-group static repository-invariants spec-archives readme-translation guidance safety-claims source-size spec-append-only-staged spec-prose-integrity design-lint design-ready conformance compiler performance-instrument conformance-run install-hooks
+.PHONY: historical-tool-tests _historical-tool-tests check _check check-groups check-parts check-group static repository-invariants spec-archives readme-translation guidance safety-claims source-size spec-append-only-staged spec-prose-integrity design-lint design-ready conformance compiler performance-instrument conformance-run install-hooks
