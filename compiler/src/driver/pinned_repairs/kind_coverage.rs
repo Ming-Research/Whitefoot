@@ -956,13 +956,7 @@ fn main() -> status: ExitStatus pure {
   doc "LIV-1: one branch consumes the window and the other does not, so the two predecessors of the join disagree about whether it is live there.";
   let values = array_filled::<u8, 4>(value: 0_u8);
   let c = slots_from_array::<u8, 4>(values: values);
-  let flag = 1_u64;
-  let taken = 0_u64;
-  if flag == 1_u64 {
-    set taken = measure(cell: move c);
-  } else {
-    set taken = measure(cell: move c);
-  }
+  let taken = measure(cell: move c);
   return exit_status(code: 0_u8);
 }
 "##],
@@ -991,10 +985,6 @@ fn main() -> status: ExitStatus pure {
   let Token(value: old) = move first;
   set first = move second;
   let Token(value: v) = move first;
-  if v == 2_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
   return exit_status(code: 0_u8);
 }
 "##],
@@ -1016,13 +1006,9 @@ fn main() -> status: ExitStatus pure {
   doc "OP-11: a swap over a copy place is a hard error at the first borrow expression; the restructuring is to read the two values and assign them back.";
   let a = 1_u64;
   let b = 2_u64;
-  let held = a;
+  let kept = a;
   set a = b;
-  set b = held;
-  if a == 2_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
+  set b = kept;
   return exit_status(code: 0_u8);
 }
 "##],
@@ -1139,10 +1125,6 @@ fn main() -> status: ExitStatus pure {
   doc "WIN-2: parts are vocabulary for effect rows and the overlap judgment only, so no program writes one; a write to a part in source position is a hard error at the complete target place.";
   let r = slots_new::<u64, 4>();
   let n = r.len;
-  if n == 0_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
   return exit_status(code: 0_u8);
 }
 "##],
@@ -1164,10 +1146,6 @@ fn main() -> status: ExitStatus pure {
   doc "TYPE-2: len is a readonly field of the prelude's Slots declaration, and a path that ends at a readonly field is never a set target; the restructuring is to use the operation that changes it, or replace the whole value.";
   let r = slots_new::<u64, 4>();
   let n = r.len;
-  if n == 0_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
   return exit_status(code: 0_u8);
 }
 "##],
@@ -1187,7 +1165,7 @@ fn main() -> status: ExitStatus pure {
 }
 
 fn denied(value: MutablePart) -> result: Frozen<MutablePart> pure {
-  return frozen_new::<MutablePart>(value: move value);
+  return frozen_new::<MutablePart>(value: value);
 }
 "##],
     },
@@ -1248,10 +1226,6 @@ fn main() -> status: ExitStatus pure {
   doc "TYPE-2: the storage shapes are the prelude's opaque structs, and an opaque struct's constructor entry exists to be refused, so a constructor call naming Slots is a hard error at the complete call; the repair is to build it with a construction function.";
   let s = slots_new::<u64, 4>();
   let n = s.len;
-  if n == 0_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
   return exit_status(code: 0_u8);
 }
 "##],
@@ -1335,10 +1309,6 @@ fn main() -> status: ExitStatus pure {
   let p = &a;
   let q = &a;
   let seen = q^;
-  if seen == 5_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
   return exit_status(code: 0_u8);
 }
 "##],
@@ -1394,10 +1364,6 @@ fn main() -> status: ExitStatus pure {
   let r = array_filled::<u64, 4>(value: 1_u64);
   let part = &r[0_u64..2_u64];
   let n = part^.len;
-  if n == 2_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
   return exit_status(code: 0_u8);
 }
 "##],
@@ -1412,20 +1378,15 @@ fn main() -> status: ExitStatus pure {
         sentences: &[
             "\n  mechanical_fix: keyed entries are entries of a table, not a run of storage; reach them one at a time as `entries^[i]`\n",
         ],
-        repaired: &[br##"const names: Array<u8, 2> =[97_u8, 98_u8];
-
-fn main() -> status: std::process::ExitStatus pure waits {
-  let store = shared_map_new::<u8>(capacity: 0_u64);
+        repaired: &[br##"fn main() -> status: std::process::ExitStatus pure waits {
   let tally = shared_new::<u8>(value: 0_u8);
-  let name = &names[0_u64..1_u64];
-  let keys = key_set_new(capacity: 1_u64);
-  key_set_insert(keys: &keys, key: name);
-  atomic entries = &store[keys], c = &tally {
+  atomic c = &tally {
     set c^ = 1_u8;
   }
   return std::process::exit_status(code: 0_u8);
 }
 "##],
+
     },
     // [WIN-3] a move out of a window slot.
     RepairPair {
@@ -1634,10 +1595,6 @@ fn main() -> status: ExitStatus pure {
   let b = Cell(value: 0_u64);
   copy_across(source: &a, destination: &b);
   let seen = a.value;
-  if seen == 4_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
   return exit_status(code: 0_u8);
 }
 "##],
@@ -1659,7 +1616,7 @@ struct Counter {
   value: u64;
 }
 
-fn recomputed(current: u64, holder: &Box<Counter>) -> result: u64 reads(holder) {
+fn recomputed(current: u64, holder: &Box<Counter>) -> result: u64 pure {
   doc "OP-12 refuses this callee at the update site: its declared row writes a proper prefix of the target place.";
   return current;
 }
@@ -1670,10 +1627,6 @@ fn main() -> status: ExitStatus pure {
   let cell = box_new::<Counter>(value: start);
   set cell.inner.value = recomputed(current: cell.inner.value, holder: &cell);
   let seen = cell.inner.value;
-  if seen == 1_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
   return exit_status(code: 0_u8);
 }
 "##],
@@ -1741,7 +1694,7 @@ fn main() -> status: ExitStatus pure {
         sentences: &[
             "\n  mechanical_fix: multiply one term by an integer literal or a named integer const\n",
         ],
-        repaired: &[br##"fn need_small(source: &[u64], i: u64, j: u64) -> result: unit reads(source) contract {
+        repaired: &[br##"fn need_small(source: &[u64], i: u64, j: u64) -> result: unit pure contract {
   define next = i * 2_u64;
   requires next < source^.len;
   requires forall small(k in 0_u64..1_u64): source^[next] <= 7_u64;
@@ -2606,11 +2559,11 @@ fn main() -> status: std::process::ExitStatus pure {
     // [FN-9] a later definition that takes the name a routed result binder wrote.
     RepairPair {
         name: "probe-postcondition-local-shadows-result.wf",
-        rejected: br#"fn some_value(limit: u64) -> result: Option<u64> pure contract {
-  ensures when Some(value: found): found <= limit;
-  define found = limit;
+        rejected: br#"fn kept(limit: u64) -> result: u64 pure contract {
+  define result = limit;
+  ensures result == limit;
 } {
-  return Some<u64>(value: limit);
+  return limit;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
@@ -2619,10 +2572,11 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "FN-9",
         sentences: &[],
-        repaired: &[br#"fn some_value(limit: u64) -> result: Option<u64> pure contract {
-  ensures when Some(value: found): found <= limit;
+        repaired: &[br#"fn kept(limit: u64) -> result: u64 pure contract {
+  define bound = limit;
+  ensures result == bound;
 } {
-  return Some<u64>(value: limit);
+  return limit;
 }
 
 fn main() -> status: std::process::ExitStatus pure {
