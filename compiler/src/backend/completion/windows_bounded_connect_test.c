@@ -26,9 +26,10 @@
  * cancellation list and its timers must be what they were.
  *
  * The same image runs on the default route as the control: its connect is a
- * ConnectEx the port cancels. The two arguments `control-bound` and
- * `control-leak` make a check fail on purpose, to show that the one-second
- * bound and the handle comparison can fail; each must exit nonzero.
+ * ConnectEx the port cancels. The three arguments `control-bound`,
+ * `control-leak` and `control-blocking` make a check fail on purpose, to show
+ * that the one-second bound, the handle comparison and the blocking-mode
+ * probe of case D can fail; each must exit nonzero through its own check.
  * Compatible production objects are shared with the other Windows probes. */
 #include "bridge.c"
 #include "../ordinary_values.c"
@@ -49,6 +50,7 @@ static wf_value factory = {{8, 0, 0, 0}};
 static wf_cancel_handle never;
 static int helper_route;
 static uint64_t bound_ns = SECOND_NS;
+static int control_nonblocking;
 static unsigned silent_port;
 static unsigned ordinary_port;
 static SOCKET silent_listener = INVALID_SOCKET;
@@ -318,6 +320,11 @@ static void case_unbounded(void) {
     peer = accept(ordinary_listener, NULL, NULL);
     CHECK(peer != INVALID_SOCKET);
     client = (SOCKET)wf__windows_socket_handle((int)result.ok.value.send.words[0]);
+    if (control_nonblocking) {
+        /* What a connect that forgot to restore blocking mode would hand out. */
+        u_long on = 1;
+        CHECK(ioctlsocket(client, FIONBIO, &on) == 0);
+    }
     /* A nonblocking socket answers an empty receive at once; a blocking one
      * waits out the receive timeout. */
     CHECK(setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof(timeout)) == 0);
@@ -371,6 +378,7 @@ int main(int argc, char **argv) {
     DWORD baseline, after;
     uint64_t settle;
     if (argc > 1 && strcmp(argv[1], "control-bound") == 0) bound_ns = 0;
+    control_nonblocking = argc > 1 && strcmp(argv[1], "control-blocking") == 0;
     CHECK(WSAStartup(MAKEWORD(2, 2), &winsock) == 0);
     wf_test_guard_start(180);
     wf__context_root_begin();

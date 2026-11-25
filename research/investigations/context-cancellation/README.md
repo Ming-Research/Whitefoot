@@ -304,9 +304,10 @@ connects that can succeed raced by a firing delayed from 0 to 2 ms, a connect
 with no bound, and a refused connect; each bounded call must end within one
 second of the firing or the deadline, and after a warm-up pass the process's
 handle count, the handle factory's credit, the driver's cancellation list and
-its timers must be what they were. Two arguments, `control-bound` and
-`control-leak`, make the one-second bound and the handle comparison fail on
-purpose, and the job requires each to fail through that check.
+its timers must be what they were. Three arguments, `control-bound`,
+`control-leak` and `control-blocking`, make the one-second bound, the handle
+comparison and the blocking-mode probe fail on purpose, and the job requires
+each to fail through that check.
 
 ## Cancellation conformance observations
 
