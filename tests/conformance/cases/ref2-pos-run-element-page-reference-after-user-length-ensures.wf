@@ -1,0 +1,27 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn replace_last(window: &Paged<u64>, value: u64) -> result: unit writes(window.last), writes(window.next), writes(window.len) contract {
+  requires window^.len > 0_u64;
+  ensures window^.len == entry(window)^.len;
+} {
+  doc "Takes and replaces the last value, publishing the unchanged window length.";
+  let old = take_back(window: window);
+  place_back(window: window, value: value);
+  return unit;
+}
+
+fn probe(rows: &[Box<Paged<u64>>]) -> result: u64 writes(rows) contract {
+  requires 0_u64 < rows^.len;
+  requires rows^[0_u64].inner.len >= 1_u64;
+  requires rows^[0_u64].inner.pages.len > 0_u64;
+} {
+  doc "A page of a boxed Paged below a range reference's element keeps its formation length across the helper's last-slot write.";
+  let page = &rows^[0_u64].inner.pages[0_u64];
+  replace_last(window: &rows^[0_u64].inner, value: 7_u64);
+  return page^.len;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

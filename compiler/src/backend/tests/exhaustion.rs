@@ -27,7 +27,8 @@
 //! the process inside the trusted base. The tests below cover the resource
 //! record and abort edges for scalar, array, Slots and Ring cells, cleanup of
 //! initialized elements before their backing allocation, probe attachment to
-//! every emitted definition, and native containment on a guarded stack.
+//! every emitted definition, native containment on a guarded stack, and two
+//! lanes of one `--par` module refused an allocation at the same moment.
 
 use super::BoundedOutput;
 use std::process::Command;
@@ -471,6 +472,223 @@ ssize_t wf_test_record_write(int fd, const void *bytes, size_t length) {
     offset += count;
     /* A positive result remains progress even with stale EINTR. */
     errno = EINTR;
+    return written;
+}
+"#;
+
+/// Two heap-refusal paths on two lanes of one `--par` module.
+///
+/// `both` hands one `build_*` call to a worker lane and runs the other on its
+/// own thread, so one refused allocation can end each thread at its own site
+/// at the same moment. The sites differ in their fill value only, so a record
+/// cannot name the thread that wrote it.
+const RACING_HEAP_RECORD_LANES: &[u8] = br#"fn build_left(n: u64) -> result: u64 pure {
+  let b = box_array_filled::<u8>(count: 4_u64, value: 7_u8);
+  let e = b.inner.len;
+  return e +wrap n;
+}
+
+fn build_right(n: u64) -> result: u64 pure {
+  let b = box_array_filled::<u8>(count: 4_u64, value: 9_u8);
+  let e = b.inner.len;
+  return e +wrap n;
+}
+
+fn both(n: u64) -> result: u64 pure {
+  let a = build_left(n: n);
+  let c = build_right(n: n);
+  return a +wrap c;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let r = both(n: 5_u64);
+  let ok = r > 0_u64;
+  if ok {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}
+"#;
+
+/// The module with the record path's host edges handed to
+/// [`RACING_RECORD_OBSERVER`]: every allocation, the record's `write`, and the
+/// latch accessor the record writer asks the floor for.
+///
+/// With `leaky`, the writer's winner test becomes a constant: the same writer
+/// with nothing arbitrating between threads, which is what the sequential
+/// writer would be on a module that has more than one.
+fn observe_racing_records(module: &str, leaky: bool) -> String {
+    const ACCESSOR: &str = "call ptr @wf__floor_record_latch()";
+    const WINNER: &str = "%won = extractvalue { i32, i1 } %acquired, 1";
+    assert!(
+        module.contains(ACCESSOR) && module.contains(WINNER),
+        "the fixture must carry the latched record writer: {module}"
+    );
+    let mut observed = module
+        .replace("@wf__heap_take(", "@wf_test_allocate(")
+        .replace("@wf__heap_give(", "@wf_test_release(")
+        .replace("@write(", "@wf_test_record_write(")
+        .replace(ACCESSOR, "call ptr @wf_test_record_latch()");
+    if leaky {
+        observed = observed.replace(WINNER, "%won = icmp eq i32 0, 0");
+    }
+    observed.push_str("\ndeclare ptr @wf_test_record_latch()\n");
+    observed
+}
+
+/// One fresh process of the linked fixture, four worker lanes.
+fn run_racing_records(executable: &std::path::Path) -> std::process::Output {
+    Command::new(executable)
+        .env("WF_WORKERS", "4")
+        .bounded_output()
+        .expect("run racing heap record writers")
+}
+
+/// Two failure paths reach the record writer together; one record is written.
+///
+/// The allocator the observer links refuses every request, and holds each
+/// caller until a second thread is inside it too, so the two refusals — one on
+/// a worker lane, one on the thread that handed the call out — leave the
+/// allocator together and reach the record writer together. The observer's
+/// `write` then holds the first record until the other path has asked for the
+/// latch and had time to write its own. A latch that arbitrates leaves the
+/// other path parked, and the output is one well-formed record. That is a
+/// runtime contract and no source outcome, since [SCOPE-3] keeps resource
+/// exhaustion outside the source execution model; without the latch, two
+/// threads refused at once would put two records on one channel.
+///
+/// The control runs the same schedule with the writer's winner test replaced
+/// by a constant. It must write both records; if it did not, the schedule
+/// would not be racing the writers and the first half would prove nothing.
+#[test]
+fn failure_paths_racing_for_the_record_leave_exactly_one() {
+    let module = super::emit_with_overlap(RACING_HEAP_RECORD_LANES);
+    assert!(
+        module.contains("@wf__par_thunk_"),
+        "the fixture must hand a call out, or the paths cannot race: {module}"
+    );
+    let latched_directory = test_directory();
+    let latched = build_linked_executable(
+        &observe_racing_records(&module, false),
+        Some(RACING_RECORD_OBSERVER),
+        &[],
+        &latched_directory,
+    );
+    // The winner may be either lane, so the schedule is run more than once.
+    for run in 0..4 {
+        let output = run_racing_records(&latched);
+        assert_eq!(
+            signal_of(&output),
+            Some(libc_sigabrt()),
+            "run {run}: {output:?}"
+        );
+        assert_eq!(
+            output.stdout, b"R;R;",
+            "run {run}: two threads must be inside the refused allocation together: {output:?}"
+        );
+        assert_resource_record(&output.stderr, "heap");
+    }
+    std::fs::remove_dir_all(latched_directory).expect("remove latched racing image");
+
+    let leaky_directory = test_directory();
+    let leaky = build_linked_executable(
+        &observe_racing_records(&module, true),
+        Some(RACING_RECORD_OBSERVER),
+        &[],
+        &leaky_directory,
+    );
+    let output = run_racing_records(&leaky);
+    assert_eq!(signal_of(&output), Some(libc_sigabrt()), "{output:?}");
+    assert_eq!(output.stdout, b"R;R;", "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "{\"resource\":\"heap\"}\n".repeat(2),
+        "without the latch the same schedule writes a record on each path: {output:?}"
+    );
+    std::fs::remove_dir_all(leaky_directory).expect("remove unlatched racing image");
+}
+
+/// The host side of [`failure_paths_racing_for_the_record_leave_exactly_one`].
+///
+/// Every wait is on an event, with a long deadline that only a hung run
+/// reaches; the one fixed interval (half a second) is the time a path the
+/// latch lets through has to start its own write, and only a leaking writer
+/// can be caught by it. Markers go straight to standard output so that an
+/// abort loses none: `R;` for each thread that left the allocator with the
+/// other inside it, `T;` for one that found no second thread.
+const RACING_RECORD_OBSERVER: &str = r#"
+#define _POSIX_C_SOURCE 200809L
+#include <sched.h>
+#include <stdatomic.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <unistd.h>
+
+/* The heap runtime a module that allocates links against. */
+extern const unsigned char wf__empty_window[64];
+extern volatile int *wf__floor_record_latch(void);
+
+static atomic_uint allocator_arrivals;
+static atomic_uint latch_arrivals;
+static atomic_uint writes_started;
+static atomic_uint writes_finished;
+
+static uint64_t now_us(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (uint64_t)now.tv_sec * 1000000u + (uint64_t)now.tv_nsec / 1000u;
+}
+
+static void wait_for(atomic_uint *counter, unsigned target, uint64_t microseconds) {
+    uint64_t deadline = now_us() + microseconds;
+    while (atomic_load(counter) < target && now_us() < deadline) sched_yield();
+}
+
+static void note(const char *text) {
+    ssize_t ignored = write(1, text, strlen(text));
+    (void)ignored;
+}
+
+/* Refuse every allocation, once a second thread is also asking. */
+void *wf_test_allocate(size_t size) {
+    (void)size;
+    atomic_fetch_add(&allocator_arrivals, 1);
+    wait_for(&allocator_arrivals, 2, 10000000);
+    note(atomic_load(&allocator_arrivals) >= 2 ? "R;" : "T;");
+    return NULL;
+}
+
+/* Nothing is ever allocated, so nothing is ever released. */
+void wf_test_release(void *allocation, uint64_t bytes) {
+    (void)bytes;
+    if (allocation == (const void *)&wf__empty_window) return;
+    _Exit(90);
+}
+
+/* The record writer asks for the latch exactly once per path. */
+volatile int *wf_test_record_latch(void) {
+    atomic_fetch_add(&latch_arrivals, 1);
+    return wf__floor_record_latch();
+}
+
+ssize_t wf_test_record_write(int fd, const void *bytes, size_t length) {
+    unsigned started = atomic_fetch_add(&writes_started, 1) + 1;
+    if (started == 1) {
+        /* Hold the first record until the other path has asked for the latch,
+           then give a path the latch lets through time to begin its write. */
+        wait_for(&latch_arrivals, 2, 10000000);
+        wait_for(&writes_started, 2, 500000);
+    }
+    ssize_t written = write(fd, bytes, length);
+    atomic_fetch_add(&writes_finished, 1);
+    /* No path aborts before every write that began has ended, so a record
+       that was let through is a record in the output. */
+    uint64_t deadline = now_us() + 10000000;
+    while (atomic_load(&writes_finished) < atomic_load(&writes_started)
+           && now_us() < deadline) sched_yield();
     return written;
 }
 "#;

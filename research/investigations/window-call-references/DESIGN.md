@@ -189,3 +189,28 @@ already invalid reference. Range checks must include a captured endpoint
 whose source binding is later changed and an empty range beyond the new
 length. No page-reference or unknown-descendant completeness claim is made
 by this repair; their existing conservative behavior remains.
+
+## Follow-up: page references
+
+The repair above left a `Paged` page reference invalidated at every user call
+that writes `window.last` or `window.filled`, whatever the callee promises. A
+page captures its initialized extent `[k * B, min((k + 1) * B, p.len))` at
+formation [REF-4], where B is the page length `paged_page_len<T>()`, a pure
+record whose only published fact is its postcondition, so the checker has no
+value for B and cannot state the extent's end as a linear fact. The extent
+does end at or below the length word its formation read, so the page's bound
+is that length: formation files an image of the length it read, and a call
+that writes `last` or `filled` keeps the reference exactly when the image is
+proved at or below the window's length in the call's exit state, the same
+post-call query a slot or range reference owes. The condition is sufficient
+and not necessary: a call that shortens the window below the length read at
+formation still invalidates a page whose extent the shorter window would
+cover, because proving that needs B. A direct `place_back` never needed this:
+a page step is separated from `r.next` and `r.free` whatever the extent
+[WIN-2], and `take_back`, `remove_at` and `clear` invalidate by name [OP-10].
+`grow_paged` and a page index that is not one formation's own evaluation keep
+the unconditional invalidation. An element reference formed below a page
+carries the page's step and so is judged by the same query: its slot index
+lies below the page's extent, hence below the length the page's formation
+read. The cases are the conformance cases whose id starts `ref2-pos-` or
+`ref2-neg-` and contains `page-reference`.

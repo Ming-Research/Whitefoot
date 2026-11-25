@@ -1136,7 +1136,7 @@ impl Reasoning<'_, '_, '_> {
         let mut held = std::mem::take(&mut state.results);
         held.retain(|binding, _| {
             let place = bound_place(*binding);
-            if events.iter().any(|event| match event {
+            !events.iter().any(|event| match event {
                 KillEvent::Rebind {
                     binding: source, ..
                 }
@@ -1158,10 +1158,7 @@ impl Reasoning<'_, '_, '_> {
                 } => self
                     .input
                     .write_kills_support(separations, &place, written, *relocation),
-            }) {
-                return false;
-            }
-            true
+            })
         });
         if held
             .values()

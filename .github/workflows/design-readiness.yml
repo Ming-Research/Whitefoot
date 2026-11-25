@@ -6,7 +6,18 @@
 # every changed node or rule. A draft shows the job as skipped, so work in
 # progress never turns it red; it runs where its answer decides something: a
 # pull request that is ready for review, and main.
+#
+# The wf-agents engine runs this workflow as one of its full workflows
+# (`ci.full` of wf-agents.toml), by hand on main's file, giving the commit to
+# merge (`commit`) and a value only its request knows (`call`), which the
+# run's name holds. Such a run checks out that commit and compares it with its
+# fork point from main, has a concurrency group of its own that no other run
+# cancels, and ends with the job `Test results`, which says how the check
+# ended as JUnit XML (.github/junit.py) in the artifact `test-results`, which
+# the engine reads. Every other run skips that job.
 name: design-readiness
+
+run-name: ${{ inputs.call && format('design-readiness {0}', inputs.call) || '' }}
 
 on:
   pull_request:
@@ -14,23 +25,40 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      commit:
+        description: The commit to check, for the wf-agents engine; empty for the branch the run is asked on
+        required: false
+        default: ''
+      call:
+        description: A value only the engine's request knows, which the run's name holds; empty otherwise
+        required: false
+        default: ''
 
 # Each main commit gets its own group, as in gate.yml: a shared main group
 # would cancel the run of every merge but the last of a quick succession, and
-# the cancelled commit would show red on the main line.
+# the cancelled commit would show red on the main line. A run the engine asked
+# for has a group of its own, named by its `call`, and is never cancelled: the
+# engine waits for it.
 concurrency:
-  group: design-readiness-${{ github.event.pull_request.number || github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
-  cancel-in-progress: true
+  group: design-readiness-${{ inputs.call && format('call-{0}-', inputs.call) || '' }}${{ github.event.pull_request.number || github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
+  cancel-in-progress: ${{ !inputs.call }}
 
 jobs:
   design-readiness:
     name: Design readiness
-    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    # Not for a pull request from a branch of a work of the wf-agents engine
+    # (`work-<n>-<tag>`): the engine runs this workflow by hand on the commit
+    # it is about to merge.
+    if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.pull_request.head.repo.full_name != github.repository || !startsWith(github.head_ref, 'work-')))
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
       - uses: actions/checkout@v4
         with:
+          # The commit an engine's request gives; for any other run, empty,
+          # which is the commit of the event.
+          ref: ${{ inputs.commit }}
           fetch-depth: 0
           # The design-tree skill's lint and CI base script, design/skill.
           submodules: true
@@ -45,14 +73,44 @@ jobs:
           fi
 
       # A pull request checks out its merge commit, so the review base is
-      # main's tip; a main push compares with its previous tip.
+      # main's tip; a main push compares with its previous tip. A run the
+      # engine asked for checks a commit that is not main's head though the
+      # run is asked on main: its base is its fork point from main.
       - name: Select the design review base
         env:
           PUSH_BEFORE: ${{ github.event.before }}
+          ENGINE_COMMIT: ${{ inputs.commit }}
         run: |
-          design_review_base=$(sh design/skill/review-base.sh "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$PUSH_BEFORE")
+          if [ -n "$ENGINE_COMMIT" ]; then
+            design_review_base=$(git merge-base refs/remotes/origin/main HEAD)
+          else
+            design_review_base=$(sh design/skill/review-base.sh "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$PUSH_BEFORE")
+          fi
           echo "DESIGN_REVIEW_BASE=$design_review_base" >> "$GITHUB_ENV"
           git log --oneline -1 "$design_review_base"
 
       - name: Require a change-log entry for tree and specification changes
         run: make design-ready
+
+  # Only in a run the engine asked for: how the check ended, as JUnit XML in
+  # the artifact `test-results`, which the engine reads (.github/junit.py).
+  results:
+    name: Test results
+    needs: [design-readiness]
+    if: ${{ !cancelled() && inputs.call }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+          sparse-checkout: .github
+          persist-credentials: false
+      - name: Name the results
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 -B .github/junit.py needs --out "$RUNNER_TEMP/junit/Test results.xml"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: ${{ runner.temp }}/junit

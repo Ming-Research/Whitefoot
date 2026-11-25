@@ -33,7 +33,7 @@ The two completion conditions are:
    tests pass, and native code retains probes. This is a prerequisite for the
    macOS package, not an optional package optimization.
 
-The [constitution's safety constraint](../../../docs/constitution.md#safety)
+The [constitution's safety constraint](../../../docs/constitution.md#article-1-safe-safety-is-proved-before-a-program-is-accepted)
 rules out removing probes: a frame can cross a guard page and write into
 another mapping. Resource exhaustion being outside source outcomes in
 [the specification](../../../spec/kernel-spec.md) does not permit corruption.

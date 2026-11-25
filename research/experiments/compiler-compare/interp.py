@@ -13,7 +13,8 @@ interpreter v2h running CoreMark.
 `build` writes DIR/images: for each interpreter the base and candidate images
 and the twin, a byte copy of the base image. `time` runs interleaved rounds
 and writes DIR/time.tsv; `perf` runs `perf stat` rounds and writes
-DIR/perf.json. `reduce` writes DIR/summary.txt: the timed verdicts by the
+DIR/perf.json, the counts of each run with its wall time, counting window, CPU
+time and page faults. `reduce` writes DIR/summary.txt: the timed verdicts by the
 hash-map comparison's rule (its functions are used as they are) and the
 counter tables. FLOOR is the recorded noise floor of each workload, as
 "workload=spread" items separated by commas, and a workload whose twin spread
@@ -22,6 +23,7 @@ and consistent, whatever the verdicts; 1 for missing, malformed or
 inconsistent data or floor; 2 for usage.
 """
 import argparse
+import collections
 import contextlib
 import csv
 import hashlib
@@ -32,12 +34,14 @@ import math
 import os
 import random
 import re
+import resource
 import shutil
 import statistics
 import subprocess
 import sys
 import tempfile
 import time
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "hash-map-compare"))
@@ -66,6 +70,10 @@ COREMARK_MODULE = "benchmarks/wasi/coremark/coremark.wasm"
 V2H_GENERATOR = os.path.join(HERE, "..", "match-dispatch", "wasm", "gen.py")
 RUN_BOUND = 600
 RAW_COLUMNS = ["round", "position", "workload", "arm", "ns"]
+# What a perf run records beside its counts (perf.json "usage"): the launch's
+# wall time, perf's counting window, the user and sys CPU time of every process
+# of the launch, and its page faults.
+USAGE_FIELDS = ["wall_ns", "window_ns", "user_ns", "sys_ns", "minor_faults", "major_faults"]
 PERF_EVENTS = ["instructions:u", "cycles:u", "branches:u", "branch-misses:u",
                "L1-dcache-loads:u", "L1-dcache-load-misses:u", "stalled-cycles-backend:u"]
 # The rates the counter table reports: label, numerator, denominator, percent.
@@ -73,6 +81,14 @@ PERF_RATES = [("IPC", "instructions:u", "cycles:u", False),
               ("branch miss", "branch-misses:u", "branches:u", True),
               ("L1 miss", "L1-dcache-load-misses:u", "L1-dcache-loads:u", True),
               ("backend stall", "stalled-cycles-backend:u", "cycles:u", True)]
+# The table of a perf run's wall time, CPU time and page faults: label, the
+# value of one run's usage (seconds, or a count), and the digits printed.
+USAGE_COLUMNS = [("wall", lambda u: u["wall_ns"] / 1e9, 4),
+                 ("window", lambda u: u["window_ns"] / 1e9, 4),
+                 ("outside", lambda u: (u["wall_ns"] - u["window_ns"]) / 1e9, 4),
+                 ("user", lambda u: u["user_ns"] / 1e9, 4),
+                 ("sys", lambda u: u["sys_ns"] / 1e9, 4),
+                 ("faults", lambda u: u["minor_faults"] + u["major_faults"], 0)]
 # The cell key compare.judge reads its resolution by: not a map size, so the
 # default 2%.
 RESOLUTION_KEY = None
@@ -188,25 +204,43 @@ def validate(workload, text):
         raise Invalid(f"CoreMark: final CRC {got['crcfinal']}, expected {CRC_FINAL} at {COREMARK_ITERATIONS} iterations")
 
 
+# One run of a workload: its wall time, its output and the resource usage of
+# every process of the launch (see usage_between).
+Launch = collections.namedtuple("Launch", "wall_ns stdout usage")
+
+
+def usage_between(before, after):
+    """CPU time (nanoseconds) and page faults of the child processes waited for
+    between two getrusage(RUSAGE_CHILDREN) readings: the kernel's accounting
+    for every process of the launch, the wrappers included. Its user and sys
+    times are sampled by the scheduler tick, so only their sum is exact."""
+    return {"user_ns": round((after.ru_utime - before.ru_utime) * 1e9),
+            "sys_ns": round((after.ru_stime - before.ru_stime) * 1e9),
+            "minor_faults": after.ru_minflt - before.ru_minflt,
+            "major_faults": after.ru_majflt - before.ru_majflt}
+
+
 def launch(out, workload, arm, cpu, wrapper=()):
-    """One pinned run; returns (wall nanoseconds, output). A failed process or
-    an output that does not validate is invalid data."""
+    """One pinned run. A failed process or an output that does not validate is
+    invalid data."""
     argv, stdin_path = workload_command(out, workload, arm)
     command = (["taskset", "-c", str(cpu), "timeout", "--foreground", "--signal=TERM", "--kill-after=10s",
                 f"{RUN_BOUND}s"] + list(wrapper) + argv)
     stdin = open(stdin_path, "rb") if stdin_path else None
     try:
+        before = resource.getrusage(resource.RUSAGE_CHILDREN)
         start = time.perf_counter_ns()
         done = subprocess.run(command, stdin=stdin, capture_output=True, text=True,
                               cwd=os.path.join(out, "inputs"), env=dict(os.environ, LC_ALL="C"))
         elapsed = time.perf_counter_ns() - start
+        after = resource.getrusage(resource.RUSAGE_CHILDREN)
     finally:
         if stdin:
             stdin.close()
     if done.returncode != 0:
         raise Invalid(f"{workload} {arm}: exit {done.returncode}: {done.stderr.strip()[-500:]}")
     validate(workload, done.stdout)
-    return elapsed, done.stdout
+    return Launch(elapsed, done.stdout, usage_between(before, after))
 
 
 def append(path, columns, rows):
@@ -234,7 +268,7 @@ def time_rounds(args):
         for index, workload in enumerate(WORKLOADS):
             arms = compare.ORDERS[(round_ + index) % len(compare.ORDERS)]
             for position, arm in enumerate(arms):
-                ns, _ = launch(args.out, workload, arm, args.cpu)
+                ns = launch(args.out, workload, arm, args.cpu).wall_ns
                 row = [round_, position, workload, arm, ns]
                 append(raw, RAW_COLUMNS, [row])
                 collected.append(dict(zip(RAW_COLUMNS, row)))
@@ -407,12 +441,14 @@ def pmu_cpus_from_sysfs(pmu):
 
 def read_perf(text, events, cpu, pmu_cpus=pmu_cpus_from_sysfs):
     """The counts of one `perf stat -x,` run: ({event: count}, [unsupported
-    events]). On a hybrid CPU a generic event is one row per PMU; a PMU whose
-    CPUs exclude the pinned CPU is ignored, and the rest are summed. A missing
-    or uncounted active counter is invalid data; an unsupported one is
+    events], window). On a hybrid CPU a generic event is one row per PMU; a PMU
+    whose CPUs exclude the pinned CPU is ignored, and the rest are summed. A
+    missing or uncounted active counter is invalid data; an unsupported one is
     reported so that the caller can drop the event. Instructions and cycles
-    must be counted."""
+    must be counted. The window is perf's counting window in nanoseconds: the
+    longest time a counted row was enabled, its runtime over its scaling."""
     counters = {event: [] for event in events}
+    windows = []
     for fields in csv.reader(text.splitlines()):
         if not fields or fields[0].lstrip().startswith("#"):
             continue
@@ -445,6 +481,7 @@ def read_perf(text, events, cpu, pmu_cpus=pmu_cpus_from_sysfs):
                     or not 0 < percent <= 100:
                 raise Invalid(f"{name}: invalid count, runtime or scaling {fields}")
             counters[event].append(count)
+            windows.append(runtime * 100 / percent)
     values, unsupported = {}, []
     for event, counts in counters.items():
         if not counts:
@@ -458,19 +495,22 @@ def read_perf(text, events, cpu, pmu_cpus=pmu_cpus_from_sysfs):
     for event in ("instructions:u", "cycles:u"):
         if event in unsupported or values.get(event, 0) <= 0:
             raise Invalid(f"{event} is unavailable")
-    return values, unsupported
+    return values, unsupported, round(max(windows))
 
 
 PERF_RUNS = itertools.count()
 
 
 def perf_once(out, workload, arm, cpu, events):
+    """({event: count}, [unsupported events], usage) of one run under perf stat;
+    the usage has USAGE_FIELDS."""
     csv_path = os.path.join(os.path.abspath(out), "perf", f"{next(PERF_RUNS):03d}-{workload}-{arm}.csv")
     # timeout stays outside perf: its helper process is no part of the count.
-    elapsed, _ = launch(out, workload, arm, cpu,
-                        wrapper=["perf", "stat", "-x,", "--no-big-num", "-e", ",".join(events), "-o", csv_path, "--"])
+    launched = launch(out, workload, arm, cpu,
+                      wrapper=["perf", "stat", "-x,", "--no-big-num", "-e", ",".join(events), "-o", csv_path, "--"])
     with open(csv_path) as f:
-        return read_perf(f.read(), events, cpu)
+        values, unsupported, window = read_perf(f.read(), events, cpu)
+    return values, unsupported, dict(launched.usage, wall_ns=launched.wall_ns, window_ns=window)
 
 
 def perf_rounds(args):
@@ -485,7 +525,7 @@ def perf_rounds(args):
     # A real validated run of the base finds which events the host lacks
     # before any measured round; a tiny probe could return <not counted>.
     while True:
-        _, unsupported = perf_once(args.out, "fib", "base", args.cpu, events)
+        _, unsupported, _ = perf_once(args.out, "fib", "base", args.cpu, events)
         if not unsupported:
             break
         dropped += unsupported
@@ -495,26 +535,39 @@ def perf_rounds(args):
         for index, workload in enumerate(WORKLOADS):
             arms = compare.ORDERS[(round_ + index) % len(compare.ORDERS)]
             for arm in arms:
-                values, unsupported = perf_once(args.out, workload, arm, args.cpu, events)
+                values, unsupported, usage = perf_once(args.out, workload, arm, args.cpu, events)
                 if unsupported:
                     raise Invalid("event support changed after discovery: " + ", ".join(unsupported))
-                runs.append({"round": round_, "workload": workload, "arm": arm, "counts": values})
+                runs.append({"round": round_, "workload": workload, "arm": arm, "counts": values, "usage": usage})
                 print(f"perf round {round_} {workload} {arm}: {values['instructions:u']:.0f} instructions, "
-                      f"{values['cycles:u']:.0f} cycles", flush=True)
+                      f"{values['cycles:u']:.0f} cycles, wall {usage['wall_ns'] / 1e9:.3f} s, "
+                      f"window {usage['window_ns'] / 1e9:.3f} s, user {usage['user_ns'] / 1e9:.3f} s, "
+                      f"sys {usage['sys_ns'] / 1e9:.3f} s, faults {usage['minor_faults'] + usage['major_faults']}",
+                      flush=True)
     with open(result, "w") as f:
         json.dump({"events": events, "dropped": dropped, "runs": runs}, f, indent=1)
     return 0
 
 
+def ratio_range(pairs):
+    """The median of a / b over the (a, b) pairs with its [min, max], as the
+    tables print them; no ratio when some b is not above 0."""
+    if not all(b > 0 for _, b in pairs):
+        return f"{'n/a':>9} [a base value is 0]"
+    ratios = [a / b for a, b in pairs]
+    return f"{statistics.median(ratios):>9.5f} [{min(ratios):.5f}, {max(ratios):.5f}]"
+
+
 def reduce_perf(data, out):
-    """Prints the counter tables of one perf.json: per workload and arm the
-    median counts and rates, then the candidate and twin ratios to the base
-    with their range over the rounds. Five rounds give no 95% interval, so
-    nothing is judged: the twin's ratios show the run's own noise."""
+    """Prints the tables of one perf.json: per workload and arm the median
+    counts and rates, then the candidate and twin ratios to the base with
+    their range over the rounds, then the same runs' wall time, CPU time and
+    page faults. Five rounds give no 95% interval, so nothing is judged: the
+    twin's ratios show the run's own noise."""
     events, runs = data["events"], data["runs"]
     if not events or "instructions:u" not in events or "cycles:u" not in events:
         raise Invalid("perf: no instructions or cycles")
-    by = {}
+    by, used = {}, {}
     for run_ in runs:
         if run_["workload"] not in WORKLOADS or run_["arm"] not in ARMS:
             raise Invalid(f"perf: unknown workload or arm in {run_}")
@@ -523,7 +576,14 @@ def reduce_perf(data, out):
             raise Invalid(f"perf: repeated {key}")
         if set(run_["counts"]) != set(events):
             raise Invalid(f"perf: {key} counts {sorted(run_['counts'])} are not {sorted(events)}")
+        usage = run_.get("usage")
+        if not isinstance(usage, dict) or set(usage) != set(USAGE_FIELDS):
+            raise Invalid(f"perf: {key} usage {usage!r} does not have exactly {USAGE_FIELDS}")
+        if not all(isinstance(v, (int, float)) and math.isfinite(v) and v >= 0 for v in usage.values()) \
+                or usage["wall_ns"] <= 0 or usage["window_ns"] <= 0:
+            raise Invalid(f"perf: {key} has invalid usage {usage}")
         by[key] = run_["counts"]
+        used[key] = usage
     rounds = sorted({r for (_, _, r) in by})
     if not rounds:
         raise Invalid("perf: no runs")
@@ -556,9 +616,32 @@ def reduce_perf(data, out):
     for workload in WORKLOADS:
         for arm in ("candidate", "twin"):
             for event in events:
-                ratios = [by[(workload, arm, r)][event] / by[(workload, "base", r)][event] for r in rounds]
-                print(f"{workload:<9} {arm:<10} {event:<26} {statistics.median(ratios):>9.5f} "
-                      f"[{min(ratios):.5f}, {max(ratios):.5f}]", file=out)
+                pairs = [(by[(workload, arm, r)][event], by[(workload, "base", r)][event]) for r in rounds]
+                print(f"{workload:<9} {arm:<10} {event:<26} {ratio_range(pairs)}", file=out)
+    print(file=out)
+    print("Wall time, CPU time and page faults of the same runs, medians over rounds (seconds, faults a count).", file=out)
+    print("Wall, user, sys and faults are those of the whole launch: taskset, timeout, perf stat and the", file=out)
+    print("workload, the same wrapper for every arm. Window is perf's counting window; outside is wall - window", file=out)
+    print("of each run.", file=out)
+    header = f"{'workload':<9} {'arm':<10}" + "".join(f" {label:>10}" for label, _, _ in USAGE_COLUMNS)
+    print(header, file=out)
+    for workload in WORKLOADS:
+        for arm in ARMS:
+            line = f"{workload:<9} {arm:<10}"
+            for _, value, digits in USAGE_COLUMNS:
+                line += f" {statistics.median(value(used[(workload, arm, r)]) for r in rounds):>10.{digits}f}"
+            print(line, file=out)
+    print(file=out)
+    print("Differences to the base (arm - base) and ratios (arm / base), median over rounds with [min, max]:", file=out)
+    print(f"{'workload':<9} {'arm':<10} {'quantity':<8} {'difference':>34} {'ratio':>26}", file=out)
+    for workload in WORKLOADS:
+        for arm in ("candidate", "twin"):
+            for label, value, digits in USAGE_COLUMNS:
+                pairs = [(value(used[(workload, arm, r)]), value(used[(workload, "base", r)])) for r in rounds]
+                diffs = [a - b for a, b in pairs]
+                text = (f"{statistics.median(diffs):>12.{digits + 2}f} "
+                        f"[{min(diffs):.{digits + 2}f}, {max(diffs):.{digits + 2}f}]")
+                print(f"{workload:<9} {arm:<10} {label:<8} {text:>34} {ratio_range(pairs):>26}", file=out)
     return 0
 
 
@@ -595,15 +678,41 @@ def synthetic(rounds, candidate_factor, twin_factor=1.0, noise=0.0, seed=1):
     return rows
 
 
-def perf_text(counts, pmu="cpu_core"):
+def perf_text(counts, pmu="cpu_core", runtime=5000000000, percent="100.00"):
     """What `perf stat -x,` writes for the given {event: count} on a hybrid
     CPU: one row per PMU, the atom PMU unsupported."""
     lines = ["# started on Fri Oct 23 12:00:00 2026", ""]
     for event, count in counts.items():
         name = event.split(":")[0]
-        lines.append(f"{count},,{pmu}/{name}/u,5000000000,100.00,,")
+        lines.append(f"{count},,{pmu}/{name}/u,{runtime},{percent},,")
         lines.append(f"<not supported>,,cpu_atom/{name}/u,0,100.00,,")
     return "\n".join(lines) + "\n"
+
+
+STAND_IN_OUTPUTS = {"halo": f"{FIB_VALUE}\n",
+                    "v2h": "".join(f"[0]{k} : {v}\n" for k, v in CRC.items()) + f"[0]crcfinal : {CRC_FINAL}\n"}
+
+
+@contextlib.contextmanager
+def stand_in_images(commands):
+    """A directory laid out like the output of `build`, whose images run the
+    shell command given for their arm (the base's, for an arm without one) and
+    print their workload's expected output."""
+    out = tempfile.mkdtemp(prefix="interp-self-test-")
+    try:
+        os.makedirs(os.path.join(out, "images"))
+        os.makedirs(os.path.join(out, "inputs"))
+        for name in ("fib.lua", "coremark.wasm"):
+            open(os.path.join(out, "inputs", name), "w").close()
+        for kind, text in STAND_IN_OUTPUTS.items():
+            for arm in ARMS:
+                path = os.path.join(out, "images", f"{kind}-{arm}")
+                with open(path, "w") as f:
+                    f.write(f"#!/bin/sh\n{commands.get(arm, commands['base'])}\ncat <<'EOF'\n{text}EOF\n")
+                os.chmod(path, 0o755)
+        yield out
+    finally:
+        shutil.rmtree(out)
 
 
 def timing_harness_test(expect):
@@ -615,35 +724,114 @@ def timing_harness_test(expect):
     if sys.platform != "linux":
         print("self-test: the timing harness is checked on Linux only (taskset, timeout)")
         return
-    outputs = {"halo": f"{FIB_VALUE}\n",
-               "v2h": "".join(f"[0]{k} : {v}\n" for k, v in CRC.items()) + f"[0]crcfinal : {CRC_FINAL}\n"}
-    out = tempfile.mkdtemp(prefix="interp-self-test-")
     try:
-        os.makedirs(os.path.join(out, "images"))
-        os.makedirs(os.path.join(out, "inputs"))
-        for name in ("fib.lua", "coremark.wasm"):
-            open(os.path.join(out, "inputs", name), "w").close()
-        for kind, text in outputs.items():
-            for arm, seconds in (("base", 0.05), ("candidate", 0.2)):
-                path = os.path.join(out, "images", f"{kind}-{arm}")
-                with open(path, "w") as f:
-                    f.write(f"#!/bin/sh\nsleep {seconds}\ncat <<'EOF'\n{text}EOF\n")
-                os.chmod(path, 0o755)
-            shutil.copyfile(os.path.join(out, "images", f"{kind}-base"), os.path.join(out, "images", f"{kind}-twin"))
-            os.chmod(os.path.join(out, "images", f"{kind}-twin"), 0o755)
-        args = argparse.Namespace(out=out, cpu=max(os.sched_getaffinity(0)), min_rounds=6, max_rounds=6)
-        with contextlib.redirect_stdout(io.StringIO()):
-            time_rounds(args)
-        cells = timed_cells(read_raw(os.path.join(out, "time.tsv")))
+        with stand_in_images({"base": "sleep 0.05", "candidate": "sleep 0.2"}) as out:
+            args = argparse.Namespace(out=out, cpu=max(os.sched_getaffinity(0)), min_rounds=6, max_rounds=6)
+            with contextlib.redirect_stdout(io.StringIO()):
+                time_rounds(args)
+            cells = timed_cells(read_raw(os.path.join(out, "time.tsv")))
     except (Invalid, subprocess.CalledProcessError, OSError) as error:
         expect("timing harness runs", f"failed: {error}", "ran")
         return
-    finally:
-        shutil.rmtree(out)
     for workload in WORKLOADS:
         candidate, twin, _ = cells[workload]
         expect(f"{workload} candidate is the slow arm", statistics.median(candidate) > 2, True)
         expect(f"{workload} twin equals the base", 0.7 < statistics.median(twin) < 1.4, True)
+
+
+def usage_harness_test(expect):
+    """`launch` on stand-in images of known resource use, through the real
+    launch path: the base sleeps (wall time and almost no CPU time), the
+    candidate touches 40 MB and then burns user CPU time, and the twin reads
+    /dev/zero in large blocks, which is kernel time. The usage must show each image's own resource: CPU time
+    far below the wall time for the sleeper, user above sys for the burner,
+    sys above user for the caller, and page faults counted."""
+    if sys.platform != "linux":
+        print("self-test: the usage harness is checked on Linux only (taskset, timeout, dd)")
+        return
+    # A counted loop: a loop on a clock would make a system call each time round.
+    burn = f'"{sys.executable}" -c \'b = b"x" * 40000000\ni = 0\nwhile i < 15000000: i += 1\''
+    # Large reads of /dev/zero: the kernel clears the buffer, and dd itself does
+    # next to nothing, so the time is sys on a fast host too.
+    calls = "dd if=/dev/zero of=/dev/null bs=1M count=10000 2>/dev/null"
+    try:
+        with stand_in_images({"base": "sleep 0.3", "candidate": burn, "twin": calls}) as out:
+            cpu = max(os.sched_getaffinity(0))
+            sleeper, burner, caller = (launch(out, "fib", arm, cpu) for arm in ("base", "candidate", "twin"))
+    except (Invalid, subprocess.CalledProcessError, OSError) as error:
+        expect("usage harness runs", f"failed: {error}", "ran")
+        return
+    cpu_time = lambda run_: run_.usage["user_ns"] + run_.usage["sys_ns"]
+    expect("sleeper wall time", sleeper.wall_ns >= 0.3e9, True)
+    expect("sleeper uses little CPU", cpu_time(sleeper) < sleeper.wall_ns / 2, True)
+    expect("burner user time", burner.usage["user_ns"] >= 0.1e9, True)
+    expect("burner user above sys", burner.usage["user_ns"] > burner.usage["sys_ns"], True)
+    expect("caller sys time", caller.usage["sys_ns"] >= 0.05e9, True)
+    expect("caller sys above user", caller.usage["sys_ns"] > caller.usage["user_ns"], True)
+    expect("sleeper page faults counted", sleeper.usage["minor_faults"] > 0, True)
+    expect("burner page faults above the sleeper's", burner.usage["minor_faults"] > sleeper.usage["minor_faults"], True)
+
+
+def perf_pipeline_test(expect):
+    """`perf` and `reduce` end to end on stand-in images and a stand-in `perf`
+    script that runs the command and writes a CSV whose counting window is the
+    command's own run time, on a CPU that is not hybrid: the base sleeps 0.05 s
+    and the candidate 0.2 s. perf.json must hold every run with its usage, the
+    window must be the CSV's, inside the wall time and about the run time of
+    the image, and the time tables must print."""
+    if sys.platform != "linux":
+        print("self-test: the perf pipeline is checked on Linux only (taskset, timeout, date)")
+        return
+    script = """#!/bin/sh
+while [ "$1" != -- ]; do
+    case "$1" in -e) events=$2; shift ;; -o) csv=$2; shift ;; esac
+    shift
+done
+shift
+start=$(date +%s%N)
+"$@" || exit $?
+window=$(( $(date +%s%N) - start ))
+{
+    echo "# started on a stand-in"
+    echo
+    i=0
+    for event in $(echo "$events" | tr , ' '); do
+        i=$((i + 1))
+        echo "$((i * 1000)),,$event,$window,100.00,,"
+    done
+} > "$csv"
+"""
+    try:
+        with stand_in_images({"base": "sleep 0.05", "candidate": "sleep 0.2"}) as out:
+            bin_dir = os.path.join(out, "bin")
+            os.makedirs(bin_dir)
+            with open(os.path.join(bin_dir, "perf"), "w") as f:
+                f.write(script)
+            os.chmod(os.path.join(bin_dir, "perf"), 0o755)
+            args = argparse.Namespace(out=out, cpu=max(os.sched_getaffinity(0)), rounds=2)
+            with mock.patch.dict(os.environ, {"PATH": bin_dir + os.pathsep + os.environ["PATH"]}), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                perf_rounds(args)
+            with open(os.path.join(out, "perf.json")) as f:
+                data = json.load(f)
+            report = io.StringIO()
+            status = reduce_perf(data, report)
+    except (Invalid, subprocess.CalledProcessError, OSError) as error:
+        expect("perf pipeline runs", f"failed: {error}", "ran")
+        return
+    runs = data["runs"]
+    expect("perf runs recorded", len(runs), 2 * len(WORKLOADS) * len(ARMS))
+    expect("perf usage fields", all(set(r["usage"]) == set(USAGE_FIELDS) for r in runs), True)
+    expect("perf window is the CSV's, inside the wall time",
+           all(0 < r["usage"]["window_ns"] < r["usage"]["wall_ns"] for r in runs), True)
+    expect("perf window covers the image's run", all(r["usage"]["window_ns"] >= 0.05e9 for r in runs), True)
+    window = {arm: statistics.median(r["usage"]["window_ns"] for r in runs if r["arm"] == arm)
+              for arm in ("base", "candidate")}
+    expect("perf window follows the arm", window["candidate"] > 2 * window["base"], True)
+    expect("perf reduced", status, 0)
+    tail = report.getvalue().split("Wall time, CPU time and page faults")[1].splitlines()
+    differences = tail[tail.index(next(line for line in tail if line.startswith("Differences"))) + 2:]
+    expect("perf difference rows", len(differences), 2 * 2 * len(USAGE_COLUMNS))
 
 
 def self_test():
@@ -720,7 +908,14 @@ def self_test():
     # not counted is invalid, and an unsupported one is reported.
     pmus = {"cpu_core": "0-15", "cpu_atom": "16-31"}.get
     counts = {event: 1000.0 * (i + 1) for i, event in enumerate(PERF_EVENTS)}
-    expect("perf parsed", read_perf(perf_text(counts), PERF_EVENTS, 2, pmus), (counts, []))
+    expect("perf parsed", read_perf(perf_text(counts), PERF_EVENTS, 2, pmus), (counts, [], 5000000000))
+    # The window is the enabled time: the runtime over the scaling, and the
+    # longest of the counted rows.
+    expect("perf window scaled", read_perf(perf_text(counts, runtime=2500000000, percent="50.00"),
+                                           PERF_EVENTS, 2, pmus)[2], 5000000000)
+    longest = perf_text(counts).replace(f"{counts['stalled-cycles-backend:u']},,cpu_core/stalled-cycles-backend/u,5000000000",
+                                        f"{counts['stalled-cycles-backend:u']},,cpu_core/stalled-cycles-backend/u,6000000000")
+    expect("perf window longest", read_perf(longest, PERF_EVENTS, 2, pmus)[2], 6000000000)
     expect_invalid("perf event missing", lambda: read_perf(
         perf_text({k: v for k, v in counts.items() if k != "branches:u"}), PERF_EVENTS, 2, pmus),
                    "no active counter for branches:u")
@@ -733,7 +928,7 @@ def self_test():
         perf_text(dict(counts, **{"page-faults:u": 1.0})), PERF_EVENTS, 2, pmus), "unexpected perf event")
     stalled = perf_text(counts).replace(f"{counts['stalled-cycles-backend:u']},,cpu_core/stalled-cycles-backend/u",
                                         "<not supported>,,cpu_core/stalled-cycles-backend/u")
-    values, unsupported = read_perf(stalled, PERF_EVENTS, 2, pmus)
+    values, unsupported, _ = read_perf(stalled, PERF_EVENTS, 2, pmus)
     expect("perf unsupported", unsupported, ["stalled-cycles-backend:u"])
     expect("perf unsupported dropped from values", "stalled-cycles-backend:u" in values, False)
     nocycles = perf_text(counts).replace(f"{counts['cycles:u']},,cpu_core/cycles/u",
@@ -749,13 +944,19 @@ def self_test():
     expect_invalid("perf pinned to atom", lambda: read_perf(perf_text(counts), PERF_EVENTS, 20, pmus),
                    "instructions:u is unavailable")
 
+    def perf_usage(scale):
+        # Base: wall 0.3 s, window 0.2 s, user 0.19 s, sys 0.01 s, 1024 faults;
+        # the times scale with the arm, the minor faults too.
+        return {"wall_ns": round(300e6 * scale), "window_ns": round(200e6 * scale), "user_ns": round(190e6 * scale),
+                "sys_ns": round(10e6 * scale), "minor_faults": round(1000 * scale), "major_faults": 24}
+
     def perf_data(candidate_scale, twin_scale):
         runs = []
         for round_ in range(5):
             for workload in WORKLOADS:
                 for arm, scale in (("base", 1.0), ("candidate", candidate_scale), ("twin", twin_scale)):
                     runs.append({"round": round_, "workload": workload, "arm": arm,
-                                 "counts": {e: c * scale for e, c in counts.items()}})
+                                 "counts": {e: c * scale for e, c in counts.items()}, "usage": perf_usage(scale)})
         return {"events": PERF_EVENTS, "dropped": [], "runs": runs}
 
     text_out = open(os.devnull, "w")
@@ -770,7 +971,39 @@ def self_test():
     buffer = io.StringIO()
     reduce_perf(perf_data(0.9, 1.0), buffer)
     expect("perf ratio printed", "0.90000" in buffer.getvalue(), True)
+
+    # The time table: each column holds its own quantity, and the differences
+    # and ratios are those of the candidate to the base.
+    def table_row(heading, *words):
+        lines = buffer.getvalue().split(heading)[1].splitlines()
+        return next(line.split()[len(words):] for line in lines if line.split()[:len(words)] == list(words))
+
+    expect("perf base row", table_row("Wall time, CPU time", "fib", "base"),
+           ["0.3000", "0.2000", "0.1000", "0.1900", "0.0100", "1024"])
+    expect("perf candidate row", table_row("Wall time, CPU time", "fib", "candidate"),
+           ["0.2700", "0.1800", "0.0900", "0.1710", "0.0090", "924"])
+    expect("perf candidate user difference", table_row("Differences to the base", "fib", "candidate", "user"),
+           ["-0.019000", "[-0.019000,", "-0.019000]", "0.90000", "[0.90000,", "0.90000]"])
+    expect("perf candidate faults difference", table_row("Differences to the base", "fib", "candidate", "faults"),
+           ["-100.00", "[-100.00,", "-100.00]", "0.90234", "[0.90234,", "0.90234]"])
+    zero = perf_data(0.9, 1.0)
+    for run_ in zero["runs"]:
+        run_["counts"]["branch-misses:u"] = 0.0
+    zero_report = io.StringIO()
+    expect("perf zero base count", reduce_perf(zero, zero_report), 0)
+    expect("perf zero base count is not a ratio", "n/a [a base value is 0]" in zero_report.getvalue(), True)
+    expect_invalid("perf run without usage", lambda: reduce_perf(
+        dict(perf_data(0.9, 1.0), runs=[{k: v for k, v in r.items() if k != "usage"} for r in perf_data(0.9, 1.0)["runs"]]),
+        text_out), "usage")
+    expect_invalid("perf usage with an unknown field", lambda: reduce_perf(
+        dict(perf_data(0.9, 1.0), runs=[dict(r, usage=dict(r["usage"], extra=1)) for r in perf_data(0.9, 1.0)["runs"]]),
+        text_out), "does not have exactly")
+    expect_invalid("perf usage without a window", lambda: reduce_perf(
+        dict(perf_data(0.9, 1.0), runs=[dict(r, usage=dict(r["usage"], window_ns=0)) for r in perf_data(0.9, 1.0)["runs"]]),
+        text_out), "invalid usage")
     timing_harness_test(expect)
+    usage_harness_test(expect)
+    perf_pipeline_test(expect)
     text_out.close()
     sink.close()
     for failure in failures:

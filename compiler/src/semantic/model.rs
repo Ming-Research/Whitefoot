@@ -3433,6 +3433,11 @@ pub(crate) enum CheckedCallSeparationPositions {
     /// separation needs proved to end at or below `r.len`, or empty.
     /// WindowBound instead requires the endpoint bound even when empty.
     RangeWithinLength(super::places::CapturedRange),
+    /// [OP-10] a page reference's captured initialized extent, which ends at
+    /// or below the length word its formation read [REF-4]. The datum names
+    /// that formation's length image, and WindowBound requires the image to
+    /// be at or below the window's length after the call.
+    PageWithinLength(super::places::CapturedValue),
 }
 
 impl CheckedCallSeparationPositions {
@@ -3458,6 +3463,7 @@ impl CheckedCallSeparationPositions {
             Self::Live(index) => named(index),
             Self::IndexOutsideRange(index, range) => named(index) && named_range(range),
             Self::RangeWithinLength(range) => named_range(range),
+            Self::PageWithinLength(extent) => named(extent),
         }
     }
 }

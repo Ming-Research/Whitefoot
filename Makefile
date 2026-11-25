@@ -117,6 +117,7 @@ repository-invariants:
 	@sh .github/test-gate-scope.sh
 	@sh .github/test-gate-both-platforms.sh
 	@sh .github/test-compiler-release-retention.sh
+	@$(PY) .github/junit.py --self-test
 	@perl .github/check-english.pl --self-test
 	@perl .github/check-english.pl
 	@test -s AGENTS.md || { echo "AGENTS.md missing" >&2; exit 1; }
