@@ -1461,9 +1461,6 @@ full local gate, warm, in about three.
 - The corpus stage cannot drop below its longest case, one conformance walk
   (78 s on the local container); splitting that walk across threads is
   recorded in `docs/todo.md`.
-- The Windows io-hosts steps have no budget, only step timeouts, and the
-  Windows job is now the longest CI job at 251–285 s; recorded in
-  `docs/todo.md`.
 - The unit job's two builds of one 243,000-line crate remain the largest
   cost and grow with the compiler; the budget makes that growth visible and
   forces the decision when it arrives.
