@@ -4,7 +4,8 @@
 # none, reading every file of the Rust toolchain into the page cache, or a
 # 60 s wait that reads nothing. Each build records its wall, user and system
 # time, its page faults and file-system inputs, and the host's I/O and CPU
-# pressure and /proc/stat counters around it. Deleted before the full check,
+# pressure and /proc/stat counters around it and around the preparation.
+# Deleted before the full check,
 # which fails while a tmp- workflow exists.
 name: tmp first build
 
@@ -50,19 +51,9 @@ jobs:
       - name: Fetch the locked crates
         run: |
           /usr/bin/time -f 'FETCH %e s, %I inputs' cargo fetch --locked --manifest-path compiler/Cargo.toml
-      - name: Prepare (${{ matrix.prep }})
-        env:
-          PREP: ${{ matrix.prep }}
+      - name: Write the counter snapshot
         run: |
-          case "$PREP" in
-            none) echo 'PREP none' ;;
-            toolchain)
-              /usr/bin/time -f 'PREP toolchain %e s, %I inputs' \
-                sh -c 'find "$1" -type f -print0 | xargs -0 cat > /dev/null' sh "$(rustc --print sysroot)" ;;
-            wait) sleep 60; echo 'PREP wait 60 s' ;;
-          esac
-      - name: Build the same compiler twice
-        run: |
+          cat > "$RUNNER_TEMP/snap.sh" <<'EOF'
           field() { sed -n "s/^$2 .*total=\([0-9]*\)$/\1/p" "/proc/pressure/$1" 2>/dev/null || true; }
           snap() {
             printf 'SNAP %s majfault=%s pgpgin=%s io_some_us=%s io_full_us=%s cpu_some_us=%s stat=%s\n' "$1" \
@@ -72,6 +63,24 @@ jobs:
               "$(head -n 1 /proc/stat | tr -s ' ' ',')"
             grep -E '^(MemFree|Cached|Dirty|Writeback):' /proc/meminfo | tr -s ' ' | paste -sd ' '
           }
+          EOF
+      - name: Prepare (${{ matrix.prep }})
+        env:
+          PREP: ${{ matrix.prep }}
+        run: |
+          . "$RUNNER_TEMP/snap.sh"
+          snap prep-before
+          case "$PREP" in
+            none) echo 'PREP none' ;;
+            toolchain)
+              /usr/bin/time -f 'PREP toolchain %e s, %I inputs' \
+                sh -c 'find "$1" -type f -print0 | xargs -0 cat > /dev/null' sh "$(rustc --print sysroot)" ;;
+            wait) sleep 60; echo 'PREP wait 60 s' ;;
+          esac
+          snap prep-after
+      - name: Build the same compiler twice
+        run: |
+          . "$RUNNER_TEMP/snap.sh"
           for i in 1 2; do
             snap "before-$i"
             perl .github/run-check.pl "tmp-first-build-$i" \

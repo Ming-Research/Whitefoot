@@ -1373,7 +1373,7 @@ reading every file of the active Rust toolchain (`rustc --print sysroot`) into
 the page cache; or a 60 s wait that reads nothing. Each build records its wall,
 user and system time, major page faults and file-system inputs (GNU `time`),
 and the host's I/O and CPU pressure (`/proc/pressure`), page-ins and
-`/proc/stat` counters around it.
+`/proc/stat` counters around it and around the preparation.
 
 - The cold page cache of the Rust toolchain (rustc, LLVM, the standard
   library, the linker) is the cause if, with no preparation, the first build
