@@ -31,7 +31,7 @@ The release workflow's `bundle_toolchain` input defaults to false, and a lightwe
 - rejected: an agent proposed making every release carry its toolchain; the owner rejected it, because existing downstreams take frequent small releases and already install that toolchain, and existing tags have extraction consumers.
 
 ### decision bundled-releases-carry-their-toolchain
-With `bundle_toolchain=true`, a `-bundled` release holds Linux x86-64, macOS arm64 and Windows x86-64 packages of compiler, clang, lld, headers, runtime objects and a manifest recording clang's answers.
+With `bundle_toolchain=true`, a `-bundled` release holds Linux x86-64, macOS arm64 and Windows x86-64 packages of compiler, clang, lld, headers, runtime objects and a manifest recording its answers.
 - replaced: Releases that use the host's clang, a bundled clang being deferred to the first formal release, was on main; the owner changed it, because the first release for outside users must work once installed, which the host's clang cannot promise.
 
 ### decision the-release-records-its-clangs-answers
