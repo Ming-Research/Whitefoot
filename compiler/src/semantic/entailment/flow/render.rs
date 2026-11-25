@@ -124,7 +124,7 @@ impl Input<'_, '_> {
             (CheckedIntegerOperation::ShiftRightExact, [value, amount]) => {
                 format!("ishr.defined({value}, {amount})")
             }
-            _ => "<invalid integer-domain goal>".to_owned(),
+            _ => described("an invalid integer-domain goal"),
         }
     }
 
@@ -702,7 +702,7 @@ impl Input<'_, '_> {
                         format!("argument #{argument} pre-transfer value")
                     }
                     EvaluatedValueOccurrence::ObligationOperand { operand, .. } => {
-                        format!("<operand #{operand} evaluated value>")
+                        described(&format!("operand #{operand} evaluated value"))
                     }
                 };
                 self.render_goal_projections(base, Some(*captured_type), projections)
@@ -889,7 +889,7 @@ impl Input<'_, '_> {
     pub(super) fn render_expression(&self, expression: &CheckedExpression) -> String {
         match expression {
             CheckedExpression::Constant(CheckedValue::ConstGeneric { .. }) => {
-                "<const parameter>".to_owned()
+                described("a const parameter")
             }
             CheckedExpression::Constant(CheckedValue::Integer { ty, bits }) => {
                 format!("{}_{}", integer_value(*ty, *bits), integer_type_name(*ty))
@@ -1095,16 +1095,16 @@ impl Reasoning<'_, '_, '_> {
             }
             TermKind::Zero => self.input.render_normalized_integer(0, ty),
             TermKind::Constant(value) => self.input.render_normalized_integer(*value, ty),
-            TermKind::ConstParameter(..) => "<const parameter>".to_owned(),
+            TermKind::ConstParameter(..) => described("a const parameter"),
             TermKind::Place(place, _) => self.input.render_place(place),
             TermKind::Measure(measure, place) => {
                 format!("{}.{}", self.input.render_place(place), measure.spelling())
             }
             TermKind::CountedCapture { side, .. } => match side {
-                CountedCaptureSide::Lower => "<counted lower capture>".to_owned(),
-                CountedCaptureSide::Upper => "<counted upper capture>".to_owned(),
+                CountedCaptureSide::Lower => described("the counted loop's lower capture"),
+                CountedCaptureSide::Upper => described("the counted loop's upper capture"),
             },
-            TermKind::IndexCapture { .. } => "<captured index>".to_owned(),
+            TermKind::IndexCapture { .. } => described("a captured index"),
             TermKind::ResultPayload {
                 payload,
                 path,
@@ -1112,7 +1112,7 @@ impl Reasoning<'_, '_, '_> {
                 ..
             } => {
                 let place = self.input.render_place_projections(
-                    "<success payload>".to_owned(),
+                    described("the success payload"),
                     Some(*payload),
                     path,
                     None,
@@ -1121,11 +1121,11 @@ impl Reasoning<'_, '_, '_> {
                     format!("{place}.{}", measure.spelling())
                 })
             }
-            TermKind::CommitValue { .. } => "<assigned value>".to_owned(),
-            TermKind::ReturnedValue { .. } => "<returned value>".to_owned(),
+            TermKind::CommitValue { .. } => described("the assigned value"),
+            TermKind::ReturnedValue { .. } => described("the returned value"),
             TermKind::CallDatum { measure, .. } => measure.map_or_else(
-                || "<argument value at the call>".to_owned(),
-                |measure| format!("<argument {} at the call>", measure.spelling()),
+                || described("the argument value at the call"),
+                |measure| described(&format!("the argument {} at the call", measure.spelling())),
             ),
             // [MSR-3] an entry datum is what the writer wrote: a measure of
             // the parameter, at the one state an `ensures` gives it.
@@ -1187,8 +1187,8 @@ impl Reasoning<'_, '_, '_> {
                     MeasurePlacement::Payload => "the payload",
                 };
                 measure.map_or_else(
-                    || format!("<value at {event}>"),
-                    |measure| format!("<{} at {event}>", measure.spelling()),
+                    || described(&format!("the value at {event}")),
+                    |measure| described(&format!("the {} at {event}", measure.spelling())),
                 )
             }
         }
@@ -1308,13 +1308,13 @@ pub(super) fn render_goal_row(
         | GoalOperation::BufferMeasure { measure, .. }
         | GoalOperation::ContainerMeasure { measure, .. } => match arguments {
             [place] => format!("{place}.{}", measure.spelling()),
-            _ => "<invalid measure goal>".to_owned(),
+            _ => described("an invalid measure goal"),
         },
         GoalOperation::ArrayIndex { .. }
         | GoalOperation::BufferIndex { .. }
         | GoalOperation::RunIndex { .. } => match arguments {
             [collection, offset] => format!("{collection}[{offset}]"),
-            _ => "<invalid index goal>".to_owned(),
+            _ => described("an invalid index goal"),
         },
     }
 }
@@ -1340,7 +1340,7 @@ pub(super) fn numeric_type_name(
         CheckedNumericType::GenericInteger(declaration)
         | CheckedNumericType::GenericFloat(declaration) => {
             declarations.get(declaration.index()).map_or_else(
-                || format!("<type-parameter:{}>", declaration.index()),
+                || described(&format!("type parameter #{}", declaration.index())),
                 |record| record.spelling().to_owned(),
             )
         }
