@@ -9,7 +9,7 @@ ownership applies to source and linked actuals alike. The
 executable evidence and its cost limits are linked below. D6's protocol/conform design,
 D6b's routing ceiling, and a compile-cost admission prerequisite are not selected.
 The selection serves the constitution's
-[delegation/performance objectives](../../../docs/constitution.md): ordinary
+[delegation/performance objectives](../../../design/constitution.md): ordinary
 explicit free-function interfaces, reusable parameter/argument groups, and no
 runtime dispatch or unchecked behavior laws.
 
