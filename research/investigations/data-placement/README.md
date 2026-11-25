@@ -87,13 +87,17 @@ the model leaves out took the top of the hole first.
 bytes into a page, so a cell of one and the same cell of the other always
 share a set of the first-level data cache; at that distance their addresses
 differ only in bits 12 and 27 (and above 27). AMD's first-level data cache
-predicts a line's way from a hash of its address, and the hash recovered for
-Zen, Zen+ and Zen 2 pairs bit 12 with bit 27 (bits 12 to 27, folded as 12 with
-27, 13 with 26, 14 with 25, 15 with 20, 16 with 21, 17 with 22, 18 with 23 and
-19 with 24: Lipp et al., "Take A Way: Exploring the Security Implications of
-AMD's Cache Way Predictors", ASIA CCS 2020, section 3). If Zen 3 and Zen 4
-keep that hash, the two lines look alike to the predictor and each access
-evicts the other's prediction, on every cell. This is inferred from one trace
+predicts a line's way from a hash of its linear address, and for Zen 3 AMD
+states that "at a given L1 DC index (11:6), only one cacheline with a given
+linear hash is accessible at any time" (Software Optimization Guide for AMD
+Family 19h Processors, 56665 rev. 3.00, section 2.6.2). The guide does not
+say which bits the hash takes; the hash recovered for Zen, Zen+ and Zen 2
+pairs bit 12 with bit 27 (bits 12 to 27, folded as 12 with 27, 13 with 26, 14
+with 25, 15 with 20, 16 with 21, 17 with 22, 18 with 23 and 19 with 24: Lipp
+et al., "Take A Way: Exploring the Security Implications of AMD's Cache Way
+Predictors", ASIA CCS 2020, section 3). If Zen 3 and Zen 4 keep that hash,
+the two lines look alike to the predictor and each access makes the other
+miss, on every cell. This is inferred from one trace
 per variant and the level shares; no trace belongs to a timed launch, and the
 second level (S's 44 to 49 ms against B's 41 to 42) is not explained by it.
 
