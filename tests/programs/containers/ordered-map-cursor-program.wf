@@ -245,10 +245,13 @@ fn cursor_test_whole(map: &OrderedMap<u64, u64, 512>, keys: CursorTestKeys, log:
   return unit;
 }
 
-fn cursor_test_fill(map: &OrderedMap<u64, u64, 512>, keys: CursorTestKeys, order: &CursorTestOrder, log: &CursorTestLog) -> result: unit reads(order), writes(map), writes(log) {
-  doc "Inserts the oracle's keys in ascending order.";
-  for (index in 0_u64..keys.count) {
-    let key = keys.spacing *wrap index;
+fn cursor_test_fill(map: &OrderedMap<u64, u64, 512>, keys: CursorTestKeys, stride: u64, order: &CursorTestOrder, log: &CursorTestLog) -> result: unit reads(order), writes(map), writes(log) {
+  doc "Inserts the oracle's keys, the one at index times stride modulo the count at each step: stride 1 is ascending order, and a stride coprime to the count inserts each key once in a scattered order.";
+  let count = keys.count;
+  for (index in 0_u64..count) {
+    let scattered = index *wrap stride;
+    let at = scattered % count;
+    let key = keys.spacing *wrap at;
     let value = cursor_test_value(key: key);
     let put = ordered_map_put::<CursorTestKey, u64, 512>(map: map, key: key, value: value, env: order);
     match put {
@@ -269,23 +272,23 @@ fn cursor_test_check(map: &OrderedMap<u64, u64, 512>, keys: CursorTestKeys, orde
 }
 
 fn cursor_test_shapes(log: &CursorTestLog) -> result: unit writes(log) {
-  doc "An empty map, one pair, one full leaf, and 400 pairs inserted in ascending order, which need at least three levels since one node of 15 entries has at most 16 children and 400 pairs fill at least 27 leaves; then removing every odd multiple of three, which merges and contracts nodes, leaves the multiples of six.";
+  doc "An empty map, one pair, one full leaf, and 400 pairs inserted in ascending order, which need at least three levels since one node of 15 entries has at most 16 children and 400 pairs fill at least 27 leaves; then removing every odd multiple of three, which merges and contracts nodes, leaves the multiples of six; last, the same 400 pairs inserted in the scattered order of stride 263, coprime to 400, which splits nodes away from the right edge and so leaves nodes of unequal sizes beside one another, where ascending insertion leaves every node off the right edge with seven entries.";
   let order = CursorTestOrder(mode: 0_u64);
   let empty_keys = CursorTestKeys(spacing: 3_u64, count: 0_u64);
   let map = ordered_map_new::<u64, u64, 512>();
   cursor_test_check(map: &map, keys: empty_keys, order: &order, log: log);
   let one_keys = CursorTestKeys(spacing: 3_u64, count: 1_u64);
-  cursor_test_fill(map: &map, keys: one_keys, order: &order, log: log);
+  cursor_test_fill(map: &map, keys: one_keys, stride: 1_u64, order: &order, log: log);
   cursor_test_check(map: &map, keys: one_keys, order: &order, log: log);
   ordered_map_free::<u64, u64, CursorTestLog, fn cursor_test_consume, 512>(map: move map, env: log);
   let leaf_keys = CursorTestKeys(spacing: 3_u64, count: 15_u64);
   let leaf = ordered_map_new::<u64, u64, 512>();
-  cursor_test_fill(map: &leaf, keys: leaf_keys, order: &order, log: log);
+  cursor_test_fill(map: &leaf, keys: leaf_keys, stride: 1_u64, order: &order, log: log);
   cursor_test_check(map: &leaf, keys: leaf_keys, order: &order, log: log);
   ordered_map_free::<u64, u64, CursorTestLog, fn cursor_test_consume, 512>(map: move leaf, env: log);
   let deep_keys = CursorTestKeys(spacing: 3_u64, count: 400_u64);
   let deep = ordered_map_new::<u64, u64, 512>();
-  cursor_test_fill(map: &deep, keys: deep_keys, order: &order, log: log);
+  cursor_test_fill(map: &deep, keys: deep_keys, stride: 1_u64, order: &order, log: log);
   cursor_test_check(map: &deep, keys: deep_keys, order: &order, log: log);
   for (index in 0_u64..200_u64) {
     let doubled = index *wrap 2_u64;
@@ -309,6 +312,10 @@ fn cursor_test_shapes(log: &CursorTestLog) -> result: unit writes(log) {
   let present = True();
   cursor_test_expect(map: &deep, cursor: &probed, present: present, key: 102_u64, value: expected, rank: 17_u64, log: log);
   ordered_map_free::<u64, u64, CursorTestLog, fn cursor_test_consume, 512>(map: move deep, env: log);
+  let scattered = ordered_map_new::<u64, u64, 512>();
+  cursor_test_fill(map: &scattered, keys: deep_keys, stride: 263_u64, order: &order, log: log);
+  cursor_test_check(map: &scattered, keys: deep_keys, order: &order, log: log);
+  ordered_map_free::<u64, u64, CursorTestLog, fn cursor_test_consume, 512>(map: move scattered, env: log);
   return unit;
 }
 
@@ -317,7 +324,7 @@ fn cursor_test_staleness(log: &CursorTestLog) -> result: unit writes(log) {
   let order = CursorTestOrder(mode: 0_u64);
   let keys = CursorTestKeys(spacing: 3_u64, count: 40_u64);
   let map = ordered_map_new::<u64, u64, 512>();
-  cursor_test_fill(map: &map, keys: keys, order: &order, log: log);
+  cursor_test_fill(map: &map, keys: keys, stride: 1_u64, order: &order, log: log);
   let probe = 30_u64;
   let at_least = OrderedSeek::OrderedAtLeast();
   let cursor = ordered_map_seek::<u64, u64, CursorTestOrder, u64, fn cursor_test_compare, 512>(map: &map, seek: at_least, probe: &probe, env: &order);
@@ -358,7 +365,7 @@ fn main() -> status: ExitStatus pure {
   if log.failures != 0_u64 {
     return exit_status(code: 1_u8);
   }
-  if log.consumed != 256_u64 {
+  if log.consumed != 656_u64 {
     return exit_status(code: 2_u8);
   }
   return exit_status(code: 0_u8);

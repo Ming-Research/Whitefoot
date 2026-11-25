@@ -343,7 +343,7 @@ fn ordered_map_cursors_match_the_sorted_oracle_in_both_lowering_modes() {
         include_bytes!("../../../tests/programs/containers/ordered-map-cursor-program.wf"),
     )];
     // Status 1 reports a cursor that disagrees with the arithmetic oracle,
-    // 2 a pair count consumed at release other than the 256 left in the maps.
+    // 2 a pair count consumed at release other than the 656 left in the maps.
     for (mode, llvm) in [
         ("sequential", compile_sources(&sources)),
         (
