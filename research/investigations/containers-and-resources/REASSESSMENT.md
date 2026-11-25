@@ -675,7 +675,7 @@ rules or general checked-library representations have passed a compiler.
 ## Selection ground
 
 [Project instructions](../../../AGENTS.md), the
-[constitution](../../../docs/constitution.md), the
+[constitution](../../../design/constitution.md), the
 [active specification](../../../spec/kernel-spec.md), and current
 [decision practice](https://github.com/mbbill/Whitefoot/blob/efe40194a05b339c46b931e87bd05a40036f23cf/docs/practice.md#decision-work) supply
 the ground. Historical design selections and compiler convenience do not define a

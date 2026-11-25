@@ -5,12 +5,6 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
-## 2026-11-25 Dispatch parts no longer save RBP where the host's x86-64 backend honors it
-
-Nodes: compiler/match-dispatch-lowering
-
-Summary: The parts of a split dispatch loop use `preserve_nonecc`, which on x86-64 still keeps RBP callee-saved, so a handler that used it as a scratch register saved and restored it on every dispatch. A new decision gives every part's definition and every call into or between the parts LLVM's `"no_callee_saved_registers"` attribute, the enclosing function's call of the dispatch function included and the enclosing definition excluded so that RBP is saved once around the chain, where a second run-time probe finds, by assembling a module that mirrors the ABI, that the host's x86-64 backend honors it on definitions and calls alike; every other host gets the text it had. The first decision's wording now names `preserve_nonecc`, whose RBP exception the old wording left out, and a refused alternative records the GHC convention, with its ten integer registers, as unmeasured. The extra load and register copy of the tail jump through a table-loaded address is recorded as LLVM 22's tail-call target class and left unchanged.
-
 ## 2026-10-23 A returned computed integer expression proves a postcondition as a `let` of it would
 
 Nodes: language/checks-and-proofs/automatic-facts

@@ -165,9 +165,10 @@ fn host_attribute() -> &'static str {
     }
 }
 
-/// compiler/match-dispatch-lowering: the attribute is chosen with the
-/// calling convention, only for the x86-64 targets whose host probe passed,
-/// and an absent attribute leaves every text unchanged.
+/// Decision `dispatch-parts-save-no-rbp-where-the-host-honors-it`: the
+/// attribute is chosen with the calling convention, only for the x86-64
+/// targets whose host probe passed, and an absent attribute leaves every
+/// text unchanged.
 #[test]
 fn the_parts_attribute_needs_x86_64_preserve_none_and_the_probed_fact() {
     use crate::backend::emitter::dispatch::convention_for;

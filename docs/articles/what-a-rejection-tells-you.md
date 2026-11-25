@@ -218,8 +218,8 @@ drop the marker.
 | The integer goal and its routes | OP-2, ENT-6 |
 | A call's requirement, instantiated with its arguments | FN-8 |
 | The grammar and one operation per expression | GRAM-4, GRAM-5, GRAM-6 |
-| The text and JSON renderings | [`design/compiler/diagnostic-rendering.md`](../../design/compiler/diagnostic-rendering.md) |
-| The wording of repairs and their pinned pairs | [`design/compiler/diagnostic-repairs.md`](../../design/compiler/diagnostic-repairs.md) |
+| The text and JSON renderings | decision `stops-render-as-labeled-records` in [`design/decisions/compiler/diagnostics/rendering.md`](../../design/decisions/compiler/diagnostics/rendering.md) |
+| The wording of repairs and their pinned pairs | decision `repair-words-live-in-one-module`, decision `repairs-pinned-with-applied-sources` in [`design/decisions/compiler/diagnostics/repairs.md`](../../design/decisions/compiler/diagnostics/repairs.md) |
 
 Every program and rejection in this article comes from the compiler at
 commit `e041772d8`, with `whitefootc --check file.wf`; the fragments are

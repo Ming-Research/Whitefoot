@@ -33,7 +33,8 @@ pub(crate) struct ToolchainFacts {
     /// a definition and the calls into it, so that a private
     /// `preserve_nonecc` function using RBP as a scratch register saves
     /// nothing while the C boundary around the chain still preserves it
-    /// (compiler/match-dispatch-lowering). Always false off x86-64.
+    /// (decision `dispatch-parts-save-no-rbp-where-the-host-honors-it`). Always
+    /// false off x86-64.
     pub(crate) no_callee_saved_registers: bool,
     pub(crate) no_capture_attribute: &'static str,
     pub(crate) coro_end_result: &'static str,
