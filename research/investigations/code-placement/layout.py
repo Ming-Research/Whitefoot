@@ -452,9 +452,19 @@ def line_samples(table_text, script_text):
     return counts, total
 
 
+def function_totals(counts):
+    """Samples per function, most first, the smallest name first on a tie."""
+    totals = collections.Counter()
+    for (name, _, _), count in counts.items():
+        totals[name] += count
+    return sorted(totals.items(), key=lambda item: (-item[1], item[0]))
+
+
 def format_lines(counts, total, top=40):
-    lines = [f"{total} samples; samples per function and 64-byte line, the line as its offset from "
-             f"the function's start and its address modulo 4096"]
+    lines = [f"{total} samples; per function:"]
+    lines += [f"{count:8d} {count / max(total, 1):6.1%} {name}" for name, count in function_totals(counts)[:10]]
+    lines.append("samples per function and 64-byte line, the line as its offset from the function's "
+                 "start and its address modulo 4096")
     for (name, line, start), count in counts.most_common(top):
         lines.append(f"{count:8d} {count / max(total, 1):6.1%} {name} +{line - start:#06x} "
                      f"line {line % 4096:#06x}")
@@ -645,6 +655,8 @@ def self_test():
     counts, total = line_samples(good["FR/p0"], "  wf__hot+0x3\n  wf__hot+0x45\n  wf__hot+0x7\n [unknown]\n")
     expect("line samples", (dict(counts), total),
            ({("wf__hot", 0x1040, 0x1040): 2, ("wf__hot", 0x1080, 0x1040): 1}, 4))
+    counts, _ = line_samples(good["FR/p0"], "  wf__cold+0x1\n  wf__hot+0x3\n  wf__hot+0x45\n  wf_rt_run+0x2\n")
+    expect("samples per function", function_totals(counts), [("wf__hot", 2), ("wf__cold", 1), ("wf_rt_run", 1)])
 
     for failure in failures:
         print(f"FAIL {failure}")
