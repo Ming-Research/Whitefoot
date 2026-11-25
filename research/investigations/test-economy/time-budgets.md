@@ -936,7 +936,7 @@ those hours, and every push queued four macOS jobs; the macOS wait, not the
 jobs, made the slow runs. From this, the gate runs macOS only where its
 answer decides a merge (a ready pull request, `main`, a manual run) and checks
 both platforms per revision in a final job
-([decision](../../../design/compiler/verification.md)).
+([decision](../../../design/decisions/development/verification.md)).
 
 ### Gate only where a pull request is open
 
@@ -950,7 +950,7 @@ none. Every one of these branches was named `claude/`, so a branch name could
 not have told the two apart. `io-hosts.yml` ran on the same pushes.
 
 From this, a push to a branch without an open pull request runs one deciding
-job and skips every check ([decision](../../../design/compiler/verification.md)).
+job and skips every check ([decision](../../../design/decisions/development/verification.md)).
 Two properties of GitHub, documented rather than measured here, shape the
 rule. GitHub starts no pull request run while the pull request conflicts
 with its base, so pull request events cannot be the only trigger. And a
@@ -1522,7 +1522,7 @@ first job started at 01:31:20Z, took 1394 s.
 From this, a push to a draft pull request's branch ends after the deciding job
 like a push to a branch with no pull request, and the full check runs once,
 started by hand after the review, and for a pull request marked ready that has
-no such run ([decision](../../../design/compiler/verification.md)). Only a
+no such run ([decision](../../../design/decisions/development/verification.md)). Only a
 manual run counts as the earlier run, because the conclusion of a push, an
 opening or a ready run does not tell a run that checked from one that skipped,
 and a manual run never skips (`.github/gate-scope.sh`). The status board's
