@@ -80,6 +80,10 @@ jobs:
             --candidate-wfc "$arms/candidate/compiler/target/gate/whitefootc" \
             --runtime-root "$arms/candidate" --out "$RUNNER_TEMP/pre"
           cat "$RUNNER_TEMP/pre/manifest.txt"
+          # The images are kept under pre/images; the two compilers' build
+          # trees are not needed again and the merged head builds two more.
+          rm -rf "$arms/base/compiler/target" "$arms/candidate/compiler/target"
+          df -h "$RUNNER_TEMP"
 
       - name: Images of the merged head
         run: |
