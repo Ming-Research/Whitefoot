@@ -30,7 +30,9 @@ fewest crossing loops, the smallest on a tie.
 `check` reads placement.sh's images.tsv and refuses the run before any
 timing when an image does not have the layout its arm and placement claim:
 a module function or runtime function at the wrong offset, a code pad that
-did not move the module or runtime by what it claims, a data pad that moved
+did not move the module or runtime by what it claims (its size ahead of
+unaligned code, a multiple of the alignment within one alignment of its size
+ahead of aligned code), a data pad that moved
 code or did not move the module's and runtime's data by its size, a `dFR`
 image whose data addresses differ from `FR`'s, or a function of a `P` module
 whose crossing loops are not the number its offset predicted.
@@ -323,13 +325,17 @@ def runtime_claim(text):
     return int(modulus), [path for path in objects.split(",") if path]
 
 
-def expected_shift(placement, aligned):
-    """The module's or runtime's move a code pad claims: exactly its size, or
-    0 or 64 for a pad under a line ahead of aligned code."""
+def expected_shift(placement, modulus):
+    """The module's or runtime's move a code pad claims: exactly its size
+    ahead of unaligned code (modulus None); ahead of code aligned to the
+    modulus, each multiple of it less than one modulus from the size, since
+    the aligned start before and after the pad both round up from a point
+    the pad moved by its size: 0 or 64 for a 16-byte pad ahead of 64-byte
+    alignment, 0 or 32 ahead of 32-byte alignment, 1024 for 1024 bytes."""
     size = int(placement[1:])
-    if aligned and size < LINE:
-        return {0, LINE}
-    return {size}
+    if not modulus:
+        return {size}
+    return {k * modulus for k in range(size // modulus + 2) if abs(k * modulus - size) < modulus}
 
 
 def check_rows(rows, image_table, object_table, read_text, object_disassembly):
@@ -381,11 +387,11 @@ def check_rows(rows, image_table, object_table, read_text, object_disassembly):
             moved = shift(module_names, there, here, {".text"})
             runtime_moved = shift(runtime_names, there, here, {".text"})
             if row.placement[0] == "m":
-                expected = expected_shift(row.placement, bool(claims))
+                expected = expected_shift(row.placement, max((c[1] for c in claims), default=None))
                 if len(moved) != 1 or not moved <= expected:
                     problems.append(f"{name}: the module moved by {sorted(moved)}, not one of {sorted(expected)}")
             else:
-                expected = expected_shift(row.placement, claimed_runtime is not None)
+                expected = expected_shift(row.placement, claimed_runtime[0] if claimed_runtime else None)
                 if moved != {0}:
                     problems.append(f"{name}: the module moved by {sorted(moved)} under a runtime pad")
                 if len(runtime_moved) != 1 or not runtime_moved <= expected:
@@ -607,19 +613,22 @@ def self_test():
             "U/dFR": image(0x1010, 0x2010, 0x6000),
             "FR/p0": image(0x1040, 0x2040, 0x6000), "FR/m16": image(0x1080, 0x2080, 0x6000),
             "FR/m1024": image(0x1440, 0x2440, 0x6000), "FR/r16": image(0x1040, 0x2080, 0x6000),
-            "FR/d64": image(0x1040, 0x2040, 0x6040), "P/p0": image(0x1070, 0x2040, 0x6000)}
+            "FR/d64": image(0x1040, 0x2040, 0x6040), "P/p0": image(0x1070, 0x2040, 0x6000),
+            # 32-byte alignment: a 16-byte pad moves code by 0 or 32, a 48-byte one by 32 or 64.
+            "A32/p0": image(0x1020, 0x2020, 0x6000), "A32/m16": image(0x1040, 0x2040, 0x6000),
+            "A32/r48": image(0x1020, 0x2040, 0x6000)}
 
     def rows_for(images):
         rows = []
         for key in images:
             arm, placement = key.split("/")
             aligned = arm != "U"
-            claims = "p.claims" if arm == "P" else "fr.claims" if aligned else "none"
-            rows.append(Row("records", arm, placement, key, "module.o", claims,
-                            "64@runtime.o" if aligned else "none", ["runtime.o"]))
+            claims = {"P": "p.claims", "A32": "a32.claims"}.get(arm, "fr.claims" if aligned else "none")
+            runtime = "none" if not aligned else "32@runtime.o" if arm == "A32" else "64@runtime.o"
+            rows.append(Row("records", arm, placement, key, "module.o", claims, runtime, ["runtime.o"]))
         return rows
 
-    texts = {"fr.claims": claims_text, "p.claims": p_claims}
+    texts = {"fr.claims": claims_text, "p.claims": p_claims, "a32.claims": claims_text.replace(" 64 ", " 32 ")}
     p_disassembly = disassembly({"wf__hot": (0x30, [(0x00, 4, "add", None), (0x04, 2, "jne", 0)])})
     # the P function above starts at 48 with a 6-byte loop at its start: no crossing.
 
@@ -639,6 +648,8 @@ def self_test():
         "dFR data unequal to FR": ("U/dFR", image(0x1010, 0x2010, 0x6040), "against FR p0"),
         "a runtime pad that moved the module": ("FR/r16", image(0x1080, 0x2080, 0x6000),
                                                 "the module moved by [64] under a runtime pad"),
+        "a 16-byte pad that moved 32-byte-aligned code by a line": (
+            "A32/m16", image(0x1060, 0x2060, 0x6000), "the module moved by [64], not one of [0, 32]"),
     }
     for label, (key, table_text, wanted) in cases.items():
         broken = dict(good)
