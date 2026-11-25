@@ -469,16 +469,39 @@ public fn main() -> status: ExitStatus pure doc "Runs the program.";
         library: &[],
         rule: "MOD-8",
         sentences: &[],
-        repaired: &[&[(
-            "main.wf",
-            br#"alias ExitStatus = std::process::ExitStatus;
+        repaired: &[
+            &[(
+                "data/later.wf",
+                br#"fn later(value: i32) -> result: i32 pure {
+  doc "Returns the value.";
+  return value;
+}
+"#,
+            )],
+            &[
+                (
+                    "data/module.wfm",
+                    br#"public enum Sign {
+  Neg();
+  Zero();
+  Pos();
+}
+
+public fn sign_of(value: i32) -> result: Sign pure doc "Classifies a value by its sign.";
+"#,
+                ),
+                (
+                    "main.wf",
+                    br#"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn main() -> status: ExitStatus pure {
   return exit_status(code: 0_u8);
 }
 "#,
-        )]],
+                ),
+            ],
+        ],
     },
     ModulePair {
         name: "mod9-neg-heap-declaration-in-module",
