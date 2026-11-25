@@ -7,7 +7,7 @@
 //! Both runs are timed from the program's line, written just before the exit
 //! call, because a loaded host may delay a spawn without bound.
 
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use super::support::{build_program, compile_corpus_module_program};
@@ -20,13 +20,20 @@ const START: Duration = Duration::from_secs(60);
 #[test]
 fn an_exit_ends_the_program_at_once_while_the_same_program_without_it_keeps_waiting() {
     let program = build_program(&compile_corpus_module_program("process_exit", "process_exit"));
-    let (mut leaving, leaving_line) =
-        ProgramChild::spawn_signalling_first_output(&mut Command::new(program.executable()))
-            .expect("start the program that exits");
-    let (mut staying, staying_line) = ProgramChild::spawn_signalling_first_output(
-        Command::new(program.executable()).arg("stay"),
-    )
-    .expect("start the program that stays");
+    let run = |arguments: &[&str]| {
+        let mut command = Command::new(program.executable());
+        command
+            .args(arguments)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        command
+    };
+    let (mut leaving, leaving_line) = ProgramChild::spawn_signalling_first_output(&mut run(&[]))
+        .expect("start the program that exits");
+    let (mut staying, staying_line) =
+        ProgramChild::spawn_signalling_first_output(&mut run(&["stay"]))
+            .expect("start the program that stays");
 
     leaving_line
         .recv_timeout(START)
