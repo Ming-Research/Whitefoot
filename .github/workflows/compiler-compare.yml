@@ -96,9 +96,11 @@ defaults:
   run:
     shell: bash
 
-# A 14900K run waits for the one before it.
+# A 14900K run waits for the one before it, whichever of compiler-compare and
+# interpreter-compare it is: both pin their timed processes to the same CPU and
+# their cleanup steps stop each other's leftovers, so they share one group.
 concurrency:
-  group: compiler-compare-${{ inputs.runner }}${{ inputs.runner == 'github' && format('-{0}', github.run_id) || '' }}
+  group: compare-${{ inputs.runner }}${{ inputs.runner == 'github' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: false
 
 env:
