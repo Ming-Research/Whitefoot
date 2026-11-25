@@ -166,7 +166,12 @@ kernel module: 576 to 1,280 bytes of `.text` across the five modules.
 
 ## Method
 
-[`placement.sh`](placement.sh) builds two trees with their own compilers and
+The runs below used `placement.sh` and `summarize.py` as they stood at
+`8097c03a`, and `main` kept them, the reducer gaining one paired line, until
+both were rebuilt for [the next runs](#the-next-runs): one compiler builds
+every arm, and the reducer reads the arms from the data. The October harness
+worked as follows.
+It built two trees with their own compilers and
 their own `tests/performance/Makefile`: the unaligned tree (`main` before this
 change) and the aligned tree (this change). From their objects it links four
 arms of every kernel:
