@@ -1,0 +1,154 @@
+# Temporary: the confirmation run of the data-placement control (item 288).
+# On hosted runners it builds the regression images of the stop-signals merge
+# base (B), its revision that started a receiver thread before the entry (S)
+# and this branch, then runs the lines compute-regression.yml runs, with only
+# the directories changed: the control and the comparison of B against S, the
+# control of each image against a copy of itself, and the qualification of B
+# and of S. Removed before the full check; the gate fails while a tmp- workflow
+# exists.
+#
+# It runs only for a head commit whose message carries the line
+# "Confirm-Run: data-placement-control-1", so later pushes start nothing.
+name: tmp-data-placement-confirm
+on:
+  push:
+defaults:
+  run:
+    shell: bash
+permissions:
+  contents: read
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+jobs:
+  decide:
+    name: decide
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.marker.outputs.run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: marker
+        run: |
+          if git log -1 --format=%B | grep -q '^Confirm-Run: data-placement-control-1$'; then
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'run=false' >> "$GITHUB_OUTPUT"
+          fi
+  confirm:
+    name: confirm ${{ matrix.i }}
+    needs: decide
+    if: needs.decide.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        i: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Host and tools
+        run: |
+          lscpu | grep -E '^(Model name|CPU\(s\)):'
+          uname -r
+          rustup default stable
+          rustc -vV
+          test -x /usr/bin/clang
+          /usr/bin/clang --version
+          # As compute-regression.yml installs it.
+          if ! command -v strace > /dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq strace > /dev/null
+          fi
+          strace --version | head -n 1
+          mkdir -p "$RUNNER_TEMP/performance-results"
+          lscpu > "$RUNNER_TEMP/performance-results/host.txt"
+      - name: Trees of B and S
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/b" c18e6708b6cc56749e621cf666040cd362094f35
+          git worktree add --detach "$RUNNER_TEMP/s" 9ec75560688efe3a016c1dce9948a443b8e017e8
+      - name: Compilers
+        run: |
+          WHITEFOOT_CHECK_TIMEOUT=900 perl .github/run-check.pl tmp-confirm-compiler-h \
+            cargo build --manifest-path compiler/Cargo.toml --locked --profile gate --bin whitefootc
+          for revision in b s; do
+            CARGO_TARGET_DIR="$RUNNER_TEMP/$revision-target" WHITEFOOT_CHECK_TIMEOUT=900 \
+              perl .github/run-check.pl "tmp-confirm-compiler-$revision" \
+              cargo build --manifest-path "$RUNNER_TEMP/$revision/compiler/Cargo.toml" \
+              --locked --profile gate --bin whitefootc
+          done
+      - name: Warm the native toolchain
+        run: make -s -j2 -C tests/performance build BUILD="$RUNNER_TEMP/performance-warmup" > /dev/null
+      # B as the baseline and S as the candidate, under the directory names
+      # compute-regression.yml gives the two arms; this branch's images beside them.
+      - name: Images
+        run: |
+          make -j2 -C tests/performance build BUILD="$RUNNER_TEMP/performance-head"
+          make -j2 -C tests/performance build BUILD="$RUNNER_TEMP/performance-baseline" \
+            ROOT="$RUNNER_TEMP/b" WFC="$RUNNER_TEMP/b-target/gate/whitefootc" \
+            FIXTURES="$RUNNER_TEMP/b/tests/programs/compute"
+          make -j2 -C tests/performance build BUILD="$RUNNER_TEMP/performance-candidate" \
+            ROOT="$RUNNER_TEMP/s" WFC="$RUNNER_TEMP/s-target/gate/whitefootc" \
+            FIXTURES="$RUNNER_TEMP/s/tests/programs/compute"
+      - name: Check data placement
+        run: |
+          bash tests/performance/data-placement.sh control "$RUNNER_TEMP/performance-baseline" \
+            "$RUNNER_TEMP/performance-candidate" "$RUNNER_TEMP/performance-results/data"
+      - name: Compare the candidate with its merge base
+        env:
+          WF_PERFORMANCE_PLACEMENT: ${{ runner.temp }}/performance-results/data
+        run: |
+          status=0
+          WHITEFOOT_CHECK_TIMEOUT=300 perl .github/run-check.pl performance-comparison \
+            bash tests/performance/compare.sh "$RUNNER_TEMP/performance-baseline" \
+            "$RUNNER_TEMP/performance-candidate" "$RUNNER_TEMP/performance-results/comparison" || status=$?
+          echo "comparison exit $status" | tee "$RUNNER_TEMP/performance-results/comparison-status.txt"
+      - name: Publish decisions and visible suspects
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/performance-results/inconclusive.txt" ]; then
+            cat "$RUNNER_TEMP/performance-results/inconclusive.txt" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          for run in null slow placement data-control data comparison; do
+            file="$RUNNER_TEMP/performance-results/$run/verdict.txt"
+            if [ -f "$file" ]; then
+              { printf '\n### %s\n\n```text\n' "$run"; cat "$file"; printf '\n```\n'; } >> "$GITHUB_STEP_SUMMARY"
+              while IFS= read -r line; do echo "::warning::$run: $line"; done < <(grep -E '^(suspect|not judged): ' "$file" || true)
+            fi
+          done
+          cp "$GITHUB_STEP_SUMMARY" "$RUNNER_TEMP/performance-results/step-summary.md"
+      # Criterion 2: one image as both arms, under directories whose names
+      # differ in length.
+      - name: Each image against a copy of itself
+        if: always()
+        run: |
+          status=0
+          for revision in baseline candidate head; do
+            cp -a "$RUNNER_TEMP/performance-$revision" "$RUNNER_TEMP/performance-$revision-copied-under-a-longer-name"
+            bash tests/performance/data-placement.sh control "$RUNNER_TEMP/performance-$revision" \
+              "$RUNNER_TEMP/performance-$revision-copied-under-a-longer-name" \
+              "$RUNNER_TEMP/performance-results/self-$revision" || status=1
+          done
+          exit "$status"
+      # Criterion 4: the qualification of B and of S.
+      - name: Qualify the data-placement control on B and on S
+        if: always()
+        run: |
+          status=0
+          for revision in baseline candidate; do
+            bash tests/performance/data-placement.sh qualify "$RUNNER_TEMP/performance-$revision" \
+              "$RUNNER_TEMP/performance-results/qualify-$revision" || status=1
+          done
+          exit "$status"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: data-placement-confirm-${{ matrix.i }}
+          if-no-files-found: warn
+          path: ${{ runner.temp }}/performance-results/
