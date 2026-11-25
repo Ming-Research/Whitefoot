@@ -4,16 +4,17 @@
 # none, reading every file of the Rust toolchain into the page cache, or a
 # 60 s wait that reads nothing. Each build records its wall, user and system
 # time, its page faults and file-system inputs, and the host's I/O and CPU
-# pressure and /proc/stat counters around it and around the preparation. It
-# runs only on a push that changes this file, so once on the branch's first
-# push. Deleted before the full check, which fails while a tmp- workflow
+# pressure and /proc/stat counters around it and around the preparation. The
+# engine pushes each commit it checks to its own branch under
+# wf-try/work-289-26e0fade/, and a push runs the jobs only when its tip
+# commit's message holds the marker in the job's condition, so one commit starts the experiment
+# once. Deleted before the full check, which fails while a tmp- workflow
 # exists.
 name: tmp first build
 
 on:
   push:
-    branches: [work-289-26e0fade]
-    paths: [.github/workflows/tmp-first-build.yml]
+    branches: ['wf-try/work-289-26e0fade/**']
 
 defaults:
   run:
@@ -27,6 +28,7 @@ env:
 jobs:
   build-twice:
     name: build twice (${{ matrix.prep }} ${{ matrix.n }})
+    if: contains(github.event.head_commit.message, '[run tmp-first-build]')
     strategy:
       fail-fast: false
       matrix:
