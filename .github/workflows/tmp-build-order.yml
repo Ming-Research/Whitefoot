@@ -1,0 +1,88 @@
+# Temporary (#289): do the two compiler builds of a compute-regression run
+# take the same time whichever comes first, once the untimed "Warm the Rust
+# toolchain" step has run? Each job does what such a run does up to and
+# including both builds, with no cache restored and none saved, so both builds
+# are cold: the candidate (this checkout) and the baseline (the merge base,
+# built from its own worktree into its own target directory) under the stage
+# labels the run uses. The jobs differ only in which build comes first. A job
+# passes when the first build's time is within 5% of the second's. The engine
+# pushes each commit it checks to its own branch under
+# wf-try/work-289-26e0fade/, and a push runs the jobs only when its tip
+# commit's message holds the marker in the job's condition. Deleted before the
+# full check, which fails while a tmp- workflow exists.
+name: tmp build order
+
+on:
+  push:
+    branches: ['wf-try/work-289-26e0fade/**']
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  CARGO_BUILD_JOBS: 2
+
+jobs:
+  order:
+    name: order (${{ matrix.first }} first)
+    if: contains(github.event.head_commit.message, '[run tmp-build-order]')
+    strategy:
+      fail-fast: false
+      matrix:
+        first: [candidate, baseline]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check the host toolchain
+        run: |
+          rustup default stable
+          rustc -vV
+          cargo --version
+          test -x /usr/bin/clang
+          /usr/bin/clang --version
+          test "$(nproc)" -ge 2
+          lscpu | grep -E '^(Model name|CPU\(s\)):'
+      - name: Check out the merge base
+        run: |
+          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          git worktree add --detach "$RUNNER_TEMP/baseline" "$(git merge-base origin/main HEAD)"
+      # The same step as compute-regression.yml's "Warm the Rust toolchain".
+      - name: Warm the Rust toolchain
+        run: |
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          cargo fetch --locked --manifest-path "$RUNNER_TEMP/baseline/compiler/Cargo.toml"
+          find "$(rustc --print sysroot)" -type f -print0 | xargs -0 cat > /dev/null
+      - name: Build both compilers, cold
+        env:
+          FIRST: ${{ matrix.first }}
+        run: |
+          # The seconds run-check.pl prints for a stage, as the log carries them.
+          build() {
+            case "$1" in
+              candidate)
+                WHITEFOOT_CHECK_TIMEOUT=300 perl .github/run-check.pl performance-candidate-compiler \
+                  cargo build --manifest-path compiler/Cargo.toml --locked --profile gate --bin whitefootc ;;
+              baseline)
+                CARGO_TARGET_DIR="$RUNNER_TEMP/baseline-target" WHITEFOOT_CHECK_TIMEOUT=300 \
+                  perl .github/run-check.pl performance-baseline-compiler \
+                  cargo build --manifest-path "$RUNNER_TEMP/baseline/compiler/Cargo.toml" \
+                  --locked --profile gate --bin whitefootc ;;
+            esac
+          }
+          if [ "$FIRST" = candidate ]; then SECOND=baseline; else SECOND=candidate; fi
+          build "$FIRST" | tee "$RUNNER_TEMP/first.log"
+          build "$SECOND" | tee "$RUNNER_TEMP/second.log"
+          seconds() { sed -n 's/^== END [a-z-]*: \([0-9.]*\) s, exit 0 ==$/\1/p' "$1"; }
+          first=$(seconds "$RUNNER_TEMP/first.log")
+          second=$(seconds "$RUNNER_TEMP/second.log")
+          test -n "$first" && test -n "$second"
+          awk -v first="$first" -v second="$second" -v which="$FIRST" 'BEGIN {
+            excess = (first - second) / second * 100
+            printf "ORDER %s first: first %.2f s, second %.2f s, first is %+.1f%% of the second\n", which, first, second, excess
+            exit (excess > 5 || excess < -5) }'
