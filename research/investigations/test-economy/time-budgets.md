@@ -1321,12 +1321,17 @@ which rule to prefer was not fixed in advance.
 jobs (`unit`, `corpus`, `runtime`, `static`) of `gate.yml`, read with `gh api`
 and `.github/recompute-time-budgets.py`: the 84 runs on `main` since 2026-10-20
 with all their attempts, and the runs of every branch before them, newest first,
-back to 2026-10-21T03:11Z (batches of 450, 300, 250 and 40 runs, each
-older than the one before): 1,765 jobs and 6,739 stage times, 6,132 of them of
-mapped classes in rows of the table. The limit of the API (5,000 requests an
-hour, shared) stopped the collection of the runs before 2026-10-21T03:11Z; the
-samples are scratch and are not kept. The data are mostly of 2026-10-21 to
-10-29, and November has few gate runs.
+back to 2026-10-21T03:11Z (batches of 450, 300, 250 and 40 runs, each older
+than the one before); then, for the groups `unit`, `corpus` and `runtime`
+only, the 192 runs created from 2026-10-19T01:12Z to 2026-10-21T03:11Z and the
+9 newest runs of 2026-10-14 (the listing has no run between them and
+2026-10-19). Together 2,764 jobs of 537 runs and 8,162 stage times, 7,419 of
+them of mapped classes in rows of the table that exited 0. The limit of the API
+(5,000 requests an hour, shared) stopped the first collection before
+2026-10-21T03:11Z and the second after the 9 runs of 10-14, each run costing 14
+to 44 requests; the samples are scratch and are not kept. The data are mostly
+of 2026-10-19 to 10-29, and November has few gate runs. The rows of the
+`static` group have no run before 2026-10-21T03:11Z.
 
 **The 22 red jobs.** On `main`, 20 runs were red at their first attempt from
 budget alone and 1 from a failing test (run 40028259133). The 22 jobs ran on
@@ -1344,14 +1349,27 @@ column, when it has fewer than 20 earlier runs, by the owner column's rule):
     python3 .github/recompute-time-budgets.py replay --samples <files> \
         --from 2026-10-20 --every 0 --branch main --attempt 1 --list
 
-Result: of the 22 jobs, 9 are cleared by the rule (every stage within its rule
-budget, the red ones within it too), none is still red, and 13 cannot be judged
-because the class has fewer than 20 earlier runs in the samples: the collection
-stopped at 2026-10-21T03:11Z. The 13 are the jobs of the runs 39411199402, 39493942006,
-39521731772, 39527880748, 39541773155, 39542995000, 39544796974, 39559275809,
-39571535553 (two jobs), 39572726540, 39612037425 and 39612824047. They must be
-judged once the runs before that date are collected; until then the claim that
-the 20 runs stay green rests on the 9 judged jobs, not on the 13.
+Result: of the 22 jobs, 20 are cleared by the rule (every stage within its rule
+budget, the red ones within it too), none is still red, and 2 cannot be judged
+because their class has fewer than 20 earlier runs in the samples:
+
+| job | run | class | stage | time | logged budget | earlier runs of its class |
+|---|---|---|---|---:|---:|---:|
+| 118589198409 | 39411199402 | EPYC 7763 | `check/runtime` | 25.1 s | 25 s | 14 |
+| 118874096168 | 39493942006 | EPYC 9V45 | `compiler/test-corpus`, `check/corpus` | 140.1 s, 224.2 s | 140 s, 220 s | 15 |
+
+Their classes lack 6 and 5 earlier runs among the samples. The samples reach
+back to 2026-10-19T01:12Z in full and, for 2026-10-14, only to its newest 9
+runs (created from 09:10Z); the listing shows no gate run between the two days,
+and 21 runs of 10-14 created from 08:27Z to 09:10Z were left uncollected when
+the reserve of the hour's requests was reached. They should hold the runs the
+two jobs lack (inferred: they were not read). Collecting them takes `collect
+--since 2026-10-14 --until 2026-10-14T09:10:00Z --job runtime --job unit --job
+corpus`, about 900 requests at the 44 a run those days cost. Until then the
+claim that the 20 runs stay green rests on 20 judged jobs of 22; the two times
+are within the budgets the table now holds (25.1 s against 35 s on EPYC 7763;
+140.1 s and 224.2 s against 215 s and 315 s on EPYC 9V45), which says nothing
+about the table of that day.
 
 **The rules compared.** Replay from 2026-10-22 on (`--every 0`, window 50),
 756 judged jobs (62 for a table 7 days old, `--age 7`); a slowdown multiplies
@@ -1359,10 +1377,10 @@ the times of every stage of a job. Jobs red:
 
 | rule | no slowdown | +20% | +30% | no slowdown, table 7 days old (62 jobs) | +30%, table 7 days old |
 |---|---:|---:|---:|---:|---:|
-| `max+10` (the former rule) | 5 | 347 | 615 | 0 | 52 |
-| `max+25` | 1 | 10 | 112 | 0 | 20 |
-| `max+30` | 1 | 5 | 40 | 0 | 8 |
-| `spread` (the new rule) | 1 | 145 | 360 | 0 | 37 |
+| `max+10` (the former rule) | 5 | 349 | 608 | 0 | 51 |
+| `max+25` | 1 | 12 | 118 | 0 | 21 |
+| `max+30` | 1 | 6 | 42 | 0 | 9 |
+| `spread` (the new rule) | 1 | 146 | 362 | 0 | 38 |
 
 The one job red with no slowdown under `max+25`, `max+30` and `spread` (checked
 with the tool's `Judgment`) is a `compiler/lint` run of 47.96 s on EPYC 9V45,
@@ -1376,14 +1394,14 @@ judged jobs by its filters); those are withdrawn.
 
 **Headroom.** The budget over the median of a stage's recent runs, less one:
 how much slower a typical run can be before its stage trips (`headroom`
-command, newest 50 runs of each class).
+command, newest 50 runs of each class; the Xeon has 32 runs of `check/unit`).
 
 | stage | class | median s | max s | `max+10` | `max+25` | `max+30` | `spread` |
 |---|---|---:|---:|---:|---:|---:|---:|
 | `check/unit` | epyc-7763 | 350.6 | 375.0 | 415 (+18%) | 470 (+34%) | 490 (+40%) | 440 (+26%) |
 | `check/unit` | epyc-9v74 | 272.3 | 354.6 | 395 (+45%) | 445 (+63%) | 465 (+71%) | 475 (+74%) |
 | `check/unit` | epyc-9v45 | 226.0 | 246.6 | 275 (+22%) | 310 (+37%) | 325 (+44%) | 295 (+31%) |
-| `check/unit` | xeon-8573c | 314.4 | 351.7 | 390 (+24%) | 440 (+40%) | 460 (+46%) | 425 (+35%) |
+| `check/unit` | xeon-8573c | 306.0 | 351.7 | 390 (+27%) | 440 (+44%) | 460 (+50%) | 435 (+42%) |
 | `check/corpus` | epyc-7763 | 374.0 | 396.2 | 440 (+18%) | 500 (+34%) | 520 (+39%) | 460 (+23%) |
 | `check/corpus` | epyc-9v74 | 296.7 | 386.5 | 430 (+45%) | 485 (+63%) | 505 (+70%) | 515 (+74%) |
 | `compiler/lint` | epyc-9v45 | 27.2 | 48.0 | 55 (+102%) | 60 (+121%) | 65 (+139%) | 75 (+176%) |
@@ -1391,15 +1409,16 @@ command, newest 50 runs of each class).
 The design tree refused "one and a half times the slowest recorded run" because
 a typical unit run could grow by 57% before the stage tripped (a sample of seven
 runs). In the newest 50 runs the spread rule keeps three of the four classes of
-the unit group below that (+26% to +35%) and exceeds it on EPYC 9V74 alone,
+the unit group below that (+26% to +42%) and exceeds it on EPYC 9V74 alone,
 whose own runs vary by 30% of the median and which the former rule left at +45%.
 No check sees a slowdown smaller than a stage's headroom: the paired performance
 comparison times compiled workloads and the compiler's build rows, and the
 recompute prints medians without judging them.
 
 **The new table.** `table --write` on the same samples, the gate.yml rows only
-(the rows of the other workflows have no samples and keep their values); a `*`
-marks a changed cell. Of the 6,132 stage times of mapped classes, none exceeds
+(the rows of the other workflows have no samples and keep their values: the
+hour's requests left too few to read their logs); a `*`
+marks a changed cell. Of the 7,419 stage times of mapped classes, none exceeds
 its new budget or the budget of the table before this change (which carries the
 owner's raise of the same day).
 
@@ -1420,50 +1439,70 @@ owner's raise of the same day).
 | `check/unit` | epyc-7763 | 50 | 350.6 | 375.0 | 450 | 440 * |
 | `check/unit` | epyc-9v74 | 50 | 272.3 | 354.6 | 410 | 475 * |
 | `check/unit` | epyc-9v45 | 50 | 226.0 | 246.6 | 300 | 295 * |
-| `check/unit` | xeon-8573c | 22 | 314.4 | 351.7 | 395 | 425 * |
+| `check/unit` | xeon-8573c | 32 | 306.0 | 351.7 | 395 | 435 * |
 | `compiler/test-build-unit` | epyc-7763 | 50 | 175.7 | 190.9 | 250 | 230 * |
 | `compiler/test-build-unit` | epyc-9v74 | 50 | 145.2 | 181.1 | 225 | 240 * |
 | `compiler/test-build-unit` | epyc-9v45 | 50 | 122.9 | 139.2 | 180 | 170 * |
-| `compiler/test-build-unit` | xeon-8573c | 23 | 175.2 | 197.8 | 230 | 245 * |
+| `compiler/test-build-unit` | xeon-8573c | 33 | 168.6 | 197.8 | 230 | 250 * |
 | `compiler/test-unit` | epyc-7763 | 50 | 175.8 | 186.7 | 215 | 220 * |
 | `compiler/test-unit` | epyc-9v74 | 50 | 130.5 | 173.3 | 195 | 235 * |
 | `compiler/test-unit` | epyc-9v45 | 50 | 102.8 | 114.0 | 135 | 140 * |
-| `compiler/test-unit` | xeon-8573c | 22 | 138.9 | 162.1 | 180 | 205 * |
+| `compiler/test-unit` | xeon-8573c | 32 | 136.1 | 162.1 | 180 | 205 * |
 | `check/corpus` | epyc-7763 | 50 | 374.0 | 396.2 | 500 | 460 * |
 | `check/corpus` | epyc-9v74 | 50 | 296.7 | 386.5 | 445 | 515 * |
 | `check/corpus` | epyc-9v45 | 50 | 236.3 | 261.8 | 315 | 315 |
-| `check/corpus` | xeon-8573c | 34 | 330.9 | 379.5 | 450 | 470 * |
+| `check/corpus` | xeon-8573c | 42 | 321.0 | 379.5 | 450 | 480 * |
 | `compiler/test-build-corpus` | epyc-7763 | 50 | 119.5 | 140.4 | 175 | 180 * |
 | `compiler/test-build-corpus` | epyc-9v74 | 50 | 99.1 | 124.1 | 150 | 165 * |
 | `compiler/test-build-corpus` | epyc-9v45 | 50 | 84.5 | 103.2 | 120 | 135 * |
-| `compiler/test-build-corpus` | xeon-8573c | 35 | 117.0 | 141.4 | 160 | 185 * |
+| `compiler/test-build-corpus` | xeon-8573c | 44 | 116.0 | 141.4 | 160 | 185 * |
 | `compiler/test-corpus` | epyc-7763 | 50 | 253.0 | 268.1 | 330 | 315 * |
 | `compiler/test-corpus` | epyc-9v74 | 50 | 197.6 | 263.2 | 305 | 360 * |
 | `compiler/test-corpus` | epyc-9v45 | 50 | 152.1 | 173.1 | 205 | 215 * |
-| `compiler/test-corpus` | xeon-8573c | 34 | 214.7 | 241.2 | 290 | 295 * |
+| `compiler/test-corpus` | xeon-8573c | 42 | 203.9 | 241.2 | 290 | 305 * |
 | `check/runtime` | epyc-7763 | 50 | 24.0 | 26.4 | 40 | 35 * |
 | `check/runtime` | epyc-9v74 | 50 | 19.4 | 27.9 | 40 | 40 |
 | `check/runtime` | epyc-9v45 | 50 | 16.3 | 21.0 | 30 | 30 |
-| `check/runtime` | xeon-8573c | 27 | 24.4 | 27.6 | 35 | 35 |
+| `check/runtime` | xeon-8573c | 45 | 24.2 | 27.6 | 35 | 35 |
 
 **Reproduction.** `collect` takes `--branch` and `--job` prefixes (for example
-`--workflow gate.yml --since 2026-10-19 --until 2026-10-21T05:00:00Z --job unit
---job corpus --job runtime --job static`) and `--reserve` (default 1,000): it
-fetches ten runs at a time and stops, printing the `--until` to go on from,
-before the hour's requests fall to the reserve, since the 5,000 an hour are
-shared with the engine's own calls and the collection of this section spent
-them all once, which failed its next test run with HTTP 403. `replay` takes
-`--rule` (`spread`, `max+10`, `max+25`, `max+30`), `--every 0`, `--age`,
-`--branch`, `--attempt` and `--list`; `headroom` prints the headroom table. The
-runs of the comparison are those named under Sources; the samples are scratch.
+`--workflow gate.yml --since 2026-10-19 --until 2026-10-21T03:11:00Z --job unit
+--job corpus --job runtime`) and `--reserve` (default 1,000): it fetches ten
+runs at a time and stops, printing the `--until` to go on from, before the
+hour's requests fall to the reserve. The 5,000 an hour are shared with the
+engine's own calls and with every other agent on the account: the first
+collection of this section spent them all and failed the next test run with
+HTTP 403, and with 1,038 left after the last batch the quota was gone within
+minutes, so a reserve protects the engine only while nobody else spends it.
+`replay` takes `--rule` (`spread`, `max+10`, `max+25`, `max+30`), `--every 0`,
+`--age`, `--branch`, `--attempt` and `--list`; `headroom` prints the headroom
+table; `table` and `replay` take every samples file at once. The runs of the
+comparison are those named under Sources; the samples are scratch.
 
 **Limits.** The data are those of one month, mostly of one week, so the
 replay's count of jobs red with no slowdown (1 of 756) cannot tell the
 rules apart there. Wall time only: CPU time was not examined. A rule
 cannot make a stale table current: the table of 2026-10-23 was not recomputed
 before 2026-11-25, and a wider margin only gives it more room. Nothing was
-measured for the other workflows' rows, and the real slowdown of a stage in the
-gate is shown by a run, not by this replay (item #284).
+measured for the other workflows' rows (io-hosts, proof, sanitizers, the
+concurrent map's sanitizers and compute-regression), which keep the values of
+the former rule or their provisional ones; the sanitizer rows have the most
+jobs and, unlike the gate's, a merge needs them green too. Two of the 22 jobs
+are not judged (above). A stage made 30% slower than its budget is shown to
+fail by a run of the verdict, not by this replay: see the next paragraph.
+
+**A stage that has slowed.** The owner's second criterion is that a stage 30%
+over its budget fails the gate and passes once the delay is gone. What decides
+it is not the rule but the verdict `run-check.pl --budget-verdict`, which the
+last step of each gate group runs on the record its stages appended to; this
+change touches neither. `.github/test-run-check.sh` (in `make static`) checks
+that verdict against a table of its own: a stage over its Linux budget is
+recorded as enforced and fails the verdict, one within it does not. The check
+with the real table on a hosted runner is a temporary workflow that is not part
+of the branch: a stage labelled `check/runtime` that sleeps 52 s, 1.3 times the
+row's largest Linux budget (40 s), must print `OVER BUDGET: enforced` and fail
+the verdict, and one that sleeps 1 s must pass it. It had not run when this was
+written, the hour's API requests being gone.
 
 ### Gate at ready, not at each draft push
 
