@@ -5,12 +5,6 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
-## 2026-11-25 A manual acceptance workflow reaches its prototype commit through a retention tag, and research self-tests stay out of the gate
-
-Nodes: compiler/verification
-
-Summary: The stage-3 acceptance workflow for default `--par` takes its runner from a prototype commit that links in the tree name and that only a pull request's branch held, so deleting the branch would have broken the links and the next dispatch. The node gains a decision: such a commit is kept by a retention tag outside the `wf-` release prefix, and the workflow fetches the tag, requires it to resolve to the commit id its tool states and archives from that commit, with no fetch by commit id; restoring the prototype's research directory into the main line is refused. It gains a second decision: a research tool's self-tests run as a step of the manual workflow that uses the tool, after its extraction step, and a gate group that extracts the prototype to run them is refused, which keeps the research-boundary decision unchanged. No tool, workflow or measurement result is a rule of the tree; the workflow and the tools are described in research/experiments.
-
 ## 2026-10-23 A returned computed integer expression proves a postcondition as a `let` of it would
 
 Nodes: language/checks-and-proofs/automatic-facts

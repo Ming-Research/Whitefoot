@@ -26,7 +26,7 @@ once. New or removed members have no coverage promise. The design must also
 state the amount of internal work, rather than equating 64 replies with a
 short hold.
 
-The [constitution](../../../docs/constitution.md) makes safety a constraint,
+The [constitution](../../../design/constitution.md) makes safety a constraint,
 requires performance useful to real projects, and weighs actual compatibility
 needs. The representation alternatives below are proposals on those grounds,
 not choices selected by implementation convenience or measured winners.
