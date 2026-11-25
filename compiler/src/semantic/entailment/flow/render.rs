@@ -703,7 +703,7 @@ impl Input<'_, '_> {
                 let base = match occurrence {
                     // [DIAG-1] fixes this spelling for an FN-8 payload.
                     EvaluatedValueOccurrence::CallArgument { argument, .. } => {
-                        format!("argument #{argument} pre-transfer value")
+                        crate::diagnostic_repairs::call_argument_datum(argument)
                     }
                     EvaluatedValueOccurrence::ObligationOperand { operand, .. } => {
                         described(&format!("operand #{operand} evaluated value"))

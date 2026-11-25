@@ -1229,6 +1229,75 @@ fn a_source_relation_field_is_read_as_source_around_its_descriptions() {
     assert!(defects.is_empty(), "{defects:?}");
 }
 
+/// The words [FN-8] fixes for an evaluated-value datum are the specification's
+/// own spelling: read as a name in a source-relation field, and only in their
+/// exact form.
+#[test]
+fn the_specified_call_argument_datum_is_read_as_a_name() {
+    use crate::diagnostic_repairs::call_argument_datum;
+
+    assert_eq!(call_argument_datum(0), "argument #0 pre-transfer value");
+    for text in [
+        format!("{} < 10_u64", call_argument_datum(0)),
+        format!("{}.count < 10_u64", call_argument_datum(12)),
+    ] {
+        let defects = with_field("instantiated_goal", Value::Source(text.clone())).text_defects();
+        assert!(defects.is_empty(), "{text}: {defects:?}");
+    }
+    for text in [
+        "argument #x pre-transfer value < 10_u64",
+        "argument pre-transfer value < 10_u64",
+        "argument #0 pre-transfer values < 10_u64",
+    ] {
+        let defects =
+            with_field("instantiated_goal", Value::Source(text.to_owned())).text_defects();
+        assert_eq!(defects.len(), 1, "{text}: {defects:?}");
+    }
+}
+
+/// The residual of a call separation is read path by path through the table of
+/// its sentence forms: a path written as a phrase in words is a defect, a
+/// sentence that is no form is a defect, and every form the renderer writes is
+/// read back to its two paths.
+#[test]
+fn a_call_separation_residual_is_read_by_its_two_paths() {
+    use crate::diagnostic_repairs::{described, separation_paths, SeparationForm};
+
+    let hidden = described("a computed value with no source spelling");
+    for form in SeparationForm::ALL {
+        let left = format!("t^[{hidden}][i].Some.value.a");
+        let text = form.render(&left, "values^[a..b]");
+        let plain = crate::diagnostic_repairs::replace_described(&text, "described")
+            .expect("balanced description");
+        assert_eq!(
+            separation_paths(&plain),
+            Some(("t^[described][i].Some.value.a", "values^[a..b]")),
+            "{text}"
+        );
+        let defects = with_field("residual", Value::Separation(text.clone())).text_defects();
+        assert!(defects.is_empty(), "{text}: {defects:?}");
+        let text = form.render("rows element at k", "values^[a..b]");
+        let defects = with_field("residual", Value::Separation(text.clone())).text_defects();
+        assert_eq!(defects.len(), 1, "{text}: {defects:?}");
+        let text = form.render("rows^[i]", "the other place");
+        let defects = with_field("residual", Value::Separation(text.clone())).text_defects();
+        assert_eq!(defects.len(), 1, "{text}: {defects:?}");
+    }
+    let defects = with_field(
+        "residual",
+        Value::Separation("rows^[i] and rows^[j] differ".to_owned()),
+    )
+    .text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+    assert!(defects[0].contains("none of the forms"), "{defects:?}");
+    let defects = with_field(
+        "residual",
+        Value::Separation("rows^[?] and rows^[j] require their captured indices to be distinct".to_owned()),
+    )
+    .text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+}
+
 /// A backtick-marked stretch that holds a description is read with the
 /// description replaced by a name, so the source around it must be source.
 #[test]

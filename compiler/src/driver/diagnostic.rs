@@ -306,6 +306,7 @@ fn value_defects(label: &str, value: &Value, written: &str, defects: &mut Vec<St
     match value {
         Value::Text(text) => text_defects(label, text, written, defects),
         Value::Source(text) => source_defects(label, text, defects),
+        Value::Separation(text) => separation_defects(label, text, defects),
         Value::List(items) => {
             for item in items {
                 value_defects(label, item, written, defects);
@@ -342,7 +343,7 @@ fn text_defects(label: &str, text: &str, written: &str, defects: &mut Vec<String
         if inside && pieces.peek().is_some() && !piece.is_empty() {
             // A described value is not source, so a stretch that holds one is
             // read with each description replaced by a name.
-            match crate::diagnostic_repairs::replace_described(piece, DESCRIBED_NAME) {
+            match named_parts(piece) {
                 None => defects.push(format!(
                     "{label}: `{piece}` holds a description that is not closed"
                 )),
@@ -375,13 +376,44 @@ fn source_defects(label: &str, text: &str, defects: &mut Vec<String>) {
         defects.push(format!("{label}: `?` stands for a value the text does not write: {text}"));
         return;
     }
-    let Some(plain) = crate::diagnostic_repairs::replace_described(text, DESCRIBED_NAME) else {
+    let Some(plain) = named_parts(text) else {
         defects.push(format!("{label}: a description is not closed: {text}"));
         return;
     };
     if !is_source_relation(&plain) {
         defects.push(format!("{label}: is not written in source terms: {text}"));
     }
+}
+
+/// What is wrong with the residual of a call separation: a `?`, a sentence
+/// that is none of the forms the renderer writes, and a path that is not
+/// written in source terms once each description is a name.
+fn separation_defects(label: &str, text: &str, defects: &mut Vec<String>) {
+    if text.contains('?') {
+        defects.push(format!("{label}: `?` stands for a value the text does not write: {text}"));
+        return;
+    }
+    let Some(plain) = named_parts(text) else {
+        defects.push(format!("{label}: a description is not closed: {text}"));
+        return;
+    };
+    let Some((left, right)) = crate::diagnostic_repairs::separation_paths(&plain) else {
+        defects.push(format!("{label}: is none of the forms of a call separation: {text}"));
+        return;
+    };
+    for path in [left, right] {
+        if !is_source_relation(path) {
+            defects.push(format!("{label}: the path `{path}` is not written in source terms: {text}"));
+        }
+    }
+}
+
+/// The text with each description and each specified call-argument datum
+/// replaced by a name, so the source around them can be read as source; `None`
+/// where a description is not closed.
+fn named_parts(text: &str) -> Option<String> {
+    let described = crate::diagnostic_repairs::replace_described(text, DESCRIBED_NAME)?;
+    Some(crate::diagnostic_repairs::replace_call_argument_datums(&described, DESCRIBED_NAME))
 }
 
 /// Whether `text` is one run of source tokens in which a word, name or
@@ -649,6 +681,10 @@ enum Value {
     /// `described`: printed as `Text` is, and read by the text check as
     /// source with each description replaced by a name.
     Source(String),
+    /// The residual of a call separation: two paths of source terms joined by
+    /// one of the fixed sentence forms of `SeparationForm`; printed as `Text`
+    /// is, and read by the text check path by path.
+    Separation(String),
     /// Exact source bytes whose spacing or escapes matter: printed quoted.
     Exact(Vec<u8>),
     Number(u64),
@@ -771,6 +807,9 @@ macro_rules! report_field {
     ($fields:ident, $field:ident, source) => {
         $fields.field(stringify!($field), &Relation($field))
     };
+    ($fields:ident, $field:ident, separation) => {
+        $fields.field(stringify!($field), &Separation($field))
+    };
 }
 
 /// One payload value as a [`Value`].
@@ -823,6 +862,18 @@ struct Relation<'field, Field: ?Sized>(&'field Field);
 impl<Field: FieldValue + ?Sized> FieldValue for Relation<'_, Field> {
     fn value(&self, bundle: &SourceBundle) -> Option<Value> {
         self.0.value(bundle).map(into_source)
+    }
+}
+
+/// A payload field that holds the residual of a call separation.
+struct Separation<'field, Field: ?Sized>(&'field Field);
+
+impl<Field: FieldValue + ?Sized> FieldValue for Separation<'_, Field> {
+    fn value(&self, bundle: &SourceBundle) -> Option<Value> {
+        self.0.value(bundle).map(|value| match value {
+            Value::Text(text) => Value::Separation(text),
+            other => other,
+        })
     }
 }
 
@@ -1254,7 +1305,7 @@ report_kind_fn!(report_semantic_kind, SEMANTIC_KINDS, SemanticIssueKind;
     UndischargedIntegerDomainObligation { residual: source, disposition, mechanical_fix };
     UndischargedConversionDomainObligation { residual: source, disposition, mechanical_fix };
     UndischargedRangeFormationObligation { residual: source, disposition, mechanical_fix };
-    UndischargedCallSeparation { residual, mechanical_fix };
+    UndischargedCallSeparation { residual: separation, mechanical_fix };
     OverlappingCallEffects { first, second, mechanical_fix };
     AtomicUpdateReachesTargetPrefix { target, effect, mechanical_fix };
     UndischargedCallRequirement[detail];
@@ -1493,7 +1544,7 @@ fn push_fields(text: &mut String, fields: &[(&'static str, Value)]) {
 /// Text rendering of one value; a value never spans two lines.
 fn write_text(text: &mut String, value: &Value) {
     match value {
-        Value::Text(value) | Value::Source(value) => {
+        Value::Text(value) | Value::Source(value) | Value::Separation(value) => {
             push_printable(text, &crate::diagnostic_repairs::unmark_described(value));
         }
         Value::Exact(bytes) => {
@@ -1510,7 +1561,7 @@ fn write_text(text: &mut String, value: &Value) {
                 if index > 0 {
                     text.push_str(", ");
                 }
-                if let Value::Text(value) | Value::Source(value) = item {
+                if let Value::Text(value) | Value::Source(value) | Value::Separation(value) = item {
                     text.push('"');
                     push_escaped(
                         text,
@@ -1688,7 +1739,7 @@ fn push_json_fields(json: &mut String, fields: &[(&'static str, Value)]) {
 
 fn push_json_value(json: &mut String, value: &Value) {
     match value {
-        Value::Text(value) | Value::Source(value) => {
+        Value::Text(value) | Value::Source(value) | Value::Separation(value) => {
             let mut printable = String::new();
             push_printable(&mut printable, &crate::diagnostic_repairs::unmark_described(value));
             push_json_string(json, &printable);

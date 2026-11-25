@@ -42,6 +42,121 @@ pub(crate) fn replace_described(text: &str, stand_in: &str) -> Option<String> {
     (!open).then_some(replaced)
 }
 
+/// The words [FN-8] fixes for a call-argument evaluated-value datum in a
+/// payload: `argument #N pre-transfer value`, with N the zero-based argument
+/// ordinal. They are the specification's own spelling, so they are neither
+/// changed nor wrapped in the marks of a description.
+const CALL_ARGUMENT_DATUM_OPEN: &str = "argument #";
+const CALL_ARGUMENT_DATUM_CLOSE: &str = " pre-transfer value";
+
+/// `argument #N pre-transfer value` for argument ordinal `argument`.
+pub(crate) fn call_argument_datum(argument: impl std::fmt::Display) -> String {
+    format!("{CALL_ARGUMENT_DATUM_OPEN}{argument}{CALL_ARGUMENT_DATUM_CLOSE}")
+}
+
+/// The text with each exact [`call_argument_datum`] form (the words, a decimal
+/// ordinal of one or more digits, the words) replaced by `stand_in`, so that
+/// the source around the datum can be read as source.
+pub(crate) fn replace_call_argument_datums(text: &str, stand_in: &str) -> String {
+    let mut replaced = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(CALL_ARGUMENT_DATUM_OPEN) {
+        let after = &rest[at + CALL_ARGUMENT_DATUM_OPEN.len()..];
+        let digits = after.bytes().take_while(|byte| byte.is_ascii_digit()).count();
+        match after[digits..].strip_prefix(CALL_ARGUMENT_DATUM_CLOSE) {
+            Some(tail) if digits > 0 => {
+                replaced.push_str(&rest[..at]);
+                replaced.push_str(stand_in);
+                rest = tail;
+            }
+            _ => {
+                replaced.push_str(&rest[..at + CALL_ARGUMENT_DATUM_OPEN.len()]);
+                rest = after;
+            }
+        }
+    }
+    replaced.push_str(rest);
+    replaced
+}
+
+/// One sentence form of a call-separation residual [EFF-5, OP-11, SHARE-2,
+/// REF-2]: the left path, a fixed connective, the right path, a fixed tail.
+/// The renderer formats a residual from a form and the text check splits one
+/// by the same forms, so a sentence the table lacks is a defect.
+#[derive(Clone, Copy)]
+pub(crate) struct SeparationForm {
+    between: &'static str,
+    tail: &'static str,
+}
+
+impl SeparationForm {
+    const fn new(between: &'static str, tail: &'static str) -> Self {
+        Self { between, tail }
+    }
+
+    pub(crate) const INDEX_BELOW_LENGTH: Self =
+        Self::new(" requires its captured index below ", ".len after the call");
+    pub(crate) const END_AT_OR_BELOW_LENGTH: Self =
+        Self::new(" requires its captured end at or below ", ".len after the call");
+    pub(crate) const FORMATION_LENGTH_AT_OR_BELOW_LENGTH: Self = Self::new(
+        " requires the length its formation read at or below ",
+        ".len after the call",
+    );
+    pub(crate) const DISTINCT_INDICES: Self =
+        Self::new(" and ", " require their captured indices to be distinct");
+    pub(crate) const RANGES: Self = Self::new(
+        " and ",
+        " select different storage (one ends before the other starts, or one is empty)",
+    );
+    pub(crate) const INDEX_AND_WINDOW: Self = Self::new(
+        " and ",
+        " select different storage (the index is below the window's length)",
+    );
+    pub(crate) const INDEX_OUTSIDE_RANGE: Self = Self::new(
+        " and ",
+        " select different storage (the index is before the range's start or at or after its end, or the range is empty)",
+    );
+    pub(crate) const RANGE_WITHIN_LENGTH: Self = Self::new(
+        " and ",
+        " select different storage (the range ends at or below the window's length, or is empty)",
+    );
+    pub(crate) const PAGE_WITHIN_LENGTH: Self = Self::new(
+        " and ",
+        " select different storage (the page's extent ends at or below the window's length)",
+    );
+
+    /// Every form a residual is written in.
+    pub(crate) const ALL: [Self; 9] = [
+        Self::INDEX_BELOW_LENGTH,
+        Self::END_AT_OR_BELOW_LENGTH,
+        Self::FORMATION_LENGTH_AT_OR_BELOW_LENGTH,
+        Self::DISTINCT_INDICES,
+        Self::RANGES,
+        Self::INDEX_AND_WINDOW,
+        Self::INDEX_OUTSIDE_RANGE,
+        Self::RANGE_WITHIN_LENGTH,
+        Self::PAGE_WITHIN_LENGTH,
+    ];
+
+    /// The residual of this form over two paths.
+    pub(crate) fn render(self, left: &str, right: &str) -> String {
+        format!("{left}{}{right}{}", self.between, self.tail)
+    }
+
+    /// The two paths of `text` when it is a residual of this form.
+    fn paths(self, text: &str) -> Option<(&str, &str)> {
+        let body = text.strip_suffix(self.tail)?;
+        let at = body.find(self.between)?;
+        let (left, right) = (&body[..at], &body[at + self.between.len()..]);
+        (!left.is_empty() && !right.is_empty()).then_some((left, right))
+    }
+}
+
+/// The two paths of a call-separation residual, by the first form that fits.
+pub(crate) fn separation_paths(text: &str) -> Option<(&str, &str)> {
+    SeparationForm::ALL.iter().find_map(|form| form.paths(text))
+}
+
 /// Takes the backticks off each backtick-marked stretch that holds a
 /// described value: a stretch is marked as source only when all of it is.
 /// A closing backtick missing leaves the text as it is. It is applied where a
