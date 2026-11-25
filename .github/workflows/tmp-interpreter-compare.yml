@@ -1,12 +1,13 @@
 # Temporary: runs the interpreter-compare stages and the compiler-compare launch
-# self-test on a hosted runner for this work's branch, with fixed inputs, before
-# the manual workflows can be dispatched from main. Remove this file before the
-# full check (the gate's `No temporary workflow` job fails while it exists).
+# self-test on a hosted runner for the commit pushed to one of this work's
+# wf-try branches, with fixed inputs, before the manual workflows can be
+# dispatched from main. Remove this file before the full check (the gate's
+# `No temporary workflow` job fails while it exists).
 name: tmp-interpreter-compare
 
 on:
   push:
-    branches: [work-236-26e0fade]
+    branches: ['wf-try/work-236-26e0fade/**']
 
 permissions:
   contents: read
@@ -24,7 +25,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
-      CANDIDATE: ${{ github.ref_name }}
+      CANDIDATE: ${{ github.sha }}
       BASE: ""
       RUNNER_KIND: github
       CPU: ""
