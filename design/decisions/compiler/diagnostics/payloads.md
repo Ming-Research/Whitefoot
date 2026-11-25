@@ -13,9 +13,10 @@ A value with no source spelling is written as a description in words between two
 - rejected: an agent proposed leaving out the field or repair sentence that needs such a value; the owner rejected it, because [FN-8], [EFF-5] and [OP-4] require the goal, paths and residual in the payload.
 - rejected: an agent proposed revising the specification to prescribe the description's words or to allow leaving the field out; the owner rejected it, because the amendment needs conformance cases and the model, and the specification leaves wording to the toolchain [DIAG-1].
 - rejected: an agent proposed keeping `?` and listing the allowed places in the text check; the owner rejected it, because the check exists to leave no placeholder and a list of exceptions keeps the known ones.
+- rejected: an agent proposed typing the payload fields that carry a source relation as source parts and description parts, returned by the renderers; the owner rejected it, because about 25 renderers and their callers would change while the repair sentences, which are strings, stay outside the type.
 
 ### decision rejection-text-is-checked-as-a-whole
-A gate check reads the text of every pinned and conformance rejection: no `?` stands for a value, and each backtick-marked stretch is source the lexer reads or a line the writer wrote.
+A gate check reads every pinned and conformance rejection's text: no `?` for a value, each backtick stretch is source or the writer's line, a source-relation field is source around its descriptions.
 - replaced: Pinning the sentences of one rejection at a time, with no scan of all rejection text, was on main; the owner changed it, because a placeholder or a stretch that is not source passed unseen unless someone pinned that rejection.
 
 ### decision recursive-row-repairs-widen-by-suffix

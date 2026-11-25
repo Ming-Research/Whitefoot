@@ -1186,6 +1186,89 @@ fn a_described_value_in_a_field_is_sound_words() {
     use crate::diagnostic_repairs::described;
 
     let goal = format!("2_u64 < rows[{}].len", described("the value of k before it was rewritten"));
-    let defects = with_field("instantiated_goal", Value::Text(goal)).text_defects();
+    let defects = with_field("instantiated_goal", Value::Source(goal)).text_defects();
     assert!(defects.is_empty(), "{defects:?}");
+}
+
+/// A field that holds a source relation is read as source with each
+/// description replaced by a name: a place or relation written as a phrase in
+/// words is a defect, the same relation with its description is not, and the
+/// forms the grammar writes with a word beside a word are admitted.
+#[test]
+fn a_source_relation_field_is_read_as_source_around_its_descriptions() {
+    use crate::diagnostic_repairs::described;
+
+    let described_index = described("the value of k before it was rewritten");
+    for text in [
+        "rows element at k".to_owned(),
+        format!("{described_index} is below the length of rows"),
+        "a # b".to_owned(),
+        "i < rows^[?].len".to_owned(),
+        format!("i < rows^[{described_index}"),
+    ] {
+        let defects = with_field("residual", Value::Source(text.clone())).text_defects();
+        assert_eq!(defects.len(), 1, "{text}: {defects:?}");
+    }
+    for text in [
+        format!("rows^[{described_index}].len"),
+        format!("0_u64 < rows^[{described_index}].len"),
+        format!("t^[{described_index}][i].Some.value.a"),
+        "i < entry(rows)^.len".to_owned(),
+        "s +wrap 1_u64 < 10_u64".to_owned(),
+        "cvt::<u32, u64>(s) < 10_u64".to_owned(),
+        "cell^.inner.len unchanged".to_owned(),
+        "move rows".to_owned(),
+        "need::<4>".to_owned(),
+    ] {
+        let defects = with_field("residual", Value::Source(text.clone())).text_defects();
+        assert!(defects.is_empty(), "{text}: {defects:?}");
+    }
+    // The same phrase in a field not marked as a source relation is prose.
+    let defects =
+        with_field("reason", Value::Text("rows element at k".to_owned())).text_defects();
+    assert!(defects.is_empty(), "{defects:?}");
+}
+
+/// A backtick-marked stretch that holds a description is read with the
+/// description replaced by a name, so the source around it must be source.
+#[test]
+fn a_described_stretch_is_read_around_its_description() {
+    use crate::diagnostic_repairs::described;
+
+    let value = described("the value of k before it was rewritten");
+    let defects = with_field(
+        "mechanical_fix",
+        Value::Text(format!("write `a # {value}` here")),
+    )
+    .text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+    assert!(defects[0].contains("is not source text"), "{defects:?}");
+    let defects = with_field(
+        "mechanical_fix",
+        Value::Text(format!("write `rows^[{value}].len` here")),
+    )
+    .text_defects();
+    assert!(defects.is_empty(), "{defects:?}");
+    let defects = with_field(
+        "mechanical_fix",
+        Value::Text(format!("write `rows^[{}.len` here", value.trim_end_matches('\u{203a}'))),
+    )
+    .text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+    assert!(defects[0].contains("not closed"), "{defects:?}");
+}
+
+/// A listing marks which payload fields hold a source relation, and the
+/// record holds them as source values that print as the text does.
+#[test]
+fn a_bounds_residual_is_held_as_a_source_relation() {
+    let failure = stop("bounds.wf", BOUNDS);
+    let held = failure
+        .record
+        .detail
+        .iter()
+        .find(|(label, _)| *label == "residual")
+        .map(|(_, value)| value);
+    assert!(matches!(held, Some(Value::Source(_))), "{held:?}");
+    assert!(failure.text_defects().is_empty(), "{:?}", failure.text_defects());
 }

@@ -20,9 +20,32 @@ pub(crate) fn described(what: &str) -> String {
     format!("{DESCRIBED_OPEN}{what}{DESCRIBED_CLOSE}")
 }
 
+/// The text with each described value, marks included, replaced by `stand_in`,
+/// so that the source around the descriptions can be read as source; `None`
+/// where a description is not closed, or a closing mark stands with no
+/// description open.
+pub(crate) fn replace_described(text: &str, stand_in: &str) -> Option<String> {
+    let mut replaced = String::with_capacity(text.len());
+    let mut open = false;
+    for character in text.chars() {
+        match (character, open) {
+            (DESCRIBED_OPEN, false) => {
+                open = true;
+                replaced.push_str(stand_in);
+            }
+            (DESCRIBED_OPEN, true) | (DESCRIBED_CLOSE, false) => return None,
+            (DESCRIBED_CLOSE, true) => open = false,
+            (_, true) => {}
+            (_, false) => replaced.push(character),
+        }
+    }
+    (!open).then_some(replaced)
+}
+
 /// Takes the backticks off each backtick-marked stretch that holds a
 /// described value: a stretch is marked as source only when all of it is.
-/// A closing backtick missing leaves the text as it is.
+/// A closing backtick missing leaves the text as it is. It is applied where a
+/// payload prints, so the payload keeps the stretch for the text check.
 pub(crate) fn unmark_described(text: &str) -> String {
     if !text.contains(DESCRIBED_OPEN) {
         return text.to_owned();

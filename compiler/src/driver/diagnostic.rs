@@ -283,12 +283,15 @@ impl Record {
     }
 
     /// What is wrong with the words of this record: a `?` standing for a
-    /// value the renderer could not write, and a stretch the text marks as
-    /// source with backticks that is not source. A stretch is source when the
-    /// lexer reads it, bare or, where it begins with a backslash, as the body
-    /// of a character literal (the spelling of an escape), or when the writer
-    /// wrote it on the line the record quotes. Exact values are the writer's own source bytes and are
-    /// not read; the marker line is not part of the payload.
+    /// value the renderer could not write, a stretch the text marks as
+    /// source with backticks that is not source, and a field that holds a
+    /// source relation, place or callee that is not written in source terms.
+    /// A stretch is source when the lexer reads it, bare or, where it begins
+    /// with a backslash, as the body of a character literal (the spelling of
+    /// an escape), or when the writer wrote it on the line the record
+    /// quotes; a description in a stretch or a field is read as a name.
+    /// Exact values are the writer's own source bytes and are not read; the
+    /// marker line is not part of the payload.
     pub(super) fn text_defects(&self) -> Vec<String> {
         let written = self.at.as_ref().map(Place::line_text).unwrap_or_default();
         let mut defects = Vec::new();
@@ -302,6 +305,7 @@ impl Record {
 fn value_defects(label: &str, value: &Value, written: &str, defects: &mut Vec<String>) {
     match value {
         Value::Text(text) => text_defects(label, text, written, defects),
+        Value::Source(text) => source_defects(label, text, defects),
         Value::List(items) => {
             for item in items {
                 value_defects(label, item, written, defects);
@@ -335,25 +339,101 @@ fn text_defects(label: &str, text: &str, written: &str, defects: &mut Vec<String
     let mut pieces = text.split('`').peekable();
     let mut inside = false;
     while let Some(piece) = pieces.next() {
-        if inside
-            && pieces.peek().is_some()
-            && !piece.is_empty()
-            && !written.contains(piece)
-            && !lexes_as_source(piece)
-            && !(piece.starts_with('\\') && lexes_as_source(&format!("'{piece}'")))
-        {
-            defects.push(format!("{label}: `{piece}` is marked as source but is not source text"));
+        if inside && pieces.peek().is_some() && !piece.is_empty() {
+            // A described value is not source, so a stretch that holds one is
+            // read with each description replaced by a name.
+            match crate::diagnostic_repairs::replace_described(piece, DESCRIBED_NAME) {
+                None => defects.push(format!(
+                    "{label}: `{piece}` holds a description that is not closed"
+                )),
+                Some(plain) => {
+                    if !written.contains(piece)
+                        && !lexes_as_source(&plain)
+                        && !(plain.starts_with('\\') && lexes_as_source(&format!("'{plain}'")))
+                    {
+                        defects.push(format!(
+                            "{label}: `{piece}` is marked as source but is not source text"
+                        ));
+                    }
+                }
+            }
         }
         inside = !inside;
     }
 }
 
-/// Whether the lexer reads `fragment` as one complete run of source tokens.
-fn lexes_as_source(fragment: &str) -> bool {
-    let inputs = [crate::SourceInput::new("fragment.wf", fragment.as_bytes())];
-    let Ok(bundle) = SourceBundle::with_limits(&inputs, crate::SourceLimits::REPRESENTABLE) else {
+/// What a description stands for while the source around it is read.
+const DESCRIBED_NAME: &str = "described";
+
+/// What is wrong with a field that holds a source relation, place or callee:
+/// a `?`, and a value that is not source once each description in it is a
+/// name. It is source when the lexer reads all of it and no two words, names
+/// or literals stand side by side where the grammar writes none [GRAM-5], so
+/// a place written as a phrase in words is a defect.
+fn source_defects(label: &str, text: &str, defects: &mut Vec<String>) {
+    if text.contains('?') {
+        defects.push(format!("{label}: `?` stands for a value the text does not write: {text}"));
+        return;
+    }
+    let Some(plain) = crate::diagnostic_repairs::replace_described(text, DESCRIBED_NAME) else {
+        defects.push(format!("{label}: a description is not closed: {text}"));
+        return;
+    };
+    if !is_source_relation(&plain) {
+        defects.push(format!("{label}: is not written in source terms: {text}"));
+    }
+}
+
+/// Whether `text` is one run of source tokens in which a word, name or
+/// literal never follows another with nothing between them, apart from the
+/// words [GRAM-5] puts before or after one.
+fn is_source_relation(text: &str) -> bool {
+    let Some(lexed) = lex_fragment(text) else {
         return false;
     };
+    let mut previous: Option<&[u8]> = None;
+    for lexeme in lexed.lexemes() {
+        let crate::Lexeme::Token(token) = lexeme else {
+            // Trivia between two words does not make them one phrase.
+            continue;
+        };
+        let Some(spelling) = lexed.source_bundle().span_bytes(token.span()) else {
+            return false;
+        };
+        let word = matches!(
+            token.kind(),
+            crate::TokenKind::LowerWordForm
+                | crate::TokenKind::UpperWordForm
+                | crate::TokenKind::LabelForm
+                | crate::TokenKind::OperationNameForm
+                | crate::TokenKind::NumberForm
+                | crate::TokenKind::CharacterForm
+                | crate::TokenKind::StringForm
+        );
+        if word {
+            if previous.is_some_and(|before| !joins_words(before, spelling)) {
+                return false;
+            }
+            previous = Some(spelling);
+        } else {
+            previous = None;
+        }
+    }
+    true
+}
+
+/// Whether the grammar writes `second` right after the word `first`: `move`
+/// before a place, `unchanged` after a relation's left side, and the range
+/// clause words.
+fn joins_words(first: &[u8], second: &[u8]) -> bool {
+    const BEFORE: &[&[u8]] = &[b"move", b"not", b"is", b"in", b"when", b"forall", b"spawn", b"musttail"];
+    BEFORE.contains(&first) || second == b"unchanged" || second == b"is" || second == b"in"
+}
+
+/// The lexical partition of `fragment`, when the lexer reads all of it.
+fn lex_fragment(fragment: &str) -> Option<crate::LexedBundle> {
+    let inputs = [crate::SourceInput::new("fragment.wf", fragment.as_bytes())];
+    let bundle = SourceBundle::with_limits(&inputs, crate::SourceLimits::REPRESENTABLE).ok()?;
     let limits = crate::LexLimits {
         max_sources: u32::MAX,
         max_source_bytes: u64::MAX,
@@ -362,7 +442,15 @@ fn lexes_as_source(fragment: &str) -> bool {
         max_tokens: u64::MAX,
         max_lexemes: u64::MAX,
     };
-    matches!(crate::lex(&bundle, limits), crate::LexOutcome::Complete(_))
+    match crate::lex(&bundle, limits) {
+        crate::LexOutcome::Complete(lexed) => Some(lexed),
+        _ => None,
+    }
+}
+
+/// Whether the lexer reads `fragment` as one complete run of source tokens.
+fn lexes_as_source(fragment: &str) -> bool {
+    lex_fragment(fragment).is_some()
 }
 
 /// Which byte of a coordinate the reader is sent to.
@@ -556,6 +644,11 @@ enum Value {
     /// Prose, a name, or a rendered source relation: quoted in a list and
     /// otherwise printed as written.
     Text(String),
+    /// A relation, place or callee written in source terms, where a part with
+    /// no source spelling is a description between the marks of
+    /// `described`: printed as `Text` is, and read by the text check as
+    /// source with each description replaced by a name.
+    Source(String),
     /// Exact source bytes whose spacing or escapes matter: printed quoted.
     Exact(Vec<u8>),
     Number(u64),
@@ -616,7 +709,7 @@ trait FieldList {
 macro_rules! report_variants {
     ($enum:ident, $value:expr, $fields:ident;
      $( $variant:ident
-        $( { $($field:ident),* $(,)? } )?
+        $( { $($field:ident $(: $how:ident)?),* $(,)? } )?
         $( ( $single:ident ) )?
         $( [ $flat:ident ] )?
      ; )*
@@ -624,7 +717,7 @@ macro_rules! report_variants {
         match $value {
             $(
                 $enum::$variant $( { $($field),* } )? $( ( $single ) )? $( ( $flat ) )? => {
-                    $( $( $fields.field(stringify!($field), $field); )* )?
+                    $( $( report_field!($fields, $field $(, $how)?); )* )?
                     $( $fields.field(stringify!($single), $single); )?
                     $( FieldList::fields(&**$flat, $fields); )?
                     stringify!($variant)
@@ -641,7 +734,7 @@ macro_rules! report_variants {
 macro_rules! report_kind_fn {
     ($report:ident, $names:ident, $enum:ident;
      $( $variant:ident
-        $( { $($field:ident),* $(,)? } )?
+        $( { $($field:ident $(: $how:ident)?),* $(,)? } )?
         $( ( $single:ident ) )?
         $( [ $flat:ident ] )?
      ; )*
@@ -652,7 +745,7 @@ macro_rules! report_kind_fn {
         fn $report(value: &$enum, fields: &mut Fields<'_>) -> &'static str {
             report_variants!($enum, value, fields;
                 $( $variant
-                    $( { $($field),* } )?
+                    $( { $($field $(: $how)?),* } )?
                     $( ( $single ) )?
                     $( [ $flat ] )?
                 ; )*
@@ -663,10 +756,21 @@ macro_rules! report_kind_fn {
 
 /// Lists every field of one payload structure, in declaration order.
 macro_rules! list_fields {
-    ($value:expr, $fields:ident; $name:ident { $($field:ident),* $(,)? }) => {{
+    ($value:expr, $fields:ident; $name:ident { $($field:ident $(: $how:ident)?),* $(,)? }) => {{
         let $name { $($field),* } = $value;
-        $( $fields.field(stringify!($field), $field); )*
+        $( report_field!($fields, $field $(, $how)?); )*
     }};
+}
+
+/// Adds one field to the record; `source` marks a field that holds a source
+/// relation, place or callee, which the text check reads as source.
+macro_rules! report_field {
+    ($fields:ident, $field:ident) => {
+        $fields.field(stringify!($field), $field)
+    };
+    ($fields:ident, $field:ident, source) => {
+        $fields.field(stringify!($field), &Relation($field))
+    };
 }
 
 /// One payload value as a [`Value`].
@@ -708,7 +812,26 @@ impl<Field: FieldValue> FieldValue for Vec<Field> {
 
 impl FieldValue for str {
     fn value(&self, _: &SourceBundle) -> Option<Value> {
-        Some(Value::Text(crate::diagnostic_repairs::unmark_described(self)))
+        Some(Value::Text(self.to_owned()))
+    }
+}
+
+/// A payload field that holds a source relation, place or callee: its value
+/// is read as source with each description replaced by a name.
+struct Relation<'field, Field: ?Sized>(&'field Field);
+
+impl<Field: FieldValue + ?Sized> FieldValue for Relation<'_, Field> {
+    fn value(&self, bundle: &SourceBundle) -> Option<Value> {
+        self.0.value(bundle).map(into_source)
+    }
+}
+
+/// `value` with each text in it read as a source relation.
+fn into_source(value: Value) -> Value {
+    match value {
+        Value::Text(text) => Value::Source(text),
+        Value::List(items) => Value::List(items.into_iter().map(into_source).collect()),
+        other => other,
     }
 }
 
@@ -985,9 +1108,9 @@ impl FieldValue for SourceProofObligation {
 impl FieldList for UndischargedCallRequirementDetail {
     fn fields(&self, fields: &mut Fields<'_>) {
         list_fields!(self, fields; UndischargedCallRequirementDetail {
-            concrete_callee,
+            concrete_callee: source,
             requires_clause,
-            instantiated_goal,
+            instantiated_goal: source,
             disposition,
             mechanical_fix,
         });
@@ -997,12 +1120,12 @@ impl FieldList for UndischargedCallRequirementDetail {
 impl FieldList for UndischargedPostconditionDetail {
     fn fields(&self, fields: &mut Fields<'_>) {
         list_fields!(self, fields; UndischargedPostconditionDetail {
-            concrete_function,
+            concrete_function: source,
             postcondition,
             conjunct,
             selector,
-            relation,
-            clause,
+            relation: source,
+            clause: source,
             disposition,
             mechanical_fix,
         });
@@ -1112,7 +1235,7 @@ report_kind_fn!(report_semantic_kind, SEMANTIC_KINDS, SemanticIssueKind;
     OpaqueDestructuring { nominal, mechanical_fix };
     UseAfterMove { mechanical_fix };
     InvalidReferenceUse { binder, event, mechanical_fix };
-    UnestablishedPayloadVariant { place, variant, mechanical_fix };
+    UnestablishedPayloadVariant { place: source, variant, mechanical_fix };
     ReferenceToReferenceVariable { mechanical_fix };
     EscapingReference { mechanical_fix };
     RangeOverRing { mechanical_fix };
@@ -1126,11 +1249,11 @@ report_kind_fn!(report_semantic_kind, SEMANTIC_KINDS, SemanticIssueKind;
     InvalidPredicateCondition;
     RedundantCondition { residual, decided, facts, mechanical_fix };
     InvalidConditionalForm { mechanical_fix };
-    UndischargedBoundsObligation { residual, disposition, mechanical_fix };
-    UndischargedEmptyRunRelease { residual, disposition, mechanical_fix };
-    UndischargedIntegerDomainObligation { residual, disposition, mechanical_fix };
-    UndischargedConversionDomainObligation { residual, disposition, mechanical_fix };
-    UndischargedRangeFormationObligation { residual, disposition, mechanical_fix };
+    UndischargedBoundsObligation { residual: source, disposition, mechanical_fix };
+    UndischargedEmptyRunRelease { residual: source, disposition, mechanical_fix };
+    UndischargedIntegerDomainObligation { residual: source, disposition, mechanical_fix };
+    UndischargedConversionDomainObligation { residual: source, disposition, mechanical_fix };
+    UndischargedRangeFormationObligation { residual: source, disposition, mechanical_fix };
     UndischargedCallSeparation { residual, mechanical_fix };
     OverlappingCallEffects { first, second, mechanical_fix };
     AtomicUpdateReachesTargetPrefix { target, effect, mechanical_fix };
@@ -1144,8 +1267,8 @@ report_kind_fn!(report_semantic_kind, SEMANTIC_KINDS, SemanticIssueKind;
     InvalidInvariant { reason, mechanical_fix };
     InvalidTypeInvariant { reason, mechanical_fix };
     TypeInvariantWritableField { field, mechanical_fix };
-    UndischargedTypeInvariant { type_invariant, instantiated_goal, disposition, mechanical_fix };
-    UndischargedLoopInvariant { name, obligation, incoming_edge, required_relation, disposition, mechanical_fix };
+    UndischargedTypeInvariant { type_invariant, instantiated_goal: source, disposition, mechanical_fix };
+    UndischargedLoopInvariant { name, obligation, incoming_edge, required_relation: source, disposition, mechanical_fix };
     UndischargedLocalInvariant { name, disposition, mechanical_fix };
     InvalidSourceProof { reason, mechanical_fix };
     UndischargedSourceProof { name, obligation, mechanical_fix };
@@ -1370,7 +1493,9 @@ fn push_fields(text: &mut String, fields: &[(&'static str, Value)]) {
 /// Text rendering of one value; a value never spans two lines.
 fn write_text(text: &mut String, value: &Value) {
     match value {
-        Value::Text(value) => push_printable(text, value),
+        Value::Text(value) | Value::Source(value) => {
+            push_printable(text, &crate::diagnostic_repairs::unmark_described(value));
+        }
         Value::Exact(bytes) => {
             text.push('"');
             push_escaped(text, bytes);
@@ -1385,9 +1510,12 @@ fn write_text(text: &mut String, value: &Value) {
                 if index > 0 {
                     text.push_str(", ");
                 }
-                if let Value::Text(value) = item {
+                if let Value::Text(value) | Value::Source(value) = item {
                     text.push('"');
-                    push_escaped(text, value.as_bytes());
+                    push_escaped(
+                        text,
+                        crate::diagnostic_repairs::unmark_described(value).as_bytes(),
+                    );
                     text.push('"');
                 } else {
                     write_text(text, item);
@@ -1560,9 +1688,9 @@ fn push_json_fields(json: &mut String, fields: &[(&'static str, Value)]) {
 
 fn push_json_value(json: &mut String, value: &Value) {
     match value {
-        Value::Text(value) => {
+        Value::Text(value) | Value::Source(value) => {
             let mut printable = String::new();
-            push_printable(&mut printable, value);
+            push_printable(&mut printable, &crate::diagnostic_repairs::unmark_described(value));
             push_json_string(json, &printable);
         }
         Value::Exact(bytes) => {
