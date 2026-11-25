@@ -82,4 +82,7 @@ its host, so its runs show the instrument working and decide nothing.
 One program, one input size and one CPU. The wall time is that of the whole
 process, start-up included, which is the same for the arms. A run's noise floor
 holds only for the launcher, image kind, CPU and iteration count it was
-measured with (RESULTS.md).
+measured with (RESULTS.md). `sample` counts every sample of the process: at 20
+iterations the hosted trial put two thirds of the samples under `[unknown]`
+(RESULTS.md), so take shares from runs of 2000 iterations or more and read that
+row first.
