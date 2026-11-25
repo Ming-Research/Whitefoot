@@ -571,24 +571,35 @@ of placement?
 One compiler builds every arm, so the arms differ in layout alone: the
 unaligned module is the emitted module with ` align 64` removed from each
 definition, and the unaligned runtime is the same sources compiled without
-`-falign-functions=64`. Hosted jobs build with the LLVM major the gate pins,
-not the image's clang 18.1.3, so the loops may fall elsewhere than in the
-table above: the table is recomputed from the new images and committed here
-before the decisive runs, with the arms the loop reading names.
+`-falign-functions=64`. Every host builds with the LLVM major the gate pins,
+which the job checks and refuses to run without, not the hosted image's
+clang 18.1.3. The loops may therefore fall elsewhere than in the table above:
+the table is recomputed from the new module objects and committed here before
+the decisive runs, with the arms the loop reading names. The manifest holds
+each module object's digest; hosts whose objects are identical share one
+table, and objects that differ get a table each.
 
-- `U`, `F`, `FR` as above, and `UR`, the unaligned module over the aligned
-  runtime.
+- `U`, `F`, `FR` as above, and `UR`, the unaligned module and
+  `ordinary_values.ll` over the aligned C runtime.
 - `O16`, `O32`, `O48`: `FR` with every function of the module starting that
   many bytes past a 64-byte boundary. They are diagnostic: one offset chosen
   for one kernel's loops is not a rule.
-- `P`: `FR` with each function of the module started at the one of 0, 16, 32
-  and 48 bytes past a 64-byte boundary that leaves the fewest of its
-  innermost loops of at most 64 bytes across a line boundary, the smallest
-  such offset on a tie. The offset comes from the function's own code, so
-  nothing ahead of the function changes it, and no padding is executed.
-- `L32`, `L64`: `FR` with the module's loops aligned to 32 and to 64 bytes;
-  `A32`: the module's functions aligned to 32 bytes.
-- The candidate rules are `P`, `L32`, `L64` and `A32`.
+- A candidate rule is the whole layout its form in the compiler would give,
+  since the driver and `compiler/runtime.mk` pass one list of host arguments
+  to the module and to every runtime unit:
+  - `L32`, `L64`: `FR` with the module, `ordinary_values.ll` and the C
+    runtime all compiled with `-falign-loops=32` or `-falign-loops=64` as
+    well.
+  - `A32`: the module's and `ordinary_values.ll`'s functions aligned to 32
+    bytes and the C runtime compiled with `-falign-functions=32`.
+  - `P`: `FR` with each function of the emitted module started at the one of
+    0, 16, 32 and 48 bytes past a 64-byte boundary that leaves the fewest of
+    its innermost loops of at most 64 bytes across a line boundary, the
+    smallest such offset on a tie. The offset comes from the function's own
+    code, so nothing ahead of the function changes it, and no padding is
+    executed. `ordinary_values.ll` and the C runtime keep the 64-byte start.
+    The run refuses a `P` image in which a function's crossing loops are not
+    the number its chosen offset predicted.
 - Code placements `p0`, `m16`, `m32`, `m48`, `r16`, `r48`, and for the
   aligned arms `m1024` and `m2048`, which move aligned code by 16 and 32
   lines and so change its offset within a page.
@@ -599,30 +610,53 @@ before the decisive runs, with the arms the loop reading names.
 - Every decisive run also samples `FR` at `p0` and the fastest placement of
   `U` by the software clock, reduced to time per 64-byte line.
 
-Criterion, with the per-round ratio and interval defined above and at least
-12 rounds on each of two 9V74 jobs:
+Hosts: two EPYC 9V74 jobs, and one job each on an EPYC 9V45, an EPYC 7763, a
+Xeon 6975P-C and the i9-14900K, at least 12 rounds each. Every one of them
+runs `records` with every arm and placement and the other four kernels with
+`U`, `FR` and the four candidate rules at the code placements, so each host
+is caught once. "Every host" below means these six jobs.
+
+Criterion, with the per-round ratio and interval defined above:
 
 - The cost is established at a width when `FR`'s interval against `U` lies
   wholly below 1 on both 9V74 jobs. Where it does not, no cost is established
   and nothing below is selected for that width.
+- Where the cost is established, it is attributed to the module's alignment
+  if `F`'s interval against `U` also lies wholly below 1 on both jobs and
+  `UR`'s does not, to the runtime's if `UR`'s does and `F`'s does not, and is
+  not separated otherwise.
 - The loop reading compares, among `FR`, `O16`, `O32` and `O48`, the arm the
   recomputed table gives the fewest crossing loops in the width's hot
   function with the arm it gives the most. It holds at a width if the first
   is faster than the second by the gate's rule on both 9V74 jobs, and is
   rejected if that interval spans 1 or lies below it. It accounts for the
   cost if, besides, `FR` is not the first arm and the first arm's interval
-  against `U` does not lie wholly below 1.
+  against `U` does not lie wholly below 1. It is read whether or not the
+  cost is established: a present layout that shows no cost while the reading
+  holds stands at a good offset under this toolchain and nothing more.
 - The data reading holds on a host if a data placement moves `FR` against
   its `p0` by the gate's rule, or `U` at `p0` under `dFR` differs from `U` at
   `p0` by it, and is rejected otherwise. If it holds on a 9V74, the arms are
   measured again with every image of a kernel given the same data addresses
   before any difference between arms is read as an effect of code.
+- The baseline reading is for the two explanations the regression runs
+  [above](#hosted-ubuntu-2404-amd-epyc-9v74) left open. On the 9V45 and the
+  7763, at widths 2 and 4 and at `p0`: it holds if `FR` is slower than `UR`
+  by the gate's rule and not slower than `U` by it, which makes the aligned
+  runtime under an unaligned module a faster layout than either, as those
+  runs met it; it is rejected if `FR` is not slower than `UR` by the gate's
+  rule; and if `FR` is slower than both, those failures were the aligned
+  layout's own cost on that host. A rejection does not show that hosts of
+  one model differ: that stays undetermined unless the two 9V74 jobs, the
+  only pair of one model here, disagree by the gate's rule on one
+  comparison. Nor does it reach October's images: their baseline was the
+  merge base's module built by clang 18.1.3, and this arm is the head's
+  module without its alignment, built by the pinned LLVM.
 - A candidate rule passes when, on both 9V74 jobs and at every width, its
   interval against `U` does not lie wholly below 1; no placement moves it
   against its `p0` by the gate's rule in any conclusive cell of any kernel on
   any host (C2); and on no host is any kernel slower than under `FR` by the
-  gate's rule. The 9V45, the 7763, the Xeon 6975P-C and the 14900K each give
-  at least one run of all five kernels.
+  gate's rule. `FR` is read by the first two conditions as well.
 - A rule that passes is then compared with the head as a compiler change on
   programs larger than the kernels, by
   [`compiler-compare.yml`](../../../.github/workflows/compiler-compare.yml)
@@ -630,7 +664,11 @@ Criterion, with the per-round ratio and interval defined above and at least
   interpreter, under that instrument's own rule), and the change in the
   kernels' code size is reported. A workload it judges slower is reported
   with the rule. `P` has no form in the compiler until it is chosen, so its
-  comparison follows the choice and precedes the decision's record.
+  comparison follows the choice and precedes the decision's record. Such a
+  form is a pass over generated code: it can reach the driver's plain build
+  and its cached build, and cannot reach `--fragments` or `--full-lto`,
+  where the linker generates the code, or a consumer of `--emit-llvm`. Firn
+  is built with `--full-lto`.
 - Where the cost is established, `FR` at `p0`, the fastest placement of `U`
   and each rule that passes are also run under `perf stat` on the Xeon
   6975P-C and the 14900K, the hosts that count branch misses and decoded
