@@ -43,6 +43,9 @@
 #ifndef FILE_OPEN
 #define FILE_OPEN 0x00000001UL
 #endif
+#ifndef FILE_CREATE
+#define FILE_CREATE 0x00000002UL
+#endif
 #ifndef FILE_DIRECTORY_FILE
 #define FILE_DIRECTORY_FILE 0x00000001UL
 #endif
@@ -1571,6 +1574,7 @@ static int wf_windows_open_at_worker(
     unsigned outcome;
     int descriptor;
     const int host_path = flags == WF_WINDOWS_HOST_PATH;
+    const int create_new = flags == WF_WINDOWS_NO_FOLLOW_CREATE_NEW;
     HANDLE lookup_root = root;
     WCHAR *host_name = NULL;
     (void)mode;
@@ -1582,8 +1586,11 @@ static int wf_windows_open_at_worker(
         *open_outcome = WF_WINDOWS_OPEN_FAILED;
     }
     if (path == NULL || error_code == NULL || open_outcome == NULL
-        || (flags != 0 && flags != WF_WINDOWS_NO_FOLLOW && !host_path)
+        || (flags != 0 && flags != WF_WINDOWS_NO_FOLLOW && !host_path && !create_new)
         || (host_path && create_directory)
+        || (create_new
+            && (create_directory
+                || descriptor_class != WF_WINDOWS_DESCRIPTOR_CLASS_WRITE_FILE))
         || has_mode > 1u || has_mode != 0u
         || expected_kind > WF_WINDOWS_EXPECT_DIRECTORY
         || !wf_windows_handle_valid(root)
@@ -1667,7 +1674,11 @@ static int wf_windows_open_at_worker(
          * NotDirectory [PRE-2]. */
         create_options |= FILE_DIRECTORY_FILE;
     }
-    if (flags == WF_WINDOWS_NO_FOLLOW) {
+    /* An exclusive create [PRE-2] keeps a reparse point at the name from being
+     * followed as every name's open does, so a link there, dangling or not,
+     * is the existing entry FILE_CREATE refuses with
+     * STATUS_OBJECT_NAME_COLLISION, and its target is never created. */
+    if (flags == WF_WINDOWS_NO_FOLLOW || create_new) {
         create_options |= FILE_OPEN_REPARSE_POINT;
     }
     status = api.create_file(
@@ -1678,7 +1689,8 @@ static int wf_windows_open_at_worker(
         NULL,
         0,
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-        (create_directory || descriptor_class == WF_WINDOWS_DESCRIPTOR_CLASS_WRITE_FILE)
+        create_new ? FILE_CREATE
+        : (create_directory || descriptor_class == WF_WINDOWS_DESCRIPTOR_CLASS_WRITE_FILE)
             ? FILE_OPEN_IF : FILE_OPEN,
         create_options,
         NULL,

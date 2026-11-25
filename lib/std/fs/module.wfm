@@ -104,6 +104,11 @@ public fn open_append(factory: &HandleFactory, root: &DirectoryWrite, name: &[u8
   requires end <= name^.len;
 } doc "Opens the file that the bytes of name from start to end name below root for appending, creating it empty when no entry has that name.";
 
+public fn create_new_file(factory: &HandleFactory, root: &DirectoryWrite, name: &[u8], start: u64, end: u64) -> result: Result<WriteFile, IoError> reads(name), writes(factory), writes(root) waits contract {
+  requires start <= end;
+  requires end <= name^.len;
+} doc "Creates the file that the bytes of name from start to end name below root, as open_append names a file, empty and opens it for appending; when an entry has that name it returns AlreadyExists and changes no entry [PRE-2].";
+
 public fn append_once(factory: &HandleFactory, file: &WriteFile, source: &[u8], start: u64, end: u64) -> result: Result<u64, IoError> reads(source), writes(factory), writes(file) waits contract {
   requires start <= end;
   requires end <= source^.len;

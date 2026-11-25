@@ -37,6 +37,10 @@ size_t wf__windows_wtf8_write(
  * the root, and the lookup follows every reparse point it reaches. A name's
  * no-follow flag is 1 and plain lookup 0. */
 #define WF_WINDOWS_HOST_PATH 2
+/* The open flag of an exclusive create below a directory [PRE-2]: a name's
+ * no-follow lookup whose disposition creates the file only when no entry has
+ * the name. It is admitted only with the write-file class. */
+#define WF_WINDOWS_NO_FOLLOW_CREATE_NEW 3
 /* A host path holds fewer UTF-16 code units than this [PRE-2]: the longest
  * name an NT lookup's UNICODE_STRING carries. */
 #define WF_WINDOWS_HOST_PATH_MAX_UNITS 32767u

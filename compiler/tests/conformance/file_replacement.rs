@@ -1,4 +1,4 @@
-//! The file-replacement, writable-subdirectory and listing witnesses on both Windows host routes.
+//! The file-replacement, writable-subdirectory, exclusive-create and listing witnesses on both Windows host routes.
 //! The Unix corpus adapter already builds and runs every manifest case;
 //! programs::file_replacement also covers replacement on the native-disabled route.
 //! Windows's ordinary corpus adapter does not yet run the full corpus.
@@ -31,6 +31,10 @@ fn namespace_cases_on_both_host_routes() {
         "sysubdir-run-move-replaces",
         "sysubdir-run-move-missing",
         "sysubdir-run-move-open-handles",
+        "syscreate-run-new-file",
+        "syscreate-run-existing-file-kept",
+        "syscreate-run-existing-directory",
+        "syscreate-run-names",
     ] {
         let case = cases
             .iter()

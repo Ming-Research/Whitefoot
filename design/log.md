@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-11-25 A file is created only when no entry has its name
+
+Nodes: language/system-interface/writable-directory
+
+Summary: The node gains a decision: a program creates a file below a write half only when no entry has its name through `create_new_file`, which tests for the name and creates the file in one host operation, follows no link at the name, returns `AlreadyExists` for any entry there and writes its root, since an exclusive create's result is the order of the operations on the directory, instead of a create-rule parameter on `open_append` or a row that reads the root ([design](../research/investigations/exclusive-create/README.md)). The ground of the decision on `open_directory_write` changes with it: the opens that ask no more of their root than `open_append` are those that create only when no entry has the name and otherwise open the one there, and an open that fails on an existing entry writes its root.
+
 ## 2026-10-23 A returned computed integer expression proves a postcondition as a `let` of it would
 
 Nodes: language/checks-and-proofs/automatic-facts

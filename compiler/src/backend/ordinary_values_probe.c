@@ -479,6 +479,8 @@ extern void wf_test_public_open(wf_open_result *, wf_value *, const wf_value *, 
 typedef void (*wf_probe_open_directory_write)(wf_open_result *, wf_value *, const wf_value *, const wf_view *, uint64_t, uint64_t);
 extern void wf_test_public_open_directory_write(wf_open_result *, wf_value *, const wf_value *, const wf_view *, uint64_t, uint64_t);
 extern void wf_test_public_read(wf_read_result *, wf_value *, wf_value *, wf_view *, uint64_t, uint64_t, uint64_t);
+typedef void (*wf_probe_create_new_file)(wf_open_result *, wf_value *, wf_value *, const wf_view *, uint64_t, uint64_t);
+extern void wf_test_public_create_new_file(wf_open_result *, wf_value *, wf_value *, const wf_view *, uint64_t, uint64_t);
 
 static void file_probe(wf_inputs *inputs, wf_probe_open open_file, wf_probe_read read_at) {
     static const char filename[] = "ordinary-values.data";
@@ -1217,6 +1219,124 @@ static void replacement_probe(wf_inputs *inputs) {
     wf__body_close_write(&result, &inputs->handles, &replacement.ok.value); check_close(&result);
 }
 
+/* The file's bytes through the read half, at most four of them. */
+static uint64_t probe_file_bytes(wf_inputs *inputs, const wf_view *name, unsigned char bytes[4]) {
+    wf_view destination = { bytes, 4 };
+    wf_open_result opened;
+    wf_read_result read;
+    wf_close_result closed;
+    uint64_t count;
+    memset(bytes, 0, 4);
+    wf__body_open_file(&opened, &inputs->handles, &inputs->cwd_read, name, 0, name->length);
+    assert(opened.tag == 0);
+    wf__body_read_at(&read, &inputs->handles, &opened.ok.value, &destination, 0, 0, 4);
+    if (read.tag == 1) {
+        assert(read.err.error.tag == 0);
+        count = 0;
+    } else {
+        count = read.ok.value;
+    }
+    wf__body_close_read(&closed, &inputs->handles, &opened.ok.value);
+    check_close(&closed);
+    return count;
+}
+
+/* [PRE-2] An exclusive create makes an empty file open for appending when no
+ * entry has the name, and with any entry there, a directory, a link to a file
+ * or a dangling link, returns AlreadyExists, returns the credit, keeps no
+ * handle, leaves the existing bytes and creates no link target.  The links are
+ * real host links, made through the host's own API, so that a create that
+ * followed a link would make the dangling link's target. */
+static void create_new_probe(wf_inputs *inputs, wf_probe_create_new_file create_new_file) {
+    static const char fresh_text[] = "xcreated-newx";
+    static const char data_text[] = "created-data";
+    static const char directory_text[] = "created-directory";
+    static const char link_text[] = "created-link";
+    static const char dangling_text[] = "created-dangling";
+#if defined(_WIN32)
+    static const wchar_t wide_link[] = L"created-link";
+    static const wchar_t wide_dangling[] = L"created-dangling";
+#endif
+    /* The padding byte on each side of `fresh_text` checks that only the
+     * selected window is the name. */
+    wf_view fresh = { (void *)fresh_text, sizeof(fresh_text) - 1 };
+    wf_view fresh_name = { (void *)(fresh_text + 1), sizeof(fresh_text) - 3 };
+    wf_view data_name = { (void *)data_text, sizeof(data_text) - 1 };
+    wf_view directory_name = { (void *)directory_text, sizeof(directory_text) - 1 };
+    wf_view link_name = { (void *)link_text, sizeof(link_text) - 1 };
+    wf_view dangling_name = { (void *)dangling_text, sizeof(dangling_text) - 1 };
+    wf_view source = { (void *)"n", 1 };
+    unsigned char bytes[4];
+    wf_value factory = {{1, 0, 0, 0}};
+    wf_open_result opened;
+    wf_write_result written;
+    wf_close_result closed;
+    FILE *fixture = NULL;
+
+    create_new_file(&opened, &factory, &inputs->cwd_write, &fresh, 0, 0);
+    assert(opened.tag == 1 && opened.err.error.tag == WF_IO_INVALID_PATH && factory.words[0] == 1);
+    create_new_file(&opened, &factory, &inputs->cwd_write, &fresh, 1, fresh.length - 1);
+    assert(opened.tag == 0 && factory.words[0] == 0);
+    assert(probe_file_bytes(inputs, &fresh_name, bytes) == 0);
+    wf__body_append_once(&written, &inputs->handles, &opened.ok.value, &source, 0, 1);
+    assert(written.tag == 0 && written.ok.value == 1);
+    wf__body_close_write(&closed, &factory, &opened.ok.value);
+    check_close(&closed);
+    assert(factory.words[0] == 1);
+    create_new_file(&opened, &factory, &inputs->cwd_write, &fresh, 1, fresh.length - 1);
+    assert(opened.tag == 1 && opened.err.error.tag == WF_IO_ALREADY_EXISTS);
+    assert(opened.err.error.origin == 1 && factory.words[0] == 1);
+    assert(probe_file_bytes(inputs, &fresh_name, bytes) == 1 && bytes[0] == 'n');
+
+    assert(wf_mkdir("created-directory") == 0);
+    create_new_file(&opened, &factory, &inputs->cwd_write, &directory_name, 0, directory_name.length);
+    assert(opened.tag == 1 && opened.err.error.tag == WF_IO_ALREADY_EXISTS && factory.words[0] == 1);
+
+#if defined(_WIN32)
+    assert(fopen_s(&fixture, "created-data", "wb") == 0);
+#else
+    fixture = fopen("created-data", "wb");
+#endif
+    assert(fixture != NULL && fputc('d', fixture) == 'd' && fclose(fixture) == 0);
+#if defined(_WIN32)
+    BOOLEAN linked = CreateSymbolicLinkW(wide_link, L"created-data", 2u);
+    if (!linked && GetLastError() == ERROR_INVALID_PARAMETER)
+        linked = CreateSymbolicLinkW(wide_link, L"created-data", 0);
+    assert(linked);
+    linked = CreateSymbolicLinkW(wide_dangling, L"created-missing", 2u);
+    if (!linked && GetLastError() == ERROR_INVALID_PARAMETER)
+        linked = CreateSymbolicLinkW(wide_dangling, L"created-missing", 0);
+    assert(linked);
+    DWORD handles_before = 0, handles_after = 0;
+    assert(GetProcessHandleCount(GetCurrentProcess(), &handles_before));
+#else
+    assert(symlink("created-data", link_text) == 0);
+    assert(symlink("created-missing", dangling_text) == 0);
+#endif
+    create_new_file(&opened, &factory, &inputs->cwd_write, &link_name, 0, link_name.length);
+    assert(opened.tag == 1 && opened.err.error.tag == WF_IO_ALREADY_EXISTS && factory.words[0] == 1);
+    create_new_file(&opened, &factory, &inputs->cwd_write, &dangling_name, 0, dangling_name.length);
+    assert(opened.tag == 1 && opened.err.error.tag == WF_IO_ALREADY_EXISTS && factory.words[0] == 1);
+#if defined(_WIN32)
+    assert(GetProcessHandleCount(GetCurrentProcess(), &handles_after));
+    assert(handles_after == handles_before);
+    assert(GetFileAttributesW(L"created-missing") == INVALID_FILE_ATTRIBUTES
+           && GetLastError() == ERROR_FILE_NOT_FOUND);
+#else
+    struct stat status;
+    assert(lstat("created-missing", &status) != 0 && errno == ENOENT);
+#endif
+    assert(probe_file_bytes(inputs, &data_name, bytes) == 1 && bytes[0] == 'd');
+
+#if defined(_WIN32)
+    assert(DeleteFileW(wide_link) && DeleteFileW(wide_dangling));
+#else
+    assert(wf_unlink(link_text) == 0 && wf_unlink(dangling_text) == 0);
+#endif
+    assert(wf_unlink("created-data") == 0 && wf_unlink("created-new") == 0);
+    assert(wf_rmdir("created-directory") == 0);
+}
+
 /* The new acquisition uses the ordinary descriptor budget and its public
  * start/finish ABI. Refusals must restore a reserved credit and close any
  * provisional handle; an exhausted budget must not create the directory. */
@@ -1675,6 +1795,12 @@ int wf_ordinary_values_tests(const char *scratch, const char *group) {
         puts("ordinary stop requests public+body: PASS");
     }
     if (files) { wf_test_guard_phase("ordinary append/sync/truncate/clock"); append_probe(&inputs); replacement_probe(&inputs); time_probe(&inputs); puts("ordinary append/sync/truncate/clock: PASS"); }
+    if (files) {
+        wf_test_guard_phase("ordinary exclusive create/links/credits public+body");
+        create_new_probe(&inputs, wf__body_create_new_file);
+        create_new_probe(&inputs, wf_test_public_create_new_file);
+        puts("ordinary exclusive create/links/credits public+body: PASS");
+    }
     if (directory) {
         wf_test_guard_phase("ordinary subdirectory/credits public+body");
         subdirectory_probe(&inputs, wf__body_open_directory_write);

@@ -668,6 +668,7 @@ static void wf_factory_return(wf_value *factory) {
 #define WF_OPEN_APPEND_MODE 0u
 #define WF_OPEN_APPEND_HAS_MODE 0u
 #define WF_OPEN_APPEND_CLASS WF_WINDOWS_DESCRIPTOR_CLASS_WRITE_FILE
+#define WF_CREATE_NEW_FILE_FLAGS WF_WINDOWS_NO_FOLLOW_CREATE_NEW
 #elif defined(__APPLE__)
 #define WF_COMPONENT_BYTES 1023u
 #define WF_NAME_BYTES WF_COMPONENT_BYTES
@@ -689,6 +690,10 @@ static void wf_factory_return(wf_value *factory) {
 #define WF_OPEN_APPEND_MODE 0666u
 #define WF_OPEN_APPEND_HAS_MODE 1u
 #define WF_OPEN_APPEND_CLASS 0u
+/* An exclusive create [PRE-2] is the append open with O_EXCL: the host tests
+ * for an entry and creates the file in one call, and with O_CREAT | O_EXCL a
+ * symbolic link at the name is an existing entry, never followed. */
+#define WF_CREATE_NEW_FILE_FLAGS (WF_OPEN_APPEND_FLAGS | O_EXCL)
 #endif
 
 /* The block a waiting context keeps for its one pending host operation
@@ -1614,6 +1619,45 @@ void wf__body_open_append(wf_open_result *result, wf_value *factory, const wf_va
     wf_host_operation operation;
     if (wf__body_open_append_start(result, factory, root, name, start, end, &operation))
         wf__body_open_append_finish(result, factory, root, name, start, end, &operation);
+}
+
+/* [PRE-2] creates a file below a directory's write half only when no entry
+ * has the name, and opens it for appending; any entry there, a symbolic link
+ * included, is AlreadyExists with nothing opened or changed.  The row writes
+ * root, as rename_file's and remove_file's do. */
+int wf__body_create_new_file_start(wf_open_result *result, wf_value *factory,
+                                   wf_value *root, const wf_view *name,
+                                   uint64_t start, uint64_t end,
+                                   wf_host_operation *operation) {
+    wf_transition(root);
+    if (!wf_component(operation->component, name, start, end)) {
+        wf_transition(factory);
+        memset(result, 0, sizeof(*result));
+        result->tag = 1;
+        wf_error_class(&result->err.error, WF_IO_INVALID_PATH, 0, 0);
+        return 0;
+    }
+    return wf_open_start_mode(result, factory, root, operation->component,
+        WF_CREATE_NEW_FILE_FLAGS, WF_OPEN_APPEND_MODE, WF_OPEN_APPEND_HAS_MODE,
+        WF_FILE_EXPECT_REGULAR, WF_OPEN_APPEND_CLASS, operation);
+}
+
+void wf__body_create_new_file_finish(wf_open_result *result, wf_value *factory,
+                                     wf_value *root, const wf_view *name,
+                                     uint64_t start, uint64_t end,
+                                     wf_host_operation *operation) {
+    (void)root;
+    (void)name;
+    (void)start;
+    (void)end;
+    wf_open_finish(result, factory, operation);
+}
+
+void wf__body_create_new_file(wf_open_result *result, wf_value *factory, wf_value *root,
+                              const wf_view *name, uint64_t start, uint64_t end) {
+    wf_host_operation operation;
+    if (wf__body_create_new_file_start(result, factory, root, name, start, end, &operation))
+        wf__body_create_new_file_finish(result, factory, root, name, start, end, &operation);
 }
 
 /* [PRE-2] one host write at the end of a file opened for appending. */

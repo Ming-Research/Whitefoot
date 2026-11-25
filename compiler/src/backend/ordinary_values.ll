@@ -729,6 +729,30 @@ entry:
   ret void
 }
 
+declare i32 @wf__body_create_new_file_start(ptr, ptr, ptr, ptr, i64, i64, ptr)
+
+define i32 @wf_std.fs.create_new_file.start(ptr %result, ptr %factory, ptr %root, ptr %name.data, i64 %name.len, i64 %start, i64 %end, ptr %operation) align 64 {
+entry:
+  %view = alloca { ptr, i64 }, align 8
+  store ptr %name.data, ptr %view, align 8
+  %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
+  store i64 %name.len, ptr %view.len, align 8
+  %state = call i32 @wf__body_create_new_file_start(ptr %result, ptr %factory, ptr %root, ptr %view, i64 %start, i64 %end, ptr %operation)
+  ret i32 %state
+}
+
+declare void @wf__body_create_new_file_finish(ptr, ptr, ptr, ptr, i64, i64, ptr)
+
+define void @wf_std.fs.create_new_file.finish(ptr %result, ptr %factory, ptr %root, ptr %name.data, i64 %name.len, i64 %start, i64 %end, ptr %operation) align 64 {
+entry:
+  %view = alloca { ptr, i64 }, align 8
+  store ptr %name.data, ptr %view, align 8
+  %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
+  store i64 %name.len, ptr %view.len, align 8
+  call void @wf__body_create_new_file_finish(ptr %result, ptr %factory, ptr %root, ptr %view, i64 %start, i64 %end, ptr %operation)
+  ret void
+}
+
 declare i32 @wf__body_append_once_start(ptr, ptr, ptr, ptr, i64, i64, ptr)
 
 define i32 @wf_std.fs.append_once.start(ptr %result, ptr %factory, ptr %file, ptr %source.data, i64 %source.len, i64 %start, i64 %end, ptr %operation) align 64 {

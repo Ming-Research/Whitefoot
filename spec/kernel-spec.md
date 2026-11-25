@@ -2812,6 +2812,7 @@ Which of the bytes `sync_file` and directory entries `sync_directory` hand to th
 A file open through a `WriteFile` or `ReadFile` keeps its bytes and remains usable through that handle after its name is changed or replaced by `rename_file` or `move_file`, or removed by `remove_file`.
 The name bytes of a sequence of host code units, a path component or the text of a `HostString`, are its bytes on a POSIX host, and on a Windows host the WTF-8 encoding of its UTF-16 code units: each surrogate pair is the UTF-8 encoding of the scalar value it denotes, and each other code unit, an unpaired surrogate included, is the one to three bytes of the UTF-8 encoding form applied to its value. A sequence that is text therefore has its UTF-8 encoding as its name bytes on both hosts, and distinct sequences have distinct name bytes; `host_copy_name_bytes` copies a `HostString`'s.
 A name given with a root to a `std::fs` operation is the name bytes of a path component, and denotes an entry directly below that root exactly when that component is nonempty and other than `.` and `..`; an operation given a name that denotes no such entry, on a Windows host one that is the name bytes of no component included, returns `InvalidPath`. `open_file`, `open_directory`, `open_append` and `open_directory_write` open the entry their name denotes only when that entry is not a symbolic link; for an entry that is one, each returns `Err` and opens no object, the link's target included.
+`create_new_file` tests whether an entry has its name and creates the file in one host operation, so no entry comes to have that name between the test and the creation, and a call returns `Ok` only when it created the entry itself: when no entry has that name it creates an empty file and returns it open for appending, and when an entry has that name, a directory or a symbolic link included, it returns `AlreadyExists`, opens no object and changes no entry, the link's target included.
 `directory_next` writes into the window of destination from start toward end one record for each of the next entries of source's directory, other than its `.` and `..` entries, in the order the host's enumeration reports them: the entry's kind byte by the table below, the byte count of its name bytes as two bytes, low byte first, and its name bytes. The records follow one another from start; next is the index after the last of them and entries counts them. A call that returns `Ok` over a nonempty window writes at least one record, `ListEnd` reports that no entry remains to be written, and a nonempty window shorter than the host's enumeration needs returns `ListFailed`. Over an empty window the call returns `Ok`, writes nothing and leaves the enumeration where it was.
 
 | Kind byte | Entry on a POSIX host, by its `d_type` | Entry on a Windows host, by its attributes |
@@ -3275,6 +3276,11 @@ public fn open_append(factory: &HandleFactory, root: &DirectoryWrite, name: &[u8
   requires start <= end;
   requires end <= name^.len;
 } doc "Opens the file that the bytes of name from start to end name below root for appending, creating it empty when no entry has that name.";
+
+public fn create_new_file(factory: &HandleFactory, root: &DirectoryWrite, name: &[u8], start: u64, end: u64) -> result: Result<WriteFile, IoError> reads(name), writes(factory), writes(root) waits contract {
+  requires start <= end;
+  requires end <= name^.len;
+} doc "Creates the file that the bytes of name from start to end name below root, as open_append names a file, empty and opens it for appending; when an entry has that name it returns AlreadyExists and changes no entry [PRE-2].";
 
 public fn append_once(factory: &HandleFactory, file: &WriteFile, source: &[u8], start: u64, end: u64) -> result: Result<u64, IoError> reads(source), writes(factory), writes(file) waits contract {
   requires start <= end;
