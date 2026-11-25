@@ -571,25 +571,33 @@ of placement?
 One compiler builds every arm, so the arms differ in layout alone: the
 unaligned module is the emitted module with ` align 64` removed from each
 definition, and the unaligned runtime is the same sources compiled without
-`-falign-functions=64`.
+`-falign-functions=64`. Hosted jobs build with the LLVM major the gate pins,
+not the image's clang 18.1.3, so the loops may fall elsewhere than in the
+table above: the table is recomputed from the new images and committed here
+before the decisive runs, with the arms the loop reading names.
 
 - `U`, `F`, `FR` as above, and `UR`, the unaligned module over the aligned
   runtime.
 - `O16`, `O32`, `O48`: `FR` with every function of the module starting that
-  many bytes past a 64-byte boundary. They are diagnostic: an offset chosen
+  many bytes past a 64-byte boundary. They are diagnostic: one offset chosen
   for one kernel's loops is not a rule.
+- `P`: `FR` with each function of the module started at the one of 0, 16, 32
+  and 48 bytes past a 64-byte boundary that leaves the fewest of its
+  innermost loops of at most 64 bytes across a line boundary, the smallest
+  such offset on a tie. The offset comes from the function's own code, so
+  nothing ahead of the function changes it, and no padding is executed.
 - `L32`, `L64`: `FR` with the module's loops aligned to 32 and to 64 bytes;
-  `A32`: the module's functions aligned to 32 bytes. These are the candidate
-  rules.
-- Placements `p0`, `m16`, `m32`, `m48`, `r16`, `r48`, and for the aligned
-  arms `m1024` and `m2048`, which move aligned code by 16 and 32 lines and so
-  change its offset within a page.
-- Every image of a kernel is linked with the same addresses for its data, and
-  the run refuses when they differ. `FR` and `U` at `p0` are also timed as the
-  linker lays their data out, which is the data arm.
-- On hosts with counters, `FR` at `p0`, the fastest placement of `U` and each
-  candidate rule are also run under `perf stat`; on every host the same
-  images are sampled by the software clock, binned by 64-byte line.
+  `A32`: the module's functions aligned to 32 bytes.
+- The candidate rules are `P`, `L32`, `L64` and `A32`.
+- Code placements `p0`, `m16`, `m32`, `m48`, `r16`, `r48`, and for the
+  aligned arms `m1024` and `m2048`, which move aligned code by 16 and 32
+  lines and so change its offset within a page.
+- Data placements: `FR` at `p0` with 64, 1024 and 2048 bytes linked at the
+  front of `.data`, which moves the static data and leaves the code where it
+  is (`d64`, `d1024`, `d2048`), and `U` at `p0` with the filler that gives
+  its data `FR`'s addresses (`dFR`).
+- Every decisive run also samples `FR` at `p0` and the fastest placement of
+  `U` by the software clock, reduced to time per 64-byte line.
 
 Criterion, with the per-round ratio and interval defined above and at least
 12 rounds on each of two 9V74 jobs:
@@ -597,17 +605,35 @@ Criterion, with the per-round ratio and interval defined above and at least
 - The cost is established at a width when `FR`'s interval against `U` lies
   wholly below 1 on both 9V74 jobs. Where it does not, no cost is established
   and nothing below is selected for that width.
-- The loop reading holds if `O48` is faster than `FR` by the gate's rule at
-  every width where the cost is established, and is rejected if `O48`'s
-  interval against `FR` spans 1 or lies below it at any of them.
-- The data reading holds if `FR` or `U` with the linker's own data layout
-  differs from the same image with the common layout by the gate's rule, and
-  is rejected otherwise.
+- The loop reading compares, among `FR`, `O16`, `O32` and `O48`, the arm the
+  recomputed table gives the fewest crossing loops in the width's hot
+  function with the arm it gives the most. It holds at a width if the first
+  is faster than the second by the gate's rule on both 9V74 jobs, and is
+  rejected if that interval spans 1 or lies below it. It accounts for the
+  cost if, besides, `FR` is not the first arm and the first arm's interval
+  against `U` does not lie wholly below 1.
+- The data reading holds on a host if a data placement moves `FR` against
+  its `p0` by the gate's rule, or `U` at `p0` under `dFR` differs from `U` at
+  `p0` by it, and is rejected otherwise. If it holds on a 9V74, the arms are
+  measured again with every image of a kernel given the same data addresses
+  before any difference between arms is read as an effect of code.
 - A candidate rule passes when, on both 9V74 jobs and at every width, its
   interval against `U` does not lie wholly below 1; no placement moves it
   against its `p0` by the gate's rule in any conclusive cell of any kernel on
   any host (C2); and on no host is any kernel slower than under `FR` by the
   gate's rule. The 9V45, the 7763, the Xeon 6975P-C and the 14900K each give
   at least one run of all five kernels.
+- A rule that passes is then compared with the head as a compiler change on
+  programs larger than the kernels, by
+  [`compiler-compare.yml`](../../../.github/workflows/compiler-compare.yml)
+  on the 14900K (the hash-map cells, Halo's interpreter and the wasm
+  interpreter, under that instrument's own rule), and the change in the
+  kernels' code size is reported. A workload it judges slower is reported
+  with the rule. `P` has no form in the compiler until it is chosen, so its
+  comparison follows the choice and precedes the decision's record.
+- Where the cost is established, `FR` at `p0`, the fastest placement of `U`
+  and each rule that passes are also run under `perf stat` on the Xeon
+  6975P-C and the 14900K, the hosts that count branch misses and decoded
+  micro-ops.
 - If no rule passes, the record states the cause as far as these arms locate
   it and the cost each rule left.
