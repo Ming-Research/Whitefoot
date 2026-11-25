@@ -620,7 +620,10 @@ Hosts: two EPYC 9V74 jobs, and one job each on an EPYC 9V45, an EPYC 7763, a
 Xeon 6975P-C and the i9-14900K, at least 12 rounds each. Every one of them
 runs `records` with every arm and placement and the other four kernels with
 `U`, `FR` and the four candidate rules at the code placements, so each host
-is caught once. "Every host" below means these six jobs.
+is caught once. "Every host" below means these six jobs. A dispatch that
+lands more decisive jobs on a model than this asks for keeps them all: each
+is reported, "every host" covers it, and a condition stated for both 9V74
+jobs must hold on every 9V74 job that measured.
 
 Criterion, with the per-round ratio and interval defined above:
 
