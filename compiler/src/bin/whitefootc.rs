@@ -1300,7 +1300,7 @@ fn unit_arguments(command: &mut Command, directory: &Path, sanitizer: Option<San
     #[cfg(target_os = "linux")]
     command.arg("-fstack-clash-protection");
     #[cfg(target_os = "macos")]
-    command.arg("-fno-stack-check");
+    command.args(["-Xclang", "-fstack-clash-protection"]);
 }
 
 /// The arguments a sanitized build adds to every compile and its link.
