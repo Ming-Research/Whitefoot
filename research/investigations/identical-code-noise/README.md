@@ -12,8 +12,8 @@ Facts read from the artifacts (2026-11-25):
   though in 172 runs all five emitted module objects (`<kernel>.o`), oracle and
   runner objects were byte-identical. Cause, seen in run 38389055091: the object
   `native/keyed_table.o` embeds the source path through `assert`'s `__FILE__`
-  (`/home/runner/work/_temp/baseline/compiler/src/backend/concurrent_map.c`
-  against `/home/runner/work/Whitefoot/Whitefoot/compiler/src/backend/concurrent_map.c`);
+  (`.../work/_temp/baseline/compiler/src/backend/concurrent_map.c`
+  against `.../work/Whitefoot/Whitefoot/compiler/src/backend/concurrent_map.c`);
   119 bytes of it differ, the strings of the merged read-only data after it move by
   5 bytes, and `objdump -d` of the two `stencil` images differs in 188 lines, 185 of them
   rip-relative `leaq` displacements into `.rodata`, the other 3 printing the same
