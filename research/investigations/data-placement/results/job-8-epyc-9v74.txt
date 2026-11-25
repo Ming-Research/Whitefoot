@@ -529,6 +529,10 @@ positions without address randomization, 10 percent or more from the median posi
   h: 32 positions read, off: 30:1.39; the others 0.983 to 1.018
   s: 32 positions read, off: 6:1.35 7:1.30 8:1.37 9:1.28 10:1.36 11:1.31 12:1.34 13:1.30 14:1.34 15:1.32 16:1.32 17:1.25 18:1.31 19:1.26 20:1.34; the others 0.935 to 1.047
   off the same way in b and in h: [30]
+positions where two arms' profiles differ by 10 percent or more
+  h over b: 0 of 32; all ratios 0.981 to 1.024
+  s over b: 16 of 32 6:1.37 7:1.32 8:1.37 9:1.28 10:1.36 11:1.32 12:1.36 13:1.30 14:1.33 15:1.31 16:1.31 17:1.24 18:1.32 19:1.26 20:1.34 30:0.66; all ratios 0.664 to 1.367
+  s over h: 16 of 32 6:1.35 7:1.31 8:1.36 9:1.28 10:1.38 11:1.32 12:1.33 13:1.29 14:1.35 15:1.32 16:1.34 17:1.24 18:1.29 19:1.26 20:1.34 30:0.67; all ratios 0.674 to 1.375
 mapping calls without address randomization, position by position
   b and h: identical at 32 positions, different at 0
   b and s: identical at 0 positions, different at 32

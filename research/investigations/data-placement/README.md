@@ -335,6 +335,30 @@ five AMD jobs from the three Xeon jobs for every image. On the Xeon jobs the
 one reading past the line was not repeated, and every other position read
 0.949 to 1.094 of its median.
 
+**Two arms' positions compared.** The same series read as a comparison of two
+arms: each arm's time at a position is divided by the arm's median position,
+so a loss an arm has at every position cancels, and a position is *unlike*
+when the two quotients differ by 10 percent or more. Positions unlike, of 32,
+in one reading:
+
+| job | host | this branch over B, which map alike | S over B |
+|---|---|---|---|
+| 1 | 9V74 | 0 | 16 |
+| 8 | 9V74 | 0 | 16 |
+| 3 | 7763 | 0 | 20 |
+| 5 | 7763 | 0 | 20 |
+| 7 | 7763 | 0 | 18 |
+| 2 | 6975P-C | 0 | 0 |
+| 4 | 6975P-C | 2 (1.13, 1.16) | 2 (1.10, 0.90) |
+| 6 | 6975P-C | 1 (1.10) | 1 (0.90) |
+
+On the AMD jobs two images that map alike are slow at the same position and
+agree within 8.3 percent everywhere, while B and S are unlike at 16 positions
+or more; on the Xeon jobs the few positions past the line are single readings
+on hosts whose ratios spread 0.90 to 1.16. Lines below 10 percent
+do not separate: at 5 percent the arms that map alike read 8 positions unlike
+on job 3.
+
 **Mapping calls.** In the same launches, B and this branch make the same
 mapping calls at the same addresses at all 32 positions on all eight jobs
 (256 of 256), although their runtimes differ by seven weeks of changes, and B
@@ -356,26 +380,37 @@ blocks are mapped can therefore be read without timing anything.
   use ahead of the entry, a pad in the static data) changes nothing under
   address randomization, and no move read through a campaign of five pairs
   detects reliably.
-- Two readings that do not depend on a campaign separate the hosts and the
-  changes in this run: one position that is 10 percent or more off twice,
-  among 32 positions without address randomization, marks a host that times
-  the kernel by placement; and equal mapping calls in such launches mark two
-  images that place their data alike.
+- Readings that do not depend on a campaign separate the hosts and the
+  changes in this run. Among 32 positions without address randomization, a
+  position 10 percent or more off marks a host that times the kernel by
+  placement; positions where two arms are unlike mark a comparison that
+  placement decides on that host; and equal mapping calls in such launches
+  mark two images that place their data alike.
 
 ## Next
 
-The control these readings suggest, for `compute-regression`: launch both
-arms once without address randomization and compare what they map; when they
-differ, launch the kernel at the 32 positions, repeat the positions that are
-off, and set the kernel's comparison aside when a position is off both times.
-Its confirmation, written before the run: with the control in the instrument
-and the stop-signals B and S images as the two arms, on every job whose host
-is an EPYC 7763 the arms are reported to map differently and `stencil` is
-reported as timed by placement, for three such jobs at least; with one image
-as both arms the arms are reported to map alike on every job; and on every
-Xeon 6975P-C job no kernel is reported as timed by placement. A 7763 job
-without the report, a Xeon job with one, or equal arms reported to differ
-rejects the control as designed.
+The control these readings suggest, for `compute-regression`, before the
+comparison: launch each arm of a kernel once at one worker without address
+randomization and compare the mapping calls the two make; when they differ,
+launch both arms at the 32 positions, launch the unlike positions again, and
+set the kernel's comparison aside when a position is unlike both times in the
+same direction.
+
+Its confirmation, written before the run, with the control in the instrument
+and several hosted jobs:
+
+1. With the stop-signals B and S images as the two arms, on every job whose
+   host is an EPYC 7763, three such jobs at least, `stencil`'s arms are
+   reported to map differently and its comparison is set aside.
+2. With one image as both arms, under two directories whose names differ in
+   length, every kernel's arms are reported to map alike on every job, for B,
+   for S and for the branch's own image.
+3. With B and S as the arms, no kernel is set aside on any Xeon 6975P-C job.
+
+A 7763 job that does not set `stencil` aside, equal arms reported to differ,
+or a kernel set aside on a Xeon 6975P-C job rejects the control as designed.
+Which kernels other than `stencil` are set aside on the AMD jobs is recorded
+without a criterion.
 
 ## Limitations
 
@@ -385,7 +420,10 @@ rejects the control as designed.
   here.
 - Only `stencil` was traced and launched by position; the other four kernels
   were timed in the campaigns alone.
-- The position rule and the comparison of mapping calls are post hoc.
+- The position rule, the comparison of two arms' positions and the
+  comparison of mapping calls are post hoc.
+- A placement that costs less than 10 percent, as adjacent grids do on the
+  7763, is below the line every reading here uses.
 - The 32 positions walk the 64 MiB that glibc's heap alignment makes matter.
   A layout whose time depends on a longer period, as adjacent grids on one
   heap do, is only partly covered.

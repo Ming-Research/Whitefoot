@@ -192,6 +192,31 @@ def positions(results):
         print(f"  off the same way in b and in h: {both or 'none'}")
 
 
+def profiles(results):
+    """Two arms' positions compared: each arm's time at a position over the
+    arm's median position, and the positions where the two differ by 10 percent
+    or more. A slowdown of one arm at every position leaves the ratios at one."""
+    times = {}
+    for revision in "bhs":
+        times[revision] = {}
+        for k in range(32):
+            if os.path.exists(os.path.join(results, "trace", f"{revision}-fixed-{k}-0.tsv")):
+                row = launch(results, f"{revision}-fixed-{k}-0")
+                if row:
+                    times[revision][k] = row[1]
+    print("positions where two arms' profiles differ by 10 percent or more")
+    for first, second in ("bh", "bs", "hs"):
+        if len(times[first]) < 32 or len(times[second]) < 32:
+            continue
+        middle = {arm: statistics.median(times[arm].values()) for arm in (first, second)}
+        ratios = {k: (times[second][k] / middle[second]) / (times[first][k] / middle[first])
+                  for k in range(32)}
+        unlike = {k: r for k, r in ratios.items() if r >= 1.10 or r <= 1 / 1.10}
+        print(f"  {second} over {first}: {len(unlike)} of 32"
+              + "".join(f" {k}:{r:.2f}" for k, r in sorted(unlike.items()))
+              + f"; all ratios {min(ratios.values()):.3f} to {max(ratios.values()):.3f}")
+
+
 def own_calls(path):
     """A launch's own mapping calls without address randomization: the mmap and
     munmap calls whose addresses lie in 0x7fff00000000 and above, joined across
@@ -291,6 +316,7 @@ def main():
         pooled(results)
         model(results)
         positions(results)
+        profiles(results)
         layouts(results)
 
 
