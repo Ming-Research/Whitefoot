@@ -92,6 +92,24 @@ pub(in crate::backend) fn returned_storage_slot(
     Some(returned)
 }
 
+/// Research switch of the scatter's timing probe
+/// (`research/investigations/scatter-chunk-building/DESIGN.md`): while it is
+/// set, construction zeroes an inactive variant's window fields at every
+/// size. Only that probe sets it, alone in its test process.
+#[cfg(test)]
+pub(crate) static SCATTER_PROBE_KEEPS_PRESENT_CONSTRUCTION: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(test)]
+fn scatter_probe_keeps_present_construction() -> bool {
+    SCATTER_PROBE_KEEPS_PRESENT_CONSTRUCTION.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+#[cfg(not(test))]
+fn scatter_probe_keeps_present_construction() -> bool {
+    false
+}
+
 impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// Preserve the logical index everywhere except address formation. A
     /// zero-stride step uses zero even in facts-off emission, so the actual
@@ -437,12 +455,25 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         .map_err(|_| BackendFailure::TextEmission)
     }
 
-    /// Retain the ordinary zero initializer except for active fields with
-    /// window storage. Construction writes every active field immediately
-    /// afterwards, copying its headers and initialized elements, so clearing
-    /// that field first would only touch WIN-1's unoccupied slots again.
-    /// This also covers nested structs, enums and Arrays: the field copy
-    /// supplies every Array element, rather than treating an Array as empty.
+    /// A constructed enum value of more than this many bytes leaves the
+    /// window fields of its inactive variants unwritten. Its value was taken
+    /// from the bounded transfer's limit (`TRANSFER_MAX_BYTES`) when the rule
+    /// was chosen; the two bounds are independent.
+    const UNWRITTEN_INACTIVE_WINDOWS_ABOVE_BYTES: u64 = 128;
+
+    /// Zeroes a constructed value's storage before its tag and fields are
+    /// written, except for the fields left out. A struct's fields and the
+    /// active variant's fields that hold window storage are left out:
+    /// construction writes every such field immediately afterwards, copying
+    /// its headers and initialized elements, so clearing it first would only
+    /// touch WIN-1's unoccupied slots again. In an enum value of more than
+    /// [`Self::UNWRITTEN_INACTIVE_WINDOWS_ABOVE_BYTES`] bytes, the fields of
+    /// inactive variants that hold window storage are left out too: nothing
+    /// reads storage the held variant does not own [OP-16], and a variant
+    /// is written whole when it becomes the held one. A field is left out
+    /// whole, with the nested structs, enums and Arrays around its windows;
+    /// every other byte is zeroed, an inactive variant's other fields and a
+    /// smaller value's inactive windows included.
     fn initialize_construction(
         &mut self,
         ty: IrType,
@@ -453,7 +484,12 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
             return self.zero_value_at(ty, destination);
         };
         let union = union_enums::is_union_enum(self.program, nominal)?;
+        // Each field with whether it is left out, in the layout's order and
+        // the tag first for an enum; a union lists only its active view.
         let mut fields = Vec::new();
+        // A union's inactive views whose window fields are left out, each
+        // listed as `fields` lists the active one.
+        let mut inactive_views = Vec::new();
         match self.nominal(nominal)?.kind() {
             IrNominalKind::Struct { fields: declared } => {
                 for field in declared {
@@ -461,29 +497,39 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
                 }
             }
             IrNominalKind::Enum { variants } => {
-                fields.push((
-                    IrType::Integer {
-                        width: enum_tag_width(self.nominal(nominal)?)?,
-                        signed: false,
-                    },
-                    false,
-                ));
+                let tag_type = IrType::Integer {
+                    width: enum_tag_width(self.nominal(nominal)?)?,
+                    signed: false,
+                };
+                let large = self.leaves_inactive_windows_unwritten(nominal, tag)?;
+                fields.push((tag_type, false));
                 for variant in variants {
                     let active = tag == Some(variant.tag());
                     if union && !active {
+                        if large {
+                            let mut view = vec![(tag_type, false)];
+                            for field in variant.fields() {
+                                view.push((field.ty(), self.contains_window_storage(field.ty())?));
+                            }
+                            inactive_views.push(view);
+                        }
                         continue;
                     }
                     for field in variant.fields() {
                         fields.push((
                             field.ty(),
-                            active && self.contains_window_storage(field.ty())?,
+                            (active || large) && self.contains_window_storage(field.ty())?,
                         ));
                     }
                 }
             }
             _ => return self.zero_value_at(ty, destination),
         }
-        if !fields.iter().any(|(_, skip)| *skip) {
+        if !fields
+            .iter()
+            .chain(inactive_views.iter().flatten())
+            .any(|(_, skip)| *skip)
+        {
             return self.zero_value_at(ty, destination);
         }
         if !union {
@@ -497,43 +543,103 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
         }
 
         // A union's inactive bytes are an explicit byte-array field. Keep
-        // them zero, including the suffix beyond the active view; exclude
-        // only active fields that will be copied in with window storage.
-        // Natural frame fields use the same target struct layout as that
-        // view (tag followed by active payload), without duplicating its
-        // alignment arithmetic here. Hidden handler words remain zeroed
-        // until begin_enum_construction writes their final addresses.
-        let slots = fields
-            .iter()
-            .map(|(field, _)| TargetFrameSlot::natural(TargetStorageType::source(*field)))
-            .collect::<Vec<_>>();
-        let view = plan_target_frame(self.target, self.program, &slots)
-            .map_err(BackendFailure::TargetLayout)?;
+        // them zero, including the suffix beyond the active view, except for
+        // the intervals of the fields left out: the active ones and, in a
+        // large value, the inactive views' window fields. Hidden handler
+        // words lie after every view and remain zeroed until
+        // begin_enum_construction writes their final addresses.
+        let mut intervals = self.left_out_intervals(&fields)?;
+        for view in &inactive_views {
+            intervals.extend(self.left_out_intervals(view)?);
+        }
+        intervals.sort_unstable();
         let size =
             validate_static_storage(self.target, self.program, &TargetStorageType::source(ty))
                 .map_err(BackendFailure::TargetLayout)?
                 .size();
         let mut start = 0;
-        for (index, (field, skip)) in fields.into_iter().enumerate() {
-            if skip {
-                let offset = view
+        for (from, to) in intervals {
+            if start < from {
+                self.zero_construction_bytes(destination, start, from)?;
+            }
+            start = start.max(to);
+        }
+        self.zero_construction_bytes(destination, start, size)
+    }
+
+    /// Whether building this enum value with `tag` active leaves the window
+    /// fields of its inactive variants unwritten: an inactive variant has
+    /// such a field and the value is larger than
+    /// [`Self::UNWRITTEN_INACTIVE_WINDOWS_ABOVE_BYTES`].
+    fn leaves_inactive_windows_unwritten(
+        &self,
+        nominal: IrNominalId,
+        tag: Option<u32>,
+    ) -> Result<bool, BackendFailure> {
+        if scatter_probe_keeps_present_construction() {
+            return Ok(false);
+        }
+        let IrNominalKind::Enum { variants } = self.nominal(nominal)?.kind() else {
+            return Err(BackendFailure::InvalidIr);
+        };
+        let mut inactive_window = false;
+        for variant in variants.iter().filter(|variant| tag != Some(variant.tag())) {
+            for field in variant.fields() {
+                inactive_window |= self.contains_window_storage(field.ty())?;
+            }
+        }
+        if !inactive_window {
+            return Ok(false);
+        }
+        let size = validate_static_storage(
+            self.target,
+            self.program,
+            &TargetStorageType::source(IrType::Nominal(nominal)),
+        )
+        .map_err(BackendFailure::TargetLayout)?
+        .size();
+        Ok(size > Self::UNWRITTEN_INACTIVE_WINDOWS_ABOVE_BYTES)
+    }
+
+    /// The byte intervals, within a union's value, of the fields of one view
+    /// that construction leaves out of its zero stores. A view is the tag
+    /// and one variant's fields; a natural frame of the same fields has the
+    /// view's target struct layout, so its alignment arithmetic is not
+    /// repeated here.
+    fn left_out_intervals(
+        &self,
+        view: &[(IrType, bool)],
+    ) -> Result<Vec<(u64, u64)>, BackendFailure> {
+        if !view.iter().any(|(_, skip)| *skip) {
+            return Ok(Vec::new());
+        }
+        let slots = view
+            .iter()
+            .map(|(field, _)| TargetFrameSlot::natural(TargetStorageType::source(*field)))
+            .collect::<Vec<_>>();
+        let layout = plan_target_frame(self.target, self.program, &slots)
+            .map_err(BackendFailure::TargetLayout)?;
+        let mut intervals = Vec::new();
+        for (index, (field, skip)) in view.iter().enumerate() {
+            if *skip {
+                let offset = layout
                     .logical_field(index)
                     .ok_or(BackendFailure::InvalidIr)?
                     .offset();
-                self.zero_construction_bytes(destination, start, offset)?;
                 let field_size = validate_static_storage(
                     self.target,
                     self.program,
-                    &TargetStorageType::source(field),
+                    &TargetStorageType::source(*field),
                 )
                 .map_err(BackendFailure::TargetLayout)?
                 .size();
-                start = offset
+                let end = offset
                     .checked_add(field_size)
                     .ok_or(BackendFailure::CounterOverflow)?;
+                intervals.push((offset, end));
             }
         }
-        self.zero_construction_bytes(destination, start, size)
+        Ok(intervals)
     }
 
     fn zero_construction_bytes(
@@ -559,7 +665,8 @@ impl<'program, 'state> FunctionEmitter<'program, 'state> {
     /// physical tag according to target endianness. Physical tag reads and
     /// product stores keep their count-sized width. Active window-bearing
     /// fields are supplied by the caller's subsequent stores; inactive enum
-    /// payload zeroing is retained.
+    /// payload is zeroed but for the window fields of a value over
+    /// `UNWRITTEN_INACTIVE_WINDOWS_ABOVE_BYTES` (`initialize_construction`).
     fn begin_construction(
         &mut self,
         result: IrValueId,

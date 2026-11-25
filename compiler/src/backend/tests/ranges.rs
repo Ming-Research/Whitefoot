@@ -1233,8 +1233,34 @@ fn write_chunk(input: &[u64], bit: u32, output: &[Option<Chunk>]) -> result: u64
     format!("{}{writer}{}", &source[..start], &source[end..])
 }
 
-/// The `--par` modules the probes compare, by name, and notes on how each
-/// was made. The first is the ordinary emission.
+/// The in-place control and its `tag-only` edit, from the ordinary emission
+/// of [`in_place_scatter_source`], or a note that the source was rejected.
+fn scatter_probe_in_place_modules(notes: &mut Vec<String>) -> Vec<(&'static str, String)> {
+    let in_place = in_place_scatter_source();
+    let inputs = [SourceInput::new("test.wf", in_place.as_bytes())];
+    match crate::compile_with_overlap(
+        &inputs,
+        crate::CompilerLimits::default(),
+        OverlapLowering::On,
+    ) {
+        Ok(module) => {
+            let module = module.into_string();
+            let (tag_only, shortened) = with_tag_only_vacant_appends(&module);
+            notes.push(format!(
+                "in-place-tag-only: {shortened} transfers shortened"
+            ));
+            vec![("in-place", module), ("in-place-tag-only", tag_only)]
+        }
+        Err(failure) => {
+            notes.push(format!("in-place source rejected: {failure}"));
+            Vec::new()
+        }
+    }
+}
+
+/// The `--par` modules the structure probe compares, by name, and notes on
+/// how each was made. The first is the ordinary emission of the commit the
+/// probe runs on, and the edits are made from it.
 fn scatter_probe_modules(notes: &mut Vec<String>) -> Vec<(&'static str, String)> {
     let source = include_bytes!("../../../../tests/programs/compute/radix_scatter.wf");
     let emitted = emit_lowered(source, OverlapLowering::On);
@@ -1255,24 +1281,59 @@ fn scatter_probe_modules(notes: &mut Vec<String>) -> Vec<(&'static str, String)>
         ("headers-only", header_clears),
         ("tag-only", tag_only),
     ];
-    let in_place = in_place_scatter_source();
-    let inputs = [SourceInput::new("test.wf", in_place.as_bytes())];
-    match crate::compile_with_overlap(
-        &inputs,
-        crate::CompilerLimits::default(),
-        OverlapLowering::On,
-    ) {
-        Ok(module) => {
-            let module = module.into_string();
-            let (tag_only, shortened) = with_tag_only_vacant_appends(&module);
-            notes.push(format!(
-                "in-place-tag-only: {shortened} transfers shortened"
-            ));
-            modules.push(("in-place", module));
-            modules.push(("in-place-tag-only", tag_only));
-        }
-        Err(failure) => notes.push(format!("in-place source rejected: {failure}")),
-    }
+    modules.extend(scatter_probe_in_place_modules(notes));
+    modules
+}
+
+/// The scatter emitted under the present construction rule, which zeroes an
+/// inactive variant's window fields at every size, through the switch that
+/// only this probe sets, alone in its test process.
+fn scatter_probe_present_emission(source: &[u8], overlap: OverlapLowering) -> String {
+    use crate::backend::emitter::places::SCATTER_PROBE_KEEPS_PRESENT_CONSTRUCTION as PRESENT;
+    PRESENT.store(true, std::sync::atomic::Ordering::SeqCst);
+    let emitted = std::panic::catch_unwind(|| emit_lowered(source, overlap));
+    PRESENT.store(false, std::sync::atomic::Ordering::SeqCst);
+    emitted.unwrap_or_else(|payload| std::panic::resume_unwind(payload))
+}
+
+/// The modules the timing probe compares, by name, and notes on how each was
+/// made: `before` (the present rule) and its `twin`, `after` (the selected
+/// lowering as this compiler emits it), `no-clear` and `headers-only` (edits
+/// of `before`), `tag-only` (an edit of `after`), the in-place control and
+/// its `tag-only` edit, and `sequential` (`before`'s rule without `--par`).
+/// Every ratio is over the first, `before`.
+fn scatter_probe_timed_modules(notes: &mut Vec<String>) -> Vec<(&'static str, String)> {
+    let source = include_bytes!("../../../../tests/programs/compute/radix_scatter.wf");
+    let before = scatter_probe_present_emission(source, OverlapLowering::On);
+    let sequential = scatter_probe_present_emission(source, OverlapLowering::Off);
+    let after = emit_lowered(source, OverlapLowering::On);
+    notes.push(format!(
+        "before --par module: {} bytes, fnv1a {:016x}",
+        before.len(),
+        scatter_probe_hash(&before)
+    ));
+    notes.push(format!(
+        "after --par module: {} bytes, fnv1a {:016x}",
+        after.len(),
+        scatter_probe_hash(&after)
+    ));
+    let (without_clears, removed) = with_vacant_clears(&before, false);
+    notes.push(format!("no-clear: {removed} clears removed from before"));
+    let (header_clears, _) = with_vacant_clears(&before, true);
+    let (tag_only, shortened) = with_tag_only_vacant_appends(&after);
+    notes.push(format!(
+        "tag-only: {shortened} transfers of after shortened"
+    ));
+    let mut modules = vec![
+        ("before", before.clone()),
+        ("twin", before),
+        ("after", after),
+        ("no-clear", without_clears),
+        ("headers-only", header_clears),
+        ("tag-only", tag_only),
+    ];
+    modules.extend(scatter_probe_in_place_modules(notes));
+    modules.push(("sequential", sequential));
     modules
 }
 
@@ -1573,25 +1634,21 @@ fn scatter_probe_interval(mut values: Vec<f64>) -> String {
 
 /// Research probe for the scatter's whole call. It always fails, so that its
 /// table reaches the test result. The images are the modules of
-/// [`scatter_probe_modules`], an identical twin of the ordinary one and the
-/// program built without `--par`; each is checked against the independent
+/// [`scatter_probe_timed_modules`]; each is checked against the independent
 /// oracle before it is timed, and one that fails is left out and named.
 /// Every pass runs each image once at each width on 1,048,593 mixed keys, in
-/// an order the pass rotates, then the ordinary image on the 8,209 keys of
-/// the program's own entry, and one serial native chain.
+/// an order the pass rotates, then `before` on the 8,209 keys of the
+/// program's own entry, and one serial native chain. It sets the
+/// construction switch while it emits `before`, so it is asked for alone.
 #[test]
 #[ignore = "research probe: times the scatter's whole call"]
 fn stable_scatter_probe_times_whole_calls() {
-    let source = include_bytes!("../../../../tests/programs/compute/radix_scatter.wf");
     let host = format!(
         "#define _POSIX_C_SOURCE 200809L\n#define WF_ORACLE_NO_MAIN\n{}\n{SCATTER_TIMING_HOST}",
         include_str!("../../../../tests/programs/compute/radix_scatter_oracle.c")
     );
     let mut report = Vec::new();
-    let mut modules = scatter_probe_modules(&mut report);
-    let twin = modules[0].1.clone();
-    modules.insert(1, ("twin", twin));
-    modules.push(("sequential", emit_lowered(source, OverlapLowering::Off)));
+    let modules = scatter_probe_timed_modules(&mut report);
     let mut images: Vec<(&str, PathBuf, PathBuf)> = Vec::new();
     for (name, module) in &modules {
         let Ok((directory, executable)) =
@@ -1623,10 +1680,8 @@ fn stable_scatter_probe_times_whole_calls() {
         }
     }
     assert!(
-        images
-            .first()
-            .is_some_and(|(name, _, _)| *name == "ordinary"),
-        "the ordinary image must build and verify:\n{}",
+        images.first().is_some_and(|(name, _, _)| *name == "before"),
+        "the before image must build and verify:\n{}",
         report.join("\n")
     );
     match scatter_probe_run(&images[0].2, 1, "native-verify", 0, 0) {
@@ -1688,7 +1743,7 @@ fn stable_scatter_probe_times_whole_calls() {
                 (Vec::new(), Vec::new())
             };
             report.push(format!(
-                "W{workers} {name}: wall/main {}; cpu/main {}; wall/cpu us by pass: {}",
+                "W{workers} {name}: wall/before {}; cpu/before {}; wall/cpu us by pass: {}",
                 scatter_probe_interval(wall_ratios),
                 scatter_probe_interval(cpu_ratios),
                 listed.join(" ")
@@ -1701,7 +1756,7 @@ fn stable_scatter_probe_times_whole_calls() {
             .map(|(wall, cpu)| format!("{}/{}", wall / 1000, cpu / 1000))
             .collect();
         report.push(format!(
-            "W{workers} main on {small} keys: wall/cpu us by pass: {}",
+            "W{workers} before on {small} keys: wall/cpu us by pass: {}",
             listed.join(" ")
         ));
     }
