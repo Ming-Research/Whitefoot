@@ -1659,7 +1659,14 @@ static int wf_windows_open_at_worker(
         /* Setting EOF also needs write-data access; append requests name EOF
          * explicitly in the file adapter. */
         desired_access |= FILE_APPEND_DATA | FILE_WRITE_DATA;
-        create_options |= FILE_SYNCHRONOUS_IO_NONALERT | FILE_NON_DIRECTORY_FILE;
+        create_options |= FILE_SYNCHRONOUS_IO_NONALERT;
+        /* FILE_CREATE without FILE_DIRECTORY_FILE always makes a data file,
+         * and a directory at the name must be the existing entry it refuses
+         * as AlreadyExists [PRE-2]; FILE_NON_DIRECTORY_FILE would refuse the
+         * directory first, as a different class. */
+        if (!create_new) {
+            create_options |= FILE_NON_DIRECTORY_FILE;
+        }
     } else if (expected_kind == WF_WINDOWS_EXPECT_REGULAR) {
         desired_access |= FILE_READ_DATA;
     } else if (expected_kind == WF_WINDOWS_EXPECT_DIRECTORY) {

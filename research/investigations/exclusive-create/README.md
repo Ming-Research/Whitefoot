@@ -27,12 +27,16 @@ entry, and what its row says about its root.
   that is never followed. This is the append open's own flag set with
   `O_EXCL` added.
 - **Windows.** `NtCreateFile` with `RootDirectory` set to the directory's
-  handle, the `FILE_CREATE` disposition, `FILE_NON_DIRECTORY_FILE` and
-  `FILE_OPEN_REPARSE_POINT`. An existing entry, a directory or a reparse point
-  included, is refused with `STATUS_OBJECT_NAME_COLLISION`, which converts to
-  `ERROR_ALREADY_EXISTS` (183). `FILE_OPEN_REPARSE_POINT` keeps a link at the
-  name from being followed, as every other name's open does. Without it, a
-  dangling link would be followed and its target created.
+  handle, the `FILE_CREATE` disposition and `FILE_OPEN_REPARSE_POINT`. An
+  existing entry, a directory or a reparse point included, is refused with
+  `STATUS_OBJECT_NAME_COLLISION`, which converts to `ERROR_ALREADY_EXISTS`
+  (183). `FILE_OPEN_REPARSE_POINT` keeps a link at the name from being
+  followed, as every other name's open does. Without it, a dangling link would
+  be followed and its target created. The create leaves out
+  `FILE_NON_DIRECTORY_FILE`, which the append open passes: `FILE_CREATE`
+  without `FILE_DIRECTORY_FILE` always makes a data file, and with that option
+  the first Windows run of the runtime probe found an existing directory at the
+  name refused as some class other than `AlreadyExists`.
 - **io_uring.** `IORING_OP_OPENAT` takes the same flags. The runtime passes
   an open's flags to the ring, the POSIX helper and the Windows file adapter
   unchanged.
@@ -145,4 +149,4 @@ name.
 ## Status
 
 Implemented on the work branch of item #180; the root effect follows the
-owner's answer to approve-exclusive-create.
+recommended option of approve-exclusive-create, which the work went on by.
