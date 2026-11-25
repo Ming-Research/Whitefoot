@@ -1510,6 +1510,37 @@ and `sys` before `== END cpu:`; the wrapper without the `cygwin` host name
 (1dd59da81) fails at the grep for the Windows budget; and the wrapper without
 the up-front creation of the record fails at the new `test -e` on the record.
 
+**The Windows job under four probes (2026-11-25).** The REST quota of the
+account was spent, so no manual run was possible; four temporary workflows,
+each started by the push of its commit at 19:37 UTC, ran a copy of the
+`completion-windows` job on `windows-latest`. The copy is the text of
+`io-hosts.yml` from `completion-windows:` to the job's last step except the two
+lines that tie it to the scope job (`needs` and `if`), with one more last step
+that asserts what the record of the timing script holds. The commits are
+children of a57eb3342 and are not on the branch. Job and step results were read
+through GraphQL, where each job's annotations hold the asserting step's notice:
+
+| Probe | Commit, run | Steps that failed | The record, as the asserting step read it |
+|---|---|---|---|
+| none | c10caa455, 45686947337 | none | exists, no `ENFORCED` entry |
+| `windows-test-images` at 1 s | 6aadab2d6, 45686948134 | the verdict step | exactly one entry: `ENFORCED: windows-test-images took 6.7 s, over its 1 s windows budget` |
+| every `windows-*` row at 0 s | ce6359c6b, 45687066065 | the verdict step | 16 entries, whose labels are the 16 table rows |
+| the job's default shell is plain `bash` | 268af7a77, 45686948835 | the verdict step | the file does not exist |
+
+The labels of the 0 s run are `windows-adapter-probe`, `windows-bounded-send`,
+`windows-bridge-init`, `windows-clang-identity`, `windows-corpus`,
+`windows-corpus-build`, `windows-default-route`, `windows-driver-links`,
+`windows-host`, `windows-image-imports`, `windows-llvm-mingw`,
+`windows-ordinary-values`, `windows-sched-cpu-policy`, `windows-sched-deque`,
+`windows-sched-startup` and `windows-test-images`: every timed step reached the
+wrapper under its own id, hyphens included, and its budget row was found. The
+plain-shell run shows that the new check in the verdict step, and not the timing
+script, ends a job whose steps were not timed. In the run without a probe,
+GitHub's step records give, in whole seconds: building the program cases 179 s
+(budget 400 s), running them 31 s (65 s), the driver links 12 s (35 s) and the
+test images 7 s (15 s); the 0 s run took 253, 42, 20 and 10 s. The logs of these
+runs, whose `== START` and `== END` lines name each label, were not read.
+
 ## Daily loop
 
 One edit, measured in the local container with the new defaults: an unused
