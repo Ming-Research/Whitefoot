@@ -1,0 +1,152 @@
+# Temporary: which stack probes each clang puts in the runtime's C frames over
+# a page, under each candidate argument, on the pushes the wf-agents engine
+# makes of this work's commits (the `wf-try/work-208-26e0fade/` refs), and the
+# runtime frame test on macOS. Removed before the full check (AGENTS.md,
+# "Checks").
+name: tmp-runtime-probes
+
+on:
+  push:
+    branches: ['wf-try/work-208-26e0fade/**']
+
+permissions:
+  contents: read
+
+jobs:
+  probes:
+    name: probes (${{ matrix.compiler }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - compiler: linux-llvm-22
+            os: ubuntu-24.04
+          - compiler: apple
+            os: macos-15
+          - compiler: upstream-22.1.8
+            os: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the compiler
+        env:
+          COMPILER: ${{ matrix.compiler }}
+        run: |
+          set -euo pipefail
+          case "$COMPILER" in
+            linux-llvm-22)
+              curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+              version=$(tr -d '[:space:]' < .github/llvm-major)
+              sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+              echo "CLANG=/usr/bin/clang-$version" >> "$GITHUB_ENV"
+              echo "SYSROOT=" >> "$GITHUB_ENV"
+              ;;
+            apple)
+              echo "CLANG=/usr/bin/clang" >> "$GITHUB_ENV"
+              echo "SYSROOT=" >> "$GITHUB_ENV"
+              ;;
+            upstream-22.1.8)
+              asset=$(python3 -c 'import json; print(json.load(open(".github/toolchain/llvm-assets.json"))["platforms"]["macos-arm64"]["asset"])')
+              digest=$(python3 -c 'import json; print(json.load(open(".github/toolchain/llvm-assets.json"))["platforms"]["macos-arm64"]["sha256"])')
+              tag=$(python3 -c 'import json; print(json.load(open(".github/toolchain/llvm-assets.json"))["llvm_tag"])')
+              curl --fail --location --retry 3 --max-time 600 \
+                "https://github.com/llvm/llvm-project/releases/download/$tag/$asset" -o "$RUNNER_TEMP/$asset"
+              echo "$digest  $RUNNER_TEMP/$asset" | shasum -a 256 -c -
+              mkdir -p "$RUNNER_TEMP/llvm"
+              tar -xJf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP/llvm"
+              root=$(echo "$RUNNER_TEMP"/llvm/*)
+              echo "CLANG=$root/bin/clang" >> "$GITHUB_ENV"
+              echo "SYSROOT=$(/usr/bin/xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
+              ;;
+          esac
+
+      # Each variant compiles every runtime unit the driver compiles on this
+      # host, with the driver's arguments, and lists each frame over a page or
+      # of dynamic size with the stack lines of its body and the probe
+      # attribute clang gives its definition.
+      - name: Frames and probes under each variant
+        env:
+          COMPILER: ${{ matrix.compiler }}
+        run: |
+          set -uo pipefail
+          "$CLANG" --version
+          src=compiler/src/backend
+          units="wf_floor.c ordinary_values.c heap.c sched/core.c sched/prim_host.c sched/entry.c
+            completion/runtime.c completion/wait_host.c completion/file_adapter.c completion/file_posix.c
+            completion/bridge.c completion/snapshot_export.c completion/fork_capsule.c
+            completion/stop_signals.c completion/linux_io_uring.c keyed_table.c"
+          sysroot=()
+          if [ -n "$SYSROOT" ]; then sysroot=(-isysroot "$SYSROOT"); fi
+          probe() {
+            label="$1"; shift
+            out="$RUNNER_TEMP/probe/$label"
+            rm -rf "$out"; mkdir -p "$out"
+            echo "================ $COMPILER / $label: $* ================"
+            echo "--- driver line for completion/file_posix.c:"
+            "$CLANG" "${sysroot[@]}" -std=c11 -pthread -I "$src" -I "$src/completion" -O2 -falign-functions=64 "$@" \
+              -S -o /dev/null "$src/completion/file_posix.c" -### 2>&1 | tr ' ' '\n' | grep -E 'stack|probe|chkstk' | sort -u
+            echo "--- probe attributes of wf_file_wait_readiness:"
+            "$CLANG" "${sysroot[@]}" -std=c11 -pthread -I "$src" -I "$src/completion" -O2 -falign-functions=64 "$@" \
+              -S -emit-llvm -o "$out/file_posix.ll" "$src/completion/file_posix.c" 2>&1 | head -5
+            group=$(grep -E '^define .*@wf_file_wait_readiness\(' "$out/file_posix.ll" | grep -oE '#[0-9]+' | head -1)
+            grep -E "^attributes $group " "$out/file_posix.ll" | grep -oE '"(probe-stack|stack-probe-size)"="[^"]*"' || echo "(none)"
+            for unit in $units; do
+              extra=()
+              case "$unit" in
+                completion/snapshot_export.c|completion/fork_capsule.c) extra=(-fno-builtin -fno-stack-protector -fno-sanitize=all) ;;
+              esac
+              base="$out/$(echo "${unit%.c}" | tr / _)"
+              if ! "$CLANG" "${sysroot[@]}" -std=c11 -pthread -I "$src" -I "$src/completion" -O2 -falign-functions=64 \
+                  "${extra[@]}" "$@" -S -fstack-usage -o "$base.s" "$src/$unit" 2> "$base.err"; then
+                echo "!!! $unit failed:"; cat "$base.err"; continue
+              fi
+              if [ -s "$base.err" ]; then echo "--- $unit warnings:"; head -3 "$base.err"; fi
+              awk -F '\t' '$2 > 4096 || $3 != "static"' "$base.su" | while IFS="$(printf '\t')" read -r where bytes kind; do
+                name="${where##*:}"
+                echo "### $unit $name $bytes $kind"
+                awk -v a="$name:" -v b="_$name:" '
+                  $1 == a || $1 == b { inside = 1 }
+                  inside && /\.cfi_endproc/ { exit }
+                  inside && /sp|chkstk|xzr/ { print; if (++shown == 30) exit }' "$base.s"
+              done
+            done
+            "$CLANG" "${sysroot[@]}" -O2 -falign-functions=64 -Wno-override-module -x ir "$@" -S -fstack-usage \
+              -o "$out/ordinary_values_ir.s" "$src/ordinary_values.ll" 2> /dev/null \
+              && awk -F '\t' '$2 > 4096 || $3 != "static" { print "### ordinary_values.ll " $0 }' "$out/ordinary_values_ir.su"
+            return 0
+          }
+          probe none
+          probe clash-driver -fstack-clash-protection
+          if [ "$COMPILER" != linux-llvm-22 ]; then
+            probe clash-cc1 -Xclang -fstack-clash-protection
+            probe stack-check -fstack-check
+            probe no-stack-check -fno-stack-check
+            probe no-stack-check-clash-cc1 -fno-stack-check -Xclang -fstack-clash-protection
+            probe clash-cc1-size -Xclang -fstack-clash-protection -mstack-probe-size=4096
+          fi
+
+  # The runtime frame test itself on macOS, with Apple's clang, the gate's
+  # macOS compiler: whether it reads Darwin assembly and what it reports.
+  frame-test:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      # From compiler/, so that rustup takes the toolchain its
+      # rust-toolchain.toml names.
+      - name: Set up Rust
+        working-directory: compiler
+        run: |
+          /usr/bin/clang --version
+          cargo --version
+      - name: Fetch locked compiler dependencies
+        working-directory: compiler
+        run: cargo fetch --locked
+      - name: Runtime frame test
+        working-directory: compiler
+        run: |
+          perl ../.github/run-check.pl tmp/runtime-frame-test \
+            cargo test --profile gate --locked --offline \
+            --bin whitefootc -- --exact tests::every_runtime_c_frame_over_a_page_is_probed --nocapture

@@ -1297,6 +1297,8 @@ fn unit_arguments(command: &mut Command, directory: &Path, sanitizer: Option<San
         .arg("-I")
         .arg(directory.join("completion"))
         .args(sanitizer_arguments(sanitizer));
+    #[cfg(target_os = "linux")]
+    command.arg("-fstack-clash-protection");
 }
 
 /// The arguments a sanitized build adds to every compile and its link.
