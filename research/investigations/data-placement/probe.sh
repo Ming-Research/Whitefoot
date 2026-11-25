@@ -2,16 +2,21 @@
 # The data-placement experiment's measurements on one host
 # (research/investigations/data-placement/README.md, "Method").
 #
-# usage: probe.sh IMAGES RESULTS
+# usage: probe.sh IMAGES RESULTS [moves|packed]
 #
 # IMAGES holds one directory of the five regression images per revision, each
 # linked with shift.o: b (the stop-signals merge base), s (the receiver thread
 # started before the entry), h (this branch) and hd (h with its static data
 # moved by a pad), and the alias program. A missing revision is skipped.
 # RESULTS must not exist. No measurement's failure stops the others; every
-# campaign's exit status is recorded in RESULTS/statuses.txt.
+# campaign's exit status is recorded in RESULTS/statuses.txt. `moves`, the
+# default, is the first round: each image against itself under a move, and the
+# traced launches. `packed` is the second: the comparison of two revisions
+# with every thread on one heap in both arms.
 set -uo pipefail
-[[ $# == 2 ]] || { echo 'usage: probe.sh IMAGES RESULTS' >&2; exit 2; }
+[[ $# == 2 || $# == 3 ]] || { echo 'usage: probe.sh IMAGES RESULTS [moves|packed]' >&2; exit 2; }
+series=${3:-moves}
+[[ $series == moves || $series == packed ]] || { echo 'unknown series' >&2; exit 2; }
 here=$(cd -- "$(dirname -- "$0")" && pwd)
 root=$(cd -- "$here/../../.." && pwd)
 images=$(cd -- "$1" && pwd)
@@ -37,10 +42,11 @@ arm() {
     done
 }
 
-# campaign NAME BASELINE CANDIDATE: one compare.sh campaign, its verdict shown.
+# campaign NAME BASELINE CANDIDATE [slow]: one compare.sh campaign, its verdict
+# shown.
 campaign() {
     local status=0 start=$SECONDS
-    bash "$root/tests/performance/compare.sh" "$2" "$3" "$results/$1" \
+    bash "$root/tests/performance/compare.sh" "$2" "$3" "$results/$1" "${@:4}" \
         > "$results/$1.out" 2>&1 || status=$?
     echo "== $1: exit $status, $((SECONDS - start)) s" | tee -a "$results/statuses.txt"
     if [[ -f $results/$1/verdict.txt ]]; then
@@ -77,78 +83,106 @@ trace() {
 } > "$results/host.txt" 2>&1
 cat "$results/host.txt"
 
-# The two arrays' distance alone, on this processor. The first series keeps the
-# low address bits the traced regression images had; the second starts from an
-# address whose bits 12 to 27 are zero, so the distance is the bit difference.
-if [[ -x $images/alias ]]; then
-    {
-        echo '# low distance fastest_ns median_ns'
-        real=600009fff000
-        for distance in 2001000 7fff000 8000000 8001000 7ffe000 61ff000 6bff000 7dff000 \
-            3fff000 4000000 2200000 a001000 10000000 40000000 47a00000 47c00000 46ff0000; do
-            "$images/alias" "$real" "$distance"
-        done
-        zero=600000000000
-        for pattern in 0 1000 2000 100000 8000000 8001000 4002000 2004000 108000 210000 \
-            420000 840000 1080000; do
-            "$images/alias" "$zero" "$(printf '%x' $((0x10000000 + 0x$pattern)))"
-        done
-    } > "$results/alias.txt" 2>&1
-    cat "$results/alias.txt"
-fi
+if [[ $series == moves ]]; then
+    # The two arrays' distance alone, on this processor. The first series keeps the
+    # low address bits the traced regression images had; the second starts from an
+    # address whose bits 12 to 27 are zero, so the distance is the bit difference.
+    if [[ -x $images/alias ]]; then
+        {
+            echo '# low distance fastest_ns median_ns'
+            real=600009fff000
+            for distance in 2001000 7fff000 8000000 8001000 7ffe000 61ff000 6bff000 7dff000 \
+                3fff000 4000000 2200000 a001000 10000000 40000000 47a00000 47c00000 46ff0000; do
+                "$images/alias" "$real" "$distance"
+            done
+            zero=600000000000
+            for pattern in 0 1000 2000 100000 8000000 8001000 4002000 2004000 108000 210000 \
+                420000 840000 1080000; do
+                "$images/alias" "$zero" "$(printf '%x' $((0x10000000 + 0x$pattern)))"
+            done
+        } > "$results/alias.txt" 2>&1
+        cat "$results/alias.txt"
+    fi
 
-# The static-data pad must move data symbols and no code symbol.
-if have h && have hd; then
-    for kernel in "${kernels[@]}"; do
-        symbols() { nm "$images/$1/$kernel" | awk -v types="$2" 'NF == 3 && $2 ~ types { print $3, $1 }' | sort; }
-        code=$(comm -3 <(symbols h '^[Tt]$') <(symbols hd '^[Tt]$') | wc -l)
-        data=$(comm -3 <(symbols h '^[DdBb]$') <(symbols hd '^[DdBb]$') | wc -l)
-        echo "$kernel: code symbol lines that differ: $code; data symbol lines that differ: $data"
-    done > "$results/datapad.txt" 2>&1
-    cat "$results/datapad.txt"
-fi
+    # The static-data pad must move data symbols and no code symbol.
+    if have h && have hd; then
+        for kernel in "${kernels[@]}"; do
+            symbols() { nm "$images/$1/$kernel" | awk -v types="$2" 'NF == 3 && $2 ~ types { print $3, $1 }' | sort; }
+            code=$(comm -3 <(symbols h '^[Tt]$') <(symbols hd '^[Tt]$') | wc -l)
+            data=$(comm -3 <(symbols h '^[DdBb]$') <(symbols hd '^[DdBb]$') | wc -l)
+            echo "$kernel: code symbol lines that differ: $code; data symbol lines that differ: $data"
+        done > "$results/datapad.txt" 2>&1
+        cat "$results/datapad.txt"
+    fi
 
-for revision in b s h; do
-    have "$revision" || continue
-    arm "$revision-thread" "$revision" env WF_DATA_SHIFT=thread
-    arm "$revision-map8" "$revision" env WF_DATA_SHIFT=map:8392704
-    arm "$revision-arena1" "$revision" env GLIBC_TUNABLES=glibc.malloc.arena_max=1
-done
-if have h; then
-    arm h-touch h env WF_DATA_SHIFT=touch
-    arm h-map1 h env WF_DATA_SHIFT=map:1052672
-    arm h-map34 h env WF_DATA_SHIFT=map:35651584
-fi
-
-# Campaigns, the ones the criterion reads first.
-have h && campaign null-h "$images/h" "$images/h"
-have b && have s && campaign bs "$images/b" "$images/s"
-for move in thread arena1 map8; do
     for revision in b s h; do
-        have "$revision" && campaign "$revision-$move" "$images/$revision" "$results/arms/$revision-$move"
+        have "$revision" || continue
+        arm "$revision-thread" "$revision" env WF_DATA_SHIFT=thread
+        arm "$revision-map8" "$revision" env WF_DATA_SHIFT=map:8392704
+        arm "$revision-arena1" "$revision" env GLIBC_TUNABLES=glibc.malloc.arena_max=1
     done
-done
-if have h; then
-    for move in touch map1 map34; do
-        campaign "h-$move" "$images/h" "$results/arms/h-$move"
+    if have h; then
+        arm h-touch h env WF_DATA_SHIFT=touch
+        arm h-map1 h env WF_DATA_SHIFT=map:1052672
+        arm h-map34 h env WF_DATA_SHIFT=map:35651584
+    fi
+
+    # Campaigns, the ones the criterion reads first.
+    have h && campaign null-h "$images/h" "$images/h"
+    have b && have s && campaign bs "$images/b" "$images/s"
+    for move in thread arena1 map8; do
+        for revision in b s h; do
+            have "$revision" && campaign "$revision-$move" "$images/$revision" "$results/arms/$revision-$move"
+        done
     done
-    have hd && campaign h-datapad "$images/h" "$images/hd"
+    if have h; then
+        for move in touch map1 map34; do
+            campaign "h-$move" "$images/h" "$results/arms/h-$move"
+        done
+        have hd && campaign h-datapad "$images/h" "$images/hd"
+    fi
+
+    # Traced launches: which mappings each launch got, beside its time.
+    for revision in b s h; do
+        have "$revision" || continue
+        trace "$revision-none" 24 "$revision"
+        trace "$revision-thread" 16 "$revision" env WF_DATA_SHIFT=thread
+        trace "$revision-arena1" 6 "$revision" env GLIBC_TUNABLES=glibc.malloc.arena_max=1
+        # Without address randomization a launch's mappings are fixed, and an idle
+        # mapping of k times 2 MiB ahead of them moves the entry stack by that much:
+        # 32 steps cover every position within the allocator's 64 MiB heap alignment.
+        for ((k = 0; k < 32; k++)); do
+            trace "$revision-fixed-$k" 1 "$revision" \
+                env WF_DATA_SHIFT=map:$((k * 2097152)) setarch "$machine" -R
+        done
+    done
 fi
 
-# Traced launches: which mappings each launch got, beside its time.
-for revision in b s h; do
-    have "$revision" || continue
-    trace "$revision-none" 24 "$revision"
-    trace "$revision-thread" 16 "$revision" env WF_DATA_SHIFT=thread
-    trace "$revision-arena1" 6 "$revision" env GLIBC_TUNABLES=glibc.malloc.arena_max=1
-    # Without address randomization a launch's mappings are fixed, and an idle
-    # mapping of k times 2 MiB ahead of them moves the entry stack by that much:
-    # 32 steps cover every position within the allocator's 64 MiB heap alignment.
-    for ((k = 0; k < 32; k++)); do
-        trace "$revision-fixed-$k" 1 "$revision" \
-            env WF_DATA_SHIFT=map:$((k * 2097152)) setarch "$machine" -R
+if [[ $series == packed ]]; then
+    # Every thread on one heap: large blocks are mapped one under the other
+    # below the entry stack, whatever was mapped before the entry.
+    for revision in b s h; do
+        have "$revision" && arm "$revision-packed" "$revision" env GLIBC_TUNABLES=glibc.malloc.arena_max=1
     done
-done
+    have h && campaign null-h "$images/h" "$images/h"
+    if have b && have s; then
+        # The incident's comparison as it ran, and with both arms packed, twice
+        # each to see how far one host's two readings agree.
+        campaign bs "$images/b" "$images/s"
+        campaign bs-packed "$results/arms/b-packed" "$results/arms/s-packed"
+        campaign bs-again "$images/b" "$images/s"
+        campaign bs-packed-again "$results/arms/b-packed" "$results/arms/s-packed"
+    fi
+    # Each image against itself packed, the first round's reading once more.
+    have s && campaign s-arena1 "$images/s" "$results/arms/s-packed"
+    have b && campaign b-arena1 "$images/b" "$results/arms/b-packed"
+    if have h; then
+        # The packed images against themselves, and with the instrument's own
+        # slowdown in the candidate arm, which must still fail every kernel.
+        campaign hh-packed "$results/arms/h-packed" "$results/arms/h-packed"
+        campaign hh-packed-slow "$results/arms/h-packed" "$results/arms/h-packed" slow
+    fi
+fi
 
 python3 -B "$here/reduce.py" "$results" > "$results/summary.txt" 2>&1 \
     || echo 'reduce.py failed' | tee -a "$results/statuses.txt"
