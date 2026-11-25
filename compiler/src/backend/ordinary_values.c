@@ -1976,10 +1976,10 @@ void wf__body_exit_share(wf_value *result, const wf_value *capability) {
  * contexts exit at once, the host keeps the status of the first. */
 int wf__body_exit_now_start(uint8_t *result, const wf_value *capability,
                             const wf_value *status, wf_host_operation *operation) {
+    uint8_t code = wf__ordinary_exit_code(status);
     (void)result;
     (void)capability;
     (void)operation;
-    uint8_t code = wf__ordinary_exit_code(status);
 #if defined(_WIN32)
     (void)TerminateProcess(GetCurrentProcess(), code);
     for (;;) {
