@@ -3,24 +3,33 @@
 beside this file): the Halo Lua interpreter running fib, and the wasm
 interpreter v2h running CoreMark.
 
-    interp.py build --base-wfc WFC --candidate-wfc WFC --halo DIR --silverfir DIR --out DIR
-                    [--v2h-generator GEN]
+    interp.py build --base-wfc WFC --candidate-wfc WFC --silverfir DIR --out DIR
+                    [--workloads fib,coremark] [--halo DIR] [--iterations 2000]
+                    [--base-generator GEN] [--candidate-generator GEN]
     interp.py time --out DIR --cpu N [--min-rounds 10] [--max-rounds 30]
-    interp.py perf --out DIR --cpu N [--rounds 5]
-    interp.py reduce --out DIR [--floor FLOOR]
+                   [--workloads W,...] [--trial]
+    interp.py perf --out DIR --cpu N [--rounds 5] [--workloads W,...]
+    interp.py reduce --out DIR [--floor FLOOR] [--workloads W,...]
+                     [--residual-limit SECONDS]
     interp.py self-test
 
 `build` writes DIR/images: for each interpreter the base and candidate images
-and the twin, a byte copy of the base image. `time` runs interleaved rounds
-and writes DIR/time.tsv; `perf` runs `perf stat` rounds and writes
+and the twin, a byte copy of the base image. The two arms may be built by the
+same compiler from two generators (two sources of the wasm interpreter), or by
+two compilers from one generator. `time` runs interleaved rounds and writes
+DIR/time.tsv: each run's wall time and the user and sys CPU time the kernel
+accounted to its processes. `perf` runs `perf stat` rounds and writes
 DIR/perf.json, the counts of each run with its wall time, counting window, CPU
 time and page faults. `reduce` writes DIR/summary.txt: the timed verdicts by the
-hash-map comparison's rule (its functions are used as they are) and the
-counter tables. FLOOR is the recorded noise floor of each workload, as
-"workload=spread" items separated by commas, and a workload whose twin spread
-is above its floor is not counted. Exit status: 0 when the data are complete
-and consistent, whatever the verdicts; 1 for missing, malformed or
-inconsistent data or floor; 2 for usage.
+hash-map comparison's rule (its functions are used as they are), the wall
+time's residual over user+sys CPU time, and the counter tables. FLOOR is the
+recorded noise floor of each workload, as "workload=spread" items separated by
+commas, and a workload whose twin spread is above its floor is not counted.
+A residual limit makes a workload whose median residual is above it invalid
+data. `--trial` lets `time` run 1 to 5 rounds, which judge nothing. Exit status:
+0 when the data are complete and consistent, whatever the verdicts; 1 for
+missing, malformed or inconsistent data or floor, or a residual above the
+limit; 2 for usage.
 """
 import argparse
 import collections
@@ -36,10 +45,12 @@ import random
 import re
 import resource
 import shutil
+import signal
 import statistics
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from unittest import mock
 
@@ -50,18 +61,25 @@ import compare  # noqa: E402  the hash-map comparison's statistics and rule
 Invalid = compare.Invalid
 
 ARMS = compare.ARMS
-WORKLOADS = ["fib", "coremark"]
+# The workloads of a run, selected by --workloads: the functions below loop
+# over WORKLOADS, which select_workloads changes in place.
+ALL_WORKLOADS = ["fib", "coremark"]
+WORKLOADS = list(ALL_WORKLOADS)
 # Halo's fib kernel at N = FIB_N prints fib(FIB_N); CoreMark at COREMARK_ITERATIONS
-# iterations of the 2K performance run.
+# iterations of the 2K performance run, unless `build` was given another count
+# (inputs/coremark-iterations).
 FIB_N = 32
 FIB_VALUE = "2178309"
 COREMARK_ITERATIONS = 2000
 COREMARK_ARGUMENTS = ["0x0", "0x0", "0x66"]
-# The component CRCs of the 2K performance run, and the final CRC the
-# match-dispatch investigation recorded for its v2h interpreter at 2000
-# iterations (research/experiments/match-dispatch/RESULTS.md).
+# The component CRCs of the 2K performance run, which hold at every iteration
+# count, and the final CRC the match-dispatch investigation recorded for its
+# v2h interpreter at 2000 iterations (research/experiments/match-dispatch/
+# RESULTS.md) and at 20000. At another count no independent final CRC is
+# known: every launch must agree with the first one of the run (FINAL_SEEN).
 CRC = {"crclist": "0xe714", "crcmatrix": "0x1fd7", "crcstate": "0x8e3a"}
-CRC_FINAL = "0x4983"
+CRC_FINAL = {2000: "0x4983", 20000: "0x382f"}
+FINAL_SEEN = {}
 # Halo's benchmark graph moved from research/ to tests/ between the revisions
 # the experiments pinned; the first that exists is used.
 HALO_GRAPHS = ["tests/halo-bench/modules.wfg", "research/experiments/halo-bench/modules.wfg"]
@@ -69,7 +87,7 @@ HALO_FIB = "research/experiments/halo-bench/kernels/fib.lua"
 COREMARK_MODULE = "benchmarks/wasi/coremark/coremark.wasm"
 V2H_GENERATOR = os.path.join(HERE, "..", "match-dispatch", "wasm", "gen.py")
 RUN_BOUND = 600
-RAW_COLUMNS = ["round", "position", "workload", "arm", "ns"]
+RAW_COLUMNS = ["round", "position", "workload", "arm", "ns", "user_ns", "sys_ns"]
 # What a perf run records beside its counts (perf.json "usage"): the launch's
 # wall time, perf's counting window, the user and sys CPU time of every process
 # of the launch, and its page faults.
@@ -129,40 +147,75 @@ def first_existing(root, candidates):
     raise Invalid(f"none of {candidates} exists under {root}")
 
 
+def select_workloads(text):
+    """Sets WORKLOADS to the comma-separated names in TEXT, in the order of
+    ALL_WORKLOADS."""
+    names = [name.strip() for name in text.split(",") if name.strip()]
+    unknown = [name for name in names if name not in ALL_WORKLOADS]
+    if not names or unknown or len(set(names)) != len(names):
+        raise Invalid(f"workloads {text!r}: expected a list without repeats of {', '.join(ALL_WORKLOADS)}")
+    WORKLOADS[:] = [name for name in ALL_WORKLOADS if name in names]
+
+
+def coremark_iterations(out):
+    """The iteration count `build` wrote for DIR, or the default for a
+    directory laid out by hand (the self-test's)."""
+    path = os.path.join(os.path.abspath(out), "inputs", "coremark-iterations")
+    if not os.path.exists(path):
+        return COREMARK_ITERATIONS
+    with open(path) as f:
+        return int(f.read())
+
+
 def build(args):
     images = os.path.join(args.out, "images")
     inputs = os.path.join(args.out, "inputs")
     os.makedirs(images, exist_ok=True)
     os.makedirs(inputs, exist_ok=True)
-    halo = os.path.abspath(args.halo)
-    graph = first_existing(halo, HALO_GRAPHS)
-    with open(os.path.join(halo, HALO_FIB)) as f:
-        fib = fib_source(f.read())
-    with open(os.path.join(inputs, "fib.lua"), "w") as f:
-        f.write(fib)
-    module = os.path.join(os.path.abspath(args.silverfir), COREMARK_MODULE)
-    if not os.path.exists(module):
-        raise Invalid(f"{module} does not exist")
-    shutil.copyfile(module, os.path.join(inputs, "coremark.wasm"))
-    v2h = os.path.join(inputs, "v2h.wf")
-    run([sys.executable, "-B", args.v2h_generator, v2h])
-    for arm, wfc in (("base", args.base_wfc), ("candidate", args.candidate_wfc)):
+    kinds = []
+    if "fib" in WORKLOADS:
+        if not args.halo:
+            raise Invalid("the fib workload needs --halo")
+        halo = os.path.abspath(args.halo)
+        graph = first_existing(halo, HALO_GRAPHS)
+        with open(os.path.join(halo, HALO_FIB)) as f:
+            fib = fib_source(f.read())
+        with open(os.path.join(inputs, "fib.lua"), "w") as f:
+            f.write(fib)
+        kinds.append("halo")
+    if "coremark" in WORKLOADS:
+        module = os.path.join(os.path.abspath(args.silverfir), COREMARK_MODULE)
+        if not os.path.exists(module):
+            raise Invalid(f"{module} does not exist")
+        shutil.copyfile(module, os.path.join(inputs, "coremark.wasm"))
+        with open(os.path.join(inputs, "coremark-iterations"), "w") as f:
+            f.write(str(args.iterations))
+        kinds.append("v2h")
+    for arm, wfc, generator in (("base", args.base_wfc, args.base_generator),
+                                ("candidate", args.candidate_wfc, args.candidate_generator)):
         wfc = os.path.abspath(wfc)
-        # --full-lto forbids --cache, so Halo is built uncached; v2h gets a
-        # fresh cache of its own.
-        run([wfc, "--graph", graph, "--entry", "bench", "--full-lto", "-o", os.path.join(images, f"halo-{arm}")],
-            cwd=halo)
-        run([wfc, v2h, "--cache", fresh(os.path.join(args.out, "caches", arm)), "-o",
-             os.path.join(images, f"v2h-{arm}")])
-    for kind in ("halo", "v2h"):
+        if "halo" in kinds:
+            # --full-lto forbids --cache, so Halo is built uncached.
+            run([wfc, "--graph", graph, "--entry", "bench", "--full-lto", "-o",
+                 os.path.join(images, f"halo-{arm}")], cwd=halo)
+        if "v2h" in kinds:
+            # Each arm's interpreter source stays in inputs: the sampler maps
+            # a handler's symbol to its instruction by that arm's source.
+            v2h = os.path.join(inputs, f"v2h-{arm}.wf")
+            run([sys.executable, "-B", generator, v2h])
+            run([wfc, v2h, "--cache", fresh(os.path.join(args.out, "caches", arm)), "-o",
+                 os.path.join(images, f"v2h-{arm}")])
+    for kind in kinds:
         shutil.copyfile(os.path.join(images, f"{kind}-base"), os.path.join(images, f"{kind}-twin"))
     for name in os.listdir(images):
         os.chmod(os.path.join(images, name), 0o755)
     digests = {name: sha256(os.path.join(images, name)) for name in sorted(os.listdir(images))}
     with open(os.path.join(args.out, "manifest.txt"), "a") as f:
-        f.write(f"halo graph {graph}\n")
-        f.write(f"fib {FIB_N}\ncoremark iterations {COREMARK_ITERATIONS}\n")
-        for kind in ("halo", "v2h"):
+        if "halo" in kinds:
+            f.write(f"halo graph {graph}\nfib {FIB_N}\n")
+        if "v2h" in kinds:
+            f.write(f"coremark iterations {args.iterations}\n")
+        for kind in kinds:
             if digests[f"{kind}-candidate"] == digests[f"{kind}-base"]:
                 f.write(f"{kind} images identical\n")
         for name, digest in digests.items():
@@ -184,11 +237,13 @@ def workload_command(out, workload, arm):
     if workload == "fib":
         return [os.path.join(images, f"halo-{arm}")], os.path.join(inputs, "fib.lua")
     return ([os.path.join(images, f"v2h-{arm}"), "coremark.wasm"]
-            + COREMARK_ARGUMENTS + [str(COREMARK_ITERATIONS)], None)
+            + COREMARK_ARGUMENTS + [str(coremark_iterations(out))], None)
 
 
-def validate(workload, text):
-    """Checks a run's output against the workload's independent definition."""
+def validate(workload, text, iterations=COREMARK_ITERATIONS, seen=None):
+    """Checks a run's output against the workload's independent definition.
+    At an iteration count without a known final CRC, SEEN (a dict) holds the
+    final CRC of the first launch, which every later launch must equal."""
     if workload == "fib":
         if text.strip() != FIB_VALUE:
             raise Invalid(f"fib({FIB_N}) printed {text.strip()!r}, expected {FIB_VALUE}")
@@ -200,8 +255,16 @@ def validate(workload, text):
     wrong = {k: got[k] for k, v in CRC.items() if got[k].lower() != v}
     if wrong:
         raise Invalid(f"CoreMark: wrong component CRCs {wrong}")
-    if got["crcfinal"].lower() != CRC_FINAL:
-        raise Invalid(f"CoreMark: final CRC {got['crcfinal']}, expected {CRC_FINAL} at {COREMARK_ITERATIONS} iterations")
+    final = got["crcfinal"].lower()
+    if iterations in CRC_FINAL:
+        if final != CRC_FINAL[iterations]:
+            raise Invalid(f"CoreMark: final CRC {got['crcfinal']}, expected {CRC_FINAL[iterations]} "
+                          f"at {iterations} iterations")
+    elif seen is not None:
+        first = seen.setdefault(iterations, final)
+        if final != first:
+            raise Invalid(f"CoreMark: final CRC {got['crcfinal']} differs from the run's first, {first}, "
+                          f"at {iterations} iterations (no independent value is known at that count)")
 
 
 # One run of a workload: its wall time, its output and the resource usage of
@@ -220,27 +283,59 @@ def usage_between(before, after):
             "major_faults": after.ru_majflt - before.ru_majflt}
 
 
-def launch(out, workload, arm, cpu, wrapper=()):
-    """One pinned run. A failed process or an output that does not validate is
-    invalid data."""
-    argv, stdin_path = workload_command(out, workload, arm)
-    command = (["taskset", "-c", str(cpu), "timeout", "--foreground", "--signal=TERM", "--kill-after=10s",
-                f"{RUN_BOUND}s"] + list(wrapper) + argv)
+def spawn(command, cwd, stdin_path=None, env=None):
+    """Runs COMMAND to its end and returns (wall_ns, returncode, stdout,
+    stderr, usage, expired). The wall time is from just before the spawn to the
+    return of the blocking wait; the usage is that of every child process
+    waited for in between (see usage_between). Nothing in the timed span
+    polls: the output is read until its end and the wait is a plain waitpid. The
+    run's bound is a timer thread that kills the process group, outside the
+    span's path; a helper that waited for the child in steps would put the
+    exit's time on the grid of its own poll interval."""
     stdin = open(stdin_path, "rb") if stdin_path else None
+    expired = threading.Event()
     try:
         before = resource.getrusage(resource.RUSAGE_CHILDREN)
         start = time.perf_counter_ns()
-        done = subprocess.run(command, stdin=stdin, capture_output=True, text=True,
-                              cwd=os.path.join(out, "inputs"), env=dict(os.environ, LC_ALL="C"))
+        child = subprocess.Popen(command, stdin=stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                 cwd=cwd, env=env, start_new_session=True)
+
+        def stop():
+            expired.set()
+            try:
+                os.killpg(child.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+        timer = threading.Timer(RUN_BOUND, stop)
+        timer.start()
+        try:
+            stdout, stderr = child.communicate()
+        finally:
+            timer.cancel()
         elapsed = time.perf_counter_ns() - start
         after = resource.getrusage(resource.RUSAGE_CHILDREN)
     finally:
         if stdin:
             stdin.close()
-    if done.returncode != 0:
-        raise Invalid(f"{workload} {arm}: exit {done.returncode}: {done.stderr.strip()[-500:]}")
-    validate(workload, done.stdout)
-    return Launch(elapsed, done.stdout, usage_between(before, after))
+    return elapsed, child.returncode, stdout, stderr, usage_between(before, after), expired.is_set()
+
+
+def launch(out, workload, arm, cpu, wrapper=()):
+    """One pinned run. A failed process or an output that does not validate is
+    invalid data. Between the timer and the workload there is taskset, which
+    replaces itself with the next program, and a wrapper the caller names
+    (perf stat); the run goes through no `timeout`."""
+    argv, stdin_path = workload_command(out, workload, arm)
+    elapsed, returncode, stdout, stderr, usage, expired = spawn(
+        ["taskset", "-c", str(cpu)] + list(wrapper) + argv, os.path.join(out, "inputs"), stdin_path,
+        dict(os.environ, LC_ALL="C"))
+    if expired:
+        raise Invalid(f"{workload} {arm}: exceeded {RUN_BOUND} s")
+    if returncode != 0:
+        raise Invalid(f"{workload} {arm}: exit {returncode}: {stderr.strip()[-500:]}")
+    validate(workload, stdout, coremark_iterations(out), FINAL_SEEN.setdefault(os.path.abspath(out), {}))
+    return Launch(elapsed, stdout, usage)
 
 
 def append(path, columns, rows):
@@ -268,11 +363,13 @@ def time_rounds(args):
         for index, workload in enumerate(WORKLOADS):
             arms = compare.ORDERS[(round_ + index) % len(compare.ORDERS)]
             for position, arm in enumerate(arms):
-                ns = launch(args.out, workload, arm, args.cpu).wall_ns
-                row = [round_, position, workload, arm, ns]
+                launched = launch(args.out, workload, arm, args.cpu)
+                ns = launched.wall_ns
+                row = [round_, position, workload, arm, ns, launched.usage["user_ns"], launched.usage["sys_ns"]]
                 append(raw, RAW_COLUMNS, [row])
                 collected.append(dict(zip(RAW_COLUMNS, row)))
-                print(f"round {round_} {workload} {arm}: {ns / 1e9:.3f} s", flush=True)
+                print(f"round {round_} {workload} {arm}: {ns / 1e9:.4f} s, cpu "
+                      f"{(launched.usage['user_ns'] + launched.usage['sys_ns']) / 1e9:.4f} s", flush=True)
         done = round_ + 1
         if done >= args.min_rounds:
             ratios = timed_cells(collected)
@@ -297,7 +394,7 @@ def read_raw(path):
             if len(fields) != len(RAW_COLUMNS):
                 raise Invalid(f"{path}:{number}: {len(fields)} fields")
             row = dict(zip(RAW_COLUMNS, fields))
-            for name in ("round", "position", "ns"):
+            for name in ("round", "position", "ns", "user_ns", "sys_ns"):
                 try:
                     row[name] = int(row[name])
                 except ValueError:
@@ -415,6 +512,43 @@ def reduce_time(rows, out, floor=None):
     return verdicts
 
 
+def residual_table(residuals, out, limit, what):
+    """Prints, per workload, the median and maximum over its runs of the wall
+    time minus the user and sys CPU time the kernel accounted to the same
+    launch, and returns the workloads whose median is above LIMIT (none when
+    LIMIT is None). RESIDUALS is {workload: [seconds]}. The workloads are
+    pinned and CPU bound, so the residual is what the launch spent outside the
+    process's own CPU time: process start-up, and anything a waiter adds to
+    the wall time. A wall time that moves in steps of a poll interval puts
+    that interval's remainder here."""
+    print(f"Wall time minus user+sys CPU time of the same {what} (seconds); a median above the limit makes the", file=out)
+    print("wall times invalid: something outside the workload's own time is in them.", file=out)
+    print(f"{'workload':<10} {'runs':>5} {'median':>9} {'max':>9} {'limit':>9}  residual", file=out)
+    flagged = []
+    for workload in WORKLOADS:
+        values = residuals[workload]
+        median = statistics.median(values)
+        above = limit is not None and median > limit
+        if above:
+            flagged.append(workload)
+        shown = "-" if limit is None else f"{limit:.4f}"
+        print(f"{workload:<10} {len(values):>5} {median:>9.4f} {max(values):>9.4f} {shown:>9}  "
+              f"{'ABOVE THE LIMIT' if above else 'ok' if limit is not None else 'not checked'}", file=out)
+    return flagged
+
+
+def time_residuals(rows):
+    """{workload: [wall - user - sys in seconds, per run]} of the time rows."""
+    residuals = {w: [] for w in WORKLOADS}
+    for row in rows:
+        if row["workload"] in residuals:
+            residuals[row["workload"]].append((row["ns"] - row["user_ns"] - row["sys_ns"]) / 1e9)
+    for workload, values in residuals.items():
+        if not values:
+            raise Invalid(f"{workload}: no timed rows")
+    return residuals
+
+
 # ---------------------------------------------------------------- perf stat
 
 
@@ -505,7 +639,8 @@ def perf_once(out, workload, arm, cpu, events):
     """({event: count}, [unsupported events], usage) of one run under perf stat;
     the usage has USAGE_FIELDS."""
     csv_path = os.path.join(os.path.abspath(out), "perf", f"{next(PERF_RUNS):03d}-{workload}-{arm}.csv")
-    # timeout stays outside perf: its helper process is no part of the count.
+    # perf is the only wrapper between taskset and the workload; the launch
+    # has no timeout helper.
     launched = launch(out, workload, arm, cpu,
                       wrapper=["perf", "stat", "-x,", "--no-big-num", "-e", ",".join(events), "-o", csv_path, "--"])
     with open(csv_path) as f:
@@ -525,7 +660,7 @@ def perf_rounds(args):
     # A real validated run of the base finds which events the host lacks
     # before any measured round; a tiny probe could return <not counted>.
     while True:
-        _, unsupported, _ = perf_once(args.out, "fib", "base", args.cpu, events)
+        _, unsupported, _ = perf_once(args.out, WORKLOADS[0], "base", args.cpu, events)
         if not unsupported:
             break
         dropped += unsupported
@@ -558,12 +693,13 @@ def ratio_range(pairs):
     return f"{statistics.median(ratios):>9.5f} [{min(ratios):.5f}, {max(ratios):.5f}]"
 
 
-def reduce_perf(data, out):
+def reduce_perf(data, out, residual_limit=None):
     """Prints the tables of one perf.json: per workload and arm the median
     counts and rates, then the candidate and twin ratios to the base with
     their range over the rounds, then the same runs' wall time, CPU time and
     page faults. Five rounds give no 95% interval, so nothing is judged: the
-    twin's ratios show the run's own noise."""
+    twin's ratios show the run's own noise. Returns 1 when a workload's wall
+    time minus CPU time is above RESIDUAL_LIMIT, else 0."""
     events, runs = data["events"], data["runs"]
     if not events or "instructions:u" not in events or "cycles:u" not in events:
         raise Invalid("perf: no instructions or cycles")
@@ -620,7 +756,7 @@ def reduce_perf(data, out):
                 print(f"{workload:<9} {arm:<10} {event:<26} {ratio_range(pairs)}", file=out)
     print(file=out)
     print("Wall time, CPU time and page faults of the same runs, medians over rounds (seconds, faults a count).", file=out)
-    print("Wall, user, sys and faults are those of the whole launch: taskset, timeout, perf stat and the", file=out)
+    print("Wall, user, sys and faults are those of the whole launch: taskset, perf stat and the", file=out)
     print("workload, the same wrapper for every arm. Window is perf's counting window; outside is wall - window", file=out)
     print("of each run.", file=out)
     header = f"{'workload':<9} {'arm':<10}" + "".join(f" {label:>10}" for label, _, _ in USAGE_COLUMNS)
@@ -642,30 +778,129 @@ def reduce_perf(data, out):
                 text = (f"{statistics.median(diffs):>12.{digits + 2}f} "
                         f"[{min(diffs):.{digits + 2}f}, {max(diffs):.{digits + 2}f}]")
                 print(f"{workload:<9} {arm:<10} {label:<8} {text:>34} {ratio_range(pairs):>26}", file=out)
-    return 0
+    print(file=out)
+    residuals = {w: [(u["wall_ns"] - u["user_ns"] - u["sys_ns"]) / 1e9
+                     for (w2, _, _), u in used.items() if w2 == w] for w in WORKLOADS}
+    return 1 if residual_table(residuals, out, residual_limit, "perf runs") else 0
 
 
-def reduce_all(directory, out, floor=None):
+def reduce_all(directory, out, floor=None, residual_limit=None):
     manifest = os.path.join(directory, "manifest.txt")
     if os.path.exists(manifest):
         with open(manifest) as f:
             print(f.read().rstrip(), file=out)
         print(file=out)
-    reduce_time(read_raw(os.path.join(directory, "time.tsv")), out, floor)
+    rows = read_raw(os.path.join(directory, "time.tsv"))
+    reduce_time(rows, out, floor)
+    print(file=out)
+    status = 1 if residual_table(time_residuals(rows), out, residual_limit, "timed runs") else 0
     perf = os.path.join(directory, "perf.json")
     if os.path.exists(perf):
         print(file=out)
         with open(perf) as f:
-            reduce_perf(json.load(f), out)
+            status |= reduce_perf(json.load(f), out, residual_limit)
+    return status
+
+
+# ---------------------------------------------------------------- wall clock probe
+
+# The launch chains the probe times: the instrument's own (taskset, then the
+# program), the same with the helper the instrument used to put around every
+# run, and the program alone.
+WALLCLOCK_CHAINS = [("bare", []),
+                    ("taskset", ["taskset", "-c", "{cpu}"]),
+                    ("taskset+timeout", ["taskset", "-c", "{cpu}", "timeout", "--foreground", "--signal=TERM",
+                                         "--kill-after=10s", "600s"])]
+WALLCLOCK_SECONDS = 0.21
+
+
+def counting_command(seconds):
+    """A command that spends about SECONDS of user CPU time in a counted loop
+    (a loop on a clock may make a system call each time round), the count
+    calibrated by this process on the same interpreter."""
+    start = time.perf_counter()
+    i = 0
+    while i < 2000000:
+        i += 1
+    rate = 2000000 / (time.perf_counter() - start)
+    return [sys.executable, "-c", f"i = 0\nwhile i < {round(rate * seconds)}: i += 1"]
+
+
+def wallclock_rows(cpu, runs, stand_ins):
+    """[(stand-in, chain, wall_s, cpu_s)] of RUNS launches of each stand-in
+    under each chain, in rotating chain order so that a drift of the host
+    falls on every chain alike."""
+    rows = []
+    for number in range(runs):
+        for label, command in stand_ins:
+            for index in range(len(WALLCLOCK_CHAINS)):
+                chain, prefix = WALLCLOCK_CHAINS[(number + index) % len(WALLCLOCK_CHAINS)]
+                wrapper = [part.format(cpu=cpu) for part in prefix]
+                wall, code, _, error, usage, expired = spawn(wrapper + command, None)
+                if expired or code != 0:
+                    raise Invalid(f"wallclock {label} under {chain}: exit {code}: {error.strip()[-300:]}")
+                rows.append((label, chain, wall / 1e9, (usage["user_ns"] + usage["sys_ns"]) / 1e9))
+    return rows
+
+
+def wallclock_table(rows, out):
+    """Prints, per stand-in and chain, how many distinct wall readings there
+    are at 1 ms, their minimum, median and maximum, and the median and maximum
+    of wall - (user+sys). A wall time on a grid shows as few distinct readings
+    all above the stand-in's own time, in the chain that has the waiter."""
+    print("Wall times of two stand-ins launched under each chain (seconds); distinct = readings at 1 ms;", file=out)
+    print("residual = wall - (user+sys) of the same launch; it measures the launch only for the counting", file=out)
+    print("stand-in, whose time is CPU time: the sleeper uses none, so its residual is its own time.", file=out)
+    print(f"{'stand-in':<9} {'chain':<16} {'runs':>4} {'distinct':>8} {'min':>8} {'median':>8} {'max':>8} "
+          f"{'res med':>8} {'res max':>8}", file=out)
+    for label in dict.fromkeys(r[0] for r in rows):
+        for chain, _ in WALLCLOCK_CHAINS:
+            mine = [(w, c) for (l, ch, w, c) in rows if l == label and ch == chain]
+            walls = [w for w, _ in mine]
+            residuals = [w - c for w, c in mine]
+            print(f"{label:<9} {chain:<16} {len(mine):>4} {len({round(w, 3) for w in walls}):>8} "
+                  f"{min(walls):>8.4f} {statistics.median(walls):>8.4f} {max(walls):>8.4f} "
+                  f"{statistics.median(residuals):>8.4f} {max(residuals):>8.4f}", file=out)
+
+
+def wallclock_hosts(out):
+    """The host's facts a grid's cause can be read from: which `timeout` and
+    `taskset` run, their versions, and the system."""
+    for command in (["bash", "-c", "type -a timeout taskset"],
+                    ["bash", "-c", "readlink -f \"$(command -v timeout)\""],
+                    ["timeout", "--version"], ["taskset", "--version"], ["uname", "-srm"],
+                    ["sh", "-c", "grep -E '^(PRETTY_NAME|VERSION)=' /etc/os-release"]):
+        print("$ " + " ".join(command), file=out)
+        try:
+            done = subprocess.run(command, capture_output=True, text=True)
+            print((done.stdout + done.stderr).rstrip(), file=out)
+        except OSError as error:
+            print(f"cannot run: {error}", file=out)
+
+
+def wallclock(args):
+    """The `wallclock` command: names what puts a program's wall time on a
+    grid, by launching a stand-in that sleeps 0.21 s and one that counts for
+    0.21 s under each chain."""
+    os.makedirs(args.out, exist_ok=True)
+    stand_ins = [("sleep", ["sh", "-c", f"sleep {WALLCLOCK_SECONDS}"]),
+                 ("count", counting_command(WALLCLOCK_SECONDS))]
+    with open(os.path.join(args.out, "wallclock.txt"), "w") as out:
+        wallclock_hosts(out)
+        print(file=out)
+        wallclock_table(wallclock_rows(args.cpu, args.runs, stand_ins), out)
+    with open(os.path.join(args.out, "wallclock.txt")) as f:
+        print(f.read(), end="")
     return 0
 
 
 # ---------------------------------------------------------------- self-test
 
 
-def synthetic(rounds, candidate_factor, twin_factor=1.0, noise=0.0, seed=1):
+def synthetic(rounds, candidate_factor, twin_factor=1.0, noise=0.0, seed=1, gap_ns=10_000_000):
     """Raw rows for both workloads: base 10 s, candidate and twin their factor
-    times that, each run scaled by a uniform draw within plus or minus noise."""
+    times that, each run scaled by a uniform draw within plus or minus noise;
+    each run's user and sys CPU time sum to its wall time less gap_ns."""
     rng = random.Random(seed)
     rows = []
     for round_ in range(rounds):
@@ -673,8 +908,9 @@ def synthetic(rounds, candidate_factor, twin_factor=1.0, noise=0.0, seed=1):
             for position, arm in enumerate(ARMS):
                 scale = {"base": 1.0, "candidate": candidate_factor, "twin": twin_factor}[arm]
                 scale *= 1 + rng.uniform(-noise, noise)
+                ns = round(10e9 * scale)
                 rows.append({"round": round_, "position": position, "workload": workload, "arm": arm,
-                             "ns": round(10e9 * scale)})
+                             "ns": ns, "user_ns": ns - gap_ns - 1_000_000, "sys_ns": 1_000_000})
     return rows
 
 
@@ -690,7 +926,7 @@ def perf_text(counts, pmu="cpu_core", runtime=5000000000, percent="100.00"):
 
 
 STAND_IN_OUTPUTS = {"halo": f"{FIB_VALUE}\n",
-                    "v2h": "".join(f"[0]{k} : {v}\n" for k, v in CRC.items()) + f"[0]crcfinal : {CRC_FINAL}\n"}
+                    "v2h": "".join(f"[0]{k} : {v}\n" for k, v in CRC.items()) + f"[0]crcfinal : {CRC_FINAL[2000]}\n"}
 
 
 @contextlib.contextmanager
@@ -722,7 +958,7 @@ def timing_harness_test(expect):
     four times the base and the twin equal to it, so that an image launched
     for the wrong arm, or a row written under the wrong label, is found."""
     if sys.platform != "linux":
-        print("self-test: the timing harness is checked on Linux only (taskset, timeout)")
+        print("self-test: the timing harness is checked on Linux only (taskset)")
         return
     try:
         with stand_in_images({"base": "sleep 0.05", "candidate": "sleep 0.2"}) as out:
@@ -747,7 +983,7 @@ def usage_harness_test(expect):
     far below the wall time for the sleeper, user above sys for the burner,
     sys above user for the caller, and page faults counted."""
     if sys.platform != "linux":
-        print("self-test: the usage harness is checked on Linux only (taskset, timeout, dd)")
+        print("self-test: the usage harness is checked on Linux only (taskset, dd)")
         return
     # A counted loop: a loop on a clock would make a system call each time round.
     burn = f'"{sys.executable}" -c \'b = b"x" * 40000000\ni = 0\nwhile i < 15000000: i += 1\''
@@ -780,7 +1016,7 @@ def perf_pipeline_test(expect):
     window must be the CSV's, inside the wall time and about the run time of
     the image, and the time tables must print."""
     if sys.platform != "linux":
-        print("self-test: the perf pipeline is checked on Linux only (taskset, timeout, date)")
+        print("self-test: the perf pipeline is checked on Linux only (taskset, date)")
         return
     script = """#!/bin/sh
 while [ "$1" != -- ]; do
@@ -831,7 +1067,86 @@ window=$(( $(date +%s%N) - start ))
     expect("perf reduced", status, 0)
     tail = report.getvalue().split("Wall time, CPU time and page faults")[1].splitlines()
     differences = tail[tail.index(next(line for line in tail if line.startswith("Differences"))) + 2:]
+    differences = differences[:differences.index("")]
     expect("perf difference rows", len(differences), 2 * 2 * len(USAGE_COLUMNS))
+
+
+def rounds_error(min_rounds, max_rounds, trial):
+    """Why a `time` round range is refused, or None. A judged run needs six
+    rounds for a 95% interval; a trial runs one to five and judges nothing."""
+    if max_rounds < min_rounds or min_rounds < 1:
+        return "rounds need 1 <= min-rounds <= max-rounds"
+    if trial:
+        return None if max_rounds <= 5 else "a trial runs at most 5 rounds"
+    return None if min_rounds >= 6 else "rounds need 6 <= min-rounds <= max-rounds (--trial allows fewer)"
+
+
+def launch_path_test(expect, expect_invalid):
+    """The launch path on stand-in images, with a `timeout` first on PATH that
+    fails when run: a launch that goes through `timeout` fails the test. An
+    image that sleeps 0.21 s must show a wall time that is its own: a waiter
+    that polled every 0.1 s would read it as 0.3 s. A run past its bound is
+    killed, and `time` writes the CPU time columns."""
+    global RUN_BOUND
+    if sys.platform != "linux":
+        print("self-test: the launch path is checked on Linux only (taskset)")
+        return
+    try:
+        with stand_in_images({"base": "sleep 0.21"}) as out:
+            bin_dir = os.path.join(out, "bin")
+            os.makedirs(bin_dir)
+            shim = os.path.join(bin_dir, "timeout")
+            with open(shim, "w") as f:
+                f.write("#!/bin/sh\necho 'timeout was run by the launch' >&2\nexit 97\n")
+            os.chmod(shim, 0o755)
+            cpu = max(os.sched_getaffinity(0))
+            with mock.patch.dict(os.environ, {"PATH": bin_dir + os.pathsep + os.environ["PATH"]}):
+                walls = [launch(out, "fib", "base", cpu).wall_ns / 1e9 for _ in range(3)]
+                args = argparse.Namespace(out=out, cpu=cpu, min_rounds=2, max_rounds=2)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    time_rounds(args)
+                rows = read_raw(os.path.join(out, "time.tsv"))
+                sleeper = os.path.join(out, "images", "v2h-base")
+                with open(sleeper, "w") as f:
+                    f.write("#!/bin/sh\nsleep 30\n")
+                bound, RUN_BOUND = RUN_BOUND, 0.3
+                try:
+                    started = time.monotonic()
+                    expect_invalid("a run past its bound", lambda: launch(out, "coremark", "base", cpu), "exceeded")
+                    expect("a run past its bound is killed", time.monotonic() - started < 10, True)
+                finally:
+                    RUN_BOUND = bound
+    except (Invalid, subprocess.CalledProcessError, OSError) as error:
+        expect("launch path runs", f"failed: {error}", "ran")
+        return
+    expect("wall time is the image's own, with no waiter's step", all(0.21 <= w < 0.28 for w in walls), True)
+    expect("time rows written for both workloads", len(rows), 2 * len(WORKLOADS) * len(ARMS))
+    expect("time rows hold CPU time", all(r["user_ns"] + r["sys_ns"] < r["ns"] for r in rows), True)
+
+
+def wallclock_test(expect):
+    """`wallclock` on this host, two runs of each stand-in: every chain must
+    appear for both stand-ins, and the instrument's own chain must read the
+    sleeper at its own time and the counter's wall within its CPU time."""
+    if sys.platform != "linux":
+        print("self-test: the wall clock probe is checked on Linux only (taskset, timeout)")
+        return
+    try:
+        stand_ins = [("sleep", ["sh", "-c", f"sleep {WALLCLOCK_SECONDS}"]), ("count", counting_command(WALLCLOCK_SECONDS))]
+        rows = wallclock_rows(max(os.sched_getaffinity(0)), 2, stand_ins)
+        table = io.StringIO()
+        wallclock_table(rows, table)
+    except (Invalid, subprocess.CalledProcessError, OSError) as error:
+        expect("wallclock probe runs", f"failed: {error}", "ran")
+        return
+    expect("wallclock rows", len(rows), 2 * len(stand_ins) * len(WALLCLOCK_CHAINS))
+    expect("wallclock table rows", len([l for l in table.getvalue().splitlines()
+                                        if l.split()[:1] in (["sleep"], ["count"])]),
+           len(stand_ins) * len(WALLCLOCK_CHAINS))
+    sleeper = [w for (l, c, w, _) in rows if l == "sleep" and c == "taskset"]
+    expect("wallclock sleeper under taskset", all(WALLCLOCK_SECONDS <= w < 0.28 for w in sleeper), True)
+    counter = [(w, c) for (l, ch, w, c) in rows if l == "count" and ch == "taskset"]
+    expect("wallclock counter's CPU time is most of its wall time", all(c > 0.5 * w for w, c in counter), True)
 
 
 def self_test():
@@ -858,6 +1173,19 @@ def self_test():
     expect("faster", reduce_time(synthetic(10, 0.95, noise=0.005), sink),
            {"fib": "improvement", "coremark": "improvement"})
     expect("too few rounds", set(reduce_time(synthetic(5, 1.2), sink).values()), {"unresolved"})
+    # The residual: runs whose CPU time falls 0.01 s short of the wall time
+    # pass a 0.05 s limit; a wall time 0.1 s above its CPU time (a waiter's
+    # poll interval) is flagged by it, workload by workload.
+    expect("residual within the limit",
+           residual_table(time_residuals(synthetic(6, 1.0)), sink, 0.05, "timed runs"), [])
+    expect("residual above the limit",
+           residual_table(time_residuals(synthetic(6, 1.0, gap_ns=100_000_000)), sink, 0.05, "timed runs"),
+           ["fib", "coremark"])
+    expect("residual without a limit flags nothing",
+           residual_table(time_residuals(synthetic(6, 1.0, gap_ns=100_000_000)), sink, None, "timed runs"), [])
+    one_workload = [r if r["workload"] != "fib" else dict(r, user_ns=r["user_ns"] - 90_000_000)
+                    for r in synthetic(6, 1.0)]
+    expect("residual per workload", residual_table(time_residuals(one_workload), sink, 0.05, "timed runs"), ["fib"])
     expect("noisy twin", set(reduce_time(synthetic(10, 1.2, noise=0.2), sink).values()), {"unresolved"})
     expect("offset twin", set(reduce_time(synthetic(10, 1.2, twin_factor=1.05), sink).values()), {"unresolved"})
     # One workload slower and the other not: the verdicts are per workload.
@@ -892,12 +1220,25 @@ def self_test():
     # The outputs: fib must print its value, CoreMark its CRCs.
     validate("fib", f"{FIB_VALUE}\n")
     expect_invalid("fib value", lambda: validate("fib", "2178308\n"), "expected 2178309")
-    coremark = "".join(f"[0]{k} : {v}\n" for k, v in CRC.items()) + f"[0]crcfinal : {CRC_FINAL}\n"
+    coremark = "".join(f"[0]{k} : {v}\n" for k, v in CRC.items()) + f"[0]crcfinal : {CRC_FINAL[2000]}\n"
     validate("coremark", coremark)
     expect_invalid("coremark wrong component", lambda: validate("coremark", coremark.replace("0xe714", "0xe715")),
                    "wrong component CRCs")
-    expect_invalid("coremark wrong final", lambda: validate("coremark", coremark.replace(CRC_FINAL, "0x4984")),
+    expect_invalid("coremark wrong final", lambda: validate("coremark", coremark.replace(CRC_FINAL[2000], "0x4984")),
                    "final CRC")
+    # At 20000 iterations the final CRC is another known value; at a count with
+    # none, a launch must equal the run's first, and a differing one is refused.
+    validate("coremark", coremark.replace(CRC_FINAL[2000], CRC_FINAL[20000]), 20000)
+    expect_invalid("coremark 2000's final CRC at 20000",
+                   lambda: validate("coremark", coremark, 20000), "expected 0x382f at 20000")
+    seen = {}
+    validate("coremark", coremark, 20, seen)
+    validate("coremark", coremark, 20, seen)
+    expect_invalid("coremark final CRC differing at an unlisted count",
+                   lambda: validate("coremark", coremark.replace(CRC_FINAL[2000], "0x4984"), 20, seen),
+                   "differs from the run's first")
+    expect_invalid("coremark wrong component CRC at an unlisted count",
+                   lambda: validate("coremark", coremark.replace("0xe714", "0xe715"), 20, {}), "wrong component CRCs")
     expect_invalid("coremark missing field", lambda: validate("coremark", coremark.split("\n", 1)[1]),
                    "missing, repeated or malformed")
     expect("fib source", fib_source("local N = 30\nprint(fib(N))\n"), f"local N = {FIB_N}\nprint(fib(N))\n")
@@ -1001,8 +1342,19 @@ def self_test():
     expect_invalid("perf usage without a window", lambda: reduce_perf(
         dict(perf_data(0.9, 1.0), runs=[dict(r, usage=dict(r["usage"], window_ns=0)) for r in perf_data(0.9, 1.0)["runs"]]),
         text_out), "invalid usage")
+    # The perf table's residual: wall 0.3 s against 0.2 s of CPU time is 0.1 s.
+    expect("perf residual flagged", reduce_perf(perf_data(0.9, 1.0), io.StringIO(), 0.05), 1)
+    expect("perf residual within the limit", reduce_perf(perf_data(0.9, 1.0), io.StringIO(), 0.2), 0)
+    expect("perf residual without a limit", reduce_perf(perf_data(0.9, 1.0), io.StringIO()), 0)
+    expect("a judged run needs six rounds", rounds_error(5, 5, False) is not None, True)
+    expect("a judged run of six rounds", rounds_error(6, 30, False), None)
+    expect("a trial of two rounds", rounds_error(2, 2, True), None)
+    expect("a trial of six rounds", rounds_error(6, 6, True) is not None, True)
+    expect("rounds out of order", rounds_error(8, 6, False) is not None, True)
     timing_harness_test(expect)
     usage_harness_test(expect)
+    launch_path_test(expect, expect_invalid)
+    wallclock_test(expect)
     perf_pipeline_test(expect)
     text_out.close()
     sink.close()
@@ -1015,33 +1367,57 @@ def self_test():
 def main(argv):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
+    workloads = ",".join(ALL_WORKLOADS)
     p = sub.add_parser("build")
     p.add_argument("--base-wfc", required=True)
     p.add_argument("--candidate-wfc", required=True)
-    p.add_argument("--halo", required=True)
+    p.add_argument("--halo", help="a Halo-wf checkout; needed by the fib workload")
     p.add_argument("--silverfir", required=True)
-    p.add_argument("--v2h-generator", default=V2H_GENERATOR)
+    p.add_argument("--base-generator", default=V2H_GENERATOR, help="the wasm interpreter's generator for the base arm")
+    p.add_argument("--candidate-generator", default=V2H_GENERATOR,
+                   help="the wasm interpreter's generator for the candidate arm")
+    p.add_argument("--iterations", type=int, default=COREMARK_ITERATIONS, help="CoreMark iterations")
+    p.add_argument("--workloads", default=workloads)
     p.add_argument("--out", required=True)
     p = sub.add_parser("time")
     p.add_argument("--out", required=True)
     p.add_argument("--cpu", required=True, type=int)
     p.add_argument("--min-rounds", type=int, default=10)
     p.add_argument("--max-rounds", type=int, default=30)
+    p.add_argument("--trial", action="store_true", help="allow 1 to 5 rounds; nothing is judged")
+    p.add_argument("--workloads", default=workloads)
     p = sub.add_parser("perf")
     p.add_argument("--out", required=True)
     p.add_argument("--cpu", required=True, type=int)
     p.add_argument("--rounds", type=int, default=5)
+    p.add_argument("--workloads", default=workloads)
+    p = sub.add_parser("wallclock")
+    p.add_argument("--out", required=True)
+    p.add_argument("--cpu", required=True, type=int)
+    p.add_argument("--runs", type=int, default=20)
     p = sub.add_parser("reduce")
     p.add_argument("--out", required=True)
     p.add_argument("--floor", default="")
+    p.add_argument("--residual-limit", type=float, default=None,
+                   help="seconds; a workload whose median wall - (user + sys) is above it is invalid data")
+    p.add_argument("--workloads", default=workloads)
     sub.add_parser("self-test")
     args = parser.parse_args(argv)
     try:
+        if args.command not in ("self-test", "wallclock"):
+            select_workloads(args.workloads)
+        if args.command == "wallclock":
+            if args.runs < 1:
+                parser.error("wallclock needs at least one run")
+            return wallclock(args)
         if args.command == "build":
+            if args.iterations < 1:
+                parser.error("iterations must be at least 1")
             return build(args)
         if args.command == "time":
-            if args.min_rounds < 6 or args.max_rounds < args.min_rounds:
-                parser.error("rounds need 6 <= min-rounds <= max-rounds")
+            problem = rounds_error(args.min_rounds, args.max_rounds, args.trial)
+            if problem:
+                parser.error(problem)
             return time_rounds(args)
         if args.command == "perf":
             if args.rounds < 1:
@@ -1050,7 +1426,7 @@ def main(argv):
         if args.command == "reduce":
             floor = parse_floor(args.floor) if args.floor.strip() else None
             with open(os.path.join(args.out, "summary.txt"), "w") as out:
-                status = reduce_all(args.out, out, floor)
+                status = reduce_all(args.out, out, floor, args.residual_limit)
             with open(os.path.join(args.out, "summary.txt")) as f:
                 print(f.read(), end="")
             return status

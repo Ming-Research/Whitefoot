@@ -4,10 +4,22 @@
 # research/experiments/hash-map-compare, the Halo interpreter's fib and the
 # wasm interpreter's CoreMark timed in interleaved rounds against a twin of the
 # base, and perf stat counts of those two programs with their wall time, CPU
-# time and page faults (14900K only). The README
+# time and page faults (14900K only). A fourth, one-off group, wallclock,
+# names what puts a launched program's wall time on a grid. The README
 # beside research/experiments/compiler-compare gives the cells, the decision
 # rule and the controls; the stages are research/experiments/compiler-compare/
 # run.sh, which a temporary workflow on a work branch can run too.
+#
+# WALL TIME. A timed run is the span from the spawn to the return of a
+# blocking wait, with no `timeout` helper around the program (research/
+# experiments/compiler-compare/interp.py, `spawn`). Every timed table also
+# prints the median and maximum of wall time minus the user+sys CPU time of
+# the same runs, and the `residual_limit` input makes a workload above it
+# invalid data. The earlier 14900K rounds ran each program under `timeout`;
+# all 30 fib readings fell within 0.302 to 0.303 s and all 30 CoreMark
+# readings within 0.402 to 0.403 s, while fib's user plus sys time was about
+# 0.21 s. Their spreads, noise floors and "no change" verdicts are not
+# evidence (research/experiments/interpreter-compare/RESULTS.md).
 #
 # research-boundary: manual-only
 # Explicitly requested comparison; no push or pull-request trigger. GitHub
@@ -17,7 +29,8 @@
 #
 # FAILURE POLICY. The job fails when `groups` names no group, an unknown one,
 # or perf without interpreters, when a compiler or image does not build, when
-# a reducer's self-test fails, when a process fails or its rows are missing,
+# a workload's residual is above a given `residual_limit`, when a reducer's
+# self-test fails, when a process fails or its rows are missing,
 # malformed or differ from the workload's expected checks or output (a failed
 # perf stat included; the timed table is still written), and when a floor is
 # given that is malformed or misses a measured cell. No verdict of an ordinary
@@ -48,7 +61,7 @@ on:
         type: string
         default: ""
       groups:
-        description: Comma-separated groups to run, of hash_map, interpreters and perf (perf stat of the interpreters, 14900K only; perf needs interpreters)
+        description: Comma-separated groups to run, of hash_map, interpreters, perf (perf stat of the interpreters, 14900K only; perf needs interpreters) and wallclock (a one-off probe of what puts a launch's wall time on a grid; it builds nothing)
         type: string
         default: "hash_map,interpreters,perf"
       halo:
@@ -69,6 +82,10 @@ on:
         default: ""
       interp_floor:
         description: The interpreters' noise floor, workload=spread items separated by commas, as an earlier run's summary printed it; empty means this run only measures the floor
+        type: string
+        default: ""
+      residual_limit:
+        description: Seconds; an interpreter workload whose median wall time minus user+sys CPU time is above it is invalid data. Empty means the residual is printed and not checked
         type: string
         default: ""
 
@@ -103,6 +120,7 @@ jobs:
       MAX_ROUNDS: ${{ inputs.max_rounds }}
       FLOOR: ${{ inputs.floor }}
       INTERP_FLOOR: ${{ inputs.interp_floor }}
+      INTERP_RESIDUAL_LIMIT: ${{ inputs.residual_limit }}
       PERF: ${{ contains(inputs.groups, 'perf') && '1' || '0' }}
     steps:
       - uses: actions/checkout@v4
@@ -160,9 +178,16 @@ jobs:
 
       - name: Build the base and candidate compilers
         id: arms
+        if: ${{ contains(inputs.groups, 'hash_map') || contains(inputs.groups, 'interpreters') }}
         env:
           WHITEFOOT_CHECK_TIMEOUT: "5400"
         run: perl .github/run-check.pl compiler-compare/arms bash research/experiments/compiler-compare/run.sh arms
+
+      # Builds nothing, so it runs with or without the compilers.
+      - name: Wall clock probe
+        id: wallclock
+        if: ${{ !cancelled() && contains(inputs.groups, 'wallclock') }}
+        run: bash research/experiments/compiler-compare/run.sh wallclock
 
       - name: Hash-map cells
         id: hashmap
@@ -200,3 +225,4 @@ jobs:
             ${{ runner.temp }}/out/interp/perf.json
             ${{ runner.temp }}/out/interp/perf/
             ${{ runner.temp }}/out/interp/summary.txt
+            ${{ runner.temp }}/out/wallclock/wallclock.txt
