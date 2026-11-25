@@ -59,11 +59,10 @@ fn main() -> status: ExitStatus pure {
 - `alias` gives a short name to something from another module. The
   standard library's process module supplies `ExitStatus`, the type of a
   program's result, and the function that builds one.
-- `-> result: u8` names the result and gives its type. The body declares the
-  result with `let` or returns a value directly.
-- `doc` is the first statement of a body (or follows an interface
-  declaration). It is part of the declaration, and it is the only place
-  prose goes.
+- `-> result: u8` names the result and gives its type. A `return` delivers
+  the value.
+- `doc` is the first entry of a body. It is part of the declaration, and it
+  is the only place prose goes.
 - `if` takes a `Bool` and has an optional `else`. Arguments are written
   `name: value`, so a swapped pair of arguments of the same type cannot go
   unnoticed.
@@ -369,8 +368,7 @@ fn main() -> status: ExitStatus pure {
   exits with 43.
 
 `Option` works the same way with `Some<T>(value: ...)` and `None<T>()`.
-Allocation is the one operation that does not return a failure value; see
-section 14.
+Allocation never reports a failure either; section 14 says why.
 
 ## 6. Arrays, windows and bounds
 
