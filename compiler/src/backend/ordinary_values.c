@@ -1973,7 +1973,8 @@ void wf__body_exit_share(wf_value *result, const wf_value *capability) {
  * check among them; that check requires every submission to have completed,
  * which an exit that leaves operations outstanding cannot meet. Stream writes
  * reach the host before their calls complete, so none is lost here. When two
- * contexts exit at once, the host keeps the status of the first. */
+ * contexts exit at once, the host ends the process with one of the two
+ * statuses, which WAIT-2 makes an input of the execution. */
 int wf__body_exit_now_start(uint8_t *result, const wf_value *capability,
                             const wf_value *status, wf_host_operation *operation) {
     uint8_t code = wf__ordinary_exit_code(status);
