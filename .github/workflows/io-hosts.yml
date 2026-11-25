@@ -373,6 +373,39 @@ jobs:
           WF_IO_NO_NATIVE_RING=1 WF_IO_HELPERS=2 \
             "$RUNNER_TEMP/completion/windows-bounded-send-test.exe"
 
+      # A connect that carries a deadline or a watch ends at its bound on the
+      # helper route (`windows_bounded_connect_test.c`), where `connect` runs
+      # on a helper thread, and on the default route as the control. The two
+      # controls make the one-second bound and the handle comparison fail on
+      # purpose, so a pass is known to be able to fail.
+      - name: Bound Windows connects to a listener that never answers
+        run: |
+          set -u
+          test_exe="$RUNNER_TEMP/completion/windows-bounded-connect-test.exe"
+          WF_IO_NO_NATIVE_RING=1 WF_IO_HELPERS=2 "$test_exe"
+          "$test_exe"
+          for control in control-bound control-leak; do
+            case "$control" in
+              control-bound) expected='over the 0 ms bound' ;;
+              control-leak) expected='handle count' ;;
+            esac
+            set +e
+            WF_IO_NO_NATIVE_RING=1 WF_IO_HELPERS=2 "$test_exe" "$control" \
+              > "$RUNNER_TEMP/completion/$control.out" 2> "$RUNNER_TEMP/completion/$control.err"
+            status=$?
+            set -e
+            echo "--- $control: exit status $status ---"
+            tr -d $'\r' < "$RUNNER_TEMP/completion/$control.err"
+            if [ "$status" -eq 0 ]; then
+              echo "$control passed, so the check it breaks cannot fail" >&2
+              exit 1
+            fi
+            if ! tr -d $'\r' < "$RUNNER_TEMP/completion/$control.err" | grep -F "$expected" > /dev/null; then
+              echo "$control failed, but not through the check it breaks ($expected)" >&2
+              exit 1
+            fi
+          done
+
       - name: Run ordinary values through the production native bodies
         run: |
           probe_dir="$RUNNER_TEMP/completion/ordinary-values"
