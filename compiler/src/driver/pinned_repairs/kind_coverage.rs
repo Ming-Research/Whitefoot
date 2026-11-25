@@ -2336,4 +2336,66 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "##],
     },
+    // [GRAM-2] a heap declaration after an item.
+    RepairPair {
+        name: "probe-heap-declaration-after-item.wf",
+        rejected: br##"fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+
+program no_heap;
+"##,
+        rule: "GRAM-2",
+        sentences: &[],
+        repaired: &[br##"program no_heap;
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [GRAM-2] a second heap declaration.
+    RepairPair {
+        name: "probe-second-heap-declaration.wf",
+        rejected: br##"program no_heap;
+
+program no_heap;
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"##,
+        rule: "GRAM-2",
+        sentences: &[],
+        repaired: &[br##"program no_heap;
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [TYPE-6] a construction that names a variant its enum does not declare.
+    RepairPair {
+        name: "probe-unknown-owned-variant.wf",
+        rejected: br##"enum Sign {
+  Neg();
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let s = Sign::Pos();
+  return std::process::exit_status(code: 0_u8);
+}
+"##,
+        rule: "TYPE-6",
+        sentences: &[],
+        repaired: &[br##"enum Sign {
+  Neg();
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let s = Sign::Neg();
+  return std::process::exit_status(code: 0_u8);
+}
+"##],
+    },
 ];
