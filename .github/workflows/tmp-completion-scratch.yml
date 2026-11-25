@@ -1,0 +1,120 @@
+# Temporary: two checkouts on one host run the concurrent map's test, before
+# and after the change that gives each checkout its own test-program directory.
+# Removed before the full check (the gate fails while a tmp- workflow exists).
+name: tmp-completion-scratch
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scratch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install the host toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang
+          /usr/bin/clang --version
+
+      # Two checkouts A and B of one commit share TMPDIR and the scratch root.
+      # B's test prints a marked last line. Order (i): B edited, A built and run,
+      # then B run. Before the change B runs A's programs and shows no marker;
+      # after it B shows its own. (ii): both started together. (iii): both name
+      # one directory as COMPLETION_TMP, in the order of (i).
+      - name: Run the map test in two checkouts
+        shell: bash
+        run: |
+          set -u
+          base=7ed842e2842a8e3dcbd41edba4645791a1da2b4b
+          head=$GITHUB_SHA
+          cc=/usr/bin/clang
+          host=$RUNNER_TEMP/host-tmp
+          mkdir -p "$host"
+          export TMPDIR=$host
+          export WHITEFOOT_SCRATCH_ROOT=$host/whitefoot
+          a=$RUNNER_TEMP/a
+          b=$RUNNER_TEMP/b
+          problems=0
+
+          fresh() {
+            git worktree remove --force "$a" 2>/dev/null || true
+            git worktree remove --force "$b" 2>/dev/null || true
+            rm -rf "$a" "$b" "$host"/* "$RUNNER_TEMP/explicit"
+            git worktree prune
+            git worktree add --detach "$a" "$1" > /dev/null
+            git worktree add --detach "$b" "$1" > /dev/null
+            perl -pi -e 's/all checks passed\\n/all checks passed (checkout B)\\n/' "$b/compiler/src/backend/concurrent_map_test.c"
+            echo "marker lines in B's source: $(grep -c 'checkout B' "$b/compiler/src/backend/concurrent_map_test.c")"
+          }
+          one() { # dir out label
+            ( cd "$1" && WHITEFOOT_CHECK_TIMEOUT=1500 perl .github/run-check.pl "$3" \
+                make -j4 -C compiler concurrent-map-test CC=$cc ) > "$2" 2>&1
+            echo "$3: exit $?"
+          }
+          verdict() { # label ok-condition-text status
+            if [ "$3" = ok ]; then echo "RESULT $1: $2: as expected"; else echo "RESULT $1: $2: NOT as expected"; problems=$((problems + 1)); fi
+          }
+          sees() { # file pattern
+            grep -F -q -- "$2" "$1" && echo yes || echo no
+          }
+          # the run's own text from each side
+          check_pair() { # label expectB(marker|nomarker)
+            local label=$1 want=$2
+            [ "$(sees $RUNNER_TEMP/a.out 'concurrent-map-test: all checks passed')" = yes ] && [ "$(sees $RUNNER_TEMP/a.out '(checkout B)')" = no ] \
+              && verdict "$label" "A ran and shows no marker" ok || verdict "$label" "A ran and shows no marker" bad
+            if [ "$want" = marker ]; then
+              [ "$(sees $RUNNER_TEMP/b.out '(checkout B)')" = yes ] \
+                && verdict "$label" "B shows its own marker" ok || verdict "$label" "B shows its own marker" bad
+            else
+              [ "$(sees $RUNNER_TEMP/b.out 'concurrent-map-test: all checks passed')" = yes ] && [ "$(sees $RUNNER_TEMP/b.out '(checkout B)')" = no ] \
+                && verdict "$label" "B ran A's programs and shows no marker (the fault)" ok || verdict "$label" "B ran A's programs and shows no marker (the fault)" bad
+            fi
+          }
+
+          for when in before after; do
+            if [ $when = before ]; then commit=$base; want=nomarker; else commit=$head; want=marker; fi
+
+            echo "::group::$when (i) fixed order, shared TMPDIR"
+            fresh "$commit"
+            one "$a" "$RUNNER_TEMP/a.out" "tmp-map-a"; one "$b" "$RUNNER_TEMP/b.out" "tmp-map-b"
+            tail -3 "$RUNNER_TEMP/a.out" "$RUNNER_TEMP/b.out"
+            check_pair "$when-i" $want
+            if [ $when = after ]; then
+              [ -z "$(git -C "$a" status --porcelain)" ] && verdict "$when-i" "A's worktree has nothing untracked" ok || { git -C "$a" status --porcelain | head; verdict "$when-i" "A's worktree has nothing untracked" bad; }
+            fi
+            echo "::endgroup::"
+
+            if [ $when = after ]; then
+              echo "::group::$when (ii) both at once"
+              fresh "$commit"
+              ( cd "$a" && make -j4 -C compiler concurrent-map-test CC=$cc ) > "$RUNNER_TEMP/a.out" 2>&1 & pa=$!
+              ( cd "$b" && make -j4 -C compiler concurrent-map-test CC=$cc ) > "$RUNNER_TEMP/b.out" 2>&1 & pb=$!
+              wait $pa; sa=$?; wait $pb; sb=$?
+              echo "exit A $sa, exit B $sb"
+              tail -3 "$RUNNER_TEMP/a.out" "$RUNNER_TEMP/b.out"
+              check_pair "$when-ii" marker
+              echo "::endgroup::"
+            fi
+
+            echo "::group::$when (iii) one named directory"
+            fresh "$commit"
+            export COMPLETION_TMP=$RUNNER_TEMP/explicit
+            one "$a" "$RUNNER_TEMP/a.out" "tmp-map-a"; one "$b" "$RUNNER_TEMP/b.out" "tmp-map-b"
+            unset COMPLETION_TMP
+            tail -3 "$RUNNER_TEMP/a.out" "$RUNNER_TEMP/b.out"
+            check_pair "$when-iii" $want
+            echo "::endgroup::"
+          done
+
+          echo "problems: $problems"
+          [ "$problems" = 0 ]
