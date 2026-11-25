@@ -7,6 +7,9 @@ starting every emitted and runtime function on a 64-byte boundary makes the
 five compute kernels' times independent of where they land, what it costs,
 and whether loop-header alignment adds anything. Its decision is in
 [design/compiler/code-alignment.md](../../../design/compiler/code-alignment.md).
+The cost of the aligned layout to `records` on some processors, which that
+decision accepted provisionally, is
+[reopened below](#the-aligned-layouts-cost-to-records-reopened).
 
 ## The observation
 
@@ -368,8 +371,7 @@ assigns, which its log did not name until this change added it. That baseline
 is not the experiment's `U`: `tests/performance/Makefile` includes the
 candidate's `compiler/runtime.mk`, so the baseline's C runtime compiles with
 `-falign-functions=64` while its module and `ordinary_values.ll` stay
-unaligned, a layout no arm of the experiment built
-([TODO](../../../docs/todo.md#verification-tooling)). The five runs below had
+unaligned, a layout no arm of the experiment built. The five runs below had
 byte-identical compiler and `tests/performance` inputs. Two passed, at
 `d4f67df6` and `8097c03a`, and three failed on `records`, five of five or four
 of five pairs lower each time:
@@ -447,3 +449,165 @@ there, `records` at width 1, 0.962886 with four of five pairs lower.
 - The host C objects of the kernel's oracle and the timing runner are not
   aligned; they lie outside the timed interval except for the calls into the
   kernel.
+
+## The aligned layout's cost to `records`, reopened
+
+The decision accepted the aligned layout's cost to `records` provisionally,
+on a three-round run. This part asks why the aligned `records` is slower on
+the EPYC 9V74 and whether a deterministic layout exists without that cost.
+What follows was read on 2026-11-25 from the runs above and from one probe;
+the new runs' question, arms and criterion close the section and were fixed
+before any of them ran.
+
+### The earlier runs under a 95 percent interval
+
+The reducer now gives the shipped arm's line an interval: per round, the
+median of `U` over its six placements divided by the same median of `FR`,
+and the order statistics that bound the median of those ratios at 95 percent
+(the 3rd and 10th of 12 rounds, the 6th and 15th of 20). Below 1 the aligned
+images are slower. `records`, from the saved `raw.tsv` of each run:
+
+| run | processor | width 1 | width 2 | width 4 |
+|---|---|---|---|---|
+| 37434117176 | i9-14900K | 0.996 (0.992 to 1.002) | 1.005 (0.995 to 1.012) | 1.005 (0.992 to 1.017) |
+| 37434120227 | EPYC 7763 | 1.003 (0.999 to 1.005) | 0.971 (0.955 to 1.029) | 0.988 (0.947 to 1.026) |
+| 37436514442 | EPYC 7763 | 1.002 (0.998 to 1.006) | 1.003 (0.985 to 1.026) | 0.999 (0.981 to 1.023) |
+| 37436517830 | EPYC 7763 | 1.001 (0.998 to 1.003) | 1.015 (0.953 to 1.025) | 0.982 (0.958 to 0.999) |
+| 37439142869 | EPYC 7763 | 1.000 (0.996 to 1.002) | 0.988 (0.884 to 1.027) | 0.974 (0.952 to 1.071) |
+| 37439146282 | EPYC 7763 | 1.002 (0.999 to 1.003) | 1.009 (0.948 to 1.051) | 0.968 (0.954 to 0.988) |
+| 37439150433 | EPYC 7763 | 1.003 (0.997 to 1.004) | 1.011 (1.006 to 1.039) | 0.984 (0.954 to 0.995) |
+| 37436510214 | EPYC 9V45 | 0.959 (0.948 to 0.978) | 1.008 (0.984 to 1.022) | 1.102 (1.087 to 1.108) |
+| 37439138936 | Xeon 8370C | 0.970 (0.968 to 0.976) | 1.018 (1.015 to 1.024) | 1.001 (1.000 to 1.002) |
+| 37432965442, three rounds | EPYC 9V74 | 0.956 | 0.880 | 0.909 |
+
+An interval wholly below 1 appears at width 1 on the 9V45 and the 8370C and
+at width 4 on three of the six 7763 runs; three rounds give no interval, so
+the 9V74's cost is still unmeasured by this test. Its three per-round ratios
+lie between 0.949 and 0.970, 0.872 and 0.886, and 0.906 and 0.930.
+
+### Where the inner loops of `records` fall
+
+Read from the candidate image of `compute-regression` run 37446065946
+(`02aa1489`, clang 18.1.3), whose module is the aligned arms'. Width 1 runs
+`wf__par_seq_summarize_records`; widths 2 and 4 run
+`wf__par_split_summarize_records.0`, which holds the chunk function's body
+inline. Each has the same two inner loops: 54 bytes over the continuation
+bytes of a multi-byte sequence, at function offset 0x110 and 0x2d0, and 21
+bytes over ASCII bytes, at 0x170 and 0x330. Those offsets are 16 and 48
+modulo 64 in both functions, so a function's start within its line places
+both loops:
+
+| start modulo 64 | multi-byte loop, bytes of its line | ASCII loop |
+|---|---|---|
+| 0, every aligned arm | 16 to 69, crosses into the next line | 48 to 68, crosses |
+| 16 | 32 to 85, crosses | 0 to 20 |
+| 32 | 48 to 101, crosses | 16 to 36 |
+| 48 | 0 to 53 | 32 to 52 |
+
+`U`'s module placements start the sequential function at 16, 32, 48 and 0
+(`p0`, `m16`, `m32`, `m48`) and the split function at 0, 16, 32 and 48. At
+widths 2 and 4 `m48`, the split function at 48, is the fastest placement of
+`U` on all four hosted models and within 1.5 percent of the fastest on the
+14900K, and `m32`, at 32, is the slowest at width 4 on every host. At width 1
+`m32`, the sequential function at 48, is the fastest or within 1 percent of
+it on every host, and `m16`, at 32, the slowest on every host but the 9V74.
+On the 9V74's three rounds the sequential function at 48 read 14.956 ms
+against 17.119 to 17.369 for `FR`. So on every processor measured the
+unaligned placement that keeps both inner loops of the hot function inside
+one line each is the fastest or within 1.5 percent of it, and the aligned
+layout fixes both across a line boundary. This reading was found in these
+runs, not predicted before them: it is the hypothesis the new runs test.
+
+It does not account for all of the 9V74's reading. At widths 2 and 4 `U` at
+`p0` starts the split function at 0, as `FR` does, and read 7.636 ms against
+`FR`'s 8.637 to 8.833 at width 2 and 7.826 against 8.530 to 8.690 at width
+4. What else differs between those images is where the module's
+other functions fall, the address bits above a line, and the image's data,
+which an aligned image moves because its code is larger. The
+[stop-signals record](../stop-signals/README.md#startup-cost-on-amd-hosts)
+measured `stencil` 9 to 30 percent slower at width 1 on the 7763 and the
+9V74 when a thread created before the entry changed where memory was mapped.
+No arm here holds the data's addresses fixed while the code moves.
+
+### The regression comparison's baseline now
+
+Since `45608d629` `tests/performance/Makefile` includes the selected
+revision's `compiler/runtime.mk`, so each side of `compute-regression` builds
+its runtime by its own revision's rules. With alignment on `main` both sides
+are aligned, and the layout's fixed cost is the same on both. The baseline
+described [above](#hosted-ubuntu-2404-amd-epyc-9v74), an unaligned module
+over an aligned runtime, was the baseline only of the runs of the change
+that introduced alignment; the arm `UR` below rebuilds it to separate the two
+explanations those runs left open.
+
+### Hardware counters on the hosts
+
+A probe (run 45622862240 at `0ee3d56b2`, 24 hosted `ubuntu-24.04` jobs and
+one on the 14900K) asked each host for its counter flags, its `perf` event
+sources, the kernel's own line and a `perf stat` of user-mode cycles,
+branches and branch misses:
+
+| processor | jobs | counters |
+|---|---|---|
+| EPYC 7763, 9V74, 9V45 | 8, 2, 2 | none: no counter flag, no `cpu` event source, the kernel reports "PMU not available due to virtualization, using software events only", and `cycles` and the raw AMD events are not supported |
+| Xeon 6975P-C | 12 | cycles, instructions, branches, branch misses, `idq.dsb_uops`, `idq.mite_uops`, `baclears.any`, `br_misp_retired.all_branches` |
+| i9-14900K | 1 | the same on `cpu_core` and `cpu_atom`, and `frontend_retired.dsb_miss` |
+
+Branch-prediction and op-cache counts therefore cannot be read on the 9V74
+or the 9V45 as the hosted pool provides them. The software clock still
+samples there, which gives time per instruction address. The pool has
+changed since the runs above: half of this probe's hosted jobs, and 15 of 24
+in the run before it (45622347072), landed on the Xeon 6975P-C, which no
+earlier run met, and none on the Xeon 8370C.
+
+### The next runs
+
+Question: on the 9V74 and the 9V45, is the aligned `records` slower than the
+unaligned placements' median, is the cause the position of its inner loops in
+their lines, the image's data or neither, and does a layout rule that applies
+to every function alike remove the cost while keeping the times independent
+of placement?
+
+One compiler builds every arm, so the arms differ in layout alone: the
+unaligned module is the emitted module with ` align 64` removed from each
+definition, and the unaligned runtime is the same sources compiled without
+`-falign-functions=64`.
+
+- `U`, `F`, `FR` as above, and `UR`, the unaligned module over the aligned
+  runtime.
+- `O16`, `O32`, `O48`: `FR` with every function of the module starting that
+  many bytes past a 64-byte boundary. They are diagnostic: an offset chosen
+  for one kernel's loops is not a rule.
+- `L32`, `L64`: `FR` with the module's loops aligned to 32 and to 64 bytes;
+  `A32`: the module's functions aligned to 32 bytes. These are the candidate
+  rules.
+- Placements `p0`, `m16`, `m32`, `m48`, `r16`, `r48`, and for the aligned
+  arms `m1024` and `m2048`, which move aligned code by 16 and 32 lines and so
+  change its offset within a page.
+- Every image of a kernel is linked with the same addresses for its data, and
+  the run refuses when they differ. `FR` and `U` at `p0` are also timed as the
+  linker lays their data out, which is the data arm.
+- On hosts with counters, `FR` at `p0`, the fastest placement of `U` and each
+  candidate rule are also run under `perf stat`; on every host the same
+  images are sampled by the software clock, binned by 64-byte line.
+
+Criterion, with the per-round ratio and interval defined above and at least
+12 rounds on each of two 9V74 jobs:
+
+- The cost is established at a width when `FR`'s interval against `U` lies
+  wholly below 1 on both 9V74 jobs. Where it does not, no cost is established
+  and nothing below is selected for that width.
+- The loop reading holds if `O48` is faster than `FR` by the gate's rule at
+  every width where the cost is established, and is rejected if `O48`'s
+  interval against `FR` spans 1 or lies below it at any of them.
+- The data reading holds if `FR` or `U` with the linker's own data layout
+  differs from the same image with the common layout by the gate's rule, and
+  is rejected otherwise.
+- A candidate rule passes when, on both 9V74 jobs and at every width, its
+  interval against `U` does not lie wholly below 1; no placement moves it
+  against its `p0` by the gate's rule in any conclusive cell of any kernel on
+  any host (C2); and on no host is any kernel slower than under `FR` by the
+  gate's rule. The 9V45, the 7763, the Xeon 6975P-C and the 14900K each give
+  at least one run of all five kernels.
+- If no rule passes, the record states the cause as far as these arms locate
+  it and the cost each rule left.

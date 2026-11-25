@@ -9,9 +9,17 @@ comparison of two cells is paired by round: its ratio is the median of the
 per-round ratios, and it is adverse when that median is below 0.97 and at
 least 80 percent of the rounds lean the same way, the regression gate's own
 threshold. Prints the cells, then one verdict line per criterion.
+
+The shipped arm's line also gives a 95 percent interval of the per-round
+ratio's median, from order statistics: with n rounds, the k-th smallest and
+k-th largest ratios, k the largest rank whose binomial(n, 1/2) tail stays at
+or under 2.5 percent on each side (the 3rd and 10th of 12 rounds, the 6th and
+15th of 20). It assumes only that the rounds are independent, and fewer than
+six rounds give none.
 """
 
 import collections
+import math
 import statistics
 import sys
 
@@ -59,6 +67,22 @@ def paired(reference, candidate):
     ratios = [a / b for a, b in zip(reference, candidate)]
     return statistics.median(ratios), sum(r < 1 for r in ratios) / len(ratios), \
         sum(r > 1 for r in ratios) / len(ratios)
+
+
+def interval(reference, candidate):
+    """The 95 percent order-statistic interval of the median of
+    reference/candidate per round, or None when the rounds are too few."""
+    ratios = sorted(a / b for a, b in zip(reference, candidate))
+    count = len(ratios)
+    rank, tail = 0, 0.0
+    while True:
+        tail += math.comb(count, rank) / 2 ** count
+        if tail > 0.025:
+            break
+        rank += 1
+    if rank == 0:
+        return None
+    return ratios[rank - 1], ratios[count - rank]
 
 
 def adverse(reference, candidate):
@@ -165,7 +189,14 @@ def main():
             ratio, slower, faster = paired(reference, candidate)
             verdict = "slower" if ratio < 0.97 and slower >= 0.8 else \
                 "faster" if ratio > 1 / 0.97 and faster >= 0.8 else "same"
-            print(f"  {kernel} W={width}: U/FR {ratio:.3f} {verdict}")
+            bounds = interval(reference, candidate)
+            if bounds is None:
+                span = f"no 95% interval from {len(rounds)} rounds"
+            else:
+                side = "wholly slower" if bounds[1] < 1 else \
+                    "wholly faster" if bounds[0] > 1 else "spans 1"
+                span = f"95% interval {bounds[0]:.3f} to {bounds[1]:.3f}, {side}"
+            print(f"  {kernel} W={width}: U/FR {ratio:.3f} {verdict}; {span}")
     print("\nQ3 FRL against FR: loop alignment stays refused unless FRL is invariant and,")
     print("  in some kernel at two or more widths, faster than FR by the gate's rule with no cell slower")
     faster = collections.Counter()
