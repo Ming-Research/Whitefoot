@@ -207,7 +207,7 @@ pub(super) fn run() -> &'static Run {
             .chain(
                 super::module_pairs::MODULE_PAIRS
                     .iter()
-                    .chain(super::graph_pairs::GRAPH_PAIRS)
+                    .chain(super::module_kind_pairs::MODULE_KIND_PAIRS)
                     .map(super::module_pairs::check_module_pair),
             );
         for result in results {
