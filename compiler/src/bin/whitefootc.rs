@@ -3852,7 +3852,11 @@ mod tests {
                     .any(|probe| body.contains(probe));
                 report.push(format!("{relative_path} {name} {bytes} {kind} probed={probed}"));
                 if !probed {
-                    unprobed.push(format!("{relative_path} {name} {bytes} {kind}"));
+                    unprobed.push(format!(
+                        "{relative_path} {name} {bytes} {kind} args={:?}\n{}",
+                        command.get_args().collect::<Vec<_>>(),
+                        body.lines().take(60).collect::<Vec<_>>().join("\n")
+                    ));
                 }
             }
         }
