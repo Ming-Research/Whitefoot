@@ -1956,4 +1956,384 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "##],
     },
+    // [CONST-1] a const expression naming a constant that is no integer.
+    RepairPair {
+        name: "const1-neg-noninteger.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/const1-neg-noninteger.wf"
+        ),
+        rule: "CONST-1",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const name: u64 = 4_u64;
+
+fn main() -> status: ExitStatus pure {
+  doc "An IDENT resolving to a non-integer (unit-typed) const used in a const-expression position, here a run capacity, is a compile-time rejection.";
+  let xs = slots_new::<i32, name>();
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [RANGE-5] a fact that does not separate two iterations.
+    RepairPair {
+        name: "range5-neg-fact-does-not-separate.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/range5-neg-fact-does-not-separate.wf"
+        ),
+        rule: "RANGE-5",
+        sentences: &[],
+        repaired: &[br##"fn scatter(order: &[u64], pos: &[u64], out: &[u64]) -> result: unit reads(order), writes(out) contract {
+  requires pos^.len == out^.len;
+  requires forall inv(k in 0_u64..order^.len) when order^[k] < out^.len: pos^[order^[k]] == k;
+} {
+  doc "Writes each iteration's index at the slot order names. inv bounds pos only from above, which two iterations naming one slot satisfy, so the certificate does not hold.";
+  let count = order^.len;
+  for (
+    k in 0_u64..count,
+    apart(i, j) {
+    }
+  ) {
+    let e = order^[k];
+    if e < out^.len {
+      set out^[e] = k;
+    }
+  }
+  return unit;
+}
+
+fn reversed(n: u64) -> result: u64 pure contract {
+  requires n <= 1000_u64;
+  requires n >= 1_u64;
+} {
+  doc "Builds the reversal permutation order[k] = n - 1 - k with its inverse pos, proving inv by two loop invariants, and scatters through it.";
+  let order = box_array_filled::<u64>(count: n, value: 0_u64);
+  let pos = box_array_filled::<u64>(count: n, value: 0_u64);
+  let out = box_array_filled::<u64>(count: n, value: 0_u64);
+  let last = n - 1_u64;
+  for (
+    k in 0_u64..n,
+    invariant forall vals(q in 0_u64..k): order.inner[q] == last - q,
+    invariant forall inv(q in 0_u64..k): pos.inner[order.inner[q]] == q
+  ) {
+    let back = last - k;
+    set order.inner[k] = back;
+    set pos.inner[back] = k;
+  }
+  scatter(order: &order.inner[0_u64..n], pos: &pos.inner[0_u64..n], out: &out.inner[0_u64..n]);
+  let first = out.inner[0_u64];
+  return first;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let got = reversed(n: 5_u64);
+  if got != 4_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [FN-9] a result datum spelled like a module alias.
+    RepairPair {
+        name: "fn9-neg-result-beside-module-alias.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/fn9-neg-result-beside-module-alias.wf"
+        ),
+        rule: "FN-9",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias process = std::process;
+
+fn capped(limit: u64) -> capped_value: u64 pure contract {
+  ensures capped_value <= limit;
+} {
+  doc "The result datum takes the spelling of a module alias, which is in both use classes, so the candidate competes with it and is not fresh [FN-9, TYPE-6].";
+  return limit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [FN-9] an ensures relation of more than two terms.
+    RepairPair {
+        name: "fn9-neg-affine-two-parameter-terms.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/fn9-neg-affine-two-parameter-terms.wf"
+        ),
+        rule: "FN-9",
+        sentences: &[],
+        repaired: &[br##"fn bounded(base: u64, limit: u64, spare: u64) -> after: u64 pure contract {
+  ensures after <= base + limit;
+} {
+  doc "The extension admits one extra bare parameter term on one side, not an arbitrary sum of three quantities; formation must reject FN-9 before proving the trivial body.";
+  return base;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [CALL-6] ensures clauses that contradict each other.
+    RepairPair {
+        name: "call6-neg-contradictory-published-relations.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/call6-neg-contradictory-published-relations.wf"
+        ),
+        rule: "CALL-6",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn measure(taken: Slots<u8, 4>) -> measured: u64 pure contract {
+  ensures measured <= taken.len;
+} {
+  doc "The two published relations cannot hold together, so every caller goal would discharge from the contradiction alone.";
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Two ensures clauses publish relations that cannot hold together. At a contradictory point every relation and both signs of every goal are derivable, so an inconsistent contract is not one wrong fact at one caller but every fact at every caller; the set is fixed at the declaration and refused there.";
+  let run = slots_new::<u8, 4>();
+  place_back(window: &run, value: 0_u8);
+  place_back(window: &run, value: 0_u8);
+  place_back(window: &run, value: 0_u8);
+  place_back(window: &run, value: 0_u8);
+  let measured = measure(taken: move run);
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [FN-9] a call result returned under a clause that names it.
+    RepairPair {
+        name: "fn9-neg-return-call-result.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/fn9-neg-return-call-result.wf"
+        ),
+        rule: "FN-9",
+        sentences: &[],
+        repaired: &[br##"fn same(value: u64) -> result: u64 pure contract {
+  ensures result == value;
+} {
+  return value;
+}
+
+fn relay(value: u64) -> result: u64 pure contract {
+  ensures result == value;
+} {
+  doc "A call is no computed integer expression: a returned call result evaluates to no term, so the clause naming the result rejects at this return.";
+  let r = same(value: value);
+  return r;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [FN-9] a routed ensures that no return selects.
+    RepairPair {
+        name: "fn9-neg-no-selected-normal-exit.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/fn9-neg-no-selected-normal-exit.wf"
+        ),
+        rule: "FN-9",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn unselected() -> result: Result<i32, Overflow> pure contract {
+  ensures when Ok(value: result): result == 0_i32;
+} {
+  return Ok<i32, Overflow>(value: 0_i32);
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [GRAM-11] a call that names a parameter the callee does not declare.
+    RepairPair {
+        name: "gram11-neg-misspelled.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/gram11-neg-misspelled.wf"
+        ),
+        rule: "GRAM-11",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn add2(x: i32, y: i32) -> return_value: i32 pure {
+  return x +wrap y;
+}
+
+fn main() -> return_value: ExitStatus pure {
+  doc "GRAM-11: a misspelled parameter name in a call is a hard error citing GRAM-11.";
+  let r = add2(x: 40_i32, y: 2_i32);
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [EFF-1] an effect row whose entries are out of order.
+    RepairPair {
+        name: "eff1-neg-wrong-order-row.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/eff1-neg-wrong-order-row.wf"
+        ),
+        rule: "EFF-1",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn f(y: &Slots<i32, 4>, x: &Slots<i32, 4>) -> result: i32 reads(x), writes(y) contract {
+  requires y^.len < y^.cap;
+  requires x^.len > 0_u64;
+} {
+  doc "Row order violates EFF-1's canonical order: every reads entry must precede every writes entry.";
+  place_back(window: y, value: 1_i32);
+  return x^[0_u64];
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The malformed declaration above is rejected before this independent entry executes.";
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [FN-3] a generic bound that names a source interface.
+    RepairPair {
+        name: "fn3-neg-source-contract-bound.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/fn3-neg-source-contract-bound.wf"
+        ),
+        rule: "FN-3",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+interface SourceBound {
+}
+
+fn identity<T: Int>(value: T) -> result: T pure {
+  return value;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [TYPE-6] a `break` outside every loop.
+    RepairPair {
+        name: "probe-break-outside-loop.wf",
+        rejected: br##"fn main() -> status: std::process::ExitStatus pure {
+  break;
+}
+"##,
+        rule: "TYPE-6",
+        sentences: &[],
+        repaired: &[br##"fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [ERR-2] two arms for one variant.
+    RepairPair {
+        name: "probe-duplicate-match-variant.wf",
+        rejected: br##"enum Flag {
+  A();
+  B();
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let flag = Flag::A();
+  match flag {
+    A() => {
+    }
+    A() => {
+    }
+    B() => {
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"##,
+        rule: "ERR-2",
+        sentences: &[],
+        repaired: &[br##"enum Flag {
+  A();
+  B();
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let flag = Flag::A();
+  match flag {
+    A() => {
+    }
+    B() => {
+    }
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [CONST-2] two constants that define each other.
+    RepairPair {
+        name: "probe-constant-cycle.wf",
+        rejected: br##"const a: u64 = b;
+
+const b: u64 = a;
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"##,
+        rule: "CONST-2",
+        sentences: &[],
+        repaired: &[br##"const a: u64 = 1_u64;
+
+const b: u64 = a;
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [CONST-2] a reference to a constant passed where the callee writes.
+    RepairPair {
+        name: "probe-constant-as-written-argument.wf",
+        rejected: br##"const permanent: u64 = 1_u64;
+
+fn overwrite(target: &u64) -> result: unit writes(target) {
+  set target^ = 9_u64;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  overwrite(target: &permanent);
+  return std::process::exit_status(code: 0_u8);
+}
+"##,
+        rule: "CONST-2",
+        sentences: &[],
+        repaired: &[br##"const permanent: u64 = 1_u64;
+
+fn overwrite(target: &u64) -> result: unit writes(target) {
+  set target^ = 9_u64;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let copied = permanent;
+  overwrite(target: &copied);
+  return std::process::exit_status(code: 0_u8);
+}
+"##],
+    },
 ];
