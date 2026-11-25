@@ -39,7 +39,9 @@
 #   gh workflow run gate.yml --ref <branch whose tip is the commit> -f macos=true
 #
 # The last job requires every group green on the platforms the run was asked
-# for, for the revision. A job fails
+# for, for the revision: it takes this run's own result when every group of the
+# run succeeded, and otherwise reads the revision's runs and jobs
+# (.github/gate-both-platforms.sh). A job fails
 # the run while a `tmp-` workflow file exists in the checked head: a temporary
 # workflow never merges, and the last run before a merge, started by hand, is
 # the one that stops a forgotten one; main's own run stops one that got in.
@@ -449,7 +451,10 @@ jobs:
     needs: [groups, no-tmp-workflow, gate]
     if: ${{ !cancelled() && needs.groups.outputs.run == 'true' && needs.no-tmp-workflow.result == 'success' }}
     runs-on: ubuntu-24.04
-    # A listing makes one call for the runs and one per run of the revision
+    # A run whose groups all succeeded is judged by that result alone, with no
+    # call; only otherwise are the revision's runs listed, so what follows
+    # bounds the listing of a run with a group that did not succeed. A listing
+    # makes one call for the runs and one per run of the revision
     # (usually one or two). With three calls, each failing four times before
     # it answers (5+10+20+40 = 75 s of waits), and 3 waits of 30 s between 4
     # listings, the step takes 4*3*75 + 90 = 990 s, under 20 minutes; more runs
@@ -471,6 +476,11 @@ jobs:
           # The platforms the run was asked for: Linux, and macOS if its
           # manual run asked for it (wf-gate-no-macos).
           GATE_PLATFORMS: ${{ join(fromJSON(needs.groups.outputs.platforms), ' ') }}
+          # The result of this run's own group matrix (every group on every
+          # platform asked for): GitHub can list a finished group job as not
+          # complete for minutes, so a run whose groups all succeeded is not
+          # judged from the listing.
+          GATE_RUN_RESULT: ${{ needs.gate.result }}
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           GATE_GROUPS: ${{ needs.groups.outputs.groups }}

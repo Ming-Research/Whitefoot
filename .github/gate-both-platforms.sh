@@ -5,9 +5,24 @@
 # the latest completed job of a name decides, so a re-run run supersedes an
 # earlier one. Each `<group> (<os>)` must have concluded success.
 #
-# GitHub's API is sometimes flaky, and a listing taken while jobs are being
-# recorded can lack some of them, so a flaky answer must not read as a red
-# gate:
+# A run whose own group jobs all succeeded needs no listing. GitHub may record
+# a finished job as complete minutes late: run 39607651901's corpus job ended
+# 13:40:45 and the listing showed no completed entry for it for the 98 s this
+# script listed, so a group that had passed read as absent; in run 40115097375
+# the runtime job's steps ended 17:14:20 and it was recorded complete 17:24:40
+# (research/investigations/test-economy/time-budgets.md). The run's own result
+# is not late: GATE_RUN_RESULT is `needs.gate.result` of the run's group
+# matrix, `success` exactly when every group on every platform the run was
+# asked for succeeded, so the verdict is that result, with no GitHub call. A
+# group job that GitHub stops at its time limit without having recorded it
+# complete ends `cancelled` and has no result: the run is then not `success`,
+# this script reads the listing as below, finds no completed job and fails;
+# only a re-run settles it.
+#
+# Otherwise (a group failed, was cancelled or was skipped, or GATE_RUN_RESULT
+# is not set) the revision's runs are read. GitHub's API is sometimes flaky,
+# and a listing taken while jobs are being recorded can lack some of them, so
+# a flaky answer must not read as a red gate:
 # - every `gh api` call is tried up to 5 times, waiting 1, 2, 4 and 8 times
 #   GATE_RETRY_WAIT seconds (default 5: 5, 10, 20, 40 s) between tries; a call
 #   that fails every time fails the step, naming the call;
@@ -19,7 +34,9 @@
 #   result: it fails the step at once, with no further listing, after every
 #   group's line is printed; a cancelled job is no entry (see list).
 #
-# It reads GH_TOKEN, HEAD_SHA, GATE_GROUPS (a JSON array of group names) and
+# It reads GH_TOKEN, HEAD_SHA, GATE_GROUPS (a JSON array of group names),
+# GATE_PLATFORMS (space-separated, default `ubuntu-24.04 macos-15`),
+# GATE_RUN_RESULT (the run's group matrix result, optional) and
 # GITHUB_REPOSITORY, uses RUNNER_TEMP (or a fresh temporary directory) for
 # scratch files, and queries GitHub with `gh`. .github/test-gate-both-platforms.sh
 # exercises it.
@@ -32,6 +49,16 @@ listings=4
 
 groups=$(printf '%s\n' "$GATE_GROUPS" | jq -er '.[]')
 test -n "$groups"
+
+if [ "${GATE_RUN_RESULT:-}" = success ]; then
+    for group in $groups; do
+        for os in ${GATE_PLATFORMS:-ubuntu-24.04 macos-15}; do
+            echo "ok      $group ($os)"
+        done
+    done
+    echo "$HEAD_SHA: every group of this run succeeded; no listing is needed"
+    exit 0
+fi
 
 work=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gate-both-platforms.XXXXXX")
 trap 'rm -rf "$work"' EXIT
