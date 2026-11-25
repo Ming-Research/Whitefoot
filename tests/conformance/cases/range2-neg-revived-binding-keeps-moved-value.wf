@@ -1,0 +1,20 @@
+struct Holder {
+  count: u8;
+  cell: Box<u8>;
+}
+
+fn bump(marks: &[u64], x: u8) -> result: u8 pure contract {
+  requires forall small(k in 0_u64..marks^.len): marks^[k] < 8_u64;
+} {
+  doc "t takes the storage s held, whose count is x and may be 9; giving s a new value afterwards does not change t.";
+  let s = Holder(count: x, cell: box_new::<u8>(value: 0_u8));
+  let t = move s;
+  set s = Holder(count: 1_u8, cell: box_new::<u8>(value: 0_u8));
+  let v = t.count;
+  let w = 251_u8 + v;
+  return w;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

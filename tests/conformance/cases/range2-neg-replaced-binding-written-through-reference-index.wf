@@ -1,0 +1,20 @@
+struct Counter {
+  count: u64;
+}
+
+fn pick(marks: &[u64], cells: &Array<u64, 4>, x: u64) -> result: u64 pure contract {
+  requires forall small(k in 0_u64..marks^.len): marks^[k] < 8_u64;
+} {
+  doc "Replacing s whole leaves r valid, so the write through r makes s.count x, which may be 9, past the end of cells.";
+  let s = Counter(count: 0_u64);
+  let r = &s;
+  set s = Counter(count: 1_u64);
+  set r^.count = x;
+  let v = s.count;
+  let w = cells^[v];
+  return w;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
