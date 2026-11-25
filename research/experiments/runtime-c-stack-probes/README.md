@@ -129,7 +129,9 @@ The frame test, on the same day:
 | Apple clang 17, `-Xclang -fstack-clash-protection` | [45614872796](https://github.com/Ming-Research/Whitefoot/actions/runs/45614872796), 139207554717 | passes |
 | upstream 22.1.8 as packaged, `-Xclang -fstack-clash-protection` | same job | passes |
 
-The first three rows ran at commits `f6f2cb899` and `40ace2e97`, the rest
+The first row's failure message is in its job log, which was not read: the
+API that serves logs refused this work's token for its rate limit that day,
+and the job's annotations hold only the exit status. The first three rows ran at commits `f6f2cb899` and `40ace2e97`, the rest
 at `587911df0` and `1d5a54f1a`; each commit names its arguments. Before
 those commits the test matched a function's label against the whole line,
 while clang writes the label with a comment after it (`name:  # @name`), so
