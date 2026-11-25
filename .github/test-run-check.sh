@@ -331,4 +331,157 @@ WHITEFOOT_TIME_BUDGET_FILE=$work/missing WHITEFOOT_TIME_BUDGET_RECORD=$work/miss
     perl "$runner" within true > "$work/missing-recorded.log" 2>&1
 grep -q 'cannot read' "$work/missing-record"
 test ! -e "$work/lock"
+# A command that cannot be executed fails the stage with a nonzero status,
+# says why, and leaves no lock behind: the wrapper executes the command itself
+# since it no longer runs it through /usr/bin/time.
+status=0
+perl "$runner" missing-command definitely-not-a-command-for-whitefoot > "$work/missing-command.log" 2>&1 || status=$?
+test "$status" -ne 0
+grep -q 'execute check' "$work/missing-command.log"
+grep -q '^== END missing-command: ' "$work/missing-command.log"
+test ! -e "$work/lock"
+
+# The Windows I/O host job (.github/workflows/io-hosts.yml, completion-windows)
+# is held to the budget table by its form: the job's default shell runs every
+# step under the wrapper with the step's own id as its label, each step that is
+# timed has an id, and the id is a row of the table. These checks read the
+# workflow and the table as they are, so a step added without an id or without a
+# row, or a row without a step, fails here and not in a Windows run.
+repo=$(CDPATH= cd -- "$(dirname -- "$runner")/.." && pwd)
+workflow=$repo/.github/workflows/io-hosts.yml
+table=$repo/.github/time-budgets.txt
+# One line per run step of the job: "timed <id>", "noid" for a step the default
+# shell would time under a generated name, or "untimed <flags>" for a step that
+# states `shell: bash`, with v (calls the verdict), a (if: always()) and r
+# (writes the record's name to GITHUB_ENV).
+awk '
+function flush() {
+    if (step && run) {
+        if (bash) printf "untimed %s%s%s\n", (verdict ? "v" : ""), (always ? "a" : ""), (names ? "r" : "")
+        else if (id == "") print "noid"
+        else print "timed " id
+    }
+    step = 0
+}
+/^  [a-z][a-z-]*:$/ { flush(); injob = ($1 == "completion-windows:"); next }
+!injob { next }
+/^      - / { flush(); step = 1; id = ""; run = 0; bash = 0; verdict = 0; always = 0; names = 0 }
+/^      - id: / { id = $3 }
+/^        id: / { id = $2 }
+/^        run:/ { run = 1 }
+/^        shell: bash$/ { bash = 1 }
+/^        if: always\(\)$/ { always = 1 }
+/--budget-verdict/ { verdict = 1 }
+/WHITEFOOT_TIME_BUDGET_RECORD=.*GITHUB_ENV/ { names = 1 }
+END { flush() }
+' "$workflow" > "$work/windows-steps"
+test -s "$work/windows-steps"
+if grep -qx noid "$work/windows-steps"; then exit 1; fi
+test "$(grep -c '^untimed ' "$work/windows-steps")" -eq 2
+grep -qx 'untimed r' "$work/windows-steps"
+grep -qx 'untimed va' "$work/windows-steps"
+sed -n 's/^timed //p' "$work/windows-steps" | sort > "$work/windows-step-ids"
+test -s "$work/windows-step-ids"
+test "$(uniq -d < "$work/windows-step-ids" | wc -l)" -eq 0
+# The table side: the rows that name windows stages, with seconds of at least
+# the 10 s floor in the windows column and '-' in every other column.
+awk '
+/^[ \t]*(#|$)/ { next }
+$1 == "label" { nf = NF; for (i = 2; i <= NF; i++) if ($i == "windows") w = i; next }
+$1 ~ /^windows-/ {
+    if (!w || NF != nf) bad = 1
+    for (i = 2; i <= NF; i++) {
+        if (i == w) { if ($i !~ /^[0-9]+$/ || $i + 0 < 10) bad = 1 }
+        else if ($i != "-") bad = 1
+    }
+    print $1
+}
+END { exit bad }
+' "$table" > "$work/windows-rows-unsorted"
+sort "$work/windows-rows-unsorted" > "$work/windows-rows"
+test -s "$work/windows-rows"
+cmp "$work/windows-step-ids" "$work/windows-rows"
+# compiler/build, which compiler/Makefile labels, has a row with seconds in
+# every Linux column and '-' for the hosts that do not run it.
+grep -q 'CHECK_RUN) compiler/build ' "$repo/compiler/Makefile"
+awk '
+/^[ \t]*(#|$)/ { next }
+$1 == "label" { for (i = 2; i <= NF; i++) col[i] = $i; n = NF; next }
+$1 == "compiler/build" {
+    found = 1
+    if (NF != n) bad = 1
+    for (i = 2; i <= NF; i++) {
+        if (col[i] == "macos" || col[i] == "windows") { if ($i != "-") bad = 1 }
+        else if ($i !~ /^[0-9]+$/ || $i + 0 < 10) bad = 1
+    }
+}
+END { exit (!found || bad) }
+' "$table"
+
+# The job's default shell, as the workflow writes it, run the way the runner
+# runs it: the script file replaces {0}, the step's id is GITHUB_ACTION. The
+# step runs under the wrapper with its own label, a status passes through, and
+# `set -e` and `pipefail` hold in it, with a script path that has a space.
+awk '/^  [a-z][a-z-]*:$/ { injob = ($1 == "completion-windows:") }
+     injob && /^    steps:/ { exit }
+     injob && /^        shell: / { print substr($0, index($0, "shell: ") + 7) }' "$workflow" > "$work/default-shell"
+test "$(wc -l < "$work/default-shell")" -eq 1
+grep -q 'run-check.pl "\$GITHUB_ACTION"' "$work/default-shell"
+default_shell=$(sed 's|[{]0[}]|"$1"|' "$work/default-shell")
+mkdir "$work/step dir"
+run_step() {
+    # $1: the step's script, $2: the id the runner puts in GITHUB_ACTION
+    printf '%s\n' "$1" > "$work/step dir/script.sh"
+    (cd "$repo" && GITHUB_ACTION=$2 sh -c "$default_shell" sh "$work/step dir/script.sh")
+}
+run_step 'echo ran-$((1 + 1))' within > "$work/shell-ok.log" 2>&1
+grep -q '^== START within (limit' "$work/shell-ok.log"
+grep -q '^ran-2$' "$work/shell-ok.log"
+grep -q '^== END within: [0-9.]* s, exit 0 ==' "$work/shell-ok.log"
+status=0
+run_step 'exit 17' windows-sched-deque > "$work/shell-status.log" 2>&1 || status=$?
+test "$status" -eq 17
+grep -q '^== START windows-sched-deque ' "$work/shell-status.log"
+status=0
+run_step 'false; echo after-$((1 + 1))-errexit' within > "$work/shell-errexit.log" 2>&1 || status=$?
+test "$status" -ne 0
+if grep -q after-2-errexit "$work/shell-errexit.log"; then exit 1; fi
+status=0
+run_step 'false | cat; echo after-$((1 + 1))-pipefail' within > "$work/shell-pipefail.log" 2>&1 || status=$?
+test "$status" -ne 0
+if grep -q after-2-pipefail "$work/shell-pipefail.log"; then exit 1; fi
+test ! -e "$work/lock"
+
+# The job's last step, as the workflow writes it: a record that no stage
+# created, because no step ran under the wrapper, fails it, and says why; an
+# empty record passes; an enforcing entry fails with the verdict.
+awk '
+function emit() { if (collect && verdict) printf "%s", text; collect = 0; verdict = 0; text = "" }
+/^  [a-z][a-z-]*:$/ { emit(); injob = ($1 == "completion-windows:"); next }
+!injob { next }
+/^      - / { emit() }
+/^        run: [|]$/ { collect = 1; next }
+collect && /^          / { text = text substr($0, 11) "\n"; if ($0 ~ /--budget-verdict/) verdict = 1; next }
+END { emit() }
+' "$workflow" > "$work/verdict-step.sh"
+test -s "$work/verdict-step.sh"
+run_verdict() {
+    (cd "$repo" && env "$@" bash --noprofile --norc -eo pipefail "$work/verdict-step.sh")
+}
+status=0
+run_verdict WHITEFOOT_X=1 > "$work/verdict-unset.log" 2>&1 || status=$?
+test "$status" -eq 1
+grep -q 'no stage ran under run-check.pl' "$work/verdict-unset.log"
+status=0
+run_verdict WHITEFOOT_TIME_BUDGET_RECORD="$work/no-such-record" > "$work/verdict-gone.log" 2>&1 || status=$?
+test "$status" -eq 1
+grep -q 'no stage ran under run-check.pl' "$work/verdict-gone.log"
+: > "$work/verdict-empty-record"
+run_verdict WHITEFOOT_TIME_BUDGET_RECORD="$work/verdict-empty-record" > "$work/verdict-clean.log" 2>&1
+printf '  ENFORCED: windows-x took 99.0 s, over its 10 s windows budget\n' > "$work/verdict-over-record"
+status=0
+run_verdict WHITEFOOT_TIME_BUDGET_RECORD="$work/verdict-over-record" > "$work/verdict-over.log" 2>&1 || status=$?
+test "$status" -eq 1
+grep -q 'TIME BUDGETS EXCEEDED' "$work/verdict-over.log"
+
 echo 'check runner: status, nesting, exclusion, limits, timeout, cancellation, orphan cleanup and time budgets pass'
