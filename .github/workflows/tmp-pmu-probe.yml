@@ -1,0 +1,73 @@
+# Temporary: whether hardware performance counters can be read on the hosted
+# ubuntu-24.04 pool's processor models and on the owner's i9-14900K runner,
+# for research/investigations/code-placement (item 287). Each job names its
+# processor and what `perf stat` returns for the generic events and the AMD
+# branch and op-cache events, also as a notice; it builds and times nothing.
+# It runs on the pushes the wf-agents engine makes of this work's commits (the
+# `wf-try/work-287-26e0fade/` refs). Removed before the full check (AGENTS.md,
+# "Checks").
+name: tmp-pmu-probe
+
+on:
+  push:
+    branches: ['wf-try/work-287-26e0fade/**']
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  probe:
+    name: probe (${{ matrix.host }} ${{ matrix.n }})
+    runs-on: ${{ matrix.host == '14900k' && fromJSON('["self-hosted", "14900k"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        host: [github]
+        n: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+        include:
+          - host: 14900k
+            n: 1
+    steps:
+      - name: Name the processor and read the counters
+        env:
+          HOST: ${{ matrix.host }}
+        run: |
+          set -u
+          model=$(lscpu | sed -n 's/^Model name: *//p')
+          lscpu | grep -E '^(Model name|CPU family|Model|Stepping|Hypervisor vendor|CPU\(s\)):'
+          uname -r
+          flags=$(grep -m1 '^flags' /proc/cpuinfo | tr ' ' '\n' |
+            grep -x -E 'perfctr_core|perfctr_nb|perfctr_llc|perfmon_v2|arch_perfmon|ibs|pdcm|arch_lbr|amd_lbr_v2' | tr '\n' ' ')
+          echo "counter flags: ${flags:-none}"
+          devices=$(ls /sys/bus/event_source/devices | tr '\n' ' ')
+          echo "event sources: $devices"
+          if [ "$HOST" = github ]; then
+            sudo dmesg | grep -i -E 'performance events|pmu' | head -5 || true
+            sudo sysctl -w kernel.perf_event_paranoid=-1 || true
+          fi
+          echo "perf_event_paranoid=$(cat /proc/sys/kernel/perf_event_paranoid)"
+          perf=$(command -v perf || true)
+          if [ -z "$perf" ] || ! "$perf" --version >/dev/null 2>&1; then
+            perf=$(ls /usr/lib/linux-tools/*/perf /usr/lib/linux-tools-*/perf 2>/dev/null | head -1)
+          fi
+          if [ -z "$perf" ]; then
+            echo "::notice title=pmu-probe::model=$model; no perf binary; flags=${flags:-none}; sources=$devices"
+            exit 0
+          fi
+          "$perf" --version
+          generic=$("$perf" stat -x, -e cycles:u,instructions:u,branches:u,branch-misses:u -- sleep 0.2 2>&1 || true)
+          echo "$generic"
+          echo "--- AMD branch and op-cache events"
+          "$perf" stat -x, -e ex_ret_brn:u,ex_ret_brn_misp:u,bp_de_redirect:u,bp_l1_btb_correct:u,bp_l2_btb_correct:u -- sleep 0.2 2>&1 || true
+          "$perf" stat -x, -e op_cache_hit_miss.op_cache_hit:u,op_cache_hit_miss.op_cache_miss:u,de_src_op_disp.decoder:u,de_src_op_disp.op_cache:u -- sleep 0.2 2>&1 || true
+          "$perf" stat -x, -e r00c2:u,r00c3:u,r038f:u,r048f:u -- sleep 0.2 2>&1 || true
+          echo "--- Intel front-end events"
+          "$perf" stat -x, -e idq.dsb_uops:u,idq.mite_uops:u,frontend_retired.dsb_miss:u,baclears.any:u,br_misp_retired.all_branches:u -- sleep 0.2 2>&1 || true
+          cycles=$(printf '%s\n' "$generic" | awk -F, '$3 ~ /cycles/ { print $1; exit }')
+          misses=$(printf '%s\n' "$generic" | awk -F, '$3 ~ /branch-misses/ { print $1; exit }')
+          echo "::notice title=pmu-probe::model=$model; cycles=${cycles:-no row}; branch-misses=${misses:-no row}; flags=${flags:-none}; sources=$devices"
