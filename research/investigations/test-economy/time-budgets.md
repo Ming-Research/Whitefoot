@@ -1400,6 +1400,30 @@ from Cargo's rules, not observed in a run): a smaller build than a miss, which
 therefore does not set the stage's slowest time. Whether that restore's
 writeback slows the smaller build is not measured.
 
+**Two measurements after the preparation is chosen, fixed before they run.**
+Both use temporary workflows on the work branch (`tmp-candidate-samples.yml`,
+`tmp-build-order.yml`, not kept) that do what a `compute-regression.yml` run
+does up to its compiler builds on hosted `ubuntu-24.04` machines: the same
+host check, the merge-base worktree, the same untimed preparation step and the
+same labeled stages and build commands, with no cache restored or saved, so
+every build is into an empty target directory.
+
+- The order check runs one job with the candidate built first and one with the
+  merge-base compiler first, each building both. A job passes if its first
+  build is within 5% of its second. A failing job means the preparation does
+  not remove the order effect, and the preparation is chosen again.
+- The samples budget `performance-candidate-compiler` by the table's rule. A
+  batch is 40 jobs, 20 at a time, and a machine whose CPU model is not a column
+  of the table builds nothing; batches repeat until each of the three EPYC
+  columns has 20 counted runs, and stop after five. A job's log counts only if
+  it shows no cache action and as many `Compiling` lines as a build into an
+  empty target directory (9 at `e7974f0c5`). The rule's value is taken
+  whatever it is: where it is not below the present 160 s the stage's budget
+  does not fall, which is a result, not a failure of the sampling. The Xeon
+  column follows the owner-column rule of `.github/recompute-time-budgets.py`.
+  Only runs after the preparation count; the earlier runs, which include the
+  first build's extra time, are left out.
+
 ## Daily loop
 
 One edit, measured in the local container with the new defaults: an unused
