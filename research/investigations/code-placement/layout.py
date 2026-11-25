@@ -19,9 +19,10 @@ those of HOST_LL, the kernel's appended host adapter, which carry none; the
 claims file lists each rewritten definition with the alignment, offset and
 crossing-loop count the image must show.
 
-`loops` prints, for each function of an object, its innermost loops of at
-most 64 bytes and how many of them cross a 64-byte line at each start offset
-0, 16, 32 and 48. A loop is the span from a backward branch's target to the
+`loops` prints, for each function of an object, its start modulo 64, its
+innermost loops of at most 64 bytes as offset+length@start modulo 64, and how
+many of them would cross a 64-byte line at each start offset 0, 16, 32 and
+48. A loop is the span from a backward branch's target to the
 end of the furthest branch back to it, and it is innermost when no other
 such span lies inside it. `choose` writes, per function, the offset with the
 fewest crossing loops, the smallest on a tie.
@@ -232,7 +233,7 @@ def format_table(table):
     for name, (start, loops, counts) in sorted(table.items()):
         if not loops:
             continue
-        spans = ", ".join(f"{offset:#x}+{length}" for offset, length in loops)
+        spans = ", ".join(f"{offset:#x}+{length}@{(start + offset) % LINE}" for offset, length in loops)
         crossings = " ".join(f"{s}:{counts[s]}" for s in OFFSETS)
         lines.append(f"{name} start={start % LINE} loops [{spans}] crossing at start {crossings}")
     return "\n".join(lines) + "\n" if lines else "no innermost loop of at most 64 bytes\n"

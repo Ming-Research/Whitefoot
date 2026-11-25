@@ -43,7 +43,7 @@
 # wall_ns cpu_ns" rows, which summarize.py reduces; WORK/manifest.txt holds
 # the toolchain, the module objects' digests, the loop tables and the images'
 # digests, WORK/nm/ and WORK/disassembly/ the images' symbols and the FR
-# modules' code.
+# modules' code, WORK/loops/ the loop table of every arm's module object.
 #
 # `sample` then samples records under the software clock, FR at p0 and the
 # fastest U placement of the run at each width, into WORK/lines/.
@@ -158,6 +158,7 @@ for kernel in "${kernels[@]}"; do
             "$fixtures/${kernel}_host.ll"
         # shellcheck disable=SC2086
         "$clang" ${flags[$arm]} -Wno-override-module -x ir -c "$dir/$kernel.ll" -o "$dir/$kernel.o"
+        layout loops "$dir/$kernel.o" > "$work/loops/$kernel-$arm.txt"
     done
 done
 cmp -s "$work/arm-FR/records.o" "$work/fr/records.o" || {
