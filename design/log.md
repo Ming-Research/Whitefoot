@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-11-25 The performance comparison warms the Rust toolchain before its first compiler build
+
+Nodes: compiler/verification
+
+Summary: The comparison timed the candidate compiler's cold build as the first heavy step of its job, and a first cold build took 9 to 15% more wall time than an identical second one on about 1% more user time, so `performance-candidate-compiler` was budgeted for waiting that was not the compiler's. The node gains a decision: an untimed step before that build fetches the locked crates of both revisions and reads every file of the Rust toolchain, outside every labeled stage, as the image construction's warm-up already stands outside its stages. Building the candidate compiler once untimed first is refused here: it would remove any first-use cost, one not yet known included, but would add a cold build of 85 to 146 s to every run. The cause and the sufficiency of the preparation are recorded in `research/investigations/test-economy/time-budgets.md`, "The first compiler build's extra time".
+
 ## 2026-10-23 A returned computed integer expression proves a postcondition as a `let` of it would
 
 Nodes: language/checks-and-proofs/automatic-facts
