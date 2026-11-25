@@ -1149,28 +1149,28 @@ fn function_bodies(module: &str) -> Vec<(&str, &str)> {
 }
 
 /// The emitted type of the scatter's `Option<Chunk>`: the named type made of
-/// an 8-bit tag and the named type that holds the two 256-word runs.
+/// an 8-bit tag and a named type that holds 256-word runs.
 fn vacant_chunk_type(module: &str) -> Option<String> {
-    let mut chunk = None;
+    let mut holders = Vec::new();
     for line in module.lines() {
         if let Some((name, definition)) = line.split_once(" = type ")
             && name.starts_with("%wf.t.")
             && definition.contains("[256 x i64]")
         {
-            chunk = Some(name.to_owned());
+            holders.push(name.to_owned());
         }
     }
-    let wanted = format!("{{ i8, {} }}", chunk?);
-    let mut option = None;
     for line in module.lines() {
         if let Some((name, definition)) = line.split_once(" = type ")
             && name.starts_with("%wf.t.")
-            && definition.trim() == wanted
+            && holders
+                .iter()
+                .any(|holder| definition.trim() == format!("{{ i8, {holder} }}"))
         {
-            option = Some(name.to_owned());
+            return Some(name.to_owned());
         }
     }
-    option
+    None
 }
 
 /// The emitted module with the whole-value clear that precedes each
@@ -1204,32 +1204,30 @@ fn with_vacant_clears(module: &str, headers: bool) -> (String, usize) {
     (kept, changed)
 }
 
-/// [`with_vacant_clears`] removing each clear whole.
-fn without_vacant_clears(module: &str) -> (String, usize) {
-    with_vacant_clears(module, false)
-}
-
-/// [`without_vacant_clears`], with each whole `Option<Chunk>` transfer in the
-/// scatter's own functions shortened to the tag byte, and how many transfers
-/// were shortened. Those functions transfer such a value only to append an
-/// empty slot, whose tag is all of its value.
+/// [`with_vacant_clears`] removing each clear whole, with each whole
+/// `Option<Chunk>` transfer of the scatter's root and of the window placement
+/// it calls shortened to the tag byte, and how many transfers were shortened.
+/// Those functions transfer such a value only to append an empty slot, whose
+/// tag is all of its value.
 fn with_tag_only_vacant_appends(module: &str) -> (String, usize) {
-    let (module, _) = without_vacant_clears(module);
+    let (module, _) = with_vacant_clears(module, false);
     let Some(option) = vacant_chunk_type(&module) else {
         return (module, 0);
     };
     let size = format!("i64 ptrtoint (ptr getelementptr ({option}, ptr null, i32 1) to i64)");
     let mut shortened = 0;
-    let mut in_scatter = false;
+    let mut appends = false;
     let mut kept = String::with_capacity(module.len());
     for line in module.lines() {
         if line.starts_with("define ") {
-            in_scatter = line
+            appends = line
                 .split_once(" @")
                 .and_then(|(_, tail)| tail.split_once('('))
-                .is_some_and(|(name, _)| name.contains("radix_scatter"));
+                .is_some_and(|(name, _)| {
+                    name.contains("radix_scatter") || name.contains("place_back")
+                });
         }
-        if in_scatter && line.contains("@llvm.mem") && line.contains(&size) {
+        if appends && line.contains("@llvm.mem") && line.contains(&size) {
             shortened += 1;
             kept.push_str(&line.replace(&size, "i64 1"));
         } else {
@@ -1295,81 +1293,17 @@ fn write_chunk(input: &[u64], bit: u32, output: &[Option<Chunk>]) -> result: u64
     format!("{}{writer}{}", &source[..start], &source[end..])
 }
 
-/// The clears and copies one optimized module keeps, function by function,
-/// and the instructions around each whole-block one.
-fn scatter_transfer_report(label: &str, optimized: &str) -> (Vec<String>, Vec<String>) {
-    let mut summary = Vec::new();
-    let mut context = Vec::new();
-    for (name, body) in function_bodies(optimized) {
-        let lines: Vec<&str> = body.lines().collect();
-        let found: Vec<&str> = lines
-            .iter()
-            .map(|line| line.trim())
-            .filter(|line| line.contains("@llvm.mem") || line.contains("zeroinitializer"))
-            .collect();
-        summary.push(format!(
-            "{label} function {name}: {} lines, {} clears or copies",
-            lines.len(),
-            found.len()
-        ));
-        for line in found {
-            summary.push(format!("{label} {name}:   {line}"));
-        }
-        let mut windows = 0;
-        for (at, line) in lines.iter().enumerate() {
-            if windows < 4 && !whole_block_transfers(line).is_empty() {
-                windows += 1;
-                let from = at.saturating_sub(16);
-                let to = (at + 8).min(lines.len());
-                context.push(format!(
-                    "{label} {name} lines {from}..{to}:\n{}",
-                    lines[from..to].join("\n")
-                ));
-            }
-        }
-    }
-    (summary, context)
-}
-
-/// Research probe for the scatter's chunk building. It always fails, so that
-/// its report reaches the test result: the clears and copies the emitted and
-/// the optimized modules hold, for the ordinary lowering, for the same module
-/// without the clear of each empty `Option<Chunk>`, and for the source that
-/// partitions inside the destination chunk.
-#[test]
-#[ignore = "research probe: reports the scatter's clears and copies"]
-fn stable_scatter_probe_reports_clears_and_copies() {
+/// The `--par` modules the probes compare, by name, and notes on how each
+/// was made. The first is the ordinary emission.
+fn scatter_probe_modules(notes: &mut Vec<String>) -> Vec<(&'static str, String)> {
     let source = include_bytes!("../../../../tests/programs/compute/radix_scatter.wf");
-    let mut summary = Vec::new();
-    let mut context = Vec::new();
     let emitted = emit_lowered(source, OverlapLowering::On);
-    for line in emitted.lines() {
-        if line.contains(" = type ") {
-            summary.push(format!("emitted type: {line}"));
-        }
-    }
-    for (name, body) in function_bodies(&emitted) {
-        if !["radix_scatter", "write_chunk", "partition_block"]
-            .iter()
-            .any(|part| name.contains(part))
-        {
-            continue;
-        }
-        summary.push(format!(
-            "emitted function {name}: {} lines",
-            body.lines().count()
-        ));
-        for line in body.lines().map(str::trim) {
-            if line.contains("@llvm.mem") || line.contains("zeroinitializer") {
-                summary.push(format!("emitted {name}:   {line}"));
-            }
-        }
-    }
-    let (without_clears, removed) = without_vacant_clears(&emitted);
-    summary.push(format!("vacant clears removed from the emitted module: {removed}"));
+    notes.push(format!("vacant type: {:?}", vacant_chunk_type(&emitted)));
+    let (without_clears, removed) = with_vacant_clears(&emitted, false);
+    notes.push(format!("no-clear: {removed} clears removed"));
     let (header_clears, _) = with_vacant_clears(&emitted, true);
     let (tag_only, shortened) = with_tag_only_vacant_appends(&emitted);
-    summary.push(format!("vacant appends shortened to the tag: {shortened}"));
+    notes.push(format!("tag-only: {shortened} transfers shortened"));
     let mut modules = vec![
         ("main", emitted),
         ("no-clear", without_clears),
@@ -1384,35 +1318,127 @@ fn stable_scatter_probe_reports_clears_and_copies() {
         OverlapLowering::On,
     ) {
         Ok(module) => {
-            let (tag_only, shortened) = with_tag_only_vacant_appends(&module.into_string());
-            summary.push(format!("in-place source: vacant appends shortened: {shortened}"));
+            let module = module.into_string();
+            let (tag_only, shortened) = with_tag_only_vacant_appends(&module);
+            notes.push(format!(
+                "in-place-tag-only: {shortened} transfers shortened"
+            ));
+            modules.push(("in-place", module));
             modules.push(("in-place-tag-only", tag_only));
         }
-        Err(failure) => summary.push(format!("in-place source rejected: {failure}")),
+        Err(failure) => notes.push(format!("in-place source rejected: {failure}")),
     }
+    modules
+}
+
+/// The lines of one function that clear or copy memory, or store a zero
+/// aggregate.
+fn transfer_lines(body: &str) -> Vec<&str> {
+    body.lines()
+        .map(str::trim)
+        .filter(|line| {
+            line.contains("@llvm.mem")
+                || (line.starts_with("store ") && line.contains("zeroinitializer"))
+        })
+        .collect()
+}
+
+/// Research probe for the scatter's chunk building. It always fails, so that
+/// its report reaches the test result: the clears and copies the emitted and
+/// the optimized modules hold, for the ordinary lowering and for each variant
+/// of [`scatter_probe_modules`]. The report ends with what matters most.
+#[test]
+#[ignore = "research probe: reports the scatter's clears and copies"]
+fn stable_scatter_probe_reports_clears_and_copies() {
+    let source = include_bytes!("../../../../tests/programs/compute/radix_scatter.wf");
+    let mut notes = Vec::new();
+    let modules = scatter_probe_modules(&mut notes);
+    let mut emitted_report = Vec::new();
+    let mut names = Vec::new();
+    for line in modules[0].1.lines() {
+        if line.contains(" = type ") {
+            emitted_report.push(format!("emitted type: {line}"));
+        }
+    }
+    for (name, body) in function_bodies(&modules[0].1) {
+        let lines = body.lines().count();
+        names.push(format!("{name}:{lines}"));
+        if ![
+            "radix_scatter",
+            "write_chunk",
+            "partition_block",
+            "place_back",
+        ]
+        .iter()
+        .any(|part| name.contains(part))
+        {
+            continue;
+        }
+        for line in transfer_lines(body) {
+            emitted_report.push(format!("emitted {name}: {line}"));
+        }
+    }
+    emitted_report.push(format!("emitted functions: {}", names.join(" ")));
+    let mut optimized_report = Vec::new();
+    let mut context = Vec::new();
     for (label, module) in &modules {
-        let optimized = host_optimized_module(module);
-        let (lines, windows) = scatter_transfer_report(label, &optimized);
-        summary.extend(lines);
-        context.extend(windows);
-        for (name, body) in function_bodies(&optimized) {
-            if name.contains("write_chunk") {
-                let cut = body
-                    .char_indices()
-                    .nth(6000)
-                    .map_or(body.len(), |(at, _)| at);
-                context.push(format!("{label} {name} body:\n{}", &body[..cut]));
+        let optimized = match std::panic::catch_unwind(|| host_optimized_module(module)) {
+            Ok(optimized) => optimized,
+            Err(_) => {
+                optimized_report.push(format!("{label}: the host optimizer refused the module"));
+                continue;
             }
+        };
+        let mut sizes = Vec::new();
+        for (name, body) in function_bodies(&optimized) {
+            let lines: Vec<&str> = body.lines().collect();
+            sizes.push(format!("{name}:{}", lines.len()));
+            for line in transfer_lines(body) {
+                optimized_report.push(format!("{label} {name}: {line}"));
+            }
+            if !matches!(*label, "main" | "no-clear" | "tag-only") {
+                continue;
+            }
+            let mut windows = 0;
+            for (at, line) in lines.iter().enumerate() {
+                if windows < 2 && !whole_block_transfers(line).is_empty() {
+                    windows += 1;
+                    let from = at.saturating_sub(12);
+                    let to = (at + 4).min(lines.len());
+                    context.push(format!(
+                        "{label} {name} lines {from}..{to}:\n{}",
+                        lines[from..to].join("\n")
+                    ));
+                }
+            }
+        }
+        optimized_report.push(format!("{label} optimized functions: {}", sizes.join(" ")));
+        for transfer in whole_block_transfers(&optimized) {
+            optimized_report.push(format!("{label} WHOLE BLOCK {transfer}"));
         }
     }
     let sequential = host_optimized_module(&emit_lowered(source, OverlapLowering::Off));
     for transfer in whole_block_transfers(&sequential) {
-        summary.push(format!("main without --par: {transfer}"));
+        optimized_report.push(format!("main without --par WHOLE BLOCK {transfer}"));
+    }
+    // What a test result keeps is its end, so the least important part of
+    // the report comes first and is cut to a bound.
+    let mut context = context.join("\n");
+    if let Some((cut, _)) = context.char_indices().nth(14_000) {
+        context.truncate(cut);
+    }
+    let mut emitted_report = emitted_report.join("\n");
+    if let Some((cut, _)) = emitted_report.char_indices().nth(8_000) {
+        emitted_report.truncate(cut);
+    }
+    let mut optimized_report = optimized_report.join("\n");
+    let length = optimized_report.chars().count();
+    if length > 24_000 {
+        optimized_report = optimized_report.chars().skip(length - 24_000).collect();
     }
     panic!(
-        "scatter clears and copies\n{}\n{}",
-        context.join("\n"),
-        summary.join("\n")
+        "scatter clears and copies\n{context}\n{emitted_report}\n{optimized_report}\n{}",
+        notes.join("\n")
     );
 }
 
@@ -1420,9 +1446,9 @@ fn stable_scatter_probe_reports_clears_and_copies() {
 /// A `WFP_MODE` that begins with `native` selects a serial native chain of the
 /// same decomposition in place of the Whitefoot entry; one that contains
 /// `verify` runs the oracle's matrix over the selected entry, and any other
-/// times it.
-/// Each timed call covers the whole scatter and nothing else: the input, the
-/// expected answer, the comparison and the release are outside it.
+/// times it on `WFP_COUNT` mixed keys. Each timed call covers the whole
+/// scatter and nothing else: the input, the expected answer, the comparison
+/// and the release are outside it.
 const SCATTER_TIMING_HOST: &str = r#"
 #include <time.h>
 extern void wf_bench_radix_scatter(const uint64_t *, uint64_t, uint32_t, uint64_t **, uint64_t *, void **);
@@ -1485,9 +1511,9 @@ int wf__main_body(int argc, char **argv) {
         (void)printf("verify PASS %zu\n", checked);
         return 0;
     }
-    const char *calls_text = getenv("WFP_CALLS");
+    const char *calls_text = getenv("WFP_CALLS"), *count_text = getenv("WFP_COUNT");
     size_t calls = calls_text ? (size_t)strtoull(calls_text, NULL, 10) : 20;
-    size_t count = 1048593;
+    size_t count = count_text ? (size_t)strtoull(count_text, NULL, 10) : 1048593;
     uint64_t *input = allocate(count, sizeof(*input));
     fill(input, count, 0, 0);
     uint64_t *expected = oracle(input, count, 0);
@@ -1523,23 +1549,34 @@ fn scatter_probe_image(module: &str, host: &str) -> (PathBuf, PathBuf) {
     (directory, executable)
 }
 
-fn scatter_probe_run(executable: &Path, workers: u32, mode: &str, calls: u32) -> String {
+/// One run of a probe image: its output, or why it failed.
+fn scatter_probe_run(
+    executable: &Path,
+    workers: u32,
+    mode: &str,
+    calls: u32,
+    count: u64,
+) -> Result<String, String> {
     let output = Command::new(executable)
         .env("WF_WORKERS", workers.to_string())
         .env("WFP_MODE", mode)
         .env("WFP_CALLS", calls.to_string())
+        .env("WFP_COUNT", count.to_string())
         .env_remove("WF_SPLIT_WORK")
         .bounded_output()
-        .expect("run the scatter probe");
-    assert!(
-        output.status.success(),
-        "{mode} workers={workers}: {output:?}"
-    );
-    String::from_utf8_lossy(&output.stdout).into_owned()
+        .map_err(|error| format!("{mode} workers={workers}: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "{mode} workers={workers}: {:?} {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 /// The median wall and CPU nanoseconds of one process's timed calls.
-fn scatter_probe_medians(stdout: &str) -> (u64, u64) {
+fn scatter_probe_medians(stdout: &str) -> Option<(u64, u64)> {
     let mut walls = Vec::new();
     let mut cpus = Vec::new();
     for line in stdout.lines() {
@@ -1547,33 +1584,56 @@ fn scatter_probe_medians(stdout: &str) -> (u64, u64) {
         if fields.next() != Some("call") {
             continue;
         }
-        let wall = fields
-            .next()
-            .and_then(|text| text.parse::<u64>().ok())
-            .expect("a call's wall time");
-        let cpu = fields
-            .next()
-            .and_then(|text| text.parse::<u64>().ok())
-            .expect("a call's CPU time");
-        walls.push(wall);
-        cpus.push(cpu);
+        walls.push(fields.next()?.parse::<u64>().ok()?);
+        cpus.push(fields.next()?.parse::<u64>().ok()?);
     }
-    assert!(!walls.is_empty(), "no timed call in {stdout:?}");
+    if walls.is_empty() {
+        return None;
+    }
     walls.sort_unstable();
     cpus.sort_unstable();
-    (walls[walls.len() / 2], cpus[cpus.len() / 2])
+    Some((walls[walls.len() / 2], cpus[cpus.len() / 2]))
 }
 
-/// Research probe for the scatter's whole call on 1,048,593 mixed keys. It
-/// always fails, so that its table reaches the test result. The images are
-/// the ordinary `--par` module, an identical twin of it, the same module
-/// without the clear of each empty `Option<Chunk>`, the same module clearing
-/// only the two run lengths, that module with each empty slot appended as
-/// its tag only, and the source that partitions
-/// inside the destination chunk, as emitted and with tag-only appends; each
-/// is checked against the
-/// independent oracle before it is timed. Every pass runs each image once at
-/// each width, in an order the pass rotates, and one serial native chain.
+/// The median of the values and the distribution-free 95% interval of that
+/// median, which for nine values is the second smallest and second largest.
+fn scatter_probe_interval(mut values: Vec<f64>) -> String {
+    values.sort_by(f64::total_cmp);
+    let count = values.len();
+    if count == 0 {
+        return "no samples".to_owned();
+    }
+    let mut tail = 0.0_f64;
+    let mut rank = 0_usize;
+    let mut combinations = 1.0_f64;
+    loop {
+        let next = tail + combinations / 2.0_f64.powi(count as i32);
+        if next > 0.025 || rank >= count {
+            break;
+        }
+        tail = next;
+        combinations = combinations * (count - rank) as f64 / (rank + 1) as f64;
+        rank += 1;
+    }
+    let median = values[count / 2];
+    if rank == 0 {
+        return format!("{median:.4} (too few samples for an interval)");
+    }
+    format!(
+        "{median:.4} [{:.4}, {:.4}]",
+        values[rank - 1],
+        values[count - rank]
+    )
+}
+
+/// Research probe for the scatter's whole call. It always fails, so that its
+/// table reaches the test result. The images are the modules of
+/// [`scatter_probe_modules`], an identical twin of the ordinary one and the
+/// program built without `--par`; each is checked against the independent
+/// oracle before it is timed, and one that fails is left out and named.
+/// Every pass runs each image once at each width on 1,048,593 mixed keys, in
+/// an order the pass rotates, then the ordinary image on the 8,209 keys of
+/// the program's own entry, and one serial native chain.
 #[test]
 #[ignore = "research probe: times the scatter's whole call"]
 fn stable_scatter_probe_times_whole_calls() {
@@ -1583,98 +1643,120 @@ fn stable_scatter_probe_times_whole_calls() {
         include_str!("../../../../tests/programs/compute/radix_scatter_oracle.c")
     );
     let mut report = Vec::new();
-    let emitted = emit_lowered(source, OverlapLowering::On);
-    let (without_clears, removed) = without_vacant_clears(&emitted);
-    report.push(format!("vacant clears removed from the emitted module: {removed}"));
-    let (header_clears, _) = with_vacant_clears(&emitted, true);
-    let (tag_only, shortened) = with_tag_only_vacant_appends(&emitted);
-    report.push(format!("vacant appends shortened to the tag: {shortened}"));
-    let mut modules = vec![
-        ("main", emitted.clone()),
-        ("twin", emitted),
-        ("no-clear", without_clears),
-        ("headers-only", header_clears),
-        ("tag-only", tag_only),
-    ];
-    let in_place = in_place_scatter_source();
-    let inputs = [SourceInput::new("test.wf", in_place.as_bytes())];
-    match crate::compile_with_overlap(
-        &inputs,
-        crate::CompilerLimits::default(),
-        OverlapLowering::On,
-    ) {
-        Ok(module) => {
-            let module = module.into_string();
-            let (tag_only, shortened) = with_tag_only_vacant_appends(&module);
-            report.push(format!("in-place source: vacant appends shortened: {shortened}"));
-            modules.push(("in-place", module));
-            modules.push(("in-place-tag-only", tag_only));
-        }
-        Err(failure) => report.push(format!("in-place source rejected: {failure}")),
-    }
-    let images: Vec<(&str, PathBuf, PathBuf)> = modules
-        .iter()
-        .map(|(name, module)| {
-            let (directory, executable) = scatter_probe_image(module, &host);
-            (*name, directory, executable)
-        })
-        .collect();
-    for (name, _, executable) in &images {
+    let mut modules = scatter_probe_modules(&mut report);
+    let twin = modules[0].1.clone();
+    modules.insert(1, ("twin", twin));
+    modules.push(("sequential", emit_lowered(source, OverlapLowering::Off)));
+    let mut images: Vec<(&str, PathBuf, PathBuf)> = Vec::new();
+    for (name, module) in &modules {
+        let Ok((directory, executable)) =
+            std::panic::catch_unwind(|| scatter_probe_image(module, &host))
+        else {
+            report.push(format!("{name}: the image did not build"));
+            continue;
+        };
+        let mut verified = true;
         for workers in [1_u32, 8] {
-            let stdout = scatter_probe_run(executable, workers, "verify", 0);
-            assert!(
-                stdout.contains("verify PASS"),
-                "{name} workers={workers}: {stdout}"
-            );
+            match scatter_probe_run(&executable, workers, "verify", 0, 0) {
+                Ok(stdout) if stdout.contains("verify PASS") => {}
+                Ok(stdout) => {
+                    verified = false;
+                    report.push(format!(
+                        "{name}: verify workers={workers} printed {stdout:?}"
+                    ));
+                }
+                Err(failure) => {
+                    verified = false;
+                    report.push(format!("{name}: {failure}"));
+                }
+            }
+        }
+        if verified {
+            images.push((*name, directory, executable));
+        } else {
+            report.push(format!("{name}: left out, the oracle refused it"));
         }
     }
-    let native = scatter_probe_run(&images[0].2, 1, "native-verify", 0);
-    assert!(native.contains("verify PASS"), "native chain: {native}");
+    assert!(
+        images.first().is_some_and(|(name, _, _)| *name == "main"),
+        "the ordinary image must build and verify:\n{}",
+        report.join("\n")
+    );
+    match scatter_probe_run(&images[0].2, 1, "native-verify", 0, 0) {
+        Ok(stdout) if stdout.contains("verify PASS") => {}
+        other => report.push(format!("native chain verify: {other:?}")),
+    }
     let widths = [1_u32, 8, 32];
     let passes = 9_usize;
-    let calls = 20_u32;
-    let mut samples: Vec<Vec<Vec<(u64, u64)>>> =
-        vec![vec![Vec::new(); widths.len()]; images.len()];
+    let large = 1_048_593_u64;
+    let small = 8_209_u64;
+    let mut samples: Vec<Vec<Vec<(u64, u64)>>> = vec![vec![Vec::new(); widths.len()]; images.len()];
+    let mut small_samples: Vec<Vec<(u64, u64)>> = vec![Vec::new(); widths.len()];
     let mut native_samples: Vec<(u64, u64)> = Vec::new();
     for pass in 0..passes {
         for (width, workers) in widths.iter().enumerate() {
             for step in 0..images.len() {
                 let image = (step + pass) % images.len();
-                let stdout = scatter_probe_run(&images[image].2, *workers, "time", calls);
-                samples[image][width].push(scatter_probe_medians(&stdout));
+                let (name, _, executable) = &images[image];
+                match scatter_probe_run(executable, *workers, "time", 20, large)
+                    .map(|stdout| scatter_probe_medians(&stdout))
+                {
+                    Ok(Some(medians)) => samples[image][width].push(medians),
+                    other => report.push(format!("{name} W{workers} pass {pass}: {other:?}")),
+                }
+            }
+            match scatter_probe_run(&images[0].2, *workers, "time", 200, small)
+                .map(|stdout| scatter_probe_medians(&stdout))
+            {
+                Ok(Some(medians)) => small_samples[width].push(medians),
+                other => report.push(format!("small W{workers} pass {pass}: {other:?}")),
             }
         }
-        let stdout = scatter_probe_run(&images[0].2, 1, "native", calls);
-        native_samples.push(scatter_probe_medians(&stdout));
+        match scatter_probe_run(&images[0].2, 1, "native", 20, large)
+            .map(|stdout| scatter_probe_medians(&stdout))
+        {
+            Ok(Some(medians)) => native_samples.push(medians),
+            other => report.push(format!("native pass {pass}: {other:?}")),
+        }
     }
     for (width, workers) in widths.iter().enumerate() {
         for (image, (name, _, _)) in images.iter().enumerate() {
             let rows = &samples[image][width];
             let base = &samples[0][width];
-            let mut walls: Vec<u64> = rows.iter().map(|(wall, _)| *wall).collect();
-            let mut cpus: Vec<u64> = rows.iter().map(|(_, cpu)| *cpu).collect();
-            let wall_ratios: Vec<String> = rows
+            let listed: Vec<String> = rows
                 .iter()
-                .zip(base)
-                .map(|((wall, _), (main, _))| format!("{:.4}", *wall as f64 / *main as f64))
+                .map(|(wall, cpu)| format!("{}/{}", wall / 1000, cpu / 1000))
                 .collect();
-            let cpu_ratios: Vec<String> = rows
-                .iter()
-                .zip(base)
-                .map(|((_, cpu), (_, main))| format!("{:.4}", *cpu as f64 / *main as f64))
-                .collect();
-            let listed: Vec<String> = rows.iter().map(|(wall, _)| (wall / 1000).to_string()).collect();
-            walls.sort_unstable();
-            cpus.sort_unstable();
+            let (wall_ratios, cpu_ratios): (Vec<f64>, Vec<f64>) = if rows.len() == base.len() {
+                rows.iter()
+                    .zip(base)
+                    .map(|((wall, cpu), (base_wall, base_cpu))| {
+                        (
+                            *wall as f64 / *base_wall as f64,
+                            *cpu as f64 / *base_cpu as f64,
+                        )
+                    })
+                    .unzip()
+            } else {
+                (Vec::new(), Vec::new())
+            };
             report.push(format!(
-                "W{workers} {name}: wall median {} us, cpu median {} us; wall us by pass: {}; wall/main by pass: {}; cpu/main by pass: {}",
-                walls[walls.len() / 2] / 1000,
-                cpus[cpus.len() / 2] / 1000,
-                listed.join(" "),
-                wall_ratios.join(" "),
-                cpu_ratios.join(" ")
+                "W{workers} {name}: wall/main {}; cpu/main {}; wall/cpu us by pass: {}",
+                scatter_probe_interval(wall_ratios),
+                scatter_probe_interval(cpu_ratios),
+                listed.join(" ")
             ));
         }
+    }
+    for (width, workers) in widths.iter().enumerate() {
+        let listed: Vec<String> = small_samples[width]
+            .iter()
+            .map(|(wall, cpu)| format!("{}/{}", wall / 1000, cpu / 1000))
+            .collect();
+        report.push(format!(
+            "W{workers} main on {small} keys: wall/cpu us by pass: {}",
+            listed.join(" ")
+        ));
     }
     let listed: Vec<String> = native_samples
         .iter()
