@@ -233,6 +233,14 @@ gate GATE_RUN_RESULT=cancelled
 [ "$listings" -eq 1 ] || fail "l3: expected 1 listing, got $listings"
 want l3 '^ok      corpus (macos-15)$'
 
+# (k2) The verdict of a run whose groups all succeeded needs no GitHub call:
+# with every call failing, it still passes.
+newcase k2
+jobs "$FAKE_DIR/jobs.1"
+gate GATE_RUN_RESULT=success FAKE_FAIL_ALWAYS=1
+[ "$status" -eq 0 ] || fail 'k2: expected a pass on the success of the run'
+[ ! -s "$FAKE_DIR/calls" ] || fail 'k2: expected no gh call'
+
 # (k1) A run whose groups all succeeded passes on its own result: the listing
 # never shows the finished group `corpus (ubuntu-24.04)` complete, and no
 # listing is made.
