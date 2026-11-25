@@ -155,12 +155,14 @@ window in a variant's payload finds, besides the scatter's `Option<Chunk>`:
 | `lib/std/collections/ordered_map/ordered-map.wf` | `Option<OrderedEntry<K, V, OrderedNode<K, V>>>` | `Slots<Box<OrderedNode<K, V>>, 1>` |
 
 and a number of conformance cases with windows of 1 to 8 elements. Firn's
-byte strings and the ordered map's links are small values that the bounded
-transfer moves by layout granules, and both regressions of 2026-09-23 were of
-small or medium values whose optimized code changed shape. No measurement of
-firn or of the ordered map under such a lowering exists. A lowering that also
-requires the value to be larger than the bounded transfer's 128 bytes leaves
-them exactly as today and still reaches the first three rows and the scatter.
+byte strings and the ordered map's links are small values, and both
+regressions of 2026-09-23 were of small or medium values whose optimized code
+changed shape. No measurement of firn or of the ordered map under such a
+lowering exists. A value that holds an inline window has no bounded transfer
+at any size (`transfer_leaves` in `compiler/src/target.rs` gives a window no
+granule), so every row above already moves by one `memmove` of its whole
+size, and no existing class separates the small rows from the large ones: a
+lowering that left the small ones as today would need a size of its own.
 Which maintained modules a candidate changes is to be confirmed from their
 emitted text.
 
