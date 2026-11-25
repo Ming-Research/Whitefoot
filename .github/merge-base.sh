@@ -8,8 +8,9 @@
 # Outside CI the script first fetches main from origin, because a stale
 # origin/main puts the merge base on an older commit than the branch's real
 # fork point and charges the branch with whatever it has merged since. A
-# failed fetch is an error, never a fall back to the old ref. CI
-# (GITHUB_ACTIONS set) does not fetch: its checkouts use fetch-depth 0 and some
+# failed fetch is an error, never a fall back to the old ref, and the fetch
+# never stops to ask for a password (GIT_TERMINAL_PROMPT=0). CI
+# (GITHUB_ACTIONS=true) does not fetch: its checkouts use fetch-depth 0 and some
 # carry no credentials. It reads the same ref, so a branch gets the same base
 # in both places. The switch is the environment variable because the script is
 # reached through nested make calls, where a flag would have to be threaded
@@ -39,9 +40,9 @@ fail() {
 }
 
 resolve() {
-    if [ -z "${GITHUB_ACTIONS:-}" ]; then
-        git fetch --quiet --no-tags origin '+refs/heads/main:refs/remotes/origin/main' ||
-            fail "cannot fetch main from origin, so the base cannot be chosen; a stale origin/main would name the wrong base (CI does not fetch: it sets GITHUB_ACTIONS)"
+    if [ "${GITHUB_ACTIONS:-}" != true ]; then
+        GIT_TERMINAL_PROMPT=0 git fetch --quiet --no-tags origin '+refs/heads/main:refs/remotes/origin/main' ||
+            fail "cannot fetch main from origin, so the base cannot be chosen; a stale origin/main would name the wrong base (CI does not fetch: it sets GITHUB_ACTIONS=true)"
     fi
     remote=$(git rev-parse --verify --quiet 'refs/remotes/origin/main^{commit}') ||
         fail "refs/remotes/origin/main does not exist; fetch main from origin (CI checks out with fetch-depth 0)"
@@ -224,6 +225,8 @@ self_test() {
     branch feature-e origin/main
     git remote set-url origin "$work/missing.git"
     expect reject 'cannot fetch main from origin' 'an unreachable origin outside CI' local_script
+    expect reject 'cannot fetch main from origin' 'GITHUB_ACTIONS other than true is not CI' \
+        env GITHUB_ACTIONS=false sh "$script"
     # F: CI does not fetch and reads the ref it already has.
     expect pass 'review base:' 'CI with an unreachable origin' ci_script
     git remote set-url origin "$remote_repo"

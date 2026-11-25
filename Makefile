@@ -133,6 +133,7 @@ repository-invariants:
 	@sh .github/test-run-check.sh
 	@$(PY) .github/recompute-time-budgets.py --self-test
 	@sh .github/merge-base.sh --self-test
+	@sh .github/test-merge-base.sh
 	@sh .github/test-gate-scope.sh
 	@sh .github/test-gate-both-platforms.sh
 	@sh .github/test-compiler-release-retention.sh
