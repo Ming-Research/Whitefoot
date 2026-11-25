@@ -1,7 +1,7 @@
 //! Written postcondition clauses, independently of their normalized proof relation.
 
-use crate::diagnostic_repairs::described;
 use super::*;
+use crate::diagnostic_repairs::described;
 use crate::semantic::postcondition::{
     ParameterDenotation, PostconditionClause, SelectedPostconditionReturn,
 };

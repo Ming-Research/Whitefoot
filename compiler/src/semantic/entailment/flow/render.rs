@@ -1,8 +1,8 @@
 //! Canonical rendering [ENT-6]: residuals, relations, terms, goals
 //! and places spelled in the source's own terms.
 
-use crate::diagnostic_repairs::described;
 use super::*;
+use crate::diagnostic_repairs::described;
 
 /// How a source rendering spells one counted loop binder.
 #[derive(Clone, Copy, Debug)]

@@ -1093,10 +1093,9 @@ impl<'unit> TypeContext<'unit> {
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
                 Ok((self.declarations.tree.source_spelling(node)?, false))
             }
-            RangeEndpointReading::Unspelled(None) => Ok((
-                described("a range endpoint with no source spelling"),
-                false,
-            )),
+            RangeEndpointReading::Unspelled(None) => {
+                Ok((described("a range endpoint with no source spelling"), false))
+            }
         }
     }
     /// [FN-9] the first failed exit of one relation, or its missing exit.
