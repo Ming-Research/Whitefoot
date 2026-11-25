@@ -1148,29 +1148,22 @@ fn function_bodies(module: &str) -> Vec<(&str, &str)> {
     functions
 }
 
-/// The emitted type of the scatter's `Option<Chunk>`: the named type made of
-/// an 8-bit tag and a named type that holds 256-word runs.
+/// The emitted type of the scatter's `Option<Chunk>`, where the module
+/// defines it.
 fn vacant_chunk_type(module: &str) -> Option<String> {
-    let mut holders = Vec::new();
-    for line in module.lines() {
-        if let Some((name, definition)) = line.split_once(" = type ")
-            && name.starts_with("%wf.t.")
-            && definition.contains("[256 x i64]")
-        {
-            holders.push(name.to_owned());
-        }
-    }
-    for line in module.lines() {
-        if let Some((name, definition)) = line.split_once(" = type ")
-            && name.starts_with("%wf.t.")
-            && holders
-                .iter()
-                .any(|holder| definition.trim() == format!("{{ i8, {holder} }}"))
-        {
-            return Some(name.to_owned());
-        }
-    }
-    None
+    let option = nominal_type("Option<Chunk>");
+    module
+        .contains(&format!("{option} = type "))
+        .then_some(option)
+}
+
+/// A 64-bit FNV-1a of a module's text, which tells two emissions apart.
+fn scatter_probe_hash(module: &str) -> u64 {
+    module
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+        })
 }
 
 /// The emitted module with the whole-value clear that precedes each
@@ -1298,6 +1291,11 @@ fn write_chunk(input: &[u64], bit: u32, output: &[Option<Chunk>]) -> result: u64
 fn scatter_probe_modules(notes: &mut Vec<String>) -> Vec<(&'static str, String)> {
     let source = include_bytes!("../../../../tests/programs/compute/radix_scatter.wf");
     let emitted = emit_lowered(source, OverlapLowering::On);
+    notes.push(format!(
+        "ordinary --par module: {} bytes, fnv1a {:016x}",
+        emitted.len(),
+        scatter_probe_hash(&emitted)
+    ));
     notes.push(format!("vacant type: {:?}", vacant_chunk_type(&emitted)));
     let (without_clears, removed) = with_vacant_clears(&emitted, false);
     notes.push(format!("no-clear: {removed} clears removed"));
@@ -1305,7 +1303,7 @@ fn scatter_probe_modules(notes: &mut Vec<String>) -> Vec<(&'static str, String)>
     let (tag_only, shortened) = with_tag_only_vacant_appends(&emitted);
     notes.push(format!("tag-only: {shortened} transfers shortened"));
     let mut modules = vec![
-        ("main", emitted),
+        ("ordinary", emitted),
         ("no-clear", without_clears),
         ("headers-only", header_clears),
         ("tag-only", tag_only),
@@ -1396,7 +1394,7 @@ fn stable_scatter_probe_reports_clears_and_copies() {
             for line in transfer_lines(body) {
                 optimized_report.push(format!("{label} {name}: {line}"));
             }
-            if !matches!(*label, "main" | "no-clear" | "tag-only") {
+            if !matches!(*label, "ordinary" | "no-clear" | "tag-only") {
                 continue;
             }
             let mut windows = 0;
@@ -1419,7 +1417,7 @@ fn stable_scatter_probe_reports_clears_and_copies() {
     }
     let sequential = host_optimized_module(&emit_lowered(source, OverlapLowering::Off));
     for transfer in whole_block_transfers(&sequential) {
-        optimized_report.push(format!("main without --par WHOLE BLOCK {transfer}"));
+        optimized_report.push(format!("ordinary without --par WHOLE BLOCK {transfer}"));
     }
     // What a test result keeps is its end, so the least important part of
     // the report comes first and is cut to a bound.
@@ -1678,7 +1676,9 @@ fn stable_scatter_probe_times_whole_calls() {
         }
     }
     assert!(
-        images.first().is_some_and(|(name, _, _)| *name == "main"),
+        images
+            .first()
+            .is_some_and(|(name, _, _)| *name == "ordinary"),
         "the ordinary image must build and verify:\n{}",
         report.join("\n")
     );
