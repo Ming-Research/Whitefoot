@@ -3785,6 +3785,82 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// The runtime's C frames over one page, read from the same compile the
+    /// driver gives each runtime unit: every such frame must reach its probe
+    /// in the assembly, because a frame that steps over the guard page writes
+    /// into whatever is mapped below it instead of ending in the floor's
+    /// `{"resource":"stack"}` record.
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn every_runtime_c_frame_over_a_page_is_probed() {
+        const PAGE: u64 = 4096;
+        let (staged, compiled) = runtime_units("");
+        let directory = std::env::temp_dir().join(format!(
+            "whitefootc-runtime-frames-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&directory);
+        let mut report = Vec::new();
+        let mut unprobed = Vec::new();
+        for unit in &staged {
+            let path = directory.join(unit.relative_path);
+            std::fs::create_dir_all(path.parent().unwrap()).expect("stage a runtime directory");
+            std::fs::write(&path, unit.source).expect("stage a runtime unit");
+        }
+        for relative_path in compiled.iter().filter(|name| name.ends_with(".c")) {
+            let assembly = directory.join(relative_path).with_extension("s");
+            let mut command = super::resolved_toolchain().expect("the toolchain resolves").command();
+            super::unit_arguments(&mut command, &directory, None);
+            #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
+            let output = command
+                .args(whitefoot::HOST_OPTIMIZATION_ARGUMENTS)
+                .args(super::restricted_child_arguments(relative_path))
+                .args(["-S", "-fstack-usage", "-o"])
+                .arg(&assembly)
+                .arg(directory.join(relative_path))
+                .output()
+                .expect("start the host compiler");
+            assert!(
+                output.status.success(),
+                "{relative_path}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let usage = std::fs::read_to_string(assembly.with_extension("su"))
+                .expect("read the stack-usage report");
+            let text = std::fs::read_to_string(&assembly).expect("read the assembly");
+            for row in usage.lines() {
+                let fields: Vec<&str> = row.split('\t').collect();
+                let (Some(bytes), Some(kind)) = (fields.get(1), fields.get(2)) else {
+                    continue;
+                };
+                let bytes: u64 = bytes.parse().expect("a frame size");
+                let name = fields[0].rsplit(':').next().unwrap_or_default();
+                if bytes <= PAGE && *kind == "static" {
+                    continue;
+                }
+                let label = format!("{name}:");
+                let body: String = text
+                    .lines()
+                    .skip_while(|line| *line != label && *line != format!("_{label}"))
+                    .take_while(|line| !line.trim_start().starts_with(".cfi_endproc"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let probed = ["___chkstk_darwin", "___chkstk_ms", "str\txzr, [sp]", "$0, (%rsp)"]
+                    .iter()
+                    .any(|probe| body.contains(probe));
+                report.push(format!("{relative_path} {name} {bytes} {kind} probed={probed}"));
+                if !probed {
+                    unprobed.push(format!("{relative_path} {name} {bytes} {kind}"));
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&directory);
+        assert!(
+            unprobed.is_empty(),
+            "runtime C frames over a page without a stack probe: {unprobed:#?}\nall large frames: {report:#?}"
+        );
+    }
+
     #[test]
     fn a_report_string_is_escaped_json() {
         assert_eq!(
