@@ -1451,7 +1451,12 @@ time of each job, by the processor in its log, in seconds:
 | Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz | none | 1 | 115.47 | 115.47 | |
 
 No class has the 20 runs the rule asks for; the 20 jobs are all the hosted
-runs of the stage there are. The row's cells, by the rule of the
+runs of the stage there are. Sampling the four mapped classes to 20 runs each
+would take at least 74 more builds (four times 20, less the six runs they have),
+about 2 to 3 minutes of runner time each, so about 3 hours: an estimate from
+these 20 jobs, not a measurement, and a low one, since the job does not choose
+its processor and 14 of the 20 landed on the two models that have no column.
+The row's cells, by the rule of the
 budget-row decision for a row new to the table (each class with runs, its
 maximum plus 10%, rounded up to 5 s with the 10 s floor; a class with no run,
 the row's largest value; a model without a column, the stage's largest Linux

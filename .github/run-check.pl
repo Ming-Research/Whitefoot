@@ -137,7 +137,10 @@ my $elapsed = clock_gettime(CLOCK_MONOTONIC) - $started;
 if (defined $status) {
     # The format of `time -p`: the command's wall time and the CPU times of
     # everything this process has reaped, which is the command and its
-    # descendants that were waited for.
+    # descendants that were waited for. Under Git for Windows' perl the
+    # descendants counted are the msys processes only: a native child such as
+    # cargo or clang shows 0 (research/investigations/test-economy/
+    # time-budgets.md, "Windows I/O host stages"). The budgets read wall time.
     my ($user, $system) = (times)[2, 3];
     printf STDERR "real %.2f\nuser %.2f\nsys %.2f\n", $completed - $started, $user, $system;
 }
