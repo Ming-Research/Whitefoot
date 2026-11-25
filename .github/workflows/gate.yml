@@ -32,10 +32,10 @@
 # that each compile for themselves and run a share of the group's tests, so
 # that the slowest part and not the slowest group sets the time; the parts and
 # the groups come from the Makefile, and .github/gate-matrix.sh decides which
-# host runs parts (compiler/verification). The proof-receipt test runs whole,
-# in one job of its own. macOS is off for now
-# (wf-gate-no-macos, compiler/verification): the hosted macOS runners take
-# five jobs at a time, and ready pull requests waited most of an hour for
+# host runs parts (decision `slowest-gate-groups-run-in-parts-on-linux`). The
+# proof-receipt test runs whole, in one job of its own. macOS is off for now
+# (decision `macos-joins-only-hand-started-gates`): the hosted macOS runners
+# take five jobs at a time, and ready pull requests waited most of an hour for
 # them. A manual run started with the `macos` input runs every group on macOS
 # as well, which a compiler release asks of its commit (compiler-release.yml
 # requires a successful gate run with macOS jobs), so the macOS queue is

@@ -1,5 +1,5 @@
 #!/usr/bin/env perl
-# Run one shard of a test group, for the gate's Linux jobs (compiler/verification).
+# Run one shard of a test group, for the gate's Linux jobs (decision `slowest-gate-groups-run-in-parts-on-linux`).
 #
 #   shard-tests.pl unit i/N CARGO
 #       The library's tests (`--lib`): libtest's own sorted list, positions

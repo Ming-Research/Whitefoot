@@ -1371,6 +1371,11 @@ part against 26 s and 36 s in the other two), which is why the walk is divided b
 receipt test runs once, whole: the whole run checks every case against one
 cache, which three subsets do not.
 
+Caching the Cargo dependencies, the build directory and LLVM was tried before
+(a pull request of the project, number 433, reported in the item that asked for
+this change, whose record this repository does not hold): a cold run took
+228 s and a warm one 225 s, so the gate does not cache them.
+
 Each part's time budget is its own row. Its initial value in every CPU column is
 the whole group's current row, which a part's share of the work cannot exceed;
 the existing rule recomputes it once a CPU class has 20 runs of the part.
