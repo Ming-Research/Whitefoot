@@ -483,4 +483,63 @@ public fn main() -> status: ExitStatus pure doc "Runs the program.";
 "#,
         )]],
     },
+    ModulePair {
+        name: "mod5-neg-private-field-selection",
+        case: "mod5-neg-private-field-selection",
+        rejected: &[],
+        rule: "MOD-5",
+        sentences: &[],
+        repaired: &[&[(
+            "main.wf",
+            br#"alias ExitStatus = std::process::ExitStatus;
+alias data = pkg::data;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  let pair = data::make(left: 1_u8, right: 2_u8);
+  let right = data::right_of(pair: pair);
+  return exit_status(code: right);
+}
+"#,
+        )]],
+    },
+    ModulePair {
+        name: "mod4-neg-alias-to-private-interface-function",
+        case: "mod4-neg-alias-to-private-interface-function",
+        rejected: &[],
+        rule: "MOD-4",
+        sentences: &[],
+        repaired: &[&[(
+            "main.wf",
+            br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  let code = pkg::data::seven();
+  return exit_status(code: code);
+}
+"#,
+        )]],
+    },
+    ModulePair {
+        name: "mod3-neg-module-slot-collision",
+        case: "mod3-neg-module-slot-collision",
+        rejected: &[],
+        rule: "MOD-3",
+        sentences: &[],
+        repaired: &[&[(
+            "main.wf",
+            br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn helper() -> result: unit pure {
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
+"#,
+        )]],
+    },
 ];
