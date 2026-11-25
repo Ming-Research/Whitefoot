@@ -58,8 +58,8 @@ less the runs whose artifact lacks them, plus run 38389055091).
 
 ## The path map and the judgment on hosted machines (2026-11-25)
 
-Two temporary workflows of this work ran on revision 0c918fc9d (its `tests/performance` and
-workflows are those of the branch's head); their logs are the data.
+Two temporary workflows of this work ran on revision 0c918fc9d, whose `tests/performance`
+and `compute-regression.yml` are those of the branch's head; their logs are the data.
 
 - Path independence (run 45631748235, EPYC 7763). The same commit was built under two
   checkout paths with the Makefile's prefix map: all five linked executables were
