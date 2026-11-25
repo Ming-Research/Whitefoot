@@ -28,7 +28,7 @@ does any work proportional to length or capacity. Reject the allocation claim
 if reset or refill within capacity performs an allocation.
 
 This serves the constitution's performance objective subject to its safety
-constraint ([constitution](../../../docs/constitution.md#performance)), using
+constraint ([constitution](../../../docs/constitution.md#article-2-fast-runtime-performance-comes-before-ease-of-writing)), using
 the investigation method in [the research guide](../../README.md). It introduces
 no writer access to window metadata and no unproved partial operation.
 

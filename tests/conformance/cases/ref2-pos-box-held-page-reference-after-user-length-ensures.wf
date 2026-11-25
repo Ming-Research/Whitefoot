@@ -1,0 +1,33 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn replace_last(window: &Paged<u64>, value: u64) -> result: unit writes(window.last), writes(window.next), writes(window.len) contract {
+  requires window^.len > 0_u64;
+  ensures window^.len == entry(window)^.len;
+} {
+  doc "Takes and replaces the last value, publishing the unchanged window length.";
+  let old = take_back(window: window);
+  place_back(window: window, value: value);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "A page of a boxed Paged survives the helper's last-slot write and shows the replaced value.";
+  let p = box_paged_new::<u64>(capacity: 2_u64);
+  place_back(window: &p.inner, value: 11_u64);
+  place_back(window: &p.inner, value: 22_u64);
+  if p.inner.pages.len > 0_u64 {
+    let page = &p.inner.pages[0_u64];
+    replace_last(window: &p.inner, value: 33_u64);
+    if page^.len == 2_u64 {
+      if page^[1_u64] != 33_u64 {
+        return exit_status(code: 2_u8);
+      }
+    } else {
+      return exit_status(code: 1_u8);
+    }
+  } else {
+    return exit_status(code: 3_u8);
+  }
+  return exit_status(code: 0_u8);
+}

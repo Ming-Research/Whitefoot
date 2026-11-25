@@ -223,7 +223,7 @@ Reopen a profile when a required host operation, observation, or failure cannot
 be represented without weakening its contract. Qualification evidence must be
 specific to the target and implementation being used.
 
-The constitution's [ordinary-object requirement](../../../docs/constitution.md#external-interaction-through-ordinary-objects)
+The constitution's [ordinary-object requirement](../../../docs/constitution.md#article-4-ordinary-objects-io-is-ordinary-program-state)
 fixes uniform source treatment of I/O and other resources. It does not select
 one object decomposition, result-origin analysis, or release implementation.
 This is a chosen architectural constraint, not a theorem uniquely implied by

@@ -2,6 +2,7 @@
 """Before/after comparison of the ordinary HashMap (README.md beside this file).
 
     compare.py build --base-wfc WFC --candidate-wfc WFC --runtime-root TREE --out DIR
+                     [--base-runtime-root TREE] [--allow-identical-images]
     compare.py measure --out DIR --cpu N [--sizes 1000,10000,1000000]
                        [--min-rounds 10] [--max-rounds 40] [--samples 5] [--slow]
     compare.py reduce --out DIR [--expect-regression] [--floor FLOOR]
@@ -9,7 +10,12 @@
 
 `build` writes DIR/images: the base, twin and candidate images of bench.wf,
 the candidate image of hold.wf and the memory cell's observed images. The
-twin is a byte copy of the base image. `measure` runs the interleaved rounds
+twin is a byte copy of the base image. The memory cell's observed images link
+the runtime of --runtime-root, and the base's the runtime of
+--base-runtime-root when that is given (two compilers built from different
+revisions). `build` refuses a candidate image byte-identical to the base image
+unless --allow-identical-images says the two arms may be the same program (the
+compiler comparison's null run). `measure` runs the interleaved rounds
 and appends DIR/raw.tsv, DIR/memory.tsv and DIR/hold.tsv. `reduce` writes
 DIR/summary.txt and prints it; FLOOR is the recorded noise floor of each
 cell, as "operation:size=spread" items separated by commas, and a cell whose
@@ -448,13 +454,25 @@ def run(command, **kwargs):
     subprocess.run(command, check=True, **kwargs)
 
 
+def check_images(digests, allow_identical):
+    """Whether the candidate's bench image equals the base's; refuses a set of
+    images the comparison cannot use."""
+    if digests["bench-twin"] != digests["bench-base"]:
+        raise Invalid("the twin image differs from the base image")
+    identical = digests["bench-candidate"] == digests["bench-base"]
+    if identical and not allow_identical:
+        raise Invalid("the candidate image equals the base image: the library change does not reach the program")
+    return identical
+
+
 def build(args):
     images = os.path.join(args.out, "images")
     os.makedirs(images, exist_ok=True)
     bench = os.path.join(HERE, "bench.wf")
-    for arm, wfc in (("base", args.base_wfc), ("candidate", args.candidate_wfc)):
+    for arm, wfc, root in (("base", args.base_wfc, args.base_runtime_root or args.runtime_root),
+                           ("candidate", args.candidate_wfc, args.runtime_root)):
         run([wfc, bench, "-o", os.path.join(images, f"bench-{arm}")])
-        run(["make", "-s", "-C", HERE, "peak", f"ROOT={args.runtime_root}", f"WFC={wfc}",
+        run(["make", "-s", "-C", HERE, "peak", f"ROOT={root}", f"WFC={wfc}",
              f"BUILD={os.path.join(args.out, 'peak-' + arm)}"])
         shutil.copyfile(os.path.join(args.out, f"peak-{arm}", "bench-peak"), os.path.join(images, f"peak-{arm}"))
     shutil.copyfile(os.path.join(images, "bench-base"), os.path.join(images, "bench-twin"))
@@ -462,13 +480,12 @@ def build(args):
     for name in os.listdir(images):
         os.chmod(os.path.join(images, name), 0o755)
     digests = {name: sha256(os.path.join(images, name)) for name in sorted(os.listdir(images))}
-    if digests["bench-twin"] != digests["bench-base"]:
-        raise Invalid("the twin image differs from the base image")
-    if digests["bench-candidate"] == digests["bench-base"]:
-        raise Invalid("the candidate image equals the base image: the library change does not reach the program")
+    identical = check_images(digests, args.allow_identical_images)
     with open(os.path.join(args.out, "manifest.txt"), "a") as f:
         f.write(f"base compiler {sha256(args.base_wfc)}\n")
         f.write(f"candidate compiler {sha256(args.candidate_wfc)}\n")
+        if identical:
+            f.write("bench images identical\n")
         for name, digest in digests.items():
             f.write(f"image {name} {digest}\n")
     return 0
@@ -697,6 +714,15 @@ def self_test():
         [dict(r, pairs=1) if r["mode"] == 2 else r for r in hold_rows(1, 1, 1, lambda m: 1)], sink))
     expect_invalid("hold missing size", lambda: reduce_hold(
         [r for r in hold_rows(1, 1, 1, lambda m: 1) if r["size"] != HOLD_SMALL], sink))
+    # The images of a build: a candidate equal to the base is refused unless
+    # the null run allows it, and a twin that is not the base never passes.
+    different = {"bench-base": "a", "bench-twin": "a", "bench-candidate": "b"}
+    same = dict(different, **{"bench-candidate": "a"})
+    expect("images differ", check_images(different, False), False)
+    expect("images differ, allowed", check_images(different, True), False)
+    expect_invalid("images equal", lambda: check_images(same, False))
+    expect("images equal, allowed", check_images(same, True), True)
+    expect_invalid("twin differs", lambda: check_images(dict(same, **{"bench-twin": "b"}), True))
     sink.close()
     for failure in failures:
         print("FAIL " + failure)
@@ -711,6 +737,8 @@ def main(argv):
     p.add_argument("--base-wfc", required=True)
     p.add_argument("--candidate-wfc", required=True)
     p.add_argument("--runtime-root", required=True)
+    p.add_argument("--base-runtime-root")
+    p.add_argument("--allow-identical-images", action="store_true")
     p.add_argument("--out", required=True)
     p = sub.add_parser("measure")
     p.add_argument("--out", required=True)

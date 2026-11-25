@@ -1,0 +1,186 @@
+# Whitefoot's declaration for the wf-agents engine: what the engine needs to
+# know to run works on this repository. The engine reads it from main as it
+# starts. A path is from the root of the repository. The words the engine
+# sends its agents name a setting under [project] as `project.<name>`, and
+# give its value beside it.
+
+# The directory that holds the design tree, which the engine looks at on each
+# work's branch. The engine finds the tree's entries in the files under
+# `principles/` and `decisions/` of this directory, in the form its own rules
+# give (`agents/tree.toml` of the engine's flow). Whitefoot's tree is still in
+# its older form (`language/`, `compiler/` and `log.md`, which `design/skill`
+# checks), so the engine finds no entry in it until it is converted.
+tree = "design/"
+
+# The guide for the project's agents, which every agent's session begins with.
+[files.guide]
+path = "AGENTS.md"
+
+# The constitution, which every agent's session holds after the guide and
+# which decides between designs. Whitefoot keeps it with its documents, not in
+# the design tree.
+[files.constitution]
+path = "docs/constitution.md"
+
+[project]
+# Where an agent keeps what it makes for research, committed: the research
+# record, `research/investigations/<name>/` for a question and its design and
+# `research/experiments/` for experiments (AGENTS.md, "Authority and reading").
+research = "research/"
+# How an agent names a test to `run_tests`: one phrase, which the words of the
+# tool follow with the name of this setting. Only the compiler's Rust tests
+# have names. Whitefoot has no workflow that times measurements the way the
+# engine asks, so it declares no `measure_names` and no [ci.measure].
+test_names = "a Rust test of the compiler by its full name as `cargo test` prints it, its module path and function joined by `::`, such as `programs::wfgrep::wfgrep_searches_a_real_tree_and_agrees_with_grep`, with no test binary; a module, a binary or a part of a name names none; the conformance cases all run inside the one test `conformance::adapter::the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path`, so a case has no name of its own; the C runtime's tests and the static checks have no names and run as the checks `runtime` and `static`"
+
+# Where the tests are, as git pathspecs: the files a line that changes only
+# the tests may change. They are the compiler's Rust test modules (each
+# `tests.rs`, `*_tests.rs` and `tests/` directory, compiled only for tests),
+# the corpus harness under `compiler/tests/`, the C runtime's test and probe
+# programs, the cases and programs under `tests/`, the conformance runner's own
+# test, and the tests of the CI scripts. The conformance runner and the
+# performance instrument are tools, not tests.
+[tests]
+paths = [
+  ":(glob)compiler/src/**/tests.rs",
+  ":(glob)compiler/src/**/*_tests.rs",
+  ":(glob)compiler/src/**/tests/**",
+  ":(glob)compiler/src/**/*_test.c",
+  ":(glob)compiler/src/**/*_test.h",
+  ":(glob)compiler/src/**/*_probe.c",
+  "compiler/src/backend/completion/harness.c",
+  "compiler/src/backend/runtime_test_guard.h",
+  ":(glob)compiler/tests/**",
+  ":(glob)tests/conformance/cases/**",
+  "tests/conformance/manifest.jsonl",
+  "tests/conformance/test_runner.py",
+  ":(glob)tests/codegen/**",
+  ":(glob)tests/programs/**",
+  ":(glob)tests/package-fixtures/**",
+  "tests/performance/test-verdict.sh",
+  ":(glob).github/test-*.sh",
+]
+# The data the tests expect: the verdict each conformance case requires, which
+# changes only with the specification (AGENTS.md, "Specification and test
+# integrity").
+expected = ["tests/conformance/manifest.jsonl"]
+
+# The workflows the engine runs by hand on main's file, giving the commit to
+# run on and a value only its request knows. Each reports what became of every
+# test, and of every job that runs no test, as JUnit XML in the artifact
+# `test-results` (.github/junit.py).
+[ci.fast]
+# Builds the compiler's test binaries and runs only the tests it is given by
+# name; runs the gate's groups `static` and `runtime` only when they are named
+# as checks.
+workflow = "fast.yml"
+# On the owner's own machine, the self-hosted runner `14900k`. An agent waits
+# for this workflow each time it asks for tests, so it must be quick: each
+# runner there keeps its checkout, the compiler's build and the fetched crates
+# between runs, and builds again only what changed, where a GitHub machine
+# builds everything from a fresh checkout each time. The workflow runs only
+# by hand, since the repository is public.
+runner = "14900k"
+checks = ["static", "runtime"]
+# The tests run under libtest, as the gate runs them, which on stable Rust
+# gives no test's time and cannot stop one test; so the workflow takes no
+# limit for one test, and a job stops at its own time limit.
+test_stop_input = ""
+# A run not complete by then is cancelled, and said as what it found. A
+# runner's first run builds the test binaries from nothing, which takes some
+# minutes.
+too_long = "1h"
+
+[ci.full]
+# Every check a merge needs (AGENTS.md, "Branch and main boundary" and
+# "Checks"): the gate, the I/O hosts and the sanitizers, which the full check
+# by hand runs; the Lean model and the concurrent map's sanitizers, each of
+# which checks only where the change touches its paths; and the change logs of
+# the design tree and the specification. The engine runs them one after the
+# other, once, on the commit to merge.
+workflows = [
+  "gate.yml",
+  "io-hosts.yml",
+  "sanitizers.yml",
+  "proof.yml",
+  "map-sanitizers.yml",
+  "design-readiness.yml",
+]
+# On GitHub's machines, as Whitefoot's checks run: `ubuntu-24.04`, and
+# `windows-latest` in io-hosts.yml and `macos-15` in map-sanitizers.yml beside
+# it.
+runner = "github"
+# As for the fast workflow: libtest cannot stop one test.
+test_stop_input = ""
+# How long one of the workflows may take, its wait for a runner included. Its
+# longest job, on Windows or under a sanitizer, may take 30 minutes.
+too_long = "1h"
+
+# How a pull request is merged: Whitefoot merges with a merge commit, and
+# keeps a branch once it is merged.
+[pull_request]
+merge_method = "merge"
+delete_branch = false
+
+# The paths that govern the project's agents and checks, which the owner
+# changes: where a work's change touches one, the work says why, and the
+# engine asks the owner whether the change stays. A path ending in `/` is a
+# directory and everything in it. The declaration is listed, since it names
+# commands the engine runs.
+[protected]
+paths = [
+  "AGENTS.md",
+  "docs/constitution.md",
+  # The review items the guide cites.
+  "docs/review-checklist.md",
+  # What the engine runs, on main's copy.
+  ".github/workflows/",
+  # What the engine reads of a run.
+  ".github/junit.py",
+  # A raise of a time budget is the owner's decision (AGENTS.md, "Checks").
+  ".github/time-budgets.txt",
+  # Git hooks a maintainer installs on their own machine.
+  "governance/hooks/",
+  "wf-agents.toml",
+]
+
+# The commands that build, test, check or measure, which take the host's
+# processor: no agent runs them, and the tests are had through `run_tests`
+# (AGENTS.md: every build, check, test and measurement runs in CI). Each is a
+# command with the start of its arguments.
+[heavy]
+commands = [
+  # The compiler's build, tests and lint.
+  "cargo",
+  "rustc",
+  "rustup",
+  # Every target of the Makefiles builds or checks.
+  "make",
+  # The wrapper CI runs each heavy command under.
+  "perl .github/run-check.pl",
+  # The C runtime, its tests and the programs the compiler emits.
+  "clang",
+  "cc",
+  "gcc",
+  "ld.lld",
+  # The Windows cross build and its runs.
+  "x86_64-w64-mingw32-gcc",
+  "wine64",
+  # The compiler itself, on any program.
+  "whitefootc",
+  # The Lean model and its toolchain.
+  "lake",
+  "elan",
+  # Measuring.
+  "perf",
+  "hyperfine",
+  "taskset",
+]
+
+# The variables every agent's command line is given, by name: what the
+# project's toolchain reads, so that a command an agent may run reaches no
+# further than its worktree. `compiler/rust-toolchain.toml` pins a toolchain
+# with components, which rustup would download where the machine lacks it; a
+# cargo or rustc that a script reaches then fails instead.
+[environment]
+RUSTUP_AUTO_INSTALL = "0"
