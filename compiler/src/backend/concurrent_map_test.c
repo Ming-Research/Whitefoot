@@ -43,11 +43,14 @@
  */
 #define _GNU_SOURCE
 #include <pthread.h>
+#include <signal.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -97,6 +100,10 @@ static void hold_seen(struct wf_cmap_user *u, int closed);
 #define WF_CMAP_PATIENCE(u) patience_of(u)
 #define WF_CMAP_HOLD_QUEUED(u) hold_seen((u), 0)
 #define WF_CMAP_HOLD_CLOSED(u) hold_seen((u), 1)
+/* The runtime's internal error: the test's build names its reason on the
+ * standard error stream, so that a stop for another reason is told apart. */
+static void refused(const char *reason) __attribute__((noreturn, unused));
+#define WF_CMAP_REFUSED(reason) refused(reason)
 
 /* The tests a build runs: locked reads change only wf_cmap_get, which only
  * the tests of word keys call, and narrowed hashes change only entries'
@@ -3368,6 +3375,77 @@ static void tables_read_selection(void) {
         fail("read selections leaked blocks", atomic_load(&blocks_out), before);
 }
 
+static void refused(const char *reason) {
+    fprintf(stderr, "wf runtime internal error: %s\n", reason);
+    abort();
+}
+
+/* The child of read_hold_write_selection: a statement that only reads holds
+ * the map whole, and something asks the runtime to select an entry for
+ * write. Reaching the end of the selection means the runtime did it; the
+ * statement then ends and the next statement takes the same key, which
+ * waits for ever on the cell the selection left locked, until the alarm. */
+static int read_hold_child(unsigned kind) {
+    struct rlimit no_core = {0, 0};
+    setrlimit(RLIMIT_CORE, &no_core);
+    alarm(10);
+    wf_cmap *map = wf_cmap_create_entries(16, 8, 1);
+    wf_cmap_holding hold;
+    wf__table_hold_begin(&hold, map);
+    wf__table_hold_read(&hold);
+    wf__table_hold_whole(&hold);
+    wf__table_hold_take(&hold);
+    if (kind == 0) {
+        wf__table_held_entry(map, (const unsigned char *)"a", 1, 1);
+    } else {
+        wf_key_set set;
+        wf__key_set_new(&set, 2);
+        wf__key_set_insert(&set, (const unsigned char *)"a", 1);
+        wf__key_set_insert(&set, (const unsigned char *)"b", 1);
+        uint64_t entries[3];
+        wf__table_held_entries(map, &set, entries, NULL);
+    }
+    wf__table_hold_release(&hold, 0, 4, 0);
+    wf_table_entry entry;
+    wf__table_lock_entry(map, (const unsigned char *)"a", 1, 0, &entry);
+    wf__table_unlock_entry(&entry, 1);
+    return 0;
+}
+
+/* A request to select an entry for write, by one key (kind 0) or by a set of
+ * keys (kind 1), while the statement holds the map whole and only reads, stops
+ * the program at once with the runtime's internal error. It must not lock the
+ * entry's cell, which the read-only release never unlocks: a cell left locked
+ * stops the next statement on that key far from the fault. The request runs
+ * in a child process, whose end the parent reads. */
+static void read_hold_write_selection(unsigned kind) {
+    int fds[2];
+    if (pipe(fds) != 0) fail("a pipe for the child's report was not made", 0, 0);
+    fflush(stdout);
+    pid_t pid = fork();
+    if (pid < 0) fail("a child for the write selection was not made", 0, 0);
+    if (pid == 0) {
+        close(fds[0]);
+        dup2(fds[1], 2);
+        close(fds[1]);
+        _exit(read_hold_child(kind));
+    }
+    close(fds[1]);
+    char report[512];
+    size_t length = 0;
+    for (ssize_t n; length < sizeof report - 1 && (n = read(fds[0], report + length, sizeof report - 1 - length)) > 0;)
+        length += (size_t)n;
+    report[length] = 0;
+    close(fds[0]);
+    int status = 0;
+    if (waitpid(pid, &status, 0) != pid) fail("the write selection's child was not waited for", 0, 0);
+    if (!WIFSIGNALED(status) || WTERMSIG(status) != SIGABRT)
+        fail("a write selection under a read-only whole hold did not stop the program (kind, signal or exit status + 1000)",
+             kind, WIFSIGNALED(status) ? (unsigned)WTERMSIG(status) : 1000u + (unsigned)WEXITSTATUS(status));
+    if (strstr(report, "write selection under a read-only whole hold") == NULL)
+        fail("the program stopped for another reason than a write selection under a read-only whole hold", kind, length);
+}
+
 /* Independent observations of merge, read mode, and stable missing keys. */
 static void shared_map_groups(void) {
     void *object = wf__shared_map_new(16, 8, 2);
@@ -4574,6 +4652,8 @@ int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "selection") == 0) {
         tables_held_selection();
         tables_read_selection();
+        read_hold_write_selection(0);
+        read_hold_write_selection(1);
         shared_map_groups();
         if (atomic_load(&mapped_bytes_out) != 0)
             fail("selection checks leaked counted map storage", atomic_load(&mapped_bytes_out), 0);
@@ -4632,6 +4712,8 @@ int main(int argc, char **argv) {
         tables_wake_writers();
         tables_held_selection();
         tables_read_selection();
+        read_hold_write_selection(0);
+        read_hold_write_selection(1);
         shared_map_groups();
         holds_move_amounts(0, PATIENCE);
         holds_move_amounts(1, PATIENCE);
