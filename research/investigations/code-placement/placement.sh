@@ -5,6 +5,7 @@
 #
 # usage: placement.sh TREE WFC WORK ROUNDS [CPUS]
 #        placement.sh sample WORK [CPUS]
+#        placement.sh counters WORK [CPUS]
 #
 # TREE's tests/performance/Makefile builds the five compute kernels with the
 # compiler WFC; every arm is that build with a different layout, so the arms
@@ -46,23 +47,55 @@
 # modules' code, WORK/loops/ the loop table of every arm's module object.
 #
 # `sample` then samples records under the software clock, FR at p0 and the
-# fastest U placement of the run at each width, into WORK/lines/.
+# fastest U placement of the run at each width, into WORK/lines/. `counters`
+# counts, where the host's kernel exposes hardware counters, records' cycles,
+# instructions, branches, branch misses, micro-ops delivered from the decoded
+# micro-op cache and from the legacy decoders, and front-end resteers, for FR
+# at p0, U at each code placement and each rule at p0, at each width, into
+# WORK/counters/ and WORK/counters.txt; on a host without them it says so and
+# counts nothing.
 set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 layout() { python3 -I "$here/layout.py" "$@"; }
 widths=(1 2 4)
 
-if [[ ${1:-} == sample ]]; then
-    [[ $# == 2 || $# == 3 ]] || { echo 'usage: placement.sh sample WORK [CPUS]' >&2; exit 2; }
+if [[ ${1:-} == sample || ${1:-} == counters ]]; then
+    mode=$1
+    [[ $# == 2 || $# == 3 ]] || { echo "usage: placement.sh $mode WORK [CPUS]" >&2; exit 2; }
     work=$(realpath -- "$2"); cpus=${3:-0-3}
     perf=$(command -v perf || true)
     if [[ -z $perf ]] || ! "$perf" --version > /dev/null 2>&1; then
         perf=$(ls /usr/lib/linux-tools/*/perf /usr/lib/linux-tools-*/perf 2> /dev/null | head -1)
     fi
     [[ -n $perf ]] || { echo 'no perf binary' >&2; exit 1; }
-    mkdir -p "$work/lines"
     image_of() { awk -F '\t' -v a="$1" -v p="$2" '$1 == "records" && $2 == a && $3 == p { print $4 }' \
         "$work/images.tsv"; }
+    if [[ $mode == counters ]]; then
+        events=()
+        for event in cycles instructions branches branch-misses idq.dsb_uops idq.mite_uops baclears.any; do
+            if "$perf" stat -x, -e "$event:u" -- true 2>&1 | grep -q '^[0-9]'; then events+=("$event:u"); fi
+        done
+        if ((${#events[@]} == 0)); then
+            echo "no hardware counter is readable on this host; nothing counted"
+            exit 0
+        fi
+        mkdir -p "$work/counters"
+        for width in "${widths[@]}"; do
+            for name in "FR p0" "U p0" "U m16" "U m32" "U m48" "U r16" "U r48" "L32 p0" "L64 p0" "A32 p0" "P p0"; do
+                read -r arm placement <<< "$name"
+                image=$(image_of "$arm" "$placement")
+                "$perf" stat -x, -o "$work/counters/$width-$arm-$placement.csv" \
+                    -e "$(IFS=,; echo "${events[*]}")" -- bash -c '
+                    for _ in $(seq 10); do
+                        env -u WF_SPLIT_WORK WF_WORKERS="$1" taskset -c "$2" "$3" measure candidate "$1" 0 > /dev/null
+                    done' counters "$width" "$cpus" "$image"
+            done
+        done
+        layout counters "$work/counters" > "$work/counters.txt"
+        cat "$work/counters.txt"
+        exit 0
+    fi
+    mkdir -p "$work/lines"
     for width in "${widths[@]}"; do
         fastest=$(python3 -I "$here/summarize.py" fastest "$work/raw.tsv" records "$width" U)
         for name in "FR p0" "U $fastest"; do

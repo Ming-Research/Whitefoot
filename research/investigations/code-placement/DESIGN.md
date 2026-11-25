@@ -684,10 +684,13 @@ Criterion, with the per-round ratio and interval defined above:
   and its cached build, and cannot reach `--fragments` or `--full-lto`,
   where the linker generates the code, or a consumer of `--emit-llvm`. Firn
   is built with `--full-lto`.
-- Where the cost is established, `FR` at `p0`, the fastest placement of `U`
-  and each rule that passes are also run under `perf stat` on the Xeon
-  6975P-C and the 14900K, the hosts that count branch misses and decoded
-  micro-ops.
+- Every job on a host that counts branch misses and decoded micro-ops, the
+  Xeon 6975P-C and the 14900K, also runs `records` under `perf stat` after
+  its timed rounds: `FR` at `p0`, `U` at each code placement and each rule at
+  `p0`, so that no second job is needed to reach the layouts a 9V74 names.
+  Where the cost is established, the record reports the counts of `FR` at
+  `p0`, of the placement of `U` fastest on the 9V74 and of each rule that
+  passes.
 - If no rule passes, the record states the cause as far as these arms locate
   it and the cost each rule left.
 

@@ -8,6 +8,7 @@ usage:
   layout.py datadelta IMAGE_FROM IMAGE_TO
   layout.py check IMAGES_TSV
   layout.py lines IMAGE PERF_SCRIPT
+  layout.py counters DIRECTORY
   layout.py self-test
 
 `rewrite` writes one arm's module from the aligned emitted module. MODE is
@@ -39,7 +40,10 @@ whose crossing loops are not the number its offset predicted.
 
 `datadelta` prints by how many bytes the data of IMAGE_TO lies above that of
 IMAGE_FROM, the size of the filler `dFR` links. `lines` reduces `perf script
--F sym,symoff` text to samples per function and 64-byte line.
+-F sym,symoff` text to samples per function and 64-byte line. `counters`
+tabulates the `perf stat -x,` files placement.sh writes as WIDTH-ARM-PLACEMENT.csv,
+with the branch-miss rate and the share of micro-ops the decoded micro-op
+cache delivered.
 
 The tools read GNU objdump's output (OBJDUMP, default `objdump`).
 """
@@ -477,6 +481,48 @@ def format_lines(counts, total, top=40):
     return "\n".join(lines) + "\n"
 
 
+# --- hardware counts --------------------------------------------------------
+
+def read_counts(text):
+    """{event: count} from `perf stat -x,` output; an event a hybrid host
+    counts on two kinds of core gives one entry per kind, as perf names it;
+    an uncounted event is left out."""
+    counts = {}
+    for line in text.splitlines():
+        fields = line.split(",")
+        if line.startswith("#") or len(fields) < 3 or not fields[0].strip().isdigit():
+            continue
+        counts[fields[2]] = int(fields[0])
+    return counts
+
+
+def derived(counts):
+    """The branch-miss rate and the decoded-cache share of micro-ops, summed
+    over kinds of core, or None where an event is missing."""
+    def total(word, without=None):
+        values = [v for e, v in counts.items() if word in e and (without is None or without not in e)]
+        return sum(values) if values else None
+    misses, branches = total("branch-misses"), total("branches", "misses")
+    dsb, mite = total("dsb_uops"), total("mite_uops")
+    rate = misses / branches if misses is not None and branches else None
+    share = dsb / (dsb + mite) if dsb is not None and mite is not None and dsb + mite else None
+    return rate, share
+
+
+def format_counts(files):
+    """files: {(width, arm, placement): perf stat text}."""
+    lines = ["records: counts over ten processes per image; miss = branch misses per branch, "
+             "dsb = share of micro-ops from the decoded micro-op cache"]
+    for (width, arm, placement), text in sorted(files.items(), key=lambda item: (int(item[0][0]), item[0][1:])):
+        counts = read_counts(text)
+        rate, share = derived(counts)
+        values = " ".join(f"{event}={count}" for event, count in counts.items())
+        miss = "-" if rate is None else f"{rate:.4%}"
+        dsb = "-" if share is None else f"{share:.2%}"
+        lines.append(f"W={width} {arm} {placement}: miss={miss} dsb={dsb} {values}")
+    return "\n".join(lines) + "\n"
+
+
 # --- the command line -------------------------------------------------------
 
 def main(arguments):
@@ -513,6 +559,13 @@ def main(arguments):
         elif command == "lines" and len(rest) == 2:
             counts, total = line_samples(objdump("-t", rest[0]), open(rest[1], encoding="utf-8").read())
             sys.stdout.write(format_lines(counts, total))
+        elif command == "counters" and len(rest) == 1:
+            files = {}
+            for name in os.listdir(rest[0]):
+                if name.endswith(".csv"):
+                    with open(os.path.join(rest[0], name), encoding="utf-8") as handle:
+                        files[tuple(name[:-4].split("-", 2))] = handle.read()
+            sys.stdout.write(format_counts(files))
         elif command == "self-test" and not rest:
             self_test()
         else:
@@ -668,6 +721,19 @@ def self_test():
            ({("wf__hot", 0x1040, 0x1040): 2, ("wf__hot", 0x1080, 0x1040): 1}, 4))
     counts, _ = line_samples(good["FR/p0"], "  wf__cold+0x1\n  wf__hot+0x3\n  wf__hot+0x45\n  wf_rt_run+0x2\n")
     expect("samples per function", function_totals(counts), [("wf__hot", 2), ("wf__cold", 1), ("wf_rt_run", 1)])
+
+    hybrid = ("# started on Wed Nov 25\n\n"
+              "4000,,cpu_core/branches:u/,100,100.00,,\n120,,cpu_core/branch-misses:u/,100,100.00,,\n"
+              "1000,,cpu_atom/branches:u/,100,100.00,,\n30,,cpu_atom/branch-misses:u/,100,100.00,,\n"
+              "<not counted>,,cpu_atom/cycles:u/,0,0.00,,\n"
+              "900,,idq.dsb_uops:u,100,100.00,,\n100,,idq.mite_uops:u,100,100.00,,\n"
+              "<not supported>,,baclears.any:u,0,100.00,,\n")
+    counts = read_counts(hybrid)
+    expect("counts", counts, {"cpu_core/branches:u/": 4000, "cpu_core/branch-misses:u/": 120,
+                              "cpu_atom/branches:u/": 1000, "cpu_atom/branch-misses:u/": 30,
+                              "idq.dsb_uops:u": 900, "idq.mite_uops:u": 100})
+    expect("derived", derived(counts), (150 / 5000, 0.9))
+    expect("derived without the cache events", derived({"branches:u": 10}), (None, None))
 
     for failure in failures:
         print(f"FAIL {failure}")

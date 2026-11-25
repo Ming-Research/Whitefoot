@@ -490,6 +490,24 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # Branch misses and decoded micro-ops, on a host whose kernel exposes
+      # hardware counters (the hosted Xeon 6975P-C and the 14900K; the hosted
+      # EPYC machines do not). The harness names a host without them.
+      - name: Count records' front-end events
+        if: steps.model.outputs.match == 'true'
+        env:
+          CPUS: ${{ inputs.placement_cpus }}
+        run: |
+          bash research/investigations/code-placement/placement.sh counters "$RUNNER_TEMP/placement" "$CPUS" \
+            > "$RUNNER_TEMP/placement/counters-log.txt"
+          {
+            echo "### records, front-end counts"
+            echo
+            echo '```text'
+            cat "$RUNNER_TEMP/placement/counters-log.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       # The event that reopened the investigation: the same aligned compiler
       # and flags over the runtime before and after a change that adds one
       # import, judged by the regression instrument itself. The event
@@ -532,4 +550,6 @@ jobs:
             ${{ runner.temp }}/placement/disassembly/
             ${{ runner.temp }}/placement/loops/
             ${{ runner.temp }}/placement/lines/
+            ${{ runner.temp }}/placement/counters/
+            ${{ runner.temp }}/placement/counters-log.txt
             ${{ runner.temp }}/placement/event/
