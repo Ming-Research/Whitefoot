@@ -60,11 +60,14 @@ allocates two grids of 32 MiB plus a header, which glibc maps one by one
 | 5 | 9V45 | +0x71ef000 | +0x47c00000 | +0x2001000 | +0x2001000 |
 | 6 | 8370C | +0x77ff000 | +0x46ff0000 | +0x7bff000 | -0xa001000 |
 
-The traces' other mappings suggest how, as a reading of six traces that the
-experiment below tests. The entry runs on a thread with a 1 GiB stack, and its
-first allocation makes glibc reserve a heap for the thread: 128 MiB mapped,
-then trimmed to the 64 MiB that starts on a 64 MiB boundary. A grid then goes
-to the highest hole that holds it.
+The traces' other mappings say how. The entry runs on a thread with a 1 GiB
+stack, and its first allocation makes glibc reserve a heap for the thread:
+128 MiB mapped, then trimmed to the 64 MiB that starts on a 64 MiB boundary. A
+grid then goes to the highest hole that holds it. [`layout.py`](layout.py)
+models these rules; given each trace's C library base it reproduces both grid
+addresses exactly for 16 of the 18 traces of B, S and N, and is 64 KiB off for
+one grid in the other two (job 5's B and job 6's S), where a 64 KiB mapping
+the model leaves out took the top of the hole first.
 
 - In B and N the stack sits under the C library at a random 2 MiB step, so the
   hole between the thread's heap and its stack is anywhere up to 64 MiB. Half
