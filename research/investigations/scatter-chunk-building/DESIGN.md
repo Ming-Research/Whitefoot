@@ -46,10 +46,9 @@ timing probe measures that emission, `after`, against `before`: the same
 compiler emitting under the present construction rule, through a switch that
 exists only in the compiler's own tests and leaves the branch with the probes.
 `before` counts as main's emission if its module has the length and the hash
-of the scatter's `--par` module in the
-[census](#the-lowering-the-owner-selected) of the earlier commit. The
-timing probe is asked for alone: the tests named in one request run as threads
-of one process.
+that the structure probe reports on the earlier commit for the `--par` module
+it emits there through the same entry. The timing probe is asked for alone:
+the tests named in one request run as threads of one process.
 
 Besides those emissions, each probe builds variants by editing an emitted
 module's text before the host optimizer runs. A variant shows what the
@@ -121,11 +120,13 @@ Fixed before measuring:
   `after`'s wall interval at eight workers lies wholly below 1, its wall and
   CPU intervals at one worker do not lie wholly above 1, and it is enough for
   the append by the criterion above. This one campaign is the acceptance
-  measurement. If `after`'s interval at eight workers contains 1, the emitter
-  change is taken back and the remaining cost is recorded here, which is the
-  item's second outcome. If the time improves and the append keeps a
-  whole-block clear or copy, the lowering does not give the first outcome
-  alone, and that is reported before anything else is done.
+  measurement. If the three intervals hold and the append keeps a whole-block
+  clear or copy, the lowering does not give the first outcome alone, and that
+  is reported before anything else is done. If a width stays unresolved, that
+  is reported and nothing is decided. In every other case (the interval at
+  eight workers contains 1 or lies above it, or a wall or CPU interval at one
+  worker lies wholly above 1) the emitter change is taken back and the
+  remaining cost is recorded here, which is the item's second outcome.
 
 Limits known in advance: the i9-14900K runner is a hybrid processor and the
 probe pins nothing, so eight workers may land on either kind of core; other
@@ -180,12 +181,18 @@ inactive variant included, and keep the zero store for every other byte. It
 extends the header-only construction of 2026-10-09 from the active variant to
 the whole value, and it differs from the lowering declined on 2026-09-23 in
 what it leaves alone: a type with no inline window is built exactly as today.
-Of the libraries under `lib/std/collections`, only the ordered map names a
-constant-capacity window (its one-slot `Slots<Box<OrderedNode<K, V>>, 1>`
-links); the hash map and the slab name none, so their emitted modules are the
-same text under it unless a caller gives them a window payload. That is its
-falsifier for those two consumers: if a module of the 2026-09-23 comparison
-changes under the lowering, its two regressions have to be measured again
+Of the libraries under `lib/std/collections`, the ordered map and the slab
+name constant-capacity windows in their structs (the ordered map's one-slot
+`Slots<Box<OrderedNode<K, V>>, 1>` links and its node's
+`Slots<OrderedEntry<..>, 15>`; `SlabCell<T>`'s `Slots<T, 1>`), and the hash
+map names none. The lowering changes a module only where such a struct, or a
+caller's payload that holds a window, sits inline in a variant of an enum:
+the ordered map's `Option<OrderedEntry<..>>` does, the node and the slab's
+cell do not, and the library enums over a caller's key and value
+(`HashMapSlot<K, V>`, `HashMapPut<K, V>`, `OrderedPut<K, V>` and the `Option`
+of their pairs) do when the key or the value holds a window. That is its
+falsifier for the two consumers of the 2026-09-23 comparison: if one of their
+modules changes under the lowering, its regression has to be measured again
 before the lowering is proposed.
 
 **Which values a lowering keyed on window storage alone would change.** A
@@ -199,6 +206,7 @@ window in a variant's payload finds, besides the scatter's `Option<Chunk>`:
 | `tests/programs/short_lived_windows.wf` | `Held` | `Slots<Box<u64>, 64>`, `Ring<Box<u64>, 4>` |
 | `apps/firn/bytes/module.wfm` | `Bytes`, and through it `Value`, `Option<Entry>`, `Option<Key>`, `Option<Rank>` | `Slots<u8, 24>` |
 | `lib/std/collections/ordered_map/ordered-map.wf` | `Option<OrderedEntry<K, V, OrderedNode<K, V>>>` | `Slots<Box<OrderedNode<K, V>>, 1>` |
+| `lib/std/collections`, as firn instantiates them | `HashMapSlot`, `HashMapPut` and `Option<HashMapPair>` over `Key` with `Bytes`, `unit` or `f64`; `OrderedPut` and `Option<OrderedPair>` over `Rank` | `Slots<u8, 24>`, through `Key` and `Bytes` |
 
 and a number of conformance cases with windows of 1 to 8 elements. Firn's
 byte strings and the ordered map's links are small values, and both
@@ -244,9 +252,11 @@ not yet from the compiler:
 | `Result<HuffmanTable, InflateError>` | 2,456 | yes |
 | `Held` of `short_lived_windows.wf` | 608 | yes, where its window-less variant is built, which the program does not do today |
 | `Option<Lease>` | 272 | yes |
+| firn `HashMapSlot<Key, Bytes>`, `HashMapPut<Key, Bytes>`, `Option<HashMapPair<Key, Bytes>>` | 96 | no |
 | firn `Option<Entry>` | 80 | no |
 | firn `Value`, `Option<Rank>` | 64 | no |
 | firn `Option<Key>` | 56 | no |
+| firn's hash map enums over `Key` with `unit` or `f64`, its `OrderedPut<Rank, unit>` and `Option<OrderedPair<Rank, unit>>` | 56 to 64 | no |
 | firn `Bytes` | 40 | no |
 | ordered map `Option<OrderedEntry<..>>`, firn's instance | 80 | no |
 | ordered map `Option<OrderedEntry<..>>`, the test program's instances | 40 | no |
