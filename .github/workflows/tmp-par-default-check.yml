@@ -1,5 +1,7 @@
 # Generated from par-default-accept.yml by replacing the trigger, the input expressions and the
-# names, and adding the negative job below (its step is the formal workflow's resolve step, verbatim).
+# names, and adding the negative job below (its step is the formal workflow's resolve step plus a first
+# line that keeps stderr, so the job can check the message), and keeping the output of the identity
+# and measure steps as annotations.
 # Temporary: removed before the full check.
 # Runs the stage-3 acceptance measurement for default --par demand splitting,
 # whose matrix, rules and order Whitefoot#468's investigation record
@@ -184,21 +186,47 @@ jobs:
           for image in "$build"/{seq,demand,par}/*; do
             if [[ "$(basename "$image")" != *.* && -x "$image" ]]; then objdump -d "$image" > "$image.disassembly"; fi
           done
-      - name: Require machine-code identity of ordinary and selected cheap computation
+      # The next two steps differ from the formal workflow: the output is kept
+      # and, on failure, shown as an annotation (job logs need admin rights to
+      # read), and the identity step does not stop the measure step, so the
+      # run shows how far main's compiler goes.
+      - id: identity
+        continue-on-error: true
+        name: Require machine-code identity of ordinary and selected cheap computation
         run: |
-          set -euo pipefail
+          set +e
           perl .github/run-check.pl par-default/identity \
             python3 -B research/experiments/par-default/identity.py \
-              --build "$RUNNER_TEMP/s3" --output "$RUNNER_TEMP/s3/sequential-identity.json"
-      - name: Verify every oracle, then interleave arms, widths and rounds
+              --build "$RUNNER_TEMP/s3" --output "$RUNNER_TEMP/s3/sequential-identity.json" \
+            2>&1 | tee "$RUNNER_TEMP/identity.out"
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            body=$(tail -n 40 "$RUNNER_TEMP/identity.out" | head -c 3500 | tr -d '\r' | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')
+            echo "::error title=identity exit $status::$body"
+          fi
+          exit "$status"
+      - id: measure
+        continue-on-error: true
+        name: Verify every oracle, then interleave arms, widths and rounds
         env:
           WHITEFOOT_CHECK_TIMEOUT: "9000"
         run: |
-          set -euo pipefail
+          set +e
           perl .github/run-check.pl par-default/measure \
             python3 -B research/experiments/par-default/accept.py run --build "$RUNNER_TEMP/s3" \
-              --mode "$MODE" --rounds "$ROUNDS" --candidate-revision "$CANDIDATE" --base-revision "$BASE"
+              --mode "$MODE" --rounds "$ROUNDS" --candidate-revision "$CANDIDATE" --base-revision "$BASE" \
+            2>&1 | tee "$RUNNER_TEMP/measure.out"
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            body=$(tail -n 40 "$RUNNER_TEMP/measure.out" | head -c 3500 | tr -d '\r' | sed 's/%/%25/g' | awk 'BEGIN{ORS="%0A"} {print}')
+            echo "::error title=measure exit $status::$body"
+            exit "$status"
+          fi
           { echo '```'; cat "$RUNNER_TEMP/s3/summary.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Report the outcomes of the two steps above
+        if: always()
+        run: |
+          echo "::notice title=outcomes::identity=${{ steps.identity.outcome }} measure=${{ steps.measure.outcome }}"
       - name: Retain the evidence, including a failed construction
         if: always()
         run: |
@@ -230,8 +258,10 @@ jobs:
         include:
           - variant: missing-tag
             tag: par-demand-prototype-missing
+            expect: 'retention tag par-demand-prototype-missing cannot be fetched from origin'
           - variant: wrong-id
             tag: par-demand-prototype
+            expect: 'retention tag par-demand-prototype resolves to 73aaab85a92479ada6bf57fa996e17b163e019ed, but accept.py freezes'
     env:
       FROZEN_TAG: ${{ matrix.tag }}
     steps:
@@ -251,6 +281,7 @@ jobs:
         env:
           BASE_INPUT: ""
         run: |
+          exec 2> >(tee "$RUNNER_TEMP/resolve.err" >&2)
           set -euo pipefail
           git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
           base=${BASE_INPUT:-$(git merge-base origin/main HEAD)}
@@ -284,7 +315,10 @@ jobs:
             find research/experiments/par-demand -type f -exec sha256sum {} + | sort -k2
           } > "$RUNNER_TEMP/host.txt"
           { echo "BASE=$base"; echo "BASE_TREE=$base_tree"; echo "CANDIDATE=$(git rev-parse HEAD)"; } >> "$GITHUB_ENV"
-      - name: The resolve step must have failed
+      - name: The resolve step must have failed with the intended message
+        env:
+          EXPECT: ${{ matrix.expect }}
         run: |
           echo "resolve outcome: ${{ steps.resolve.outcome }}"
           test "${{ steps.resolve.outcome }}" = failure
+          grep -F -- "$EXPECT" "$RUNNER_TEMP/resolve.err"
