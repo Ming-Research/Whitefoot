@@ -31,7 +31,7 @@
 //! adapter excludes no case, weakens no expectation, and skips nothing;
 //! running it prints the complete tally.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::process::CommandExt;
@@ -45,7 +45,7 @@ use whitefoot::{
     ModuleProgramFailure, OverlapLowering, SourceInput, check, check_module_entry,
     check_module_program, check_module_program_with_cache, check_with_cache, compile,
     compile_module_program, compile_with_overlap, discover_module_sources, entry_verdict,
-    form_module_program_graph,
+    form_module_program_graph, rejection_kinds,
 };
 
 use crate::support::{
@@ -68,6 +68,43 @@ static NEXT_INVOCATION: AtomicU64 = AtomicU64::new(0);
 struct Reached {
     verdict: Verdict,
     note: Option<String>,
+    /// What the rejection's words show, for a case that stopped as a source
+    /// rejection.
+    text: RejectionText,
+}
+
+/// The words of a source rejection as the compiler printed them: the defects
+/// of its text and the kind each diagnostic names.
+#[derive(Default)]
+struct RejectionText {
+    defects: Vec<String>,
+    kinds: Vec<String>,
+}
+
+impl Reached {
+    fn of(verdict: Verdict, note: Option<String>) -> Self {
+        Self {
+            verdict,
+            note,
+            text: RejectionText::default(),
+        }
+    }
+}
+
+/// The text defects and the kinds of a source rejection's diagnostics; any
+/// other stop prints no kind a writer repairs and is not read.
+fn rejection_text(failure: &CompilationFailure) -> RejectionText {
+    let mut text = RejectionText::default();
+    if failure.kind() != CompilationFailureKind::Source {
+        return text;
+    }
+    for diagnostic in failure.diagnostics() {
+        text.defects.extend(diagnostic.text_defects());
+        if let Some(kind) = diagnostic.kind_name() {
+            text.kinds.push(kind.to_owned());
+        }
+    }
+    text
 }
 
 /// Drives a module-form case through the ordinary module program path
@@ -152,14 +189,16 @@ fn reach(case: &Case) -> Reached {
         Err(failure) => {
             let note = Some(failure.to_string());
             let verdict = failure_verdict(&failure);
-            return Reached { verdict, note };
+            let text = rejection_text(&failure);
+            return Reached {
+                verdict,
+                note,
+                text,
+            };
         }
     };
     if !case.expect.needs_execution() {
-        return Reached {
-            verdict: Verdict::Accept,
-            note: None,
-        };
+        return Reached::of(Verdict::Accept, None);
     }
     let module = module.expect("a run expectation uses the complete compiler path");
     let verdict = execute(&sanitized(module), case.arrange.as_ref());
@@ -174,18 +213,15 @@ fn reach(case: &Case) -> Reached {
             Err(failure) => Verdict::Stopped(format!("the --par build failed: {failure}")),
         };
         if parallel != verdict {
-            return Reached {
-                verdict: Verdict::Stopped(format!(
+            return Reached::of(
+                Verdict::Stopped(format!(
                     "the --par build reached {parallel:?}, the ordinary build {verdict:?}"
                 )),
-                note: None,
-            };
+                None,
+            );
         }
     }
-    Reached {
-        verdict,
-        note: None,
-    }
+    Reached::of(verdict, None)
 }
 
 /// Links and runs one emitted module under the case's own arrangement.
@@ -430,9 +466,31 @@ fn the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path() 
     );
     let mut tally: BTreeMap<Outcome, usize> = BTreeMap::new();
     let mut reports = Vec::new();
+    // The words of every source rejection the corpus reaches, read from the
+    // compile that gave the verdict: none holds a `?` for a value or marks
+    // as source a stretch the lexer does not read, and each kind a record
+    // prints is one the compiler lists.
+    let listed = rejection_kinds();
+    let mut text_defects = Vec::new();
+    let mut unlisted = BTreeSet::new();
     let (shard, shards) = shard();
     for case in cases.iter().skip(shard).step_by(shards) {
         let reached = reach(case);
+        text_defects.extend(
+            reached
+                .text
+                .defects
+                .iter()
+                .map(|defect| format!("  {}: {defect}", case.id)),
+        );
+        unlisted.extend(
+            reached
+                .text
+                .kinds
+                .iter()
+                .filter(|kind| !listed.contains(&kind.as_str()))
+                .cloned(),
+        );
         let outcome = outcome(case, &reached.verdict);
         *tally.entry(outcome).or_default() += 1;
         if outcome == Outcome::Fail {
@@ -457,6 +515,16 @@ fn the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path() 
     println!("conformance adapter: {summary}");
     let failed = tally.get(&Outcome::Fail).copied().unwrap_or_default();
     assert_eq!(failed, 0, "conformance adapter: {summary}");
+    assert!(
+        text_defects.is_empty(),
+        "{} rejection texts are unsound:\n{}",
+        text_defects.len(),
+        text_defects.join("\n")
+    );
+    assert!(
+        unlisted.is_empty(),
+        "rejections print kinds the compiler does not list: {unlisted:?}"
+    );
 }
 
 /// One failure's corpus verdict, as `reach` reduces it: every reported
