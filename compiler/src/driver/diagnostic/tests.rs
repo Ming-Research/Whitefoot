@@ -1092,3 +1092,69 @@ fn integer_match_coverage_diagnostic_carries_full_domain_and_repair() {
     );
     assert_no_internal_identity(&rendered);
 }
+
+/// The failure of [`BOUNDS`] with one payload field added to its record.
+fn with_field(label: &'static str, value: Value) -> CompilationFailure {
+    let mut failure = stop("bounds.wf", BOUNDS);
+    failure.record.detail.push((label, value));
+    failure
+}
+
+/// A rejection whose words are sound reports no defect.
+#[test]
+fn a_rejection_with_sound_words_has_no_text_defects() {
+    let defects = stop("bounds.wf", BOUNDS).text_defects();
+    assert!(defects.is_empty(), "{defects:?}");
+    let defects = with_field(
+        "mechanical_fix",
+        Value::Text("write `let at = count;` before `src^[at]`".to_owned()),
+    )
+    .text_defects();
+    assert!(defects.is_empty(), "{defects:?}");
+}
+
+/// A `?` that stands for a value the renderer could not write is a defect,
+/// whichever field carries it.
+#[test]
+fn a_question_mark_standing_for_a_value_is_a_text_defect() {
+    let defects = with_field(
+        "instantiated_goal",
+        Value::Text("0_u64 < rows^[?].len".to_owned()),
+    )
+    .text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+    assert!(defects[0].starts_with("instantiated_goal:"), "{defects:?}");
+    let defects = with_field(
+        "residual",
+        Value::List(vec![Value::Text("t^[?][i] and t^[?][j]".to_owned())]),
+    )
+    .text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+}
+
+/// A stretch the text marks as source that the lexer does not read as source
+/// is a defect; an unmarked stretch and a stretch left open are not read.
+#[test]
+fn a_marked_stretch_that_is_not_source_is_a_text_defect() {
+    let defects = with_field(
+        "mechanical_fix",
+        Value::Text("write `a $ b` here".to_owned()),
+    )
+    .text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+    assert!(defects[0].contains("is not source text"), "{defects:?}");
+    let defects = with_field(
+        "mechanical_fix",
+        Value::Text("the value of k before it was rewritten, then `a $ b".to_owned()),
+    )
+    .text_defects();
+    assert!(defects.is_empty(), "{defects:?}");
+}
+
+/// The writer's own source bytes, which a record quotes exactly, are not
+/// read for placeholders.
+#[test]
+fn quoted_source_bytes_are_not_read_for_defects() {
+    let defects = with_field("found", Value::Exact(b"\"why?\"".to_vec())).text_defects();
+    assert!(defects.is_empty(), "{defects:?}");
+}

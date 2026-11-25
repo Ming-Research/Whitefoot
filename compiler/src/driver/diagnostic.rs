@@ -32,6 +32,7 @@
 
 use core::fmt::{self, Write as _};
 
+use super::CompositionIssue;
 use crate::source::SourceBundle;
 use crate::syntax::terminal::TerminalPredicate;
 use crate::{
@@ -273,6 +274,86 @@ impl Record {
         json.push('}');
         json
     }
+}
+
+impl Record {
+    /// The kind name the summary line prints, when the stop has one.
+    pub(super) fn kind(&self) -> Option<&str> {
+        self.kind.as_deref()
+    }
+
+    /// What is wrong with the words of this record: a `?` standing for a
+    /// value the renderer could not write, and a stretch the text marks as
+    /// source with backticks that the lexer does not read as source. Exact
+    /// values are the writer's own source bytes and are not read; the source
+    /// line and the marker are not part of the payload.
+    pub(super) fn text_defects(&self) -> Vec<String> {
+        let mut defects = Vec::new();
+        for (label, value) in &self.detail {
+            value_defects(label, value, &mut defects);
+        }
+        defects
+    }
+}
+
+fn value_defects(label: &str, value: &Value, defects: &mut Vec<String>) {
+    match value {
+        Value::Text(text) => text_defects(label, text, defects),
+        Value::List(items) => {
+            for item in items {
+                value_defects(label, item, defects);
+            }
+        }
+        Value::MatchSite {
+            enum_name,
+            missing_variants,
+            ..
+        } => {
+            text_defects(label, enum_name, defects);
+            for variant in missing_variants {
+                value_defects(label, variant, defects);
+            }
+        }
+        Value::Fields(fields) | Value::Variant(_, fields) => {
+            for (inner, value) in fields {
+                value_defects(inner, value, defects);
+            }
+        }
+        Value::Exact(_) | Value::Number(_) | Value::Place(..) => {}
+    }
+}
+
+fn text_defects(label: &str, text: &str, defects: &mut Vec<String>) {
+    if text.contains('?') {
+        defects.push(format!("{label}: `?` stands for a value the text does not write: {text}"));
+    }
+    // The odd-numbered pieces between backticks are the stretches the text
+    // marks as source; a last piece with no closing backtick is not one.
+    let mut pieces = text.split('`').peekable();
+    let mut inside = false;
+    while let Some(piece) = pieces.next() {
+        if inside && pieces.peek().is_some() && !piece.is_empty() && !lexes_as_source(piece) {
+            defects.push(format!("{label}: `{piece}` is marked as source but is not source text"));
+        }
+        inside = !inside;
+    }
+}
+
+/// Whether the lexer reads `fragment` as one complete run of source tokens.
+fn lexes_as_source(fragment: &str) -> bool {
+    let inputs = [crate::SourceInput::new("fragment.wf", fragment.as_bytes())];
+    let Ok(bundle) = SourceBundle::with_limits(&inputs, crate::SourceLimits::REPRESENTABLE) else {
+        return false;
+    };
+    let limits = crate::LexLimits {
+        max_sources: u32::MAX,
+        max_source_bytes: u64::MAX,
+        max_total_source_bytes: u64::MAX,
+        max_token_bytes: u64::MAX,
+        max_tokens: u64::MAX,
+        max_lexemes: u64::MAX,
+    };
+    matches!(crate::lex(&bundle, limits), crate::LexOutcome::Complete(_))
 }
 
 /// Which byte of a coordinate the reader is sent to.
@@ -544,6 +625,33 @@ macro_rules! report_variants {
     };
 }
 
+/// Defines one classification's report function and the list of its variant
+/// names from one listing, so the list of rejection kinds cannot fall behind
+/// the variants a record can print. The listing has the form of
+/// [`report_variants!`].
+macro_rules! report_kind_fn {
+    ($report:ident, $names:ident, $enum:ident;
+     $( $variant:ident
+        $( { $($field:ident),* $(,)? } )?
+        $( ( $single:ident ) )?
+        $( [ $flat:ident ] )?
+     ; )*
+    ) => {
+        /// The variant names this classification's records print.
+        pub(crate) const $names: &[&str] = &[ $( stringify!($variant) ),* ];
+
+        fn $report(value: &$enum, fields: &mut Fields<'_>) -> &'static str {
+            report_variants!($enum, value, fields;
+                $( $variant
+                    $( { $($field),* } )?
+                    $( ( $single ) )?
+                    $( [ $flat ] )?
+                ; )*
+            )
+        }
+    };
+}
+
 /// Lists every field of one payload structure, in declaration order.
 macro_rules! list_fields {
     ($value:expr, $fields:ident; $name:ident { $($field:ident),* $(,)? }) => {{
@@ -744,8 +852,41 @@ impl FieldValue for ExpectedTerminals {
     }
 }
 
+/// The kind a formed token that satisfies no terminal predicate prints.
+const UNCLASSIFIED_TOKEN: &str = "UnclassifiedToken";
+/// The kind a grammar failure prints.
+const UNEXPECTED_TOKEN: &str = "UnexpectedToken";
+/// The kind a trivia gap that is not the canonical one prints.
+const NON_CANONICAL_TRIVIA: &str = "NonCanonicalTrivia";
+
+/// Every kind name a source rejection can print, once each and sorted: the
+/// variants of each rejection classification and the kinds the lexical,
+/// grammar and canonical-form rejections print. The lists come from the
+/// listings that define what a record prints, so a kind added to a payload is
+/// in this list when it compiles. A capability stop is not a rejection and is
+/// not listed.
+#[must_use]
+pub fn rejection_kinds() -> Vec<&'static str> {
+    let fixed: &[&'static str] = &[UNCLASSIFIED_TOKEN, UNEXPECTED_TOKEN, NON_CANONICAL_TRIVIA];
+    let lists: [&[&'static str]; 6] = [
+        GRAPH_KINDS,
+        COMPOSITION_KINDS,
+        SEMANTIC_KINDS,
+        RESOLUTION_KINDS,
+        <SourceIssueKind as VariantName>::NAMES,
+        fixed,
+    ];
+    let mut kinds: Vec<&'static str> = lists.concat();
+    kinds.sort_unstable();
+    kinds.dedup();
+    kinds
+}
+
 /// A closed classification printed by its variant name.
 trait VariantName {
+    /// Every variant's name, in declaration order.
+    const NAMES: &'static [&'static str];
+
     fn name(&self) -> &'static str;
 }
 
@@ -756,6 +897,8 @@ macro_rules! variant_names {
     ($($enum:ident { $($variant:ident),* $(,)? })*) => {
         $(
             impl VariantName for $enum {
+                const NAMES: &'static [&'static str] = &[ $( stringify!($variant) ),* ];
+
                 fn name(&self) -> &'static str {
                     match self {
                         $( $enum::$variant => stringify!($variant), )*
@@ -874,180 +1017,210 @@ impl Report for SemanticIssue {
     }
 }
 
+report_kind_fn!(report_graph_kind, GRAPH_KINDS, GraphIssueKind;
+    DuplicateModule { path };
+    SelfDependency { path };
+    DuplicateDependency { path };
+    UnregisteredDependency { path };
+    LaterDependency { path };
+    DuplicateEntry { name };
+    UnregisteredEntryModule { target };
+    StandardPath { path };
+    UnknownStandardModule { path };
+    StandardPrefixInLibrary { path };
+    BoundPath { path };
+    InvalidLocation { location };
+    DuplicateBindingName { name };
+    DuplicatePackage { name };
+    BindingCycle { name };
+    UnboundPackage { path };
+    UnknownBoundModule { path };
+);
+
 /// A refused graph binding, row or entry is located at its written binding
 /// or path; the kind carries the payload [MOD-1, MOD-11].
 impl Report for GraphIssue {
     fn report(&self, fields: &mut Fields<'_>) -> &'static str {
         let kind = self.kind();
-        report_variants!(GraphIssueKind, kind, fields;
-            DuplicateModule { path };
-            SelfDependency { path };
-            DuplicateDependency { path };
-            UnregisteredDependency { path };
-            LaterDependency { path };
-            DuplicateEntry { name };
-            UnregisteredEntryModule { target };
-            StandardPath { path };
-            UnknownStandardModule { path };
-            StandardPrefixInLibrary { path };
-            BoundPath { path };
-            InvalidLocation { location };
-            DuplicateBindingName { name };
-            DuplicatePackage { name };
-            BindingCycle { name };
-            UnboundPackage { path };
-            UnknownBoundModule { path };
-        )
+        report_graph_kind(kind, fields)
     }
 }
+
+report_kind_fn!(report_composition_kind, COMPOSITION_KINDS, CompositionIssue;
+    PendingDeclaration { declaration };
+    EntryFunctionMissing { function };
+    EntryFunctionPrivate { function };
+    HeapInClosure { path };
+);
 
 /// A composition rejection names what the entry's composition judgment
 /// found [MOD-8, MOD-9, STOR-8].
-impl Report for super::CompositionIssue {
+impl Report for CompositionIssue {
     fn report(&self, fields: &mut Fields<'_>) -> &'static str {
-        use super::CompositionIssue;
-        report_variants!(CompositionIssue, self, fields;
-            PendingDeclaration { declaration };
-            EntryFunctionMissing { function };
-            EntryFunctionPrivate { function };
-            HeapInClosure { path };
-        )
+        report_composition_kind(self, fields)
     }
 }
 
+report_kind_fn!(report_semantic_kind, SEMANTIC_KINDS, SemanticIssueKind;
+    InvalidIntegerLiteral;
+    InvalidFloatLiteral { canonical_spelling, mechanical_fix };
+    InvalidTextItem { reason, mechanical_fix };
+    NonAsciiByteCharacter { mechanical_fix };
+    TextLengthMismatch { declared_length, byte_length, mechanical_fix };
+    InvalidConstValue;
+    InaccessibleField { field, reason };
+    InaccessibleVariant { variant, reason };
+    ConstantCycle { cycle };
+    ConstEvalOverflow { operation };
+    ConstArgumentOutOfRange { parameter_type, value };
+    ConstRuntimeArithmeticMode { mechanical_fix };
+    TypeMismatch { expected, found, mechanical_fix };
+    BorrowOfDerivedMeasure { mechanical_fix };
+    UnadmittedOperandShape { expected, mechanical_fix };
+    BehaviorArgumentMismatch { expected, mechanical_fix };
+    UnforwardedGroupApplication { mechanical_fix };
+    ImmutableSetTarget;
+    InvalidSetTarget { root_class, required_classes, mechanical_fix };
+    ImmutableWrittenArgument { binding, mechanical_fix };
+    LinearValueNotConsumed { binding, obligation, mechanical_fix };
+    LinearValuePartiallyConsumed { obligation, residual, mechanical_fix };
+    LinearityBoundMismatch { parameter, bound, argument, actual };
+    LivenessJoinDisagreement { binding, live_predecessor, dead_predecessor, mechanical_fix };
+    LinearAssignmentTarget { target_type, mechanical_fix };
+    InvalidRestrictedTypePlacement { spelling, mechanical_fix };
+    SwapOverCopyPlace { place_type, mechanical_fix };
+    HeapTypeUnderNoHeap { spelling, mechanical_fix };
+    InvalidElementMove { mechanical_fix };
+    MoveThroughReference { mechanical_fix };
+    ReservedPseudoField { spelling, mechanical_fix };
+    ReadonlyWriteTarget { spelling, mechanical_fix };
+    FrozenForbiddenPart { part, mechanical_fix };
+    SharedStateHoldsOwnHandle { part, handle, mechanical_fix };
+    FrozenContentConsume { mechanical_fix };
+    MoveOfCopy { binding, ty, reason, mechanical_fix };
+    BareAffineUse { binding, ty, reason, mechanical_fix };
+    ContainerConstruction { nominal, mechanical_fix };
+    OpaqueDestructuring { nominal, mechanical_fix };
+    UseAfterMove { mechanical_fix };
+    InvalidReferenceUse { binder, event, mechanical_fix };
+    UnestablishedPayloadVariant { place, variant, mechanical_fix };
+    ReferenceToReferenceVariable { mechanical_fix };
+    EscapingReference { mechanical_fix };
+    RangeOverRing { mechanical_fix };
+    RangeOverEntries { mechanical_fix };
+    MoveOutOfSlot { mechanical_fix };
+    MissingDereference { mechanical_fix };
+    RangeReferentUse { mechanical_fix };
+    MoveOuterBindingInLoop { binding, mechanical_fix };
+    InvalidOperation { operation, operand_types, mechanical_fix };
+    InvalidEqualityType { mechanical_fix };
+    InvalidPredicateCondition;
+    RedundantCondition { residual, decided, facts, mechanical_fix };
+    InvalidConditionalForm { mechanical_fix };
+    UndischargedBoundsObligation { residual, disposition, mechanical_fix };
+    UndischargedEmptyRunRelease { residual, disposition, mechanical_fix };
+    UndischargedIntegerDomainObligation { residual, disposition, mechanical_fix };
+    UndischargedConversionDomainObligation { residual, disposition, mechanical_fix };
+    UndischargedRangeFormationObligation { residual, disposition, mechanical_fix };
+    UndischargedCallSeparation { residual, mechanical_fix };
+    OverlappingCallEffects { first, second, mechanical_fix };
+    AtomicUpdateReachesTargetPrefix { target, effect, mechanical_fix };
+    UndischargedCallRequirement[detail];
+    InvalidCountedEndpoint { mechanical_fix };
+    BreakOutsideLoop { mechanical_fix };
+    ContinueOutsideLoop { mechanical_fix };
+    InvalidRangeClause { reason, mechanical_fix };
+    UndischargedRangeFact { fact, site, missing, mechanical_fix };
+    UndischargedApart { pair, mechanical_fix };
+    InvalidInvariant { reason, mechanical_fix };
+    InvalidTypeInvariant { reason, mechanical_fix };
+    TypeInvariantWritableField { field, mechanical_fix };
+    UndischargedTypeInvariant { type_invariant, instantiated_goal, disposition, mechanical_fix };
+    UndischargedLoopInvariant { name, obligation, incoming_edge, required_relation, disposition, mechanical_fix };
+    UndischargedLocalInvariant { name, disposition, mechanical_fix };
+    InvalidSourceProof { reason, mechanical_fix };
+    UndischargedSourceProof { name, obligation, mechanical_fix };
+    ReturnMismatch;
+    WaitingCallOutsideWaitingFunction { callee, context, mechanical_fix };
+    AtomicTargetNotShared { found, mechanical_fix };
+    WaitInsideAtomic { construct, mechanical_fix };
+    TableOffsetNotKey { mechanical_fix };
+    TableEntriesNotBorrowed { mechanical_fix };
+    AtomicKeyNotBytes { found, mechanical_fix };
+    AtomicKeyReadsTheState { mechanical_fix };
+    AtomicBindingUnused { binding, mechanical_fix };
+    AtomicGuardWrites { mechanical_fix };
+    AtomicGuardDecisionCell { mechanical_fix };
+    AtomicGuardReadsSelfChanging { handle, mechanical_fix };
+    InvalidSpawn { condition };
+    InvalidMusttail { condition, subject };
+    PolymorphicRecursion { cycle, changed_argument, mechanical_fix };
+    UnreachableStatement;
+    FunctionFallthrough;
+    InvalidRequires;
+    InvalidHeldContract { reason, mechanical_fix };
+    SnapshotResource { owned_path, mechanical_fix };
+    InvalidPostconditionSelector { mechanical_fix };
+    AmbiguousResultRoute { mechanical_fix };
+    InvalidPostconditionFields { required_fields };
+    PostconditionCandidateNotFresh { spelling, conflicts };
+    PostconditionLocalShadowsResult { spelling, selector };
+    InvalidPostconditionClause;
+    InvalidPostconditionRelation;
+    InvalidEntryFormer { mechanical_fix };
+    ContradictoryPublishedRelations { relations, mechanical_fix };
+    InvalidPostconditionReturn;
+    NoSelectedNormalExit { residual, mechanical_fix };
+    UndischargedPostcondition[detail];
+    InvalidNamedArguments { callee, declared_parameters };
+    DuplicateFieldLabel { label };
+    InvalidConstructionFields { constructor, declared_fields };
+    InvalidMatchFields { variant, declared_fields };
+    ForeignMatchVariant;
+    NonExhaustiveMatch { missing_variants, other_sites };
+    DuplicateMatchVariant { variant, mechanical_fix };
+    InvalidIntegerMatchArm { reason, mechanical_fix };
+    DuplicateIntegerMatchValue { value, earlier, mechanical_fix };
+    InvalidIntegerMatchCoverage { integer_type, domain, mechanical_fix };
+    InvalidPropagation { enclosing_return_type, operand_type, mechanical_fix };
+    InvalidGive;
+    EmptyDeliverySet { binding, mechanical_fix };
+    InvalidEffectRow { reason, mechanical_fix };
+    SubsumedEffectEntry { entry, covering };
+    EffectMismatch { expected_row, found_row, missing, extra, mechanical_fix };
+    SourceContractGenericBound;
+);
+
 impl Report for SemanticIssueKind {
     fn report(&self, fields: &mut Fields<'_>) -> &'static str {
-        report_variants!(SemanticIssueKind, self, fields;
-            InvalidIntegerLiteral;
-            InvalidFloatLiteral { canonical_spelling, mechanical_fix };
-            InvalidTextItem { reason, mechanical_fix };
-            NonAsciiByteCharacter { mechanical_fix };
-            TextLengthMismatch { declared_length, byte_length, mechanical_fix };
-            InvalidConstValue;
-            InaccessibleField { field, reason };
-            InaccessibleVariant { variant, reason };
-            ConstantCycle { cycle };
-            ConstEvalOverflow { operation };
-            ConstArgumentOutOfRange { parameter_type, value };
-            ConstRuntimeArithmeticMode { mechanical_fix };
-            TypeMismatch { expected, found, mechanical_fix };
-            BorrowOfDerivedMeasure { mechanical_fix };
-            UnadmittedOperandShape { expected, mechanical_fix };
-            BehaviorArgumentMismatch { expected, mechanical_fix };
-            UnforwardedGroupApplication { mechanical_fix };
-            ImmutableSetTarget;
-            InvalidSetTarget { root_class, required_classes, mechanical_fix };
-            ImmutableWrittenArgument { binding, mechanical_fix };
-            LinearValueNotConsumed { binding, obligation, mechanical_fix };
-            LinearValuePartiallyConsumed { obligation, residual, mechanical_fix };
-            LinearityBoundMismatch { parameter, bound, argument, actual };
-            LivenessJoinDisagreement { binding, live_predecessor, dead_predecessor, mechanical_fix };
-            LinearAssignmentTarget { target_type, mechanical_fix };
-            InvalidRestrictedTypePlacement { spelling, mechanical_fix };
-            SwapOverCopyPlace { place_type, mechanical_fix };
-            HeapTypeUnderNoHeap { spelling, mechanical_fix };
-            InvalidElementMove { mechanical_fix };
-            MoveThroughReference { mechanical_fix };
-            ReservedPseudoField { spelling, mechanical_fix };
-            ReadonlyWriteTarget { spelling, mechanical_fix };
-            FrozenForbiddenPart { part, mechanical_fix };
-            SharedStateHoldsOwnHandle { part, handle, mechanical_fix };
-            FrozenContentConsume { mechanical_fix };
-            MoveOfCopy { binding, ty, reason, mechanical_fix };
-            BareAffineUse { binding, ty, reason, mechanical_fix };
-            ContainerConstruction { nominal, mechanical_fix };
-            OpaqueDestructuring { nominal, mechanical_fix };
-            UseAfterMove { mechanical_fix };
-            InvalidReferenceUse { binder, event, mechanical_fix };
-            UnestablishedPayloadVariant { place, variant, mechanical_fix };
-            ReferenceToReferenceVariable { mechanical_fix };
-            EscapingReference { mechanical_fix };
-            RangeOverRing { mechanical_fix };
-            RangeOverEntries { mechanical_fix };
-            MoveOutOfSlot { mechanical_fix };
-            MissingDereference { mechanical_fix };
-            RangeReferentUse { mechanical_fix };
-            MoveOuterBindingInLoop { binding, mechanical_fix };
-            InvalidOperation { operation, operand_types, mechanical_fix };
-            InvalidEqualityType { mechanical_fix };
-            InvalidPredicateCondition;
-            RedundantCondition { residual, decided, facts, mechanical_fix };
-            InvalidConditionalForm { mechanical_fix };
-            UndischargedBoundsObligation { residual, disposition, mechanical_fix };
-            UndischargedEmptyRunRelease { residual, disposition, mechanical_fix };
-            UndischargedIntegerDomainObligation { residual, disposition, mechanical_fix };
-            UndischargedConversionDomainObligation { residual, disposition, mechanical_fix };
-            UndischargedRangeFormationObligation { residual, disposition, mechanical_fix };
-            UndischargedCallSeparation { residual, mechanical_fix };
-            OverlappingCallEffects { first, second, mechanical_fix };
-            AtomicUpdateReachesTargetPrefix { target, effect, mechanical_fix };
-            UndischargedCallRequirement[detail];
-            InvalidCountedEndpoint { mechanical_fix };
-            BreakOutsideLoop { mechanical_fix };
-            ContinueOutsideLoop { mechanical_fix };
-            InvalidRangeClause { reason, mechanical_fix };
-            UndischargedRangeFact { fact, site, missing, mechanical_fix };
-            UndischargedApart { pair, mechanical_fix };
-            InvalidInvariant { reason, mechanical_fix };
-            InvalidTypeInvariant { reason, mechanical_fix };
-            TypeInvariantWritableField { field, mechanical_fix };
-            UndischargedTypeInvariant { type_invariant, instantiated_goal, disposition, mechanical_fix };
-            UndischargedLoopInvariant { name, obligation, incoming_edge, required_relation, disposition, mechanical_fix };
-            UndischargedLocalInvariant { name, disposition, mechanical_fix };
-            InvalidSourceProof { reason, mechanical_fix };
-            UndischargedSourceProof { name, obligation, mechanical_fix };
-            ReturnMismatch;
-            WaitingCallOutsideWaitingFunction { callee, context, mechanical_fix };
-            AtomicTargetNotShared { found, mechanical_fix };
-            WaitInsideAtomic { construct, mechanical_fix };
-            TableOffsetNotKey { mechanical_fix };
-            TableEntriesNotBorrowed { mechanical_fix };
-            AtomicKeyNotBytes { found, mechanical_fix };
-            AtomicKeyReadsTheState { mechanical_fix };
-            AtomicBindingUnused { binding, mechanical_fix };
-            AtomicGuardWrites { mechanical_fix };
-            AtomicGuardDecisionCell { mechanical_fix };
-            AtomicGuardReadsSelfChanging { handle, mechanical_fix };
-            InvalidSpawn { condition };
-            InvalidMusttail { condition, subject };
-            PolymorphicRecursion { cycle, changed_argument, mechanical_fix };
-            UnreachableStatement;
-            FunctionFallthrough;
-            InvalidRequires;
-            InvalidHeldContract { reason, mechanical_fix };
-            SnapshotResource { owned_path, mechanical_fix };
-            InvalidPostconditionSelector { mechanical_fix };
-            AmbiguousResultRoute { mechanical_fix };
-            InvalidPostconditionFields { required_fields };
-            PostconditionCandidateNotFresh { spelling, conflicts };
-            PostconditionLocalShadowsResult { spelling, selector };
-            InvalidPostconditionClause;
-            InvalidPostconditionRelation;
-            InvalidEntryFormer { mechanical_fix };
-            ContradictoryPublishedRelations { relations, mechanical_fix };
-            InvalidPostconditionReturn;
-            NoSelectedNormalExit { residual, mechanical_fix };
-            UndischargedPostcondition[detail];
-            InvalidNamedArguments { callee, declared_parameters };
-            DuplicateFieldLabel { label };
-            InvalidConstructionFields { constructor, declared_fields };
-            InvalidMatchFields { variant, declared_fields };
-            ForeignMatchVariant;
-            NonExhaustiveMatch { missing_variants, other_sites };
-            DuplicateMatchVariant { variant, mechanical_fix };
-            InvalidIntegerMatchArm { reason, mechanical_fix };
-            DuplicateIntegerMatchValue { value, earlier, mechanical_fix };
-            InvalidIntegerMatchCoverage { integer_type, domain, mechanical_fix };
-            InvalidPropagation { enclosing_return_type, operand_type, mechanical_fix };
-            InvalidGive;
-            EmptyDeliverySet { binding, mechanical_fix };
-            InvalidEffectRow { reason, mechanical_fix };
-            SubsumedEffectEntry { entry, covering };
-            EffectMismatch { expected_row, found_row, missing, extra, mechanical_fix };
-            SourceContractGenericBound;
-        )
+        report_semantic_kind(self, fields)
     }
 }
+
+report_kind_fn!(report_resolution_kind, RESOLUTION_KINDS, ResolutionIssueKind;
+    ContractShape(shape);
+    MisplacedHeapDeclaration { admitted };
+    ReservedName { spelling, declaration_role, class, inventory_ordinal, mechanical_fix };
+    MatchBinderFreshness { spelling, paired_field, earlier_binder, arm_entry_conflicts };
+    DeclarationCollision { spelling, conflicts, mechanical_fix };
+    InvisibleUse { spelling, role, admissible, origins, mechanical_fix };
+    NonEnclosingLabel { spelling, role, origins };
+    ModuleProgramHeapDeclaration;
+    MisplacedAlias;
+    InvalidAliasTarget { spelling, target, reason };
+    AliasNamesPackage { spelling };
+    LibraryNamesItself { path };
+    UnknownModule { path };
+    MissingModuleEdge { from, to };
+    QualifiedNameNotFound { spelling, module, role, mechanical_fix };
+    PrivateDeclaration { spelling, module };
+    UnknownOwnedVariant { spelling, reason };
+    MisplacedPublication { reason };
+    PrivateInPublicSignature { spelling };
+    Correspondence { spelling, reason };
+    UnresolvedUse { spelling, role, admissible, available };
+    UndeclaredSetTarget { spelling, mechanical_fix };
+);
 
 /// The rule and origin are the envelope's; the kind carries the payload.
 impl Report for ResolutionIssue {
@@ -1066,30 +1239,7 @@ impl Report for ResolutionIssue {
         ) {
             fields.field("mechanical_fix", "write one in-scope named const of the scrutinee's exact integer type, or an integer literal of that type");
         }
-        report_variants!(ResolutionIssueKind, kind, fields;
-            ContractShape(shape);
-            MisplacedHeapDeclaration { admitted };
-            ReservedName { spelling, declaration_role, class, inventory_ordinal, mechanical_fix };
-            MatchBinderFreshness { spelling, paired_field, earlier_binder, arm_entry_conflicts };
-            DeclarationCollision { spelling, conflicts, mechanical_fix };
-            InvisibleUse { spelling, role, admissible, origins, mechanical_fix };
-            NonEnclosingLabel { spelling, role, origins };
-            ModuleProgramHeapDeclaration;
-            MisplacedAlias;
-            InvalidAliasTarget { spelling, target, reason };
-            AliasNamesPackage { spelling };
-            LibraryNamesItself { path };
-            UnknownModule { path };
-            MissingModuleEdge { from, to };
-            QualifiedNameNotFound { spelling, module, role, mechanical_fix };
-            PrivateDeclaration { spelling, module };
-            UnknownOwnedVariant { spelling, reason };
-            MisplacedPublication { reason };
-            PrivateInPublicSignature { spelling };
-            Correspondence { spelling, reason };
-            UnresolvedUse { spelling, role, admissible, available };
-            UndeclaredSetTarget { spelling, mechanical_fix };
-        )
+        report_resolution_kind(kind, fields)
     }
 }
 
@@ -1133,7 +1283,7 @@ impl Report for TerminalIssue {
             )),
         );
         fields.field("mechanical_fix", mechanical_fix);
-        "UnclassifiedToken"
+        UNCLASSIFIED_TOKEN
     }
 }
 
@@ -1154,7 +1304,7 @@ impl Report for SyntaxIssue {
         fields.field("expected", expected);
         fields.field("found", &Spelled(*coordinate));
         fields.field("mechanical_fix", mechanical_fix);
-        "UnexpectedToken"
+        UNEXPECTED_TOKEN
     }
 }
 
@@ -1172,7 +1322,7 @@ impl Report for CanonicalIssue {
         fields.field("expected", &Exact(expected));
         fields.field("found", &Exact(found));
         fields.field("mechanical_fix", &self.mechanical_fix());
-        "NonCanonicalTrivia"
+        NON_CANONICAL_TRIVIA
     }
 }
 

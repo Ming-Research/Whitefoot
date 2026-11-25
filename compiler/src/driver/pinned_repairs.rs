@@ -3786,5 +3786,10 @@ fn main() -> status: ExitStatus pure {
 
 #[test]
 fn each_pinned_repair_is_carried_out_by_its_programs() {
-    harness::run_pairs();
+    harness::assert_pairs_carry_out_their_repairs();
+}
+
+#[test]
+fn every_rejection_kind_has_a_repair_pair() {
+    harness::assert_every_kind_has_a_pair();
 }

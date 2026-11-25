@@ -1,6 +1,10 @@
 //! Executes repair pairs and checks the harness's contradictory-state boundary.
 
+use std::collections::BTreeSet;
+use std::sync::OnceLock;
+
 use super::super::{CompilationFailureKind, CompilerLimits, check, compile, with_checked_program};
+use super::RepairPair;
 use crate::SourceInput;
 
 /// Every function a source declares, by the name its `fn` introduces.
@@ -31,12 +35,9 @@ pub(super) fn contradictory_successes(name: &str, source: &[u8]) -> Result<Vec<S
     .map_err(|failure| failure.to_string())
 }
 
-/// Each pinned repair is carried out by its programs [DIAG-1]: each
-/// alternative is accepted, and its construct runs in a state that is not
-/// contradictory.
-pub(super) fn run_pairs() {
-    for pair in super::REPAIRS
-        .iter()
+/// Every pinned pair, in table order.
+fn all_pairs() -> impl Iterator<Item = &'static RepairPair> {
+    super::REPAIRS.iter()
         .chain(super::call_separations::CALL_SEPARATIONS)
         .chain(super::captured_indices::CAPTURED_INDICES)
         .chain(super::cell_consumption::CELL_CONSUMPTION)
@@ -69,85 +70,183 @@ pub(super) fn run_pairs() {
         .chain(super::postcondition_places::POSTCONDITION_PLACES)
         .chain(super::common_syntax::COMMON_SYNTAX)
         .chain(super::reserved_names::RESERVED_NAMES)
-    {
-        let failure = compile(
-            &[SourceInput::new(pair.name, pair.rejected)],
-            CompilerLimits::default(),
-        )
-        .expect_err(pair.name);
-        super::entry_formers::assert_span(pair, &failure);
-        assert_eq!(
-            failure.kind(),
-            CompilationFailureKind::Source,
-            "{}: {failure}",
-            pair.name
-        );
-        assert_eq!(
-            failure.rule_id(),
-            Some(pair.rule),
-            "{}: {failure}",
-            pair.name
-        );
-        // [TYPE-9] semantic tests pin the complete call or written targ
-        // span. Pin its rendered start here with the existing repair run.
-        let citation = match pair.name {
-            "type9-neg-runtime-slots-content-swap.wf" => {
-                Some(("  ", "swap(first: &small.inner, second: &large.inner)"))
+}
+
+/// Checks one pair [DIAG-1] and returns the kind its rejection prints, or why
+/// the pair fails: the source is rejected under the pinned rule, the
+/// rendering carries every pinned sentence and every repair line it prints is
+/// pinned whole, its words are sound, and each alternative is accepted with
+/// its construct running in a state that is not contradictory.
+fn check_pair(pair: &RepairPair) -> Result<String, String> {
+    let name = pair.name;
+    let failure = match compile(
+        &[SourceInput::new(pair.name, pair.rejected)],
+        CompilerLimits::default(),
+    ) {
+        Ok(_) => return Err(format!("{name}: the pinned source is accepted")),
+        Err(failure) => failure,
+    };
+    super::entry_formers::assert_span(pair, &failure);
+    if failure.kind() != CompilationFailureKind::Source {
+        return Err(format!("{name}: not a source rejection: {failure}"));
+    }
+    if failure.rule_id() != Some(pair.rule) {
+        return Err(format!("{name}: expected {}: {failure}", pair.rule));
+    }
+    // [TYPE-9] semantic tests pin the complete call or written targ
+    // span. Pin its rendered start here with the existing repair run.
+    let citation = match pair.name {
+        "type9-neg-runtime-slots-content-swap.wf" => {
+            Some(("  ", "swap(first: &small.inner, second: &large.inner)"))
+        }
+        "type9-neg-generic-runtime-content-swap.wf" => Some(("exchange::<", "Slots<u64>")),
+        "type9-neg-function-actual-runtime-content-swap.wf" => Some(("fn swap::<", "Slots<u64>")),
+        _ => None,
+    };
+    if let Some((prefix, cited)) = citation {
+        let source = std::str::from_utf8(pair.rejected).expect("source is text");
+        let start = source
+            .find(&format!("{prefix}{cited}"))
+            .expect("refused construct")
+            + prefix.len();
+        let before = &source[..start];
+        let line = before.bytes().filter(|byte| *byte == b'\n').count() as u64 + 1;
+        let column = before
+            .rsplit('\n')
+            .next()
+            .expect("source line")
+            .chars()
+            .count() as u64
+            + 1;
+        let location = failure.location().expect("source location");
+        if location.path() != pair.name || (location.line(), location.column()) != (line, column) {
+            return Err(format!("{name}: cited at the wrong place: {failure}"));
+        }
+    }
+    let rendered = format!("{failure}\n");
+    if pair.sentences.is_empty() && rendered.contains("\n  mechanical_fix:") {
+        return Err(format!(
+            "{name}: this position must not offer an unverified repair: {rendered}"
+        ));
+    }
+    for sentence in pair.sentences {
+        if !rendered.contains(sentence) {
+            return Err(format!(
+                "{name}: the rejection no longer carries this repair.\nwanted: {sentence}\ngot:    {rendered}"
+            ));
+        }
+    }
+    // Every repair line a rendering prints is one the pair carries out: a
+    // pair that pins other fields only would leave the repair unchecked.
+    for line in rendered.lines().filter(|line| line.starts_with("  mechanical_fix:")) {
+        let whole = format!("\n{line}\n");
+        if !pair.sentences.iter().any(|sentence| sentence.contains(&whole)) {
+            return Err(format!("{name}: this repair line is not pinned whole: {line}"));
+        }
+    }
+    if pair.repaired.is_empty() {
+        return Err(format!("{name}: the pair has no accepted program"));
+    }
+    let defects: Vec<String> = failure
+        .diagnostics()
+        .flat_map(crate::CompilationFailure::text_defects)
+        .collect();
+    if !defects.is_empty() {
+        return Err(format!("{name}: its words are unsound: {defects:?}"));
+    }
+    for (alternative, source) in pair.repaired.iter().enumerate() {
+        match contradictory_successes(pair.name, source) {
+            Ok(contradictions) if contradictions.is_empty() => {}
+            Ok(contradictions) => {
+                return Err(format!(
+                    "{name}: alternative {alternative} succeeds only where its state is contradictory: {contradictions:?}"
+                ));
             }
-            "type9-neg-generic-runtime-content-swap.wf" => Some(("exchange::<", "Slots<u64>")),
-            "type9-neg-function-actual-runtime-content-swap.wf" => {
-                Some(("fn swap::<", "Slots<u64>"))
-            }
-            _ => None,
-        };
-        if let Some((prefix, cited)) = citation {
-            let source = std::str::from_utf8(pair.rejected).expect("source is text");
-            let start = source
-                .find(&format!("{prefix}{cited}"))
-                .expect("refused construct")
-                + prefix.len();
-            let before = &source[..start];
-            let line = before.bytes().filter(|byte| *byte == b'\n').count() as u64 + 1;
-            let column = before
-                .rsplit('\n')
-                .next()
-                .expect("source line")
-                .chars()
-                .count() as u64
-                + 1;
-            let location = failure.location().expect("source location");
-            assert_eq!(location.path(), pair.name);
-            assert_eq!((location.line(), location.column()), (line, column));
-        }
-        let rendered = format!("{failure}\n");
-        if pair.sentences.is_empty() {
-            assert!(
-                !rendered.contains("\n  mechanical_fix:"),
-                "{}: this position must not offer an unverified repair: {rendered}",
-                pair.name,
-            );
-        }
-        for sentence in pair.sentences {
-            assert!(
-                rendered.contains(sentence),
-                "{}: the rejection no longer carries this repair.\nwanted: {sentence}\ngot:    {rendered}",
-                pair.name,
-            );
-        }
-        for (alternative, source) in pair.repaired.iter().enumerate() {
-            match contradictory_successes(pair.name, source) {
-                Ok(contradictions) => assert!(
-                    contradictions.is_empty(),
-                    "{}: alternative {alternative} succeeds only where its state is contradictory: {contradictions:?}",
-                    pair.name
-                ),
-                Err(rejection) => panic!(
-                    "{}: alternative {alternative} is rejected:\n{rejection}",
-                    pair.name
-                ),
+            Err(rejection) => {
+                return Err(format!(
+                    "{name}: alternative {alternative} is rejected:\n{rejection}"
+                ));
             }
         }
     }
+    Ok(failure.kind_name().unwrap_or_default().to_owned())
+}
+
+/// What every pinned pair showed: the kinds their rejections print and the
+/// pairs that fail, with why.
+pub(super) struct Run {
+    pub(super) reached: BTreeSet<String>,
+    pub(super) failures: Vec<String>,
+}
+
+/// Checks every pinned pair once for the whole test binary: each pair
+/// compiles several programs, and two tests read its result.
+pub(super) fn run() -> &'static Run {
+    static RUN: OnceLock<Run> = OnceLock::new();
+    RUN.get_or_init(|| {
+        let mut run = Run {
+            reached: BTreeSet::new(),
+            failures: Vec::new(),
+        };
+        for pair in all_pairs() {
+            match check_pair(pair) {
+                Ok(kind) => {
+                    run.reached.insert(kind);
+                }
+                Err(why) => run.failures.push(why),
+            }
+        }
+        run
+    })
+}
+
+/// Each pinned repair is carried out by its programs [DIAG-1]: each
+/// alternative is accepted, and its construct runs in a state that is not
+/// contradictory. Every failing pair is reported together.
+pub(super) fn assert_pairs_carry_out_their_repairs() {
+    let run = run();
+    assert!(
+        run.failures.is_empty(),
+        "{} pinned repair pairs fail:\n{}",
+        run.failures.len(),
+        run.failures.join("\n\n")
+    );
+}
+
+/// Every rejection kind the compiler can print has a pinned pair that
+/// reaches it, and no pair reaches a kind the compiler does not list.
+pub(super) fn assert_every_kind_has_a_pair() {
+    let run = run();
+    let listed = crate::rejection_kinds();
+    let unlisted = unlisted_kinds(&listed, &run.reached);
+    assert!(
+        unlisted.is_empty(),
+        "pairs reach kinds the compiler does not list: {unlisted:?}"
+    );
+    let missing = missing_kinds(&listed, &run.reached);
+    assert!(
+        missing.is_empty(),
+        "{} rejection kinds have no repair pair: {missing:?}",
+        missing.len()
+    );
+}
+
+/// The kinds `listed` names that `reached` does not.
+pub(super) fn missing_kinds(listed: &[&str], reached: &BTreeSet<String>) -> Vec<String> {
+    listed
+        .iter()
+        .filter(|kind| !reached.contains(**kind))
+        .map(|kind| (*kind).to_owned())
+        .collect()
+}
+
+/// The kinds `reached` names that `listed` does not.
+pub(super) fn unlisted_kinds(listed: &[&str], reached: &BTreeSet<String>) -> Vec<String> {
+    reached
+        .iter()
+        .filter(|kind| !listed.contains(&kind.as_str()))
+        .cloned()
+        .collect()
 }
 
 /// An allocation whose count is bounded only by its type: `u64::MAX` for a
@@ -197,4 +296,76 @@ fn an_allocation_count_bounded_only_by_its_type_builds() {
     ) {
         panic!("a count bounded only by its type does not build:\n{failure}");
     }
+}
+
+/// A kind the compiler lists and no pair reaches is missing, and a kind a
+/// pair reaches and the compiler does not list is unlisted.
+#[test]
+fn the_kind_coverage_names_what_is_missing_and_what_is_unlisted() {
+    let reached: BTreeSet<String> = ["Listed".to_owned(), "Stray".to_owned()].into();
+    assert_eq!(
+        missing_kinds(&["Listed", "InventedKind"], &reached),
+        ["InventedKind"]
+    );
+    assert_eq!(unlisted_kinds(&["Listed", "InventedKind"], &reached), ["Stray"]);
+    assert!(missing_kinds(&["Listed"], &reached).is_empty());
+}
+
+/// The first pair of the table with its sentences and programs replaced.
+fn type9_pair(
+    sentences: &'static [&'static str],
+    repaired: &'static [&'static [u8]],
+) -> RepairPair {
+    RepairPair {
+        name: "type9-neg-runtime-slots-content-swap.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/type9-neg-runtime-slots-content-swap.wf"
+        ),
+        rule: "TYPE-9",
+        sentences,
+        repaired,
+    }
+}
+
+const TYPE9_BOX_SWAP: &[u8] =
+    include_bytes!("../../../../tests/conformance/cases/type9-pos-runtime-box-swap.wf");
+
+/// A pair that pins another field of its rejection and not the repair line
+/// the rejection prints leaves that repair unchecked, so it fails.
+#[test]
+fn a_pair_that_leaves_a_printed_repair_line_unpinned_fails() {
+    let pair = type9_pair(&["]: InvalidRestrictedTypePlacement\n"], &[TYPE9_BOX_SWAP]);
+    let why = check_pair(&pair).expect_err("the repair line is not pinned");
+    assert!(why.contains("not pinned whole"), "{why}");
+}
+
+/// A pair with no accepted program shows no repair carried out, so it fails.
+#[test]
+fn a_pair_with_no_accepted_program_fails() {
+    let pair = type9_pair(
+        &[
+            "]: InvalidRestrictedTypePlacement\n",
+            "\n  mechanical_fix: swap the owning `Box` values instead of their contents\n",
+        ],
+        &[],
+    );
+    let why = check_pair(&pair).expect_err("the pair has no program");
+    assert!(why.contains("no accepted program"), "{why}");
+}
+
+/// The same pair with both sentences and its program passes and names the
+/// kind its rejection prints.
+#[test]
+fn a_complete_pair_passes_and_names_its_kind() {
+    let pair = type9_pair(
+        &[
+            "]: InvalidRestrictedTypePlacement\n",
+            "\n  mechanical_fix: swap the owning `Box` values instead of their contents\n",
+        ],
+        &[TYPE9_BOX_SWAP],
+    );
+    assert_eq!(
+        check_pair(&pair),
+        Ok("InvalidRestrictedTypePlacement".to_owned())
+    );
 }
