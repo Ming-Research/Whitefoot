@@ -110,3 +110,16 @@ their grounds.
 
 Violations: an improvement refused only to keep old source working, before any
 real project needs it.
+
+## Article 7 (simple). The language and its specification stay small and regular
+
+The language and its specification stay as small as their objectives allow. A
+capability enters through a design that fits the language as a whole, not as a
+patch for one need: a rule states its fact once and holds without exceptions,
+and a new form or type extends what the rules already say instead of adding a
+case to each of them. Where this article conflicts with Article 1 or Article 2,
+safety comes first and performance second.
+
+Violations: a rule changed for one need with an exception or a listed case; a
+capability added without a design that fits the language as a whole; a
+specification that grows by special cases.
