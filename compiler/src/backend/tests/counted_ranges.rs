@@ -115,3 +115,106 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
 }
+
+/// The hidden counted update exists only on the edges the specification gives
+/// it [FN-1, spec "A `break` resolved to the counted loop reaches
+/// `normal_successor(for_stmt)` without the update", "no intervening inner
+/// counted loop is updated"]. A `nuw` increment is therefore emitted once per
+/// counted loop that has such an edge: a body whose every path leaves by
+/// `break` or by a `continue` to an enclosing loop has no update and so no
+/// `add nuw`, while a user `+wrap` stays a plain `add`. The programs also run,
+/// in both lowerings, so a wrongly claimed no-wrap fact would show as a
+/// changed result at the unsigned maximum.
+#[test]
+fn counted_update_nuw_follows_the_edges_that_reach_the_hidden_update() {
+    let source = br#"fn nested_continue(n: u64, m: u64, skip: u64) -> result: u64 pure {
+  let total = 0_u64;
+  for @outer (i in 0_u64..n) {
+    for (j in 0_u64..m) {
+      if j == skip {
+        continue @outer;
+      }
+      set total = total +wrap 1_u64;
+    }
+  }
+  return total;
+}
+
+fn inner_never_updates(n: u64, m: u64) -> result: u64 pure {
+  let total = 0_u64;
+  for @outer (i in 0_u64..n) {
+    for (j in 0_u64..m) {
+      set total = total +wrap 1_u64;
+      continue @outer;
+    }
+  }
+  return total;
+}
+
+fn break_only(lower: u64, upper: u64) -> result: u64 pure {
+  let total = 0_u64;
+  for (i in lower..upper) {
+    set total = total +wrap i;
+    break;
+  }
+  return total;
+}
+
+fn at_the_maximum(lower: u64, upper: u64) -> result: u64 pure {
+  let total = 0_u64;
+  for (i in lower..upper) {
+    set total = total +wrap 1_u64;
+  }
+  return total;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  if nested_continue(n: 3_u64, m: 4_u64, skip: 2_u64) != 6_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if inner_never_updates(n: 4_u64, m: 3_u64) != 4_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if break_only(lower: 3_u64, upper: 9_u64) != 3_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  if break_only(lower: 9_u64, upper: 9_u64) != 0_u64 {
+    return std::process::exit_status(code: 4_u8);
+  }
+  if at_the_maximum(lower: 18446744073709551613_u64, upper: 18446744073709551615_u64) != 2_u64 {
+    return std::process::exit_status(code: 5_u8);
+  }
+  if at_the_maximum(lower: 18446744073709551615_u64, upper: 18446744073709551615_u64) != 0_u64 {
+    return std::process::exit_status(code: 6_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let module = super::emit(source);
+    for (name, nuw) in [
+        ("nested_continue", 2),
+        ("inner_never_updates", 1),
+        ("break_only", 0),
+        ("at_the_maximum", 1),
+    ] {
+        let function = emitted_function(&module, name);
+        assert_eq!(
+            function.matches("= add nuw i64").count(),
+            nuw,
+            "{name}: one nuw update per counted loop with an edge into its update: {function}",
+        );
+        assert_eq!(
+            function.matches("= add i64").count(),
+            1,
+            "{name}: the user-written +wrap stays a plain add: {function}",
+        );
+        assert!(!function.contains(" nsw "), "{name}: {function}");
+        assert!(!function.contains(".with.overflow."), "{name}: {function}");
+    }
+    for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {
+        let lowered = super::emit_lowered(source, overlap);
+        let output = super::compile_link_and_run(&lowered, None, &[]);
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        assert!(output.stderr.is_empty(), "{output:?}");
+    }
+}
