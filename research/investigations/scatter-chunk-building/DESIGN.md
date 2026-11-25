@@ -33,7 +33,7 @@ proposal of that lowering has to measure again.
 
 The probes are two ignored tests in `compiler/src/backend/tests/ranges.rs`
 (`stable_scatter_probe_reports_clears_and_copies` and
-`stable_scatter_probe_times_whole_calls`, commit `a732c328e`). They fail on
+`stable_scatter_probe_times_whole_calls`, commit `94696cfad`). They fail on
 purpose so that their report reaches the test result, and they leave the
 branch before it merges. The source is the maintained program, unchanged,
 built with `--par`.
@@ -41,7 +41,9 @@ built with `--par`.
 Besides the ordinary emission (`main`), each probe builds variants by editing
 the emitted module's text before the host optimizer runs. A variant shows what
 the optimized code and the time of this program would be under a lowering; it
-does not show that the lowering is correct in general.
+does not show that the lowering is correct in general. A variant whose module
+the host refuses, or whose result the independent oracle refuses, is named in
+the report and left out.
 
 | Variant | Edit |
 | --- | --- |
@@ -51,6 +53,7 @@ does not show that the lowering is correct in general.
 | `tag-only` | `no-clear`, and each whole `Option<Chunk>` transfer in `radix_scatter` moves only the tag byte |
 | `in-place` | another source: the block writer stores an empty chunk and partitions into it through a reference |
 | `in-place-tag-only` | `in-place` with the `tag-only` edits |
+| `sequential` | none: the same source built without `--par`, timed only |
 
 `in-place` is a control for what the block writer's value transfers cost. It
 is not a proposal to change the program: a redundant transfer of a by-value
@@ -63,6 +66,10 @@ Time: one call scatters 1,048,593 mixed keys. A process makes one unreported
 call and 20 timed ones, checked against the independent oracle outside the
 timed interval, and contributes the median wall and process CPU time. Nine
 passes run every image once at 1, 8 and 32 workers, rotating the image order.
+Each pass also times `main` on the 8,209 keys of the program's own entry, 200
+calls a process, to tell a slow call apart from the process startup that the
+[par-suite baseline](../par-suite/DESIGN.md#baseline-2026-10-09) includes in
+its 4.86 at 32 workers.
 A variant's per-pass ratio is its median over `main`'s in the same pass and
 width. The interval is the distribution-free 95% interval of the median of
 those ratios, as `median_interval` of
