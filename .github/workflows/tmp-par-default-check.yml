@@ -44,8 +44,7 @@ name: tmp-par-default-check
 
 on:
   push:
-    branches: [work-243-26e0fade]
-    paths: ['.github/workflows/tmp-par-default-check.yml']
+    branches: ['work-243-26e0fade', 'wf-try/work-243-26e0fade/**']
 
 defaults:
   run:
