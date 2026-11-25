@@ -275,6 +275,10 @@ cexec bundle-version "$package_c\\bin\\clang.exe" --version
 grep -F 'clang version 22.1.8' "$logs/bundle-version.txt"
 # clang reports its installation directory with forward slashes.
 grep -iF "InstalledDir: ${package_c//\\//}/bin" "$logs/bundle-version.txt"
+# The manifest records the clang's answers to the compiler's probes, for the
+# version line the clang itself prints.
+version_line=$(tr -d '\r' < "$logs/bundle-version.txt" | head -n 1)
+python -I "$tools/clang-facts-checks.py" recorded "$package/toolchain-manifest.json" "$version_line"
 # Match the resource ablation with a positive that disables host header
 # fallback. This tests the final archive's resources, not the input subset.
 cexec builtin-headers-control "$package_c\\bin\\clang.exe" -std=c11 -nostdlibinc \
@@ -285,6 +289,27 @@ grep -E '(call|invoke)[[:space:]].*@llvm\.coro\.' "$work/out/waiting.ll"
 grep -F 'target triple = "x86_64-w64-windows-gnu"' "$work/out/waiting.ll"
 cexec ordinary-build "$compiler" -o 'C:\work\out\ordinary.exe' 'C:\work\waiting.wf'
 run_image ordinary-run 'C:\work\out\ordinary.exe'
+test "$code" = 0
+# With the recorded answers the compiler asks the clang no probe; with a record
+# that is stale (another clang version) or incomplete (an answer deleted) it
+# probes again, says why, and the program still runs.
+cexec facts-recorded "$compiler" --report -o 'C:\work\out\facts-recorded.exe' 'C:\work\waiting.wf'
+python -I "$tools/clang-facts-checks.py" report "$logs/facts-recorded.txt" manifest
+run_image facts-recorded-run 'C:\work\out\facts-recorded.exe'
+test "$code" = 0
+for edit in version answer; do
+  cp -a "$package" "$work/installed here/edited-$edit"
+  python -I "$tools/clang-facts-checks.py" edit "$work/installed here/edited-$edit/toolchain-manifest.json" "$edit"
+done
+cexec edited-version "C:\\work\\installed here\\edited-version\\bin\\whitefootc.exe" --report \
+  -o 'C:\work\out\edited-version.exe' 'C:\work\waiting.wf'
+python -I "$tools/clang-facts-checks.py" report "$logs/edited-version.txt" probed 'clang version 0.0.0' "$version_line"
+run_image edited-version-run 'C:\work\out\edited-version.exe'
+test "$code" = 0
+cexec edited-answer "C:\\work\\installed here\\edited-answer\\bin\\whitefootc.exe" --report \
+  -o 'C:\work\out\edited-answer.exe' 'C:\work\waiting.wf'
+python -I "$tools/clang-facts-checks.py" report "$logs/edited-answer.txt" probed preserve_none
+run_image edited-answer-run 'C:\work\out\edited-answer.exe'
 test "$code" = 0
 # An ordinary program built and run from the package alone.
 cexec example-build "$compiler" -o 'C:\work\out\example.exe' 'C:\work\example.wf'

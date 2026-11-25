@@ -18,7 +18,7 @@ Stack probing covers the functions the compiler generates; the runtime's C files
 - rejected: an agent proposed probing the runtime's C on every platform, with a gate check, before the merge; the owner rejected it, because it needs the flags tested on both platforms, an audit of frame sizes and a new check, and is its own work.
 
 ### decision darwin-probe-method-follows-the-clang
-On Darwin a probe compiles a large frame with `__chkstk_darwin`; if clang accepts it, that helper is used, and otherwise inline probing every 4096 bytes.
+On Darwin a probe compiles a large frame with `__chkstk_darwin`; if clang accepts it, that helper is used, else inline probing every 4096 bytes; a package records the answer.
 - rejected: an agent proposed choosing the method from the vendor string or version; the owner rejected it, because those do not show whether the clang in use can lower the helper, while compiling a large frame tests that directly.
 - rejected: an agent proposed `__chkstk_darwin` for every Darwin compiler; the owner rejected it, because the AArch64 backend of upstream LLVM 22.1.8 refuses that method.
 - rejected: an agent proposed inline probing on every Apple compiler now; the owner rejected it, because Apple's helper passed the comparison, while Apple's inline method has not been checked across its supported range.

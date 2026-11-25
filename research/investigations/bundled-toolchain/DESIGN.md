@@ -294,17 +294,24 @@ system linker and SDK as described below. This source-build distinction changes
 no release qualification promise:
 a release archive must contain its sibling clang and complete toolchain.
 
-Bundling makes the three syntax/ABI answers constant **for a particular
-qualified artifact and target**, not automatically constants of the Whitefoot
-binary or LLVM major. Retain the existing three once-per-process
-syntax/ABI probes and point all three at the selected executable in either mode;
-on Darwin add the live large-frame helper-method probe described above. Cost:
-three small compiler invocations, plus the fourth on Darwin, when native emission
-first needs the facts. The alternative is packaging-time generated facts, coupled to a verified artifact
-identity; compare them with live probes on every shipped platform and reject
-that alternative on any disagreement or an independently replaceable toolchain.
-It adds no needed evidence for the first release. In particular, a coroutine
-intrinsic declaration alone does not validate a call's result type.
+Bundling makes the syntax/ABI answers constant **for a particular qualified
+artifact and target**, not automatically constants of the Whitefoot binary or
+LLVM major. The first release kept the three once-per-process syntax/ABI probes
+(plus the Darwin helper-method probe) live in every process, pointed at the
+selected executable in either mode: three small compiler invocations, four on
+Darwin, when native emission first needed the facts. A package's release now
+asks them once instead: the staged compiler probes the staged clang and the
+answers are written under `clang_facts` in the package's
+`toolchain-manifest.json`, with the first line of that clang's `--version`. A
+compiler running from the package takes the recorded answers when that line is
+the clang's own, runs no probe, and probes as before, saying why in a note and
+in `--report`, when the manifest has no record, a different version or a
+missing or malformed answer. The release's acceptance runs the gate's compiler
+tests and conformance cases with each archive's own clang, so the answers
+the package records are the ones its clang was shown to compile the suite with.
+Source builds and lightweight releases record nothing and probe in every
+process as before. In particular, a coroutine intrinsic declaration alone does
+not validate a call's result type.
 
 An inability to execute a required probe or create its files must be reported
 as an environment/toolchain failure in the packaged path, distinguished from

@@ -37,11 +37,17 @@
 # LLVM source pins live in .github/toolchain/llvm-assets.json; the Windows
 # package takes clang and lld from the pinned llvm-mingw release, not from the
 # LLVM project's own archives, which have no MinGW sysroot.
+# Each package's manifest also records the answers of its clang to the
+# compiler's capability probes (clang_facts), asked once here of the staged
+# clang, so the compiler in the installed package takes them instead of probing
+# when the clang's version line is the recorded one.
 # Bundled candidates are retained as workflow artifacts and must pass reusable
 # exact-archive acceptance before publication, including macOS host-clang
-# isolation and a Windows container that holds no other compiler. The workflow
-# revision supplies the maintained acceptance runner and witness; the source
-# commit still owns the archived compiler/language bytes and manifest identity.
+# isolation, a Windows container that holds no other compiler, and the gate's
+# compiler tests and conformance cases run with each archive's own clang. The
+# workflow revision supplies the maintained acceptance runner and witness; the
+# source commit still owns the archived compiler/language bytes, its compiler
+# tests and manifest identity.
 # Unsupported witness behavior fails qualification without changing
 # expectations. Linux x86-64, macOS arm64 and Windows x86-64 are offered; a
 # lightweight release has no Windows archive, since a downstream's compiler
@@ -415,6 +421,22 @@ jobs:
           cp compiler/target/gate/whitefootc "$BUNDLE_DIR/bin/whitefootc"
           python3 .bundle-recipe/.github/toolchain/stage-language.py "$BUNDLE_DIR"
 
+      # The package carries one fixed clang, so its answers to the compiler's
+      # capability probes are fixed too. The staged compiler asks the staged
+      # clang once, here, through its own report, and the answers go into the
+      # manifest, which the compiler in the installed package takes in place
+      # of probing (compiler/toolchain-resolution). The witness is the recipe's
+      # revision's, as the acceptance's is.
+      - name: Record the bundled clang's answers in the manifest
+        if: needs.resolve.outputs.bundle == 'true'
+        run: |
+          set -euo pipefail
+          "$BUNDLE_DIR/bin/whitefootc" --report -o "$RUNNER_TEMP/clang-facts-witness" \
+            .bundle-recipe/tests/package-fixtures/waiting.wf > "$RUNNER_TEMP/clang-facts-report.txt"
+          cat "$RUNNER_TEMP/clang-facts-report.txt"
+          python3 .bundle-recipe/.github/toolchain/record-clang-facts.py \
+            "$RUNNER_TEMP/clang-facts-report.txt" "$BUNDLE_DIR/toolchain-manifest.json"
+
       - name: Smoke-test the staged bundled compiler
         if: needs.resolve.outputs.bundle == 'true'
         run: |
@@ -518,6 +540,17 @@ jobs:
           set -euo pipefail
           cp compiler/target/gate/whitefootc.exe "$BUNDLE_DIR/bin/whitefootc.exe"
           python .bundle-recipe/.github/toolchain/stage-language.py "$BUNDLE_DIR"
+
+      # As in the other packages: the staged compiler asks the staged clang once
+      # and the manifest keeps the answers.
+      - name: Record the bundled clang's answers in the manifest
+        run: |
+          set -euo pipefail
+          "$BUNDLE_DIR/bin/whitefootc.exe" --report -o "$RUNNER_TEMP/clang-facts-witness.exe" \
+            .bundle-recipe/tests/package-fixtures/waiting.wf > "$RUNNER_TEMP/clang-facts-report.txt"
+          cat "$RUNNER_TEMP/clang-facts-report.txt"
+          python .bundle-recipe/.github/toolchain/record-clang-facts.py \
+            "$RUNNER_TEMP/clang-facts-report.txt" "$BUNDLE_DIR/toolchain-manifest.json"
 
       - name: Smoke-test the staged bundled compiler
         run: |
@@ -678,10 +711,10 @@ jobs:
           QUALIFIED: ${{ needs.acceptance.outputs.qualified }}
         run: |
           if [ "$QUALIFIED" = true ]; then
-            echo 'The exact bundled archives passed package acceptance, including macOS host-clang isolation.' >> "$GITHUB_STEP_SUMMARY"
+            echo 'The exact bundled archives passed package acceptance, including macOS host-clang isolation and the gate compiler tests run with the clang of each archive.' >> "$GITHUB_STEP_SUMMARY"
           else
-            echo '::warning::Bundled publication is blocked: package acceptance or macOS host-clang isolation is failed or unverified. Candidate bytes remain in release-bundled-candidate.'
-            echo 'Bundled publication is blocked. Package acceptance and verified macOS host-clang isolation are required; inspect the acceptance artifacts. The exact candidate bytes remain in release-bundled-candidate.' >> "$GITHUB_STEP_SUMMARY"
+            echo '::warning::Bundled publication is blocked: package acceptance, the gate compiler tests with the packaged clang or macOS host-clang isolation is failed or unverified. Candidate bytes remain in release-bundled-candidate.'
+            echo 'Bundled publication is blocked. Package acceptance, the gate compiler tests with the packaged clang and verified macOS host-clang isolation are required; inspect the acceptance artifacts. The exact candidate bytes remain in release-bundled-candidate.' >> "$GITHUB_STEP_SUMMARY"
           fi
 
   publish:
@@ -720,7 +753,7 @@ jobs:
           toolchain_notes="whitefootc builds programs with /usr/bin/clang, and on Linux links them with ld.lld."
           if [ "$BUNDLE" = true ]; then
             again="$again -f bundle_toolchain=true"
-            toolchain_notes="These Linux x86-64, macOS arm64 and Windows x86-64 archives contain the compiler with sibling clang/lld, LLVM resources, licenses, language inputs and package checksums. Linux links with bundled ld.lld. macOS requires Apple's SDK and system linker; its bundled libLTO is used for LTO. Windows needs no Visual Studio, Windows SDK, Rust or LLVM: extract whitefootc-windows-x86_64-bundled.zip into any directory and run bin\\whitefootc.exe, which compiles for x86_64-w64-windows-gnu (MinGW headers and import libraries, the Universal C Runtime that ships with Windows) with the bundled clang and lld. Exact-archive package acceptance, including verified macOS host-clang isolation and a clean Windows Server 2022 container (no other Windows release was checked), passed before publication."
+            toolchain_notes="These Linux x86-64, macOS arm64 and Windows x86-64 archives contain the compiler with sibling clang/lld, LLVM resources, licenses, language inputs and package checksums. Linux links with bundled ld.lld. macOS requires Apple's SDK and system linker; its bundled libLTO is used for LTO. Windows needs no Visual Studio, Windows SDK, Rust or LLVM: extract whitefootc-windows-x86_64-bundled.zip into any directory and run bin\\whitefootc.exe, which compiles for x86_64-w64-windows-gnu (MinGW headers and import libraries, the Universal C Runtime that ships with Windows) with the bundled clang and lld. Exact-archive package acceptance, including verified macOS host-clang isolation, a clean Windows Server 2022 container (no other Windows release was checked), and the gate's compiler tests and conformance cases run with each archive's own clang (on Windows, the Windows host cases of the I/O host checks), passed before publication. Each package's manifest records its clang's answers to the compiler's capability probes, which the compiler takes instead of probing."
             toolchain_notes="$toolchain_notes
           The Linux qualification test host is Ubuntu 24.04. Install its host prerequisites with:
           sudo apt-get install libc6-dev libgcc-13-dev libstdc++6 zlib1g libxml2 libicu74 liblzma5

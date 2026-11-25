@@ -3,14 +3,20 @@
 Which clang, linker and SDK the compiler runs, how a packaged installation is told from a source build, and the one Windows target.
 
 ### decision sibling-clang-marks-a-packaged-install
-The compiler uses the `clang` beside it when present; a `toolchain-manifest.json` above `bin/` also marks a package, where a missing clang is a toolchain error; otherwise it uses the host default.
+The compiler uses the `clang` beside it; a `toolchain-manifest.json` above `bin/` marks a package, where a missing clang is a toolchain error, and records that clang's answers; else the host default.
 - rejected: an agent proposed inferring source-build mode from a missing clang alone; the owner rejected it, because deleting a component must not turn a qualified bundle into a compiler that depends on the host.
 - rejected: an agent proposed requiring every source build to stage a release layout; the owner rejected it, because existing source builds and small releases still use their configured host toolchain.
+- replaced: A manifest that only recognized a package and decided no behavior was on main; the owner changed it, because the package's clang is fixed at release, so its probe answers are fixed and can be recorded there.
 
 ### decision one-resolved-toolchain-for-every-step
-The resolved toolchain serves native compilation, runtime C construction, capability probes, stack reports and every link, and a packaged probe failure is a toolchain error.
+The resolved toolchain serves native compilation, runtime C construction, capability probes, stack reports, every link and the tests' own clang commands; a packaged probe failure is a toolchain error.
 - rejected: an agent proposed resolving clang separately at each invocation; the owner rejected it, because independent selection can probe one LLVM consumer and emit to another.
 - rejected: an agent proposed treating a package's probe failures as syntax rejection; the owner rejected it, because an unusable selected tool is different from an unsupported form.
+- replaced: Tests and test helpers that started the host's default clang directly were on main; the owner changed it, because a test run in a package would then compile with another clang than the package's.
+
+### decision a-package-takes-its-clangs-answers-from-its-manifest
+A packaged compiler takes the probe answers recorded in its manifest when the recorded clang version is the package clang's own, and otherwise probes and says why in a note and in `--report`.
+- replaced: Every process of a packaged compiler probing its own clang, with the manifest deciding nothing, was on main; the owner changed it, because the package's clang is fixed, so the answers are fixed, and the release can show that clang compiles the tests.
 
 ### decision packaged-linux-links-with-bundled-lld
 In packaged mode on Linux, every ordinary, full-LTO and cached ThinLTO link passes the bundled `ld.lld` alias by its absolute path through `--ld-path`, with no host fallback.
