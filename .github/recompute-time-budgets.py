@@ -49,7 +49,7 @@ BUDGETS = ".github/time-budgets.txt"
 DEFAULT_WINDOW = 50
 MARGIN_PERCENT = 10
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-MODEL = re.compile(r"^\S+ model name[ \t]*:[ \t]*(.*?)[ \t]*$", re.M)
+MODEL = re.compile(r"^\S+ [Mm]odel name[ \t]*:[ \t]*(.*?)[ \t]*$", re.M)
 END = re.compile(r"^(\S+) == END (\S+): (\d+)\.(\d\d) s, exit (\d+) ==$", re.M)
 BUDGET = re.compile(r"== BUDGET (\S+): [\d.]+ s of (\d+) s")
 OVER = re.compile(r"== OVER BUDGET: [\w-]+: (\S+) took [\d.]+ s, over its (\d+) s")
