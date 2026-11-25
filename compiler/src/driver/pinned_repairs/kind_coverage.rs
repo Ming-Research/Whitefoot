@@ -104,4 +104,308 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#],
     },
+    // [TYPE-6] a `continue` outside every loop.
+    RepairPair {
+        name: "continue-neg-outside-loop.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/continue-neg-outside-loop.wf"
+        ),
+        rule: "TYPE-6",
+        sentences: &[],
+        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure {
+  doc "Exercises the continue transfer.";
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    // [FN-1] a statement after a loop that never ends.
+    RepairPair {
+        name: "fn1-neg-statement-after-break-free-loop.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/fn1-neg-statement-after-break-free-loop.wf"
+        ),
+        rule: "FN-1",
+        sentences: &[],
+        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure {
+  loop {
+    return std::process::exit_status(code: 0_u8);
+  }
+}
+"#],
+    },
+    // [FN-1] a body that can end without returning.
+    RepairPair {
+        name: "fn1-neg-counted-return-fallthrough.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/fn1-neg-counted-return-fallthrough.wf"
+        ),
+        rule: "FN-1",
+        sentences: &[],
+        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure {
+  for (i in 0_u64..1_u64) {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}
+"#],
+    },
+    // [GRAM-12] two arms that select one value.
+    RepairPair {
+        name: "gram12-neg-duplicate-const-value.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/gram12-neg-duplicate-const-value.wf"
+        ),
+        rule: "GRAM-12",
+        sentences: &[],
+        repaired: &[br#"const first: u64 = 7_u64;
+
+const alias_of_first: u64 = first;
+
+fn selected(value: u64) -> result: unit pure {
+  match value {
+    first => {
+      return unit;
+    }
+    else => {
+      return unit;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    // [ERR-2] a match that leaves a variant uncovered.
+    RepairPair {
+        name: "reject-err2-nonexhaustive.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/reject-err2-nonexhaustive.wf"
+        ),
+        rule: "ERR-2",
+        sentences: &[],
+        repaired: &[br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Sign {
+  Neg();
+  Zero();
+  Pos();
+}
+
+fn bad(s: Sign) -> function_result: u64 pure {
+  match s {
+    Neg() => {
+      return 1_u64;
+    }
+    Zero() => {
+      return 2_u64;
+    }
+    Pos() => {
+      return 3_u64;
+    }
+  }
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
+"#],
+    },
+    // [TYPE-7] `^` applied to a value that is no reference.
+    RepairPair {
+        name: "type7-neg-deref-nonref.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/type7-neg-deref-nonref.wf"
+        ),
+        rule: "TYPE-7",
+        sentences: &[],
+        repaired: &[br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "deref applied to a plain i32 value is malformed [TYPE-7]: deref takes a place whose selected kind is a reference, &T or &[T], and an owned scalar is neither; a Box is refused there too, its content being the field inner [TYPE-9].";
+  let a = 42_i32;
+  let v = a;
+  return exit_status(code: 0_u8);
+}
+"#],
+    },
+    // [OWN-1] a value used after the match that moved it.
+    RepairPair {
+        name: "own1-neg-use-after-move.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/own1-neg-use-after-move.wf"
+        ),
+        rule: "OWN-1",
+        sentences: &[],
+        repaired: &[br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+nocopy enum Sign {
+  Neg(mag: i32);
+  Zero();
+  Pos();
+}
+
+fn main() -> return_value: ExitStatus pure {
+  doc "OWN-1/OWN-13: matching an own value moves it; a second use is use-after-move.";
+  let s = Sign::Pos();
+  match move s {
+    Neg(mag: m) => {
+    }
+    Zero() => {
+    }
+    Pos() => {
+    }
+  }
+  return exit_status(code: 0_u8);
+}
+"#],
+    },
+    // [CONST-1] a constant expression that leaves the unsigned 64-bit domain.
+    RepairPair {
+        name: "const1-neg-eval-overflow.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/const1-neg-eval-overflow.wf"
+        ),
+        rule: "CONST-1",
+        sentences: &[],
+        repaired: &[br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn doubled<const n: u64>(count: u64) -> result: Slots<u64, n * 2> pure {
+  doc "Forms a run whose capacity is the forwarded const-expression.";
+  return slots_new::<u64, n * 2>();
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "CONST-1 evaluates constants exactly in the unsigned 64-bit domain. This instantiation makes n * 2 leave that domain and is rejected at the complete const node; an accepted const expression creates no runtime operation.";
+  let cells = doubled::<8>(count: 7_u64);
+  return exit_status(code: 0_u8);
+}
+"#],
+    },
+    // [CONST-1] a constant argument outside its parameter's range.
+    RepairPair {
+        name: "const1-neg-argument-outside-parameter-range-read.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/const1-neg-argument-outside-parameter-range-read.wf"
+        ),
+        rule: "CONST-1",
+        sentences: &[],
+        repaired: &[br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn pick<const n: u8>() -> r: u8 pure contract {
+  requires n > 200_u8;
+} {
+  doc "Within u8's range n is at least 201, so 1000 - n is at most 799 and the subscript is in bounds.";
+  let block = array_filled::<u8, 800>(value: 7_u8);
+  let wide = cvt::<u8, u64>(n);
+  let at = 1000_u64 - wide;
+  return block[at];
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "300 lies outside u8's closed range, so the argument is rejected at its const node; admitted, a truncated n of 44 would read block[956], past the end of the block.";
+  let v = pick::<201>();
+  return exit_status(code: v);
+}
+"#],
+    },
+    // [EFF-1] a read entry beside the write that covers it.
+    RepairPair {
+        name: "eff1-neg-read-subsumed-by-write.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/eff1-neg-read-subsumed-by-write.wf"
+        ),
+        rule: "EFF-1",
+        sentences: &[],
+        repaired: &[br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Stats {
+  count: u64;
+}
+
+fn record(stats: &Stats) -> result: unit writes(stats.count) {
+  doc "EFF-1: writes(stats.count) states every access at or below stats.count, so reads(stats.count) beside it states one access twice.";
+  let old = stats^.count;
+  set stats^.count = old +wrap 1_u64;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The malformed declaration above is rejected before this entry calls it.";
+  let stats = Stats(count: 0_u64);
+  record(stats: &stats);
+  return exit_status(code: 0_u8);
+}
+"#],
+    },
+    // [TYPE-6] an arm that names a variant of another enum.
+    RepairPair {
+        name: "x-typ-match-foreign-variant.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/x-typ-match-foreign-variant.wf"
+        ),
+        rule: "TYPE-6",
+        sentences: &[],
+        repaired: &[br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Signal {
+  Ready();
+  Busy();
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "An arm naming a variant outside the scrutinee enum resolves in the constructor domain but is foreign to the matched nominal [TYPE-6].";
+  let s = Signal::Ready();
+  match s {
+    Ready() => {
+    }
+    Busy() => {
+    }
+  }
+  return exit_status(code: 0_u8);
+}
+"#],
+    },
+    // [WAIT-3] a `spawn` inside a contract clause.
+    RepairPair {
+        name: "wait3-neg-spawn-in-clause.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/wait3-neg-spawn-in-clause.wf"
+        ),
+        rule: "WAIT-3",
+        sentences: &[],
+        repaired: &[br#"struct Counter {
+  value: u64;
+}
+
+fn id(value: u64) -> result: u64 pure {
+  return value;
+}
+
+fn bump(counter: &Counter, value: u64) -> result: unit writes(counter) {
+  set counter^.value = value;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let left = Counter(value: 0_u64);
+  let right = Counter(value: 0_u64);
+  bump(counter: &left, value: 1_u64);
+  bump(counter: &right, value: 2_u64);
+  let sum = left.value +wrap right.value;
+  if sum == 3_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}
+"#],
+    },
 ];
