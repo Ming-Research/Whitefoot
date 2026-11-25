@@ -536,6 +536,12 @@ positions where two arms' profiles differ by 10 percent or more
   h over b: 0 of 32; all ratios 0.967 to 1.029
   s over b: 0 of 32; all ratios 0.970 to 1.045
   s over h: 0 of 32; all ratios 0.969 to 1.034
+positions in order of time, ranks where two arms differ by 10 percent or more
+  h over b: 0 of 32; all ratios 0.986 to 1.004
+  s over b: 0 of 32; all ratios 0.994 to 1.015
+  s over h: 0 of 32; all ratios 0.994 to 1.013
+positions unlike one against one, h moved by r positions over b, r = 1 to 31
+  0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0; least 0, most 0
 mapping calls without address randomization, position by position
   b and h: identical at 32 positions, different at 0
   b and s: identical at 0 positions, different at 32

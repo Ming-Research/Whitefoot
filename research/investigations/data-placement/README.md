@@ -359,6 +359,42 @@ on hosts whose ratios spread 0.90 to 1.16. Lines below 10 percent
 do not separate: at 5 percent the arms that map alike read 8 positions unlike
 on job 3.
 
+**Two arms' positions in order of time.** Position k of one image and
+position k of another are the same placement only when the two map alike. A
+position is made by an idle mapping of k times 2 MiB before the entry, so an
+image that maps r times 2 MiB more before its entry has the same profile moved
+by r positions: on every job B's grids are 0x7bff000 apart at position 0 and
+2 MiB less at each position to 13, adjacent from 14 to 29 but for position 16
+(0x4002000 the other way), 0x7fff000 apart at 30, and position 31 (0x7dff000)
+continues into position 0. With address randomization a launch draws its
+position, so a campaign can be decided by how many positions an arm has at
+each time, not by which positions they are. This branch's series read from
+position k + r is a reading of the image B would be with r times 2 MiB more
+mapped. Compared with B's one position against one, it is unlike at two
+positions or more for every r from 1 to 31 on the five AMD jobs, each arm's
+slow position at the least, so that comparison marks a change that address
+randomization hides. Compared in order of time (each arm's 32 times over its
+median position, sorted, a rank unlike when the two differ by 10 percent or
+more), every r reads the same:
+
+| job | host | one against one, this branch moved by 1 to 31 positions over B: positions unlike | in order of time, this branch over B: ranks unlike, with all ratios | S over B | S over this branch |
+|---|---|---|---|---|---|
+| 1 | 9V74 | 2 at every r | 0 (0.994 to 1.001) | 14 | 14 |
+| 8 | 9V74 | 2 at every r | 0 (0.986 to 1.007) | 14 | 14 |
+| 3 | 7763 | 2 to 12 | 0 (0.993 to 1.075) | 14 | 14 |
+| 5 | 7763 | 2 to 14 | 0 (0.944 to 1.010) | 14 | 14 |
+| 7 | 7763 | 2 to 7 | 0 (0.957 to 1.006) | 14 | 15 |
+| 2 | 6975P-C | 0 | 0 (0.986 to 1.004) | 0 | 0 |
+| 4 | 6975P-C | 0 to 4 | 0 (0.996 to 1.034) | 0 | 0 |
+| 6 | 6975P-C | 0 to 1 | 0 (0.980 to 1.040) | 0 | 0 |
+
+In order of time, two readings of one profile agree within 7.5 percent at
+every rank on all eight jobs, B and S are unlike from rank 18 on the five AMD
+jobs (S has 15 slow positions where B has one), and on the Xeon jobs every
+rank of S is within 4.1 percent of B's and of this branch's; the single
+readings past the line that the comparison one against one shows there do not
+appear.
+
 **Mapping calls.** In the same launches, B and this branch make the same
 mapping calls at the same addresses at all 32 positions on all eight jobs
 (256 of 256), although their runtimes differ by seven weeks of changes, and B
@@ -383,18 +419,21 @@ blocks are mapped can therefore be read without timing anything.
 - Readings that do not depend on a campaign separate the hosts and the
   changes in this run. Among 32 positions without address randomization, a
   position 10 percent or more off marks a host that times the kernel by
-  placement; positions where two arms are unlike mark a comparison that
-  placement decides on that host; and equal mapping calls in such launches
-  mark two images that place their data alike.
+  placement; two arms whose positions, in order of time, are unlike at a rank
+  mark a comparison that placement decides on that host; and equal mapping
+  calls in such launches mark two images that place their data alike.
+  Comparing two arms one position against one also marks an image whose
+  profile is only moved, which address randomization hides.
 
 ## Next
 
 The control these readings suggest, for `compute-regression`, before the
 comparison: launch each arm of a kernel once at one worker without address
 randomization and compare the mapping calls the two make; when they differ,
-launch both arms at the 32 positions, launch the unlike positions again, and
-set the kernel's comparison aside when a position is unlike both times in the
-same direction.
+launch both arms at the 32 positions and compare the two in order of time;
+when a rank is unlike, launch both arms at the 32 positions again, and set the
+kernel's comparison aside when the second round has a rank unlike in the same
+direction as the first.
 
 Its confirmation, written before the run, with the control in the instrument
 and several hosted jobs:
@@ -406,11 +445,15 @@ and several hosted jobs:
    length, every kernel's arms are reported to map alike on every job, for B,
    for S and for the branch's own image.
 3. With B and S as the arms, no kernel is set aside on any Xeon 6975P-C job.
+4. With one image as both arms, launching both at the 32 positions sets no
+   kernel aside on any job, for B and for S. The comparison does not read the
+   position a time came from, so this is also the reading of an image against
+   itself moved by any number of positions.
 
 A 7763 job that does not set `stencil` aside, equal arms reported to differ,
-or a kernel set aside on a Xeon 6975P-C job rejects the control as designed.
-Which kernels other than `stencil` are set aside on the AMD jobs is recorded
-without a criterion.
+a kernel set aside on a Xeon 6975P-C job, or a kernel set aside between one
+image's two series rejects the control as designed. Which kernels other than
+`stencil` are set aside on the AMD jobs is recorded without a criterion.
 
 ## Limitations
 
@@ -420,8 +463,10 @@ without a criterion.
   here.
 - Only `stencil` was traced and launched by position; the other four kernels
   were timed in the campaigns alone.
-- The position rule, the comparison of two arms' positions and the
-  comparison of mapping calls are post hoc.
+- The position rule, the comparisons of two arms' positions, one against one
+  and in order of time, and the comparison of mapping calls are post hoc. S
+  has one series a job, and the only two series of one profile are B's and
+  this branch's.
 - A placement that costs less than 10 percent, as adjacent grids do on the
   7763, is below the line every reading here uses.
 - The 32 positions walk the 64 MiB that glibc's heap alignment makes matter.

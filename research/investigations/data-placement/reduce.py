@@ -8,8 +8,9 @@ regression rule applied in both directions, and stencil's process medians at
 one worker per arm. For every traced series it prints, per distance between
 the two grids of a timed call, how many launches got it and their times. Then
 it pools the launches made with address randomization by distance class,
-applies the position rule to the launches made without it, and compares the
-revisions' mapping calls in those launches.
+applies the position rule to the launches made without it, compares two arms'
+positions one by one and in order of time, and compares the revisions' mapping
+calls in those launches.
 """
 
 import os
@@ -192,10 +193,8 @@ def positions(results):
         print(f"  off the same way in b and in h: {both or 'none'}")
 
 
-def profiles(results):
-    """Two arms' positions compared: each arm's time at a position over the
-    arm's median position, and the positions where the two differ by 10 percent
-    or more. A slowdown of one arm at every position leaves the ratios at one."""
+def fixed_times(results):
+    """revision -> position -> ms, for the launches without address randomization."""
     times = {}
     for revision in "bhs":
         times[revision] = {}
@@ -204,6 +203,18 @@ def profiles(results):
                 row = launch(results, f"{revision}-fixed-{k}-0")
                 if row:
                     times[revision][k] = row[1]
+    return times
+
+
+def unlike(ratio):
+    return ratio >= 1.10 or ratio <= 1 / 1.10
+
+
+def profiles(results):
+    """Two arms' positions compared: each arm's time at a position over the
+    arm's median position, and the positions where the two differ by 10 percent
+    or more. A slowdown of one arm at every position leaves the ratios at one."""
+    times = fixed_times(results)
     print("positions where two arms' profiles differ by 10 percent or more")
     for first, second in ("bh", "bs", "hs"):
         if len(times[first]) < 32 or len(times[second]) < 32:
@@ -211,10 +222,41 @@ def profiles(results):
         middle = {arm: statistics.median(times[arm].values()) for arm in (first, second)}
         ratios = {k: (times[second][k] / middle[second]) / (times[first][k] / middle[first])
                   for k in range(32)}
-        unlike = {k: r for k, r in ratios.items() if r >= 1.10 or r <= 1 / 1.10}
-        print(f"  {second} over {first}: {len(unlike)} of 32"
-              + "".join(f" {k}:{r:.2f}" for k, r in sorted(unlike.items()))
+        differ = {k: r for k, r in ratios.items() if unlike(r)}
+        print(f"  {second} over {first}: {len(differ)} of 32"
+              + "".join(f" {k}:{r:.2f}" for k, r in sorted(differ.items()))
               + f"; all ratios {min(ratios.values()):.3f} to {max(ratios.values()):.3f}")
+
+
+def ranks(results):
+    """Two arms' positions compared in order of time: each arm's times over its
+    median position, sorted, and the ranks where the two differ by 10 percent or
+    more, which does not read the position a time came from. Then b against h
+    moved by r positions, one position against one: h maps as b does, so h read
+    from position k + r is a reading of the image b would be with r times 2 MiB
+    more mapped before the entry."""
+    times = fixed_times(results)
+    print("positions in order of time, ranks where two arms differ by 10 percent or more")
+    for first, second in ("bh", "bs", "hs"):
+        if len(times[first]) < 32 or len(times[second]) < 32:
+            continue
+        ordered = {}
+        for arm in (first, second):
+            middle = statistics.median(times[arm].values())
+            ordered[arm] = sorted(t / middle for t in times[arm].values())
+        ratios = [ordered[second][i] / ordered[first][i] for i in range(32)]
+        differ = [str(i + 1) for i, r in enumerate(ratios) if unlike(r)]
+        print(f"  {second} over {first}: {len(differ)} of 32"
+              + (" at " + " ".join(differ) if differ else "")
+              + f"; all ratios {min(ratios):.3f} to {max(ratios):.3f}")
+    if len(times["b"]) == 32 and len(times["h"]) == 32:
+        middle = {arm: statistics.median(times[arm].values()) for arm in "bh"}
+        counts = []
+        for r in range(1, 32):
+            counts.append(sum(unlike((times["h"][(k + r) % 32] / middle["h"]) / (times["b"][k] / middle["b"]))
+                              for k in range(32)))
+        print("positions unlike one against one, h moved by r positions over b, r = 1 to 31")
+        print("  " + " ".join(str(c) for c in counts) + f"; least {min(counts)}, most {max(counts)}")
 
 
 def own_calls(path):
@@ -317,6 +359,7 @@ def main():
         model(results)
         positions(results)
         profiles(results)
+        ranks(results)
         layouts(results)
 
 
