@@ -1128,6 +1128,503 @@ fn stable_scatter_builds_its_chunks_without_whole_block_clears_or_copies() {
     );
 }
 
+/// Each function definition of one module, as its symbol and its text.
+fn function_bodies(module: &str) -> Vec<(&str, &str)> {
+    let mut functions = Vec::new();
+    let mut rest = module;
+    while let Some(start) = rest.find("\ndefine ") {
+        let body = &rest[start + 1..];
+        let Some(end) = body.find("\n}\n") else {
+            break;
+        };
+        let text = &body[..end + 2];
+        let name = text
+            .split_once(" @")
+            .and_then(|(_, tail)| tail.split_once('('))
+            .map_or("", |(name, _)| name);
+        functions.push((name, text));
+        rest = &body[end + 2..];
+    }
+    functions
+}
+
+/// The emitted module without the whole-value clear that precedes each
+/// construction of an empty `Option<Chunk>`, and how many clears were removed.
+/// The tag store that follows each clear stays, so the value is the same.
+fn without_vacant_clears(module: &str) -> (String, usize) {
+    let mut chunk = None;
+    for line in module.lines() {
+        if let Some((name, definition)) = line.split_once(" = type ")
+            && name.starts_with("%wf.t.")
+            && definition.contains("[256 x i64]")
+        {
+            chunk = Some(name.to_owned());
+        }
+    }
+    let Some(chunk) = chunk else {
+        return (module.to_owned(), 0);
+    };
+    let wanted = format!("{{ i8, {chunk} }}");
+    let mut option = None;
+    for line in module.lines() {
+        if let Some((name, definition)) = line.split_once(" = type ")
+            && name.starts_with("%wf.t.")
+            && definition.trim() == wanted
+        {
+            option = Some(name.to_owned());
+        }
+    }
+    let Some(option) = option else {
+        return (module.to_owned(), 0);
+    };
+    let clear = format!("  store {option} zeroinitializer, ptr ");
+    let mut removed = 0;
+    let mut kept = String::with_capacity(module.len());
+    for line in module.lines() {
+        if line.starts_with(&clear) {
+            removed += 1;
+            continue;
+        }
+        kept.push_str(line);
+        kept.push('\n');
+    }
+    (kept, removed)
+}
+
+/// The scatter with each block partitioned inside its destination chunk: the
+/// chunk is stored empty and then filled through a reference, so no run
+/// crosses a call result, a constructor or a store as a value.
+fn in_place_scatter_source() -> String {
+    let source = include_str!("../../../../tests/programs/compute/radix_scatter.wf");
+    let start = source
+        .find("fn write_chunk(")
+        .expect("the scatter's block writer");
+    let end = source.find("fn tally(").expect("the scatter's tally");
+    let writer = r#"fn partition_into(input: &[u64], bit: u32, chunk: &Chunk) -> result: u64 reads(input), writes(chunk) contract {
+  requires input^.len <= 256_u64;
+  requires bit < 64_u32;
+} {
+  let count = input^.len;
+  clear(window: &chunk^.low);
+  clear(window: &chunk^.high);
+  for (
+    i in 0_u64..count,
+    invariant low_count: chunk^.low.len <= i,
+    invariant high_count: chunk^.high.len <= i
+  ) {
+    let key = input^[i];
+    let shifted = ishr(key, bit);
+    let digit = shifted % 2_u64;
+    let is_low = digit == 0_u64;
+    let is_high = digit != 0_u64;
+    append_selected(values: &chunk^.low, value: key, selected: is_low);
+    append_selected(values: &chunk^.high, value: key, selected: is_high);
+  }
+  return count;
+}
+
+fn write_chunk(input: &[u64], bit: u32, output: &[Option<Chunk>]) -> result: u64 reads(input), writes(output) contract {
+  requires input^.len <= 256_u64;
+  requires bit < 64_u32;
+  requires 1_u64 <= output^.len;
+} {
+  let low = slots_new::<u64, 256>();
+  let high = slots_new::<u64, 256>();
+  let chunk = Chunk(low: move low, high: move high);
+  set output^[0_u64] = Some<Chunk>(value: move chunk);
+  match output^[0_u64] {
+    None() => {
+      return 0_u64;
+    }
+    Some(value: payload) => {
+      return partition_into(input: input, bit: bit, chunk: payload);
+    }
+  }
+}
+
+"#;
+    format!("{}{writer}{}", &source[..start], &source[end..])
+}
+
+/// The clears and copies one optimized module keeps, function by function,
+/// and the instructions around each whole-block one.
+fn scatter_transfer_report(label: &str, optimized: &str) -> (Vec<String>, Vec<String>) {
+    let mut summary = Vec::new();
+    let mut context = Vec::new();
+    for (name, body) in function_bodies(optimized) {
+        let lines: Vec<&str> = body.lines().collect();
+        let found: Vec<&str> = lines
+            .iter()
+            .map(|line| line.trim())
+            .filter(|line| line.contains("@llvm.mem") || line.contains("zeroinitializer"))
+            .collect();
+        summary.push(format!(
+            "{label} function {name}: {} lines, {} clears or copies",
+            lines.len(),
+            found.len()
+        ));
+        for line in found {
+            summary.push(format!("{label} {name}:   {line}"));
+        }
+        let mut windows = 0;
+        for (at, line) in lines.iter().enumerate() {
+            if windows < 4 && !whole_block_transfers(line).is_empty() {
+                windows += 1;
+                let from = at.saturating_sub(16);
+                let to = (at + 8).min(lines.len());
+                context.push(format!(
+                    "{label} {name} lines {from}..{to}:\n{}",
+                    lines[from..to].join("\n")
+                ));
+            }
+        }
+    }
+    (summary, context)
+}
+
+/// Research probe for the scatter's chunk building. It always fails, so that
+/// its report reaches the test result: the clears and copies the emitted and
+/// the optimized modules hold, for the ordinary lowering, for the same module
+/// without the clear of each empty `Option<Chunk>`, and for the source that
+/// partitions inside the destination chunk.
+#[test]
+#[ignore = "research probe: reports the scatter's clears and copies"]
+fn stable_scatter_probe_reports_clears_and_copies() {
+    let source = include_bytes!("../../../../tests/programs/compute/radix_scatter.wf");
+    let mut summary = Vec::new();
+    let mut context = Vec::new();
+    let emitted = emit_lowered(source, OverlapLowering::On);
+    for line in emitted.lines() {
+        if line.contains(" = type ") {
+            summary.push(format!("emitted type: {line}"));
+        }
+    }
+    for (name, body) in function_bodies(&emitted) {
+        if !["radix_scatter", "write_chunk", "partition_block"]
+            .iter()
+            .any(|part| name.contains(part))
+        {
+            continue;
+        }
+        summary.push(format!(
+            "emitted function {name}: {} lines",
+            body.lines().count()
+        ));
+        for line in body.lines().map(str::trim) {
+            if line.contains("@llvm.mem") || line.contains("zeroinitializer") {
+                summary.push(format!("emitted {name}:   {line}"));
+            }
+        }
+    }
+    let (without_clears, removed) = without_vacant_clears(&emitted);
+    summary.push(format!("vacant clears removed from the emitted module: {removed}"));
+    let mut modules = vec![("main", emitted), ("no-clear", without_clears)];
+    let in_place = in_place_scatter_source();
+    let inputs = [SourceInput::new("test.wf", in_place.as_bytes())];
+    match crate::compile_with_overlap(
+        &inputs,
+        crate::CompilerLimits::default(),
+        OverlapLowering::On,
+    ) {
+        Ok(module) => {
+            let (cleared, removed) = without_vacant_clears(&module.into_string());
+            summary.push(format!("in-place source: vacant clears removed: {removed}"));
+            modules.push(("in-place-no-clear", cleared));
+        }
+        Err(failure) => summary.push(format!("in-place source rejected: {failure}")),
+    }
+    for (label, module) in &modules {
+        let optimized = host_optimized_module(module);
+        let (lines, windows) = scatter_transfer_report(label, &optimized);
+        summary.extend(lines);
+        context.extend(windows);
+        for (name, body) in function_bodies(&optimized) {
+            if name.contains("write_chunk") {
+                let cut = body
+                    .char_indices()
+                    .nth(6000)
+                    .map_or(body.len(), |(at, _)| at);
+                context.push(format!("{label} {name} body:\n{}", &body[..cut]));
+            }
+        }
+    }
+    let sequential = host_optimized_module(&emit_lowered(source, OverlapLowering::Off));
+    for transfer in whole_block_transfers(&sequential) {
+        summary.push(format!("main without --par: {transfer}"));
+    }
+    panic!(
+        "scatter clears and copies\n{}\n{}",
+        context.join("\n"),
+        summary.join("\n")
+    );
+}
+
+/// The timing host of the scatter probe, appended to the independent oracle.
+/// A `WFP_MODE` that begins with `native` selects a serial native chain of the
+/// same decomposition in place of the Whitefoot entry; one that contains
+/// `verify` runs the oracle's matrix over the selected entry, and any other
+/// times it.
+/// Each timed call covers the whole scatter and nothing else: the input, the
+/// expected answer, the comparison and the release are outside it.
+const SCATTER_TIMING_HOST: &str = r#"
+#include <time.h>
+extern void wf_bench_radix_scatter(const uint64_t *, uint64_t, uint32_t, uint64_t **, uint64_t *, void **);
+extern void wf_bench_radix_scatter_release(void *);
+extern int wf__floor_run(int, char **);
+typedef struct { uint64_t low[BLOCK], high[BLOCK]; size_t low_count, high_count; } native_chunk;
+static void native_entry(const uint64_t *input, uint64_t n, uint32_t bit,
+                         uint64_t **output, uint64_t *length, void **held) {
+    size_t count = (size_t)n, blocks = count / BLOCK + 1, capacity = blocks * BLOCK;
+    native_chunk *chunks = allocate(blocks, sizeof(*chunks));
+    for (size_t b = 0; b < blocks; ++b) {
+        size_t first = b * BLOCK, end = first + BLOCK;
+        if (end > count) end = count;
+        native_chunk *part = &chunks[b];
+        for (size_t i = first; i < end; ++i) {
+            uint64_t value = input[i];
+            if ((value >> bit) & 1) part->high[part->high_count++] = value;
+            else part->low[part->low_count++] = value;
+        }
+    }
+    size_t lows = 0, highs = 0;
+    for (size_t b = 0; b < blocks; ++b) {
+        lows += chunks[b].low_count;
+        highs += chunks[b].high_count;
+    }
+    uint64_t *low = allocate(capacity, sizeof(uint64_t));
+    uint64_t *high = allocate(capacity, sizeof(uint64_t));
+    size_t low_at = 0, high_at = 0;
+    for (size_t b = 0; b < blocks; ++b) {
+        memcpy(low + low_at, chunks[b].low, chunks[b].low_count * sizeof(uint64_t));
+        low_at += chunks[b].low_count;
+        memcpy(high + high_at, chunks[b].high, chunks[b].high_count * sizeof(uint64_t));
+        high_at += chunks[b].high_count;
+    }
+    uint64_t *result = allocate(lows + highs, sizeof(uint64_t));
+    memcpy(result, low, lows * sizeof(uint64_t));
+    memcpy(result + lows, high, highs * sizeof(uint64_t));
+    free(chunks);
+    free(low);
+    free(high);
+    *output = result;
+    *length = lows + highs;
+    *held = result;
+}
+static void native_release(void *held) { free(held); }
+static uint64_t clock_ns(clockid_t id) {
+    struct timespec now;
+    if (clock_gettime(id, &now)) fail("clock");
+    return (uint64_t)now.tv_sec * UINT64_C(1000000000) + (uint64_t)now.tv_nsec;
+}
+int wf__main_body(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    const char *mode = getenv("WFP_MODE");
+    int native = mode && !strncmp(mode, "native", 6);
+    scatter_entry entry = native ? native_entry : wf_bench_radix_scatter;
+    scatter_release release = native ? native_release : wf_bench_radix_scatter_release;
+    if (mode && strstr(mode, "verify")) {
+        size_t checked = matrix(entry, release);
+        (void)printf("verify PASS %zu\n", checked);
+        return 0;
+    }
+    const char *calls_text = getenv("WFP_CALLS");
+    size_t calls = calls_text ? (size_t)strtoull(calls_text, NULL, 10) : 20;
+    size_t count = 1048593;
+    uint64_t *input = allocate(count, sizeof(*input));
+    fill(input, count, 0, 0);
+    uint64_t *expected = oracle(input, count, 0);
+    for (size_t call = 0; call <= calls; ++call) {
+        uint64_t *actual = NULL, length = UINT64_MAX;
+        void *held = NULL;
+        uint64_t cpu = clock_ns(CLOCK_PROCESS_CPUTIME_ID), wall = clock_ns(CLOCK_MONOTONIC);
+        entry(input, count, 0, &actual, &length, &held);
+        wall = clock_ns(CLOCK_MONOTONIC) - wall;
+        cpu = clock_ns(CLOCK_PROCESS_CPUTIME_ID) - cpu;
+        if (length != count) fail("timed output length");
+        (void)compare(actual, expected, count);
+        release(held);
+        /* Call 0 warms the process up and is not reported. */
+        if (call) (void)printf("call\t%llu\t%llu\n", (unsigned long long)wall, (unsigned long long)cpu);
+    }
+    free(input);
+    free(expected);
+    return 0;
+}
+int main(int argc, char **argv) { return wf__floor_run(argc, argv); }
+"#;
+
+/// Links one emitted scatter module with the timing host, in its own
+/// directory.
+fn scatter_probe_image(module: &str, host: &str) -> (PathBuf, PathBuf) {
+    let adapter = include_str!("../../../../tests/programs/compute/radix_scatter_host.ll");
+    let llvm = bind_compute_host_adapter(module, adapter)
+        .replace("@main(", "@wf_scatter_probe_main(")
+        .replace("@wf__main_body(", "@wf_scatter_probe_body(");
+    let directory = test_directory();
+    let executable = build_linked_executable(&llvm, Some(host), &[], &directory);
+    (directory, executable)
+}
+
+fn scatter_probe_run(executable: &Path, workers: u32, mode: &str, calls: u32) -> String {
+    let output = Command::new(executable)
+        .env("WF_WORKERS", workers.to_string())
+        .env("WFP_MODE", mode)
+        .env("WFP_CALLS", calls.to_string())
+        .env_remove("WF_SPLIT_WORK")
+        .bounded_output()
+        .expect("run the scatter probe");
+    assert!(
+        output.status.success(),
+        "{mode} workers={workers}: {output:?}"
+    );
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+/// The median wall and CPU nanoseconds of one process's timed calls.
+fn scatter_probe_medians(stdout: &str) -> (u64, u64) {
+    let mut walls = Vec::new();
+    let mut cpus = Vec::new();
+    for line in stdout.lines() {
+        let mut fields = line.split('\t');
+        if fields.next() != Some("call") {
+            continue;
+        }
+        let wall = fields
+            .next()
+            .and_then(|text| text.parse::<u64>().ok())
+            .expect("a call's wall time");
+        let cpu = fields
+            .next()
+            .and_then(|text| text.parse::<u64>().ok())
+            .expect("a call's CPU time");
+        walls.push(wall);
+        cpus.push(cpu);
+    }
+    assert!(!walls.is_empty(), "no timed call in {stdout:?}");
+    walls.sort_unstable();
+    cpus.sort_unstable();
+    (walls[walls.len() / 2], cpus[cpus.len() / 2])
+}
+
+/// Research probe for the scatter's whole call on 1,048,593 mixed keys. It
+/// always fails, so that its table reaches the test result. The images are
+/// the ordinary `--par` module, an identical twin of it, the same module
+/// without the clear of each empty `Option<Chunk>`, and the source that
+/// partitions inside the destination chunk; each is checked against the
+/// independent oracle before it is timed. Every pass runs each image once at
+/// each width, in an order the pass rotates, and one serial native chain.
+#[test]
+#[ignore = "research probe: times the scatter's whole call"]
+fn stable_scatter_probe_times_whole_calls() {
+    let source = include_bytes!("../../../../tests/programs/compute/radix_scatter.wf");
+    let host = format!(
+        "#define _POSIX_C_SOURCE 200809L\n#define WF_ORACLE_NO_MAIN\n{}\n{SCATTER_TIMING_HOST}",
+        include_str!("../../../../tests/programs/compute/radix_scatter_oracle.c")
+    );
+    let mut report = Vec::new();
+    let emitted = emit_lowered(source, OverlapLowering::On);
+    let (without_clears, removed) = without_vacant_clears(&emitted);
+    report.push(format!("vacant clears removed from the emitted module: {removed}"));
+    let mut modules = vec![
+        ("main", emitted.clone()),
+        ("twin", emitted),
+        ("no-clear", without_clears),
+    ];
+    let in_place = in_place_scatter_source();
+    let inputs = [SourceInput::new("test.wf", in_place.as_bytes())];
+    match crate::compile_with_overlap(
+        &inputs,
+        crate::CompilerLimits::default(),
+        OverlapLowering::On,
+    ) {
+        Ok(module) => {
+            let module = module.into_string();
+            let (cleared, removed) = without_vacant_clears(&module);
+            report.push(format!("in-place source: vacant clears removed: {removed}"));
+            modules.push(("in-place", module));
+            modules.push(("in-place-no-clear", cleared));
+        }
+        Err(failure) => report.push(format!("in-place source rejected: {failure}")),
+    }
+    let images: Vec<(&str, PathBuf, PathBuf)> = modules
+        .iter()
+        .map(|(name, module)| {
+            let (directory, executable) = scatter_probe_image(module, &host);
+            (*name, directory, executable)
+        })
+        .collect();
+    for (name, _, executable) in &images {
+        for workers in [1_u32, 8] {
+            let stdout = scatter_probe_run(executable, workers, "verify", 0);
+            assert!(
+                stdout.contains("verify PASS"),
+                "{name} workers={workers}: {stdout}"
+            );
+        }
+    }
+    let native = scatter_probe_run(&images[0].2, 1, "native-verify", 0);
+    assert!(native.contains("verify PASS"), "native chain: {native}");
+    let widths = [1_u32, 8, 32];
+    let passes = 9_usize;
+    let calls = 20_u32;
+    let mut samples: Vec<Vec<Vec<(u64, u64)>>> =
+        vec![vec![Vec::new(); widths.len()]; images.len()];
+    let mut native_samples: Vec<(u64, u64)> = Vec::new();
+    for pass in 0..passes {
+        for (width, workers) in widths.iter().enumerate() {
+            for step in 0..images.len() {
+                let image = (step + pass) % images.len();
+                let stdout = scatter_probe_run(&images[image].2, *workers, "time", calls);
+                samples[image][width].push(scatter_probe_medians(&stdout));
+            }
+        }
+        let stdout = scatter_probe_run(&images[0].2, 1, "native", calls);
+        native_samples.push(scatter_probe_medians(&stdout));
+    }
+    for (width, workers) in widths.iter().enumerate() {
+        for (image, (name, _, _)) in images.iter().enumerate() {
+            let rows = &samples[image][width];
+            let base = &samples[0][width];
+            let mut walls: Vec<u64> = rows.iter().map(|(wall, _)| *wall).collect();
+            let mut cpus: Vec<u64> = rows.iter().map(|(_, cpu)| *cpu).collect();
+            let wall_ratios: Vec<String> = rows
+                .iter()
+                .zip(base)
+                .map(|((wall, _), (main, _))| format!("{:.4}", *wall as f64 / *main as f64))
+                .collect();
+            let cpu_ratios: Vec<String> = rows
+                .iter()
+                .zip(base)
+                .map(|((_, cpu), (_, main))| format!("{:.4}", *cpu as f64 / *main as f64))
+                .collect();
+            let listed: Vec<String> = rows.iter().map(|(wall, _)| (wall / 1000).to_string()).collect();
+            walls.sort_unstable();
+            cpus.sort_unstable();
+            report.push(format!(
+                "W{workers} {name}: wall median {} us, cpu median {} us; wall us by pass: {}; wall/main by pass: {}; cpu/main by pass: {}",
+                walls[walls.len() / 2] / 1000,
+                cpus[cpus.len() / 2] / 1000,
+                listed.join(" "),
+                wall_ratios.join(" "),
+                cpu_ratios.join(" ")
+            ));
+        }
+    }
+    let listed: Vec<String> = native_samples
+        .iter()
+        .map(|(wall, cpu)| format!("{}/{}", wall / 1000, cpu / 1000))
+        .collect();
+    report.push(format!(
+        "serial native chain: wall/cpu us by pass: {}",
+        listed.join(" ")
+    ));
+    for (_, directory, _) in &images {
+        std::fs::remove_dir_all(directory).expect("remove scatter probe files");
+    }
+    panic!("scatter whole-call timing\n{}", report.join("\n"));
+}
+
 #[test]
 fn stencil_matches_an_independent_dimension_and_step_matrix() {
     let source = include_bytes!("../../../../tests/programs/compute/stencil.wf");
