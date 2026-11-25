@@ -22,7 +22,7 @@ CI runs; it changes neither the rule nor who approves a raise.
 Cells and columns:
   * A class column with at least 20 recorded runs of a stage is recomputed.
   * A cell with fewer runs keeps its value, except in a column the owner
-    added for a model with too few runs (OWNER_COLUMNS: the Xeon): that
+    added for a model with too few runs (OWNER_COLUMNS: the Xeons): that
     takes the larger of the row's recomputed class values and, if it has
     any run, its own time by the rule: one run shows a class needs more,
     not that it needs less. The row is left alone when no class has enough
@@ -44,7 +44,7 @@ import time
 MINIMUM_RUNS = 20
 # The columns the owner added for a model with fewer than MINIMUM_RUNS runs
 # (design/decisions/development/verification.md); an addition is the owner's decision.
-OWNER_COLUMNS = ("xeon-8573c",)
+OWNER_COLUMNS = ("xeon-8573c", "xeon-6975p")
 BUDGETS = ".github/time-budgets.txt"
 DEFAULT_WINDOW = 50
 MARGIN_PERCENT = 10
