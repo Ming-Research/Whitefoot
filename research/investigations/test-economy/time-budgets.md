@@ -1338,7 +1338,7 @@ chose on 2026-10-09 (above): it is path-filtered and rare, and a path-filtered
 workflow that listed `ready_for_review` would be waited for after a ready mark
 even when no path matched.
 
-### The final job read a job listing that lagged, and two runs ended red without a failing group (2026-11-25)
+### The final job read a job listing that lagged, and two runs ended red without a failing group
 
 Read with `gh api` on 2026-11-25 from the runs' records; the listing's lag
 itself was not seen again, only its effect in the final job's log.
