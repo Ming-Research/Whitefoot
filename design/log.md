@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-11-25 The final job takes its own run's success as the verdict instead of reading a job listing that can lag
+
+Nodes: compiler/verification
+
+Summary: The final job "Gate on both platforms" read every group of its own run from GitHub's job listing, which recorded finished jobs as complete minutes late, so a pull request's run with every group green failed because one group read as absent after four listings, and a run on the main line failed after five HTTP 502 answers. The job now takes the result of its run's own group matrix as the verdict when it is success, with no GitHub call, and reads the revision's runs and jobs, retrying and listing again, only when it is not; a group job GitHub stops at its time limit without a recorded completion has no result, so only a re-run settles it. A failure another run of the same revision records later no longer turns this run's final job red.
+
 ## 2026-10-23 A returned computed integer expression proves a postcondition as a `let` of it would
 
 Nodes: language/checks-and-proofs/automatic-facts
