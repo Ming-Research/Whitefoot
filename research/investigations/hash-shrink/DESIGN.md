@@ -32,7 +32,7 @@ and implementation have no diff between that pin and the inspected Whitefoot
 revision. Firn was read through the GitHub connector after a shallow clone
 failed DNS resolution; no Firn files were changed.
 
-The [constitution](../../../docs/constitution.md) makes safety a constraint
+The [constitution](../../../design/constitution.md) makes safety a constraint
 and performance a project requirement; implementation or migration effort
 alone does not select a design. Real compatibility effects still need an
 account. The [research method](../../README.md) requires attribution and a
@@ -47,7 +47,7 @@ There are three unrelated hash-table concerns here:
 | --- | --- | --- |
 | `std::collections::hash_map::HashMap<Key, unit, ceiling>` | Firn's `Value::Members` in [store interface, lines 42–61](https://github.com/Ming-Research/Firn-wf/blob/c6f6058fb17277d4d44d364a45efad1eae01a22b/firn/store/module.wfm#L42) | This is the set's member table and the proposed change's home. |
 | `Shared<ConcurrentHashMap<Entry>>` | Firn's outer keyspace, [lines 236–243](https://github.com/Ming-Research/Firn-wf/blob/c6f6058fb17277d4d44d364a45efad1eae01a22b/firn/store/module.wfm#L236) | It protects the set value under atomic entry access; its buckets are not what SPOP scans. |
-| Compiler fact maps | [fact-map hashing decision](../../../design/compiler/fact-map-hashing.md) | Compiler proof-state hashing, unrelated to either runtime table. The requested `design/language/fact-map-hashing.md` does not exist; the compiler node is its actual location. |
+| Compiler fact maps | [fact-map hashing decision](../../../design/decisions/compiler/checker/entailment.md#decision-fact-maps-use-the-fixed-word-hasher) | Compiler proof-state hashing, unrelated to either runtime table. |
 
 The current standard-library [interface](../../../lib/std/collections/hash_map/module.wfm),
 [implementation](../../../lib/std/collections/hash_map/hash-map.wf) and
@@ -77,9 +77,9 @@ is kept even under inconsistent callbacks.
 
 The separate [C concurrent map](../../../compiler/src/backend/concurrent_map.c)
 uses atomic cell words, entry nodes, cooperative moves and retired-table
-reclamation. Its [decision node](../../../design/compiler/waiting-contexts/concurrent-map.md),
-[waiting-context ancestor](../../../design/compiler/waiting-contexts.md) and
-[compiler ancestor](../../../design/compiler.md) govern publication, locks,
+reclamation. Its [decisions](../../../design/decisions/runtime/waiting-contexts/concurrent-map.md),
+[waiting-context parent](../../../design/decisions/runtime/waiting-contexts.md) and
+[runtime parent](../../../design/decisions/runtime.md) govern publication, locks,
 stable entry-node addresses during holds, and scanning. None of that
 machinery migrates the ordinary HashMap stored inside one entry. Changing
 it to fix member sparsity would target the wrong storage. Its sanitizer
