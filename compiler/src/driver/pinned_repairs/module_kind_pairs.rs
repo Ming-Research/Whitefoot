@@ -630,7 +630,9 @@ fn main() -> status: ExitStatus pure {
         )],
         library: &[],
         rule: "MOD-5",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: replace `sign_off` with an accessible name declared in `pkg::data` for this grammar position: `sign_of` [MOD-5]\n",
+        ],
         repaired: &[&[]],
     },
     ModulePair {
@@ -651,12 +653,12 @@ fn main() -> status: ExitStatus pure {
 "#,
         )],
         library: &[],
-        rule: "MOD-5",
+        rule: "OP-1",
         sentences: &[],
         repaired: &[&[]],
     },
     ModulePair {
-        name: "probe-unknown-module-alias",
+        name: "probe-unknown-module-qualifier",
         case: "mod1-pos-ordered-graph-and-entries",
         rejected: &[(
             "main.wf",
@@ -664,17 +666,16 @@ fn main() -> status: ExitStatus pure {
 alias data = pkg::data;
 alias exit_status = std::process::exit_status;
 alias report = pkg::report;
-alias nowhere = pkg::nowhere;
 
 fn main() -> status: ExitStatus pure {
-  let sign = data::sign_of(value: 5_i32);
+  let sign = nowhere::sign_of(value: 5_i32);
   let code = report::code_of(sign: sign);
   return exit_status(code: code);
 }
 "#,
         )],
         library: &[],
-        rule: "MOD-4",
+        rule: "MOD-5",
         sentences: &[],
         repaired: &[&[]],
     },

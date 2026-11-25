@@ -111,7 +111,9 @@ fn main() -> status: std::process::ExitStatus pure {
             "../../../../tests/conformance/cases/continue-neg-outside-loop.wf"
         ),
         rule: "TYPE-6",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: move `continue;` inside a loop or remove it\n",
+        ],
         repaired: &[br#"fn main() -> status: std::process::ExitStatus pure {
   doc "Exercises the continue transfer.";
   return std::process::exit_status(code: 0_u8);
@@ -2237,7 +2239,9 @@ fn main() -> status: ExitStatus pure {
 }
 "##,
         rule: "TYPE-6",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: move `break;` inside a loop or remove it\n",
+        ],
         repaired: &[br##"fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
@@ -2265,7 +2269,9 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "##,
         rule: "ERR-2",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: remove the repeated variant arm\n",
+        ],
         repaired: &[br##"enum Flag {
   A();
   B();
@@ -2321,7 +2327,9 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "##,
         rule: "CONST-2",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: copy the value into a local binding and pass a reference to that writable copy\n",
+        ],
         repaired: &[br##"const permanent: u64 = 1_u64;
 
 fn overwrite(target: &u64) -> result: unit writes(target) {
