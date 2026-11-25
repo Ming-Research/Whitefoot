@@ -1338,6 +1338,97 @@ chose on 2026-10-09 (above): it is path-filtered and rare, and a path-filtered
 workflow that listed `ready_for_review` would be waited for after a ready mark
 even when no path matched.
 
+### Windows I/O host stages and the compiler build stage (2026-11-25)
+
+**Question.** Can `run-check.pl` hold each step of `io-hosts.yml`'s
+`completion-windows` job, whose steps ran outside it with no budget, and what
+does each step take; and what does the `compiler/build` stage take on hosted
+Linux runners, a labeled stage with no row whose runs on CI are rare.
+
+**Earlier Windows runs.** Read from the Actions API on 2026-11-25: the
+`completion-windows` job of 79 `io-hosts.yml` runs, the newest 40 runs on
+`main` and the newest 40 manual runs (one is both), every one successful,
+2026-10-23 04:09Z to 2026-11-25 12:15Z, with step times at the API's
+one-second resolution. The job took 258 to
+493 s (median 380). Its Rust step, which builds the compiler with the corpus
+harness and runs the Windows cases, took 200 to 404 s (median 298); 3 of the 79
+took more than 360 s. In run 45611988088 its build took 268 s ("Finished ...
+in 4m 28s") and its cases 44.11 s. Every other step took at most 27 s (`Record
+the host`; median 8), the llvm-mingw download at most 15 s and the driver links
+at most 27 s.
+
+**Probe on windows-latest.** Temporary workflow run 45622841522, commit
+a49185fdc, job `windows-probe` (139235247506). The step
+times and the job's annotations were read through the GraphQL API; the job log
+was not, because this collection had spent the REST API's hourly limit. Every
+step that might fail was marked to continue, and the job carries four failure
+annotations, exit statuses 2, 17, 1 and 1. Two steps were written to fail: a
+step run under the wrapper through `shell: bash <helper> LABEL {0}`, whose
+helper runs the step's script file under the wrapper with `bash --noprofile
+--norc -eo pipefail` and whose script runs `false` (exit 1), and a step that
+runs `exit 17` the same way (exit 17). The shipped wrapper's own test script
+(`.github/test-run-check.sh`) under Git bash ended within a second, and the
+same script against a copy of the wrapper whose
+child runs the command itself (`exec { $ARGV[0] } @ARGV`) instead of through
+`/usr/bin/time -p` ran 21 s. A step whose custom shell started the shipped
+wrapper inline ran under a second. Inferred, to be confirmed from the log:
+the remaining 1 is the shipped test script and the 2 is the inline step, the
+status `die` leaves after `exec` fails with ENOENT, so Git for Windows has no
+`/usr/bin/time` while the rest of the wrapper (fork, its process group, the
+lock under `/tmp`, an absolute `/d/a/_temp/...` record) works under the perl
+Git bash reaches; the seven samples below, every step of which ran under the
+direct-exec copy and passed without being marked to continue, show the last
+part directly. Also to be read from that log: which perl the steps reach, the
+`/usr/bin` listing, Perl's `times` after a CPU-bound native and msys child, and
+whether the deadline stops a native child and its native child and whether a
+native process left running is seen.
+
+**Seven wrapped samples.** The same run's seven `windows-wrapped` jobs
+(139235248500, 139235248315, 139235248002, 139235248029, 139235248120,
+139235247910, 139235247922) ran a copy of `completion-windows` with every run
+step under that helper and the direct-exec wrapper, the Rust step split into
+its build (`--no-run`) and its cases, and the host step also printing the
+processor's name. All seven passed every step. Step times in seconds (API, one
+second resolution), and the budget the Windows rule gives (1.25 times the
+slowest, rounded up to 5 s, at least 10 s):
+
+| Stage | Seven samples | Max | Budget |
+|---|---|---:|---:|
+| `windows-llvm-mingw` | 17 16 9 11 9 11 11 | 17 | 25 |
+| `windows-clang-identity` | 0 0 1 1 1 2 1 | 2 | 10 |
+| `windows-host` | 14 31 10 14 12 12 14 | 31 | 40 |
+| `windows-test-images` | 8 11 7 10 7 10 11 | 11 | 15 |
+| `windows-image-imports` | 1 1 1 2 1 2 1 | 2 | 10 |
+| `windows-sched-deque` | 0 0 0 0 1 0 0 | 1 | 10 |
+| `windows-sched-cpu-policy` | 2 2 1 2 1 2 2 | 2 | 10 |
+| `windows-sched-startup` | 0 0 1 0 0 0 0 | 1 | 10 |
+| `windows-default-route` | 0 1 0 0 0 1 1 | 1 | 10 |
+| `windows-adapter-probe` | 1 0 0 1 1 0 0 | 1 | 10 |
+| `windows-bounded-send` | 2 3 3 3 3 3 3 | 3 | 10 |
+| `windows-ordinary-values` | 1 1 0 0 0 0 1 | 1 | 10 |
+| `windows-bridge-init` | 0 0 1 0 0 1 0 | 1 | 10 |
+| `windows-corpus-build` | 213 317 179 267 188 255 266 | 317 | 400 |
+| `windows-corpus` | 37 45 31 43 34 42 51 | 51 | 65 |
+| `windows-driver-links` | 16 22 13 19 13 19 25 | 25 | 35 |
+
+The wrapper's own `== END` lines in those logs give each time to the
+hundredth and replace these one-second values once read. Against the 79
+earlier runs, the build and case budgets together (465 s) lie above the
+slowest earlier Rust step (404 s).
+
+**Cold `compiler/build` on hosted Linux.** The same run's twenty `linux-build`
+jobs on `ubuntu-24.04` (four processors), each a fresh checkout, `cargo fetch
+--locked`, then `make -C compiler build`: the build step took 81 to 115 s
+(seconds per job: 99 81 93 95 95 90 95 94 93 91 93 115 89 94 114 114 108 92 114
+87, jobs 1 to 20). Each job's log names its processor; not read yet, for the
+reason above. Earlier CI runs of the stage, from the logs of the
+`io-bench.yml` jobs read the same day before the API limit stopped the
+collection (26 jobs that ran it, one build per compared revision): 20.95 to
+33.64 s on the self-hosted runner `whitefoot-14900k` or `14900k` (2026-10-04 to
+2026-10-24), 107.42 and 60.40 s on `14900k-2` (2026-11-25), and 109.68 s on
+one hosted runner (2026-10-24). The `compute-bench.yml` logs were not read. No
+workflow that runs the stage names a budget record.
+
 ## Daily loop
 
 One edit, measured in the local container with the new defaults: an unused
