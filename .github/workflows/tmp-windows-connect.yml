@@ -1,11 +1,12 @@
 # Temporary: the Windows connect test and the send test it shares a header
-# with, on this branch's pushes, without the rest of io-hosts. Removed before
-# the full check (AGENTS.md, "Checks").
+# with, on the pushes the wf-agents engine makes of this work's commits (the
+# `wf-try/work-209-26e0fade/` refs), without the rest of io-hosts. Removed
+# before the full check (AGENTS.md, "Checks").
 name: tmp-windows-connect
 
 on:
   push:
-    branches: [work-209-26e0fade]
+    branches: ['wf-try/work-209-26e0fade/**']
 
 permissions:
   contents: read
