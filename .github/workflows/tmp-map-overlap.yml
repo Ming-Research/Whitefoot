@@ -1,0 +1,48 @@
+# Temporary: the evidence of work W291 for the concurrent map's test.
+# Removed before the full check.
+name: tmp-map-overlap
+
+# The wf-agents engine pushes each commit it checks to a branch of its own
+# under wf-try/work-291-26e0fade/. Only a commit whose message names
+# map-overlap-evidence runs the evidence.
+on:
+  push:
+    branches:
+      - 'wf-try/work-291-26e0fade/**'
+
+env:
+  CC: clang
+  WHITEFOOT_CHECK_TIMEOUT: '10800'
+  N_PLAIN: '3'
+  N_LOAD: '2'
+  COPIES: '4'
+  N_CTL: '5'
+
+jobs:
+  evidence:
+    name: map overlap evidence (${{ matrix.os }})
+    if: ${{ contains(github.event.head_commit.message, 'map-overlap-evidence') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Calibrate
+        run: perl .github/run-check.pl map-overlap-calibrate bash .github/tmp-map-overlap.sh calibrate
+      - name: Swap-lock control
+        if: ${{ !cancelled() }}
+        run: perl .github/run-check.pl map-overlap-swap bash .github/tmp-map-overlap.sh swap-control
+      - name: Inert-thread control
+        if: ${{ !cancelled() }}
+        run: perl .github/run-check.pl map-overlap-inert bash .github/tmp-map-overlap.sh inert-control
+      - name: Before the change
+        if: ${{ !cancelled() }}
+        run: perl .github/run-check.pl map-overlap-before bash .github/tmp-map-overlap.sh before
+      - name: After the change
+        if: ${{ !cancelled() }}
+        run: perl .github/run-check.pl map-overlap-after bash .github/tmp-map-overlap.sh after

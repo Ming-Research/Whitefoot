@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+# Temporary: the evidence of work W291 for the concurrent map test. Removed before the full check.
+# usage: tmp-map-overlap.sh calibrate|before|after|swap-control|inert-control
+set -u
+ROOT=$(pwd)
+S=${RUNNER_TEMP:-/tmp}/map-overlap
+mkdir -p "$S"
+CC=${CC:-clang}
+BASE="-std=c11 -O2 -g -Wall -Wextra -Werror -Wpedantic -pthread -DWF_GUARD_TEST_HOOKS=1"
+ASAN="-fsanitize=address,undefined -fno-sanitize-recover=undefined"
+TSAN="-fsanitize=thread"
+SRC=src/backend/concurrent_map_test.c
+N_PLAIN=${N_PLAIN:-50}
+N_LOAD=${N_LOAD:-50}
+COPIES=${COPIES:-4}
+N_CTL=${N_CTL:-5}
+export ASAN_OPTIONS=detect_leaks=0
+export TSAN_OPTIONS=halt_on_error=1
+
+# build NAME DIR(of compiler/) FLAGS...
+build() {
+    local name=$1 dir=$2
+    shift 2
+    echo "== build $name"
+    (cd "$dir" && $CC $BASE "$@" $SRC -o "$S/$name") || { echo "BUILD FAILED: $name"; exit 1; }
+}
+
+# the first message line a failed run printed
+first_line() { grep -h -m1 -E 'concurrent-map-test:|Sanitizer' "$1" | cut -c1-150; }
+
+# one run: prints its seconds and exit status
+timed() { # name bin args...
+    local name=$1 bin=$2
+    shift 2
+    local t0=$SECONDS
+    "$bin" "$@" > "$S/$name.out" 2>&1
+    local status=$?
+    echo "$name: exit $status in $((SECONDS - t0)) s; $(first_line "$S/$name.out")"
+    return $status
+}
+
+# n consecutive runs, a tally of the failures
+consecutive() { # name bin n args...
+    local name=$1 bin=$2 n=$3 failed=0
+    shift 3
+    rm -f "$S/$name.tally"
+    for i in $(seq "$n"); do
+        if ! "$bin" "$@" > "$S/$name.$i.out" 2>&1; then
+            failed=$((failed + 1))
+            echo "FAIL run $i: $(first_line "$S/$name.$i.out")" >> "$S/$name.tally"
+        fi
+    done
+    echo "$name: $failed of $n runs failed"
+    [ -f "$S/$name.tally" ] && cut -d: -f2- "$S/$name.tally" | sort | uniq -c
+    return 0
+}
+
+# COPIES copies at once, n runs each
+loaded() { # name bin n
+    local name=$1 bin=$2 n=$3
+    rm -f "$S/$name".copy.*.tally
+    for c in $(seq "$COPIES"); do
+        (
+            for i in $(seq "$n"); do
+                if ! "$bin" > "$S/$name.$c.$i.out" 2>&1; then
+                    echo "FAIL: $(first_line "$S/$name.$c.$i.out")" >> "$S/$name.copy.$c.tally"
+                fi
+            done
+        ) &
+    done
+    wait
+    local failed=0
+    [ -n "$(ls "$S/$name".copy.*.tally 2>/dev/null)" ] && failed=$(cat "$S/$name".copy.*.tally | wc -l)
+    echo "$name: $failed of $((COPIES * n)) loaded runs failed"
+    [ "$failed" -gt 0 ] && cat "$S/$name".copy.*.tally | sort | uniq -c
+    return 0
+}
+
+# NAME of a build, expecting exit 1 on every one of n runs of args
+expect_fail() { # name bin n args...
+    local name=$1 bin=$2 n=$3 failed=0
+    shift 3
+    for i in $(seq "$n"); do
+        "$bin" "$@" > "$S/$name.$i.out" 2>&1
+        local status=$?
+        [ "$status" -ne 0 ] && failed=$((failed + 1))
+        echo "$name run $i: exit $status; $(first_line "$S/$name.$i.out")"
+    done
+    echo "RESULT $name: $failed of $n runs failed"
+}
+
+# sources of the merge before this work's changes, in their own tree
+old_tree() {
+    mkdir -p "$S/old"
+    git -C "$ROOT" archive 04ca5968ec9a977d7ee8050abf91601de5561c1e compiler/src/backend | tar -x -C "$S/old"
+}
+
+# a copy of this checkout's backend sources
+copy_tree() { # dir
+    rm -rf "$1"
+    mkdir -p "$1"
+    cp -R "$ROOT/compiler/src" "$1/src"
+}
+
+case ${1:-} in
+calibrate)
+    build fixed-plain "$ROOT/compiler"
+    for i in 1 2 3; do timed "fixed-plain-$i" "$S/fixed-plain" || true; done
+    build fixed-asan "$ROOT/compiler" $ASAN
+    timed fixed-asan "$S/fixed-asan" || true
+    build fixed-tsan "$ROOT/compiler" $TSAN
+    timed fixed-tsan "$S/fixed-tsan" || true
+    ;;
+before)
+    old_tree
+    build old-plain "$S/old/compiler"
+    timed old-plain-1 "$S/old-plain" || true
+    consecutive old-plain "$S/old-plain" "$N_PLAIN"
+    loaded old-loaded "$S/old-plain" "$N_LOAD"
+    ;;
+after)
+    build fixed-plain "$ROOT/compiler"
+    consecutive fixed-plain "$S/fixed-plain" "$N_PLAIN"
+    loaded fixed-loaded "$S/fixed-plain" "$N_LOAD"
+    ;;
+swap-control)
+    copy_tree "$S/swap"
+    # The swap without its locks: the two lock steps and the two unlock steps.
+    perl -0pi -e 's/(void wf_cmap_swap.*?#undef SWAP_FIELD)/my $f = $1; $f =~ s{    lock_map\(first\);\n    if \(b != a\)\n        lock_map\(first == a \? b : a\);\n}{    (void)first;\n}; $f =~ s{    unlock_map\(a\);\n    if \(b != a\)\n        unlock_map\(b\);\n}{}; $f/se' "$S/swap/src/backend/concurrent_map.c"
+    diff "$ROOT/compiler/src/backend/concurrent_map.c" "$S/swap/src/backend/concurrent_map.c"
+    [ "$(diff "$ROOT/compiler/src/backend/concurrent_map.c" "$S/swap/src/backend/concurrent_map.c" | grep -c '^[<>]')" -eq 7 ] || { echo "PATCH DID NOT APPLY AS EXPECTED"; exit 1; }
+    mkdir -p "$S/swap"
+    for v in plain asan tsan; do
+        case $v in plain) f="" ;; asan) f=$ASAN ;; tsan) f=$TSAN ;; esac
+        build "swap-$v" "$S/swap" $f
+        build "ok-$v" "$ROOT/compiler" $f
+    done
+    for v in plain asan tsan; do
+        expect_fail "swap-$v-inside" "$S/swap-$v" "$N_CTL" release-inside-swap
+        expect_fail "ok-$v-inside" "$S/ok-$v" "$N_CTL" release-inside-swap
+    done
+    for v in asan tsan; do
+        expect_fail "swap-$v-beside" "$S/swap-$v" "$N_CTL" release-beside-swaps
+        expect_fail "ok-$v-beside" "$S/ok-$v" "$N_CTL" release-beside-swaps
+    done
+    ;;
+inert-control)
+    copy_tree "$S/inert"
+    f="$S/inert/src/backend/concurrent_map_test.c"
+    perl -0pi -e 's/(uint64_t absent_length = counted_key\(999, absent\), last = 0;\n)/$1    if (getenv("INERT") != NULL \&\& strcmp(getenv("INERT"), "reader") == 0)\n        return NULL;\n/' "$f"
+    perl -0pi -e 's/(static void \*hold_entries\(void \*arg\) \{\n)/$1    if (getenv("INERT") != NULL \&\& strcmp(getenv("INERT"), "holder") == 0)\n        return NULL;\n/' "$f"
+    perl -0pi -e 's/(static void \*release_reserves\(void \*arg\) \{\n)/$1    if (getenv("INERT") != NULL \&\& strcmp(getenv("INERT"), "releaser") == 0)\n        return NULL;\n/' "$f"
+    [ "$(diff "$ROOT/compiler/src/backend/concurrent_map_test.c" "$f" | grep -c '^>')" -eq 6 ] || { echo "PATCH DID NOT APPLY AS EXPECTED"; diff "$ROOT/compiler/src/backend/concurrent_map_test.c" "$f"; exit 1; }
+    build inert "$S/inert"
+    build ok-plain "$ROOT/compiler"
+    for who in reader holder releaser; do
+        args=""
+        [ "$who" = releaser ] && args="release-beside-swaps"
+        echo "== $who inert"
+        INERT=$who timed "inert-$who" "$S/inert" $args || true
+        echo "RESULT inert-$who: $(cat "$S/inert-$who.out" | grep -c 'concurrent-map-test:') message lines"
+    done
+    echo "== none inert (the same build)"
+    timed inert-none "$S/inert" || true
+    ;;
+*)
+    echo "usage: $0 calibrate|before|after|swap-control|inert-control" >&2
+    exit 2
+    ;;
+esac
