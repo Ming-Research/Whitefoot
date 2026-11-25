@@ -241,10 +241,9 @@ entry main = pkg::main;
         rejected: &[],
         rule: "MOD-4",
         sentences: &[],
-        repaired: &[&[
-            (
-                "main.wf",
-                br#"alias ExitStatus = std::process::ExitStatus;
+        repaired: &[&[(
+            "main.wf",
+            br#"alias ExitStatus = std::process::ExitStatus;
 alias data = pkg::data;
 alias exit_status = std::process::exit_status;
 
@@ -252,8 +251,7 @@ fn main() -> status: ExitStatus pure {
   return exit_status(code: 0_u8);
 }
 "#,
-            ),
-        ]],
+        )]],
     },
     ModulePair {
         name: "mod4-neg-alias-case-mismatch",
@@ -261,10 +259,9 @@ fn main() -> status: ExitStatus pure {
         rejected: &[],
         rule: "MOD-4",
         sentences: &[],
-        repaired: &[&[
-            (
-                "main.wf",
-                br#"alias ExitStatus = std::process::ExitStatus;
+        repaired: &[&[(
+            "main.wf",
+            br#"alias ExitStatus = std::process::ExitStatus;
 alias Sign = pkg::data::Sign;
 alias exit_status = std::process::exit_status;
 
@@ -272,8 +269,7 @@ fn main() -> status: ExitStatus pure {
   return exit_status(code: 0_u8);
 }
 "#,
-            ),
-        ]],
+        )]],
     },
     ModulePair {
         name: "mod4-neg-alias-takes-bound-name",
@@ -281,10 +277,9 @@ fn main() -> status: ExitStatus pure {
         rejected: &[],
         rule: "MOD-4",
         sentences: &[],
-        repaired: &[&[
-            (
-                "main.wf",
-                br#"alias ExitStatus = std::process::ExitStatus;
+        repaired: &[&[(
+            "main.wf",
+            br#"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 alias Value = json::Value;
 
@@ -303,8 +298,7 @@ fn main() -> status: ExitStatus pure {
   return exit_status(code: 1_u8);
 }
 "#,
-            ),
-        ]],
+        )]],
     },
     ModulePair {
         name: "mod5-neg-missing-edge",
@@ -312,17 +306,15 @@ fn main() -> status: ExitStatus pure {
         rejected: &[],
         rule: "MOD-5",
         sentences: &[],
-        repaired: &[&[
-            (
-                "modules.wfg",
-                br#"pkg::data: [];
+        repaired: &[&[(
+            "modules.wfg",
+            br#"pkg::data: [];
 pkg::report: [pkg::data];
 pkg: [pkg::data, pkg::report, std::process];
 
 entry main = pkg::main;
 "#,
-            ),
-        ]],
+        )]],
     },
     ModulePair {
         name: "mod5-neg-private-declaration",
@@ -330,10 +322,9 @@ entry main = pkg::main;
         rejected: &[],
         rule: "MOD-5",
         sentences: &[],
-        repaired: &[&[
-            (
-                "data/module.wfm",
-                br#"public enum Sign {
+        repaired: &[&[(
+            "data/module.wfm",
+            br#"public enum Sign {
   Neg();
   Zero();
   Pos();
@@ -343,8 +334,7 @@ public fn sign_of(value: i32) -> result: Sign pure doc "Classifies a value by it
 
 public fn secret() -> result: u8 pure doc "Returns three.";
 "#,
-            ),
-        ]],
+        )]],
     },
     ModulePair {
         name: "mod6-neg-public-in-implementation",
@@ -352,10 +342,9 @@ public fn secret() -> result: u8 pure doc "Returns three.";
         rejected: &[],
         rule: "MOD-6",
         sentences: &[],
-        repaired: &[&[
-            (
-                "main.wf",
-                br#"alias ExitStatus = std::process::ExitStatus;
+        repaired: &[&[(
+            "main.wf",
+            br#"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn helper() -> result: u8 pure {
@@ -367,8 +356,7 @@ fn main() -> status: ExitStatus pure {
   return exit_status(code: code);
 }
 "#,
-            ),
-        ]],
+        )]],
     },
     ModulePair {
         name: "mod6-neg-private-type-in-public-signature",
@@ -376,17 +364,15 @@ fn main() -> status: ExitStatus pure {
         rejected: &[],
         rule: "MOD-6",
         sentences: &[],
-        repaired: &[&[
-            (
-                "data/module.wfm",
-                br#"public struct Secret {
+        repaired: &[&[(
+            "data/module.wfm",
+            br#"public struct Secret {
   value: i32;
 }
 
 public fn leak(value: Secret) -> result: i32 pure doc "Reads the secret's value.";
 "#,
-            ),
-        ]],
+        )]],
     },
     ModulePair {
         name: "mod7-neg-interface-body",
@@ -420,15 +406,13 @@ fn main() -> status: ExitStatus pure {
         rejected: &[],
         rule: "MOD-7",
         sentences: &[],
-        repaired: &[&[
-            (
-                "module.wfm",
-                br#"alias ExitStatus = std::process::ExitStatus;
+        repaired: &[&[(
+            "module.wfm",
+            br#"alias ExitStatus = std::process::ExitStatus;
 
 public fn main() -> status: ExitStatus pure doc "Runs the program.";
 "#,
-            ),
-        ]],
+        )]],
     },
     ModulePair {
         name: "mod7-neg-definition-differs",
@@ -436,10 +420,9 @@ public fn main() -> status: ExitStatus pure doc "Runs the program.";
         rejected: &[],
         rule: "MOD-7",
         sentences: &[],
-        repaired: &[&[
-            (
-                "data/sign.wf",
-                br#"fn sign_of(value: i32) -> result: Sign pure {
+        repaired: &[&[(
+            "data/sign.wf",
+            br#"fn sign_of(value: i32) -> result: Sign pure {
   doc "Compares the value against zero.";
   if value < 0_i32 {
     return Sign::Neg();
@@ -450,8 +433,7 @@ public fn main() -> status: ExitStatus pure doc "Runs the program.";
   return Sign::Pos();
 }
 "#,
-            ),
-        ]],
+        )]],
     },
     ModulePair {
         name: "mod8-neg-pending-declaration-blocks-composition",
@@ -459,18 +441,16 @@ public fn main() -> status: ExitStatus pure doc "Runs the program.";
         rejected: &[],
         rule: "MOD-8",
         sentences: &[],
-        repaired: &[&[
-            (
-                "main.wf",
-                br#"alias ExitStatus = std::process::ExitStatus;
+        repaired: &[&[(
+            "main.wf",
+            br#"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn main() -> status: ExitStatus pure {
   return exit_status(code: 0_u8);
 }
 "#,
-            ),
-        ]],
+        )]],
     },
     ModulePair {
         name: "mod9-neg-heap-declaration-in-module",
@@ -478,18 +458,16 @@ fn main() -> status: ExitStatus pure {
         rejected: &[],
         rule: "MOD-9",
         sentences: &[],
-        repaired: &[&[
-            (
-                "main.wf",
-                br#"alias ExitStatus = std::process::ExitStatus;
+        repaired: &[&[(
+            "main.wf",
+            br#"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn main() -> status: ExitStatus pure {
   return exit_status(code: 0_u8);
 }
 "#,
-            ),
-        ]],
+        )]],
     },
     ModulePair {
         name: "mod9-neg-private-entry",
@@ -497,14 +475,12 @@ fn main() -> status: ExitStatus pure {
         rejected: &[],
         rule: "MOD-9",
         sentences: &[],
-        repaired: &[&[
-            (
-                "module.wfm",
-                br#"alias ExitStatus = std::process::ExitStatus;
+        repaired: &[&[(
+            "module.wfm",
+            br#"alias ExitStatus = std::process::ExitStatus;
 
 public fn main() -> status: ExitStatus pure doc "Runs the program.";
 "#,
-            ),
-        ]],
+        )]],
     },
 ];

@@ -114,22 +114,20 @@ fn copy_directory(from: &Path, to: &Path) {
 /// it declares when it is accepted.
 enum Reached {
     Rejected(CompilationFailure),
-    Accepted {
-        declared: Vec<String>,
-    },
+    Accepted { declared: Vec<String> },
 }
 
 /// Forms the graph, checks every module and every entry of the program in
 /// `root`, and returns the first rejection or the declared functions.
 fn reach(case: &str, root: &Path) -> Reached {
-    let graph = match form_module_program_graph(&root.join("modules.wfg"), CompilerLimits::default())
-    {
-        Ok(graph) => graph,
-        Err(ModuleProgramFailure::Compilation(failure)) => return Reached::Rejected(failure),
-        Err(ModuleProgramFailure::Discovery(failure)) => panic!("{case}: {failure}"),
-    };
-    let sources = discover_module_sources(root, &graph)
-        .unwrap_or_else(|failure| panic!("{case}: {failure}"));
+    let graph =
+        match form_module_program_graph(&root.join("modules.wfg"), CompilerLimits::default()) {
+            Ok(graph) => graph,
+            Err(ModuleProgramFailure::Compilation(failure)) => return Reached::Rejected(failure),
+            Err(ModuleProgramFailure::Discovery(failure)) => panic!("{case}: {failure}"),
+        };
+    let sources =
+        discover_module_sources(root, &graph).unwrap_or_else(|failure| panic!("{case}: {failure}"));
     let inputs: Vec<_> = sources
         .iter()
         .map(|source| {
@@ -164,8 +162,8 @@ fn reach(case: &str, root: &Path) -> Reached {
 fn contradictions(case: &str, root: &Path, declared: &[String]) -> Vec<String> {
     let graph = form_module_program_graph(&root.join("modules.wfg"), CompilerLimits::default())
         .unwrap_or_else(|_| panic!("{case}: the accepted program forms its graph"));
-    let sources = discover_module_sources(root, &graph)
-        .unwrap_or_else(|failure| panic!("{case}: {failure}"));
+    let sources =
+        discover_module_sources(root, &graph).unwrap_or_else(|failure| panic!("{case}: {failure}"));
     let inputs: Vec<_> = sources
         .iter()
         .map(|source| {

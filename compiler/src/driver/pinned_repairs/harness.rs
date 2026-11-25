@@ -37,7 +37,8 @@ pub(super) fn contradictory_successes(name: &str, source: &[u8]) -> Result<Vec<S
 
 /// Every pinned pair, in table order.
 fn all_pairs() -> impl Iterator<Item = &'static RepairPair> {
-    super::REPAIRS.iter()
+    super::REPAIRS
+        .iter()
         .chain(super::call_separations::CALL_SEPARATIONS)
         .chain(super::captured_indices::CAPTURED_INDICES)
         .chain(super::cell_consumption::CELL_CONSUMPTION)
@@ -103,10 +104,15 @@ pub(super) fn check_rejection(
     }
     // Every repair line a rendering prints is one the pair carries out: a
     // pair that pins other fields only would leave the repair unchecked.
-    for line in rendered.lines().filter(|line| line.starts_with("  mechanical_fix:")) {
+    for line in rendered
+        .lines()
+        .filter(|line| line.starts_with("  mechanical_fix:"))
+    {
         let whole = format!("\n{line}\n");
         if !sentences.iter().any(|sentence| sentence.contains(&whole)) {
-            return Err(format!("{name}: this repair line is not pinned whole: {line}"));
+            return Err(format!(
+                "{name}: this repair line is not pinned whole: {line}"
+            ));
         }
     }
     let defects: Vec<String> = failure
@@ -202,14 +208,12 @@ pub(super) fn run() -> &'static Run {
             reached: BTreeSet::new(),
             failures: Vec::new(),
         };
-        let results = all_pairs()
-            .map(check_pair)
-            .chain(
-                super::module_pairs::MODULE_PAIRS
-                    .iter()
-                    .chain(super::module_kind_pairs::MODULE_KIND_PAIRS)
-                    .map(super::module_pairs::check_module_pair),
-            );
+        let results = all_pairs().map(check_pair).chain(
+            super::module_pairs::MODULE_PAIRS
+                .iter()
+                .chain(super::module_kind_pairs::MODULE_KIND_PAIRS)
+                .map(super::module_pairs::check_module_pair),
+        );
         for result in results {
             match result {
                 Ok(kind) => {
@@ -329,7 +333,10 @@ fn the_kind_coverage_names_what_is_missing_and_what_is_unlisted() {
         missing_kinds(&["Listed", "InventedKind"], &reached),
         ["InventedKind"]
     );
-    assert_eq!(unlisted_kinds(&["Listed", "InventedKind"], &reached), ["Stray"]);
+    assert_eq!(
+        unlisted_kinds(&["Listed", "InventedKind"], &reached),
+        ["Stray"]
+    );
     assert!(missing_kinds(&["Listed"], &reached).is_empty());
 }
 
