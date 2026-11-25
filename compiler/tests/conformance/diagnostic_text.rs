@@ -4,9 +4,46 @@
 
 use std::collections::BTreeMap;
 
-use whitefoot::{CompilerLimits, DiagnosticFormat, SourceInput, check, rejection_kinds};
+use whitefoot::{
+    CompilationFailure, CompilerLimits, DiagnosticFormat, ModuleEntry, ModuleProgramFailure,
+    SourceInput, check, check_module_entry, check_module_program, discover_module_sources,
+    form_module_program_graph, rejection_kinds,
+};
 
 use super::corpus::{self, Expectation};
+
+/// The rejection a module-form case reaches through the ordinary module path.
+fn module_failure(case: &corpus::Case, root: &std::path::Path) -> Option<CompilationFailure> {
+    let graph = match form_module_program_graph(&root.join("modules.wfg"), CompilerLimits::default())
+    {
+        Ok(graph) => graph,
+        Err(ModuleProgramFailure::Compilation(failure)) => return Some(failure),
+        Err(ModuleProgramFailure::Discovery(failure)) => panic!("{}: {failure}", case.id),
+    };
+    let sources = discover_module_sources(root, &graph)
+        .unwrap_or_else(|failure| panic!("{}: {failure}", case.id));
+    let inputs: Vec<_> = sources
+        .iter()
+        .map(|source| {
+            SourceInput::new(&source.logical_path, &source.bytes)
+                .in_module(source.module, source.role)
+        })
+        .collect();
+    if let Err(failure) = check_module_program(&graph, &inputs, CompilerLimits::default()) {
+        return Some(failure);
+    }
+    for entry in graph.entries() {
+        if let Err(failure) = check_module_entry(
+            &graph,
+            &inputs,
+            ModuleEntry::Named(entry.name()),
+            CompilerLimits::default(),
+        ) {
+            return Some(failure);
+        }
+    }
+    None
+}
 
 #[test]
 fn probe_rejection_text_and_kinds() {
@@ -22,15 +59,19 @@ fn probe_rejection_text_and_kinds() {
         ) {
             continue;
         }
-        if case.module_root().is_some() {
+        let (failure, size) = if let Some(root) = case.module_root() {
             module_form += 1;
-            continue;
-        }
-        let source = case.source();
-        let path = case.logical_path();
-        let Err(failure) = check(&[SourceInput::new(&path, &source)], CompilerLimits::default())
-        else {
-            continue;
+            match module_failure(&case, &root) {
+                Some(failure) => (failure, usize::MAX / 2),
+                None => continue,
+            }
+        } else {
+            let source = case.source();
+            let path = case.logical_path();
+            match check(&[SourceInput::new(&path, &source)], CompilerLimits::default()) {
+                Err(failure) => (failure, source.len()),
+                Ok(()) => continue,
+            }
         };
         for diagnostic in failure.diagnostics() {
             for defect in diagnostic.text_defects() {
@@ -48,12 +89,12 @@ fn probe_rejection_text_and_kinds() {
                 .collect();
             let better = smallest
                 .get(kind)
-                .is_none_or(|(size, ..)| source.len() < *size);
+                .is_none_or(|(size_so_far, ..)| size < *size_so_far);
             if better {
                 smallest.insert(
                     kind.to_owned(),
                     (
-                        source.len(),
+                        size,
                         case.id.clone(),
                         diagnostic.rule_id().unwrap_or("-").to_owned(),
                         fixes,
@@ -72,7 +113,7 @@ fn probe_rejection_text_and_kinds() {
         .filter(|kind| !listed.contains(&kind.as_str()))
         .collect();
     let mut report = format!(
-        "module-form reject cases skipped: {module_form}\nlisted kinds: {}; reached by single-source cases: {}\nlisted and unreached: {unreached:?}\nreached and unlisted: {unlisted:?}\n",
+        "module-form reject cases read: {module_form}\nlisted kinds: {}; reached by the cases: {}\nlisted and unreached: {unreached:?}\nreached and unlisted: {unlisted:?}\n",
         listed.len(),
         counts.len()
     );
