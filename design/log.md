@@ -9,7 +9,7 @@ retired, and carry an `Owner-approved:` line, a field since retired.
 
 Nodes: compiler/waiting-contexts/bounded-waits
 
-Summary: The cancellation-route decision named the Windows helper's accepts and transfers as bounded readiness polls, while its connect was still one blocking Winsock call whose only interruption, `CancelSynchronousIo`, is not documented to end it. The decision now includes the connect: a Windows helper makes it in nonblocking mode and waits for it in the same bounded slices as an accept, with one last look before a bound ends it so an outcome the host already produced stays the call's outcome. Keeping the blocking connect because `CancelSynchronousIo` might end it is refused, since the interface documents no such effect and the rule for every other blocking Winsock call already rests on that.
+Summary: The cancellation-route decision named the Windows helper's accepts and transfers as bounded readiness polls, while its connect was still one blocking Winsock call whose only interruption, `CancelSynchronousIo`, is not documented to end it. The decision now includes the connect: a Windows helper makes it in nonblocking mode and waits for it in the same bounded slices as an accept, with one last look before a bound ends it so an outcome the host already produced stays the call's outcome. Keeping the blocking connect because `CancelSynchronousIo` might end it is refused: the interface documents no such effect, and a Windows run of the new test showed a cancelled helper connect returning only at the host's own connect timeout, about 21 s later.
 
 ## 2026-10-23 A returned computed integer expression proves a postcondition as a `let` of it would
 
