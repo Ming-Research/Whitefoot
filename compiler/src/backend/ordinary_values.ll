@@ -1159,6 +1159,29 @@ entry:
   ret void
 }
 
+declare void @wf__body_exit_share(ptr, ptr)
+
+define void @wf_std.process.exit_share(ptr %result, ptr %exit) align 64 {
+entry:
+  call void @wf__body_exit_share(ptr %result, ptr %exit)
+  ret void
+}
+
+declare i32 @wf__body_exit_now_start(ptr, ptr, ptr, ptr)
+declare void @wf__body_exit_now_finish(ptr, ptr, ptr, ptr)
+
+define i32 @wf_std.process.exit_now.start(ptr %result, ptr %exit, ptr %status, ptr %operation) align 64 {
+entry:
+  %state = call i32 @wf__body_exit_now_start(ptr %result, ptr %exit, ptr %status, ptr %operation)
+  ret i32 %state
+}
+
+define void @wf_std.process.exit_now.finish(ptr %result, ptr %exit, ptr %status, ptr %operation) align 64 {
+entry:
+  call void @wf__body_exit_now_finish(ptr %result, ptr %exit, ptr %status, ptr %operation)
+  ret void
+}
+
 declare i64 @wf__body_heap_in_use(ptr)
 
 define i64 @wf_std.process.heap_in_use(ptr %meter) align 64 {

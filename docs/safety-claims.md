@@ -100,7 +100,7 @@ An accepted program contains no abort, exception, unwinding edge, runtime check 
 | Rule | Contribution | Rejecting cases | Accepting cases | Other evidence |
 |---|---|---|---|---|
 | `SCOPE-2` | A program is accepted only if every proof-required partial operation is statically discharged; failure rejects compilation and no statement can request a runtime fallback. | | `scope2-pos-accepted` | |
-| `EFF-4` | Accepted source has no writer-reachable abort effect, exception, unwinding edge or hidden runtime proof fallback. | | | `compiler-source-proof-erasure` |
+| `EFF-4` | Accepted source has no writer-reachable abort effect, exception, unwinding edge or hidden runtime proof fallback: the only endings of an execution its source causes are the entry's return and a call of `exit_now`, neither taken because a proof or a check failed. | | `wait2-run-exit-from-nested-call` | `compiler-source-proof-erasure` |
 | `ERR-4` | Expected environment and input failures are `Result` values; an unproved function, operation-domain or bounds obligation attached to source execution is a source rejection. | | `err4-pos-recoverable-value`, `err4-checked-domain-violation` | |
 | `OWN-8` | The checker rejects any program it cannot prove conformant. | | | `policy` |
 | `ENT-1` | The derivation system that discharges obligations is closed, deterministic and terminating, so acceptance depends on no timeout, machine speed or search budget. | | `ent1-pos-instantiation-judged-at-value` | |

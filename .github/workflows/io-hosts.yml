@@ -446,7 +446,7 @@ jobs:
           RUST_MIN_STACK: 8388608
         run: |
           cargo test --manifest-path compiler/Cargo.toml --profile gate --locked \
-            --test corpus -- programs::windows:: programs::network:: programs::file_replacement:: programs::stop_signals:: programs::driver_count:: programs::host_paths:: programs::wfgrep_hosts:: conformance::file_replacement:: native_windows::
+            --test corpus -- programs::windows:: programs::network:: programs::file_replacement:: programs::stop_signals:: programs::process_exit:: programs::driver_count:: programs::host_paths:: programs::wfgrep_hosts:: conformance::file_replacement:: native_windows::
 
       # The driver itself on this target: the module names the MinGW triple,
       # and an ordinary link, a cached ThinLTO link of function fragments (the

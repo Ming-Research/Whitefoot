@@ -150,7 +150,7 @@ fn run_desk(handles: &HandleFactory, root: &std::fs::DirectoryWrite) -> result: 
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "Three running contexts take turns with one WriteFile, which no shared object could hold before its state could be linear: the file sits in a one-slot window, each turn takes it out in an atomic statement, writes outside every statement across two host waits, and puts it back, and the handle that ends last receives it and closes it. The status is 0 when every turn wrote its record and the file was closed once; the harness reads the log for records that two writers interleaved.";
-  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: cwd_directory, stdout: unused_out, stderr: unused_err, handles: handles, stdin: unused_input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: cwd_directory, stdout: unused_out, stderr: unused_err, handles: handles, stdin: unused_input, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id, exit: unused_exit) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   let outcome = run_desk(handles: &handles, root: &cwd_write);
   close_directory_write(factory: &handles, directory: move cwd_write);

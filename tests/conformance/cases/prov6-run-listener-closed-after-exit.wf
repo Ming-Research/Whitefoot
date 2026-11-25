@@ -1,0 +1,22 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias exit_status = std::process::exit_status;
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(cwd: directory, handles: factory, stops: stops, exit: exit, ..) = move inputs;
+  let std::fs::Directory(read: read_directory, write: write_directory) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move write_directory);
+  std::fs::close_directory(factory: &factory, directory: move read_directory);
+  let opened = std::process::stop_listen(factory: &factory, stops: &stops);
+  match opened {
+    Ok(value: listener) => {
+      let failed = exit_status(code: 1_u8);
+      std::process::exit_now(exit: &exit, status: move failed);
+      let closed = std::process::close_stop_listener(factory: &factory, listener: move listener);
+      return exit_status(code: 0_u8);
+    }
+    Err(error: problem) => {
+      return exit_status(code: 2_u8);
+    }
+  }
+}

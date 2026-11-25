@@ -1,0 +1,32 @@
+# Temporary: runs the immediate-exit program test on macOS, which no workflow
+# the engine starts covers (gate.yml runs macOS only under `-f macos=true`).
+# Deleted before the full check, which fails while a tmp- workflow exists.
+name: tmp process exit on macOS
+
+on:
+  push:
+    branches: [work-176-26e0fade]
+
+jobs:
+  process-exit:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set the scratch root
+        run: echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
+      - name: Install the host toolchain
+        run: |
+          test -x /usr/bin/clang
+          /usr/bin/clang --version
+          rustup default stable
+          cargo --version
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+      - name: Run the process exit test
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "2400"
+        run: |
+          perl .github/run-check.pl process-exit-macos \
+            cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline \
+            --test corpus -- programs::process_exit:: --nocapture

@@ -1711,7 +1711,7 @@ Elimination of an unused licensed call additionally requires a termination proof
 The source spelling `pure` excludes state reads and state writes; it does not promise termination.
 A call that exhibits `writes(path)` may remain observable even when its result is unused. A call on fresh local state retains that instantiated effect even though it frames out of the enclosing signature. No optimization may erase, duplicate, speculate, or reorder either call unless ordinary effect-path overlap, closed-state, escape, ownership, control, result, release, and surviving-observer proofs establish the exact transformation.
 
-[EFF-4] Accepted source has no writer-reachable abort effect, exception, unwinding edge, or hidden runtime proof fallback.
+[EFF-4] Accepted source has no writer-reachable abort effect, exception, unwinding edge, or hidden runtime proof fallback: the only endings of an execution that its source causes are its entry's return [PROG-3] and a call of `exit_now` [WAIT-2], and neither is taken because a proof or a check failed.
 Every proof failure rejects the source before lowering.
 Unavailable resources and a trusted-computing-base failure remain outside the source effect system under [SCOPE-3]; none creates a writer-visible effect spelling or an alternate successful source judgment.
 
@@ -2416,6 +2416,7 @@ The snapshot creation result, child termination, collection outcomes and unconst
 Where a context executes, and whether two contexts execute at the same time, are not observable.
 While every context, from every point of its execution, reaches in finitely many steps its completion or a wait, each context that does not wait, or waits for a host outcome that has been produced or for a context that has completed, eventually takes its next step, and each atomic statement that has begun, and that has no guard or whose guard is true in its targets' states at every point from some point on, eventually takes effect. The waiting cancellation-state update [PRE-2] has the same progress guarantee as an unguarded atomic statement; a firing that makes a guard persistently true is covered by this guarantee for guarded statements.
 An execution in which every context that has not completed waits for an atomic statement whose guard is false or for another context, and no host operation is outstanding, takes no further step and does not complete; an implementation may stop it with a report, which is not a program outcome [SCOPE-3].
+A call of `exit_now` [PRE-2] ends the execution with the status it is given, which the build reports as it reports a status the entry returns [PROG-3]: no context takes a further step after it, so no join [WAIT-3], release [STOR-3] or other scope exit executes, every host operation whose call has completed keeps the effect it took, and an outstanding host operation has taken effect wholly, in part or not at all. When several contexts call it, the call that executes first ends the execution, and which call that is is an input of the execution.
 No overlapped statement or iteration contains a waiting call [PAR-1, PAR-2], so overlapped execution never waits for the host.
 
 [WAIT-3] Spawns.
@@ -3394,6 +3395,8 @@ public fn close_send(factory: &HandleFactory, send: TcpSend) -> result: Result<u
 
 `StopSignals` is a capability of the invocation. While no `StopListener` is open, the host default applies; on POSIX, the signal's default action ends the program. POSIX SIGINT and Windows CTRL_C_EVENT produce `Interrupt`; POSIX SIGTERM and Windows CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_LOGOFF_EVENT and CTRL_SHUTDOWN_EVENT produce `Terminate`. A stop request is an input of the execution [WAIT-2]. A termination the host imposes after its grace period ends the program then.
 
+`ProcessExit` is a capability of the invocation, which supplies it as the `exit` field of `Inputs`; `exit_share` returns a further capability for the same execution, so a spawned context can hold one [WAIT-3], and what a call of `exit_now` does is stated by [WAIT-2].
+
 `std::process`, the record `process/module.wfm`:
 
 ```
@@ -3426,6 +3429,9 @@ public enum StopKind {
 public opaque nocopy struct MemoryMeter {
 }
 
+public opaque nocopy struct ProcessExit {
+}
+
 public struct Inputs {
   public args: Args;
   public drivers: u64;
@@ -3440,9 +3446,14 @@ public struct Inputs {
   public memory_meter: MemoryMeter;
   public host_paths: Option<HostPaths>;
   public process_id: Option<u64>;
+  public exit: ProcessExit;
 }
 
-public fn exit_status(code: u8) -> result: ExitStatus pure doc "Returns the status that reports code when the entry returns it.";
+public fn exit_status(code: u8) -> result: ExitStatus pure doc "Returns the status that reports code when the entry returns it or exit_now ends the execution with it.";
+
+public fn exit_share(exit: &ProcessExit) -> result: ProcessExit reads(exit) doc "Returns an exit capability that ends the same execution as exit.";
+
+public fn exit_now(exit: &ProcessExit, status: ExitStatus) -> result: unit writes(exit) waits doc "Ends the execution with status as WAIT-2 states; the call does not complete.";
 
 public fn stop_listen(factory: &HandleFactory, stops: &StopSignals) -> result: Result<StopListener, IoError> reads(stops), writes(factory) doc "Spends one handle credit and starts intercepting stop requests; a second listener while one is open returns ResourceBusy.";
 

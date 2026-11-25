@@ -22,6 +22,12 @@ archive `spec/kernel-spec-<version>.md` marks a milestone: a copy of the active
 file added by a change that edits no rule. The earlier procedure archived the
 outgoing version with every amendment; git holds the rest of the history.
 
+## 2026-11-25 any context can end the execution at once with a status
+
+Rules: changed PRE-2, WAIT-2, EFF-4
+
+Summary: A program could end only by its entry's return, which WAIT-3 places after every context the entry's activations started has completed, so one context waiting on a guard that never holds, beside a host wait still outstanding, kept the program from ending however the others decided to stop; a server that has begun its orderly stop and must end at once on a second interrupt, as Redis 7.2.16 ends with status 1, could not. PRE-2's `std::process` gains the opaque nocopy capability `ProcessExit`, supplied by the invocation as the new last field `exit` of `Inputs`, the function `exit_share`, which returns a further capability for the same execution so that a spawned context can hold one, and the waiting function `exit_now(exit, status)`, and the doc of `exit_status` names the second use of a status. WAIT-2 states once what a call of `exit_now` does: the execution ends with the status, which the build reports as it reports a returned one; no context takes a further step, so no join, release or other scope exit executes; a host operation whose call completed keeps its effect, and an outstanding one has taken effect wholly, in part or not at all; and which of several calls executes first is an input of the execution. EFF-4 now states that the only endings of an execution its source causes are the entry's return and a call of `exit_now`, neither taken because a proof or a check failed, which leaves the host-imposed endings of PRE-2, the executions WAIT-2 says do not complete and SCOPE-3's terminations as they were. Selection ground: the owner's answer to the exit-form question, option 1, a capability received from the invocation like the clocks and the memory meter and a waiting call, so that PAR-1 never overlaps it with adjacent statements and it takes effect in its context's order with no new rule, instead of a non-waiting call, which PAR-1 could overlap with an earlier statement unless it gained a special case, or an exit taking `StopSignals`, which would give the authority to end the program to every holder of the stop capability.
+
 ## 2026-10-23 a returned computed integer expression proves a postcondition as a `let` of it would
 
 Rules: changed FN-9, ENT-2, ENT-3.S7, ENT-6

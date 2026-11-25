@@ -27,6 +27,9 @@ public enum StopKind {
 public opaque nocopy struct MemoryMeter {
 }
 
+public opaque nocopy struct ProcessExit {
+}
+
 public struct Inputs {
   public args: Args;
   public drivers: u64;
@@ -41,9 +44,14 @@ public struct Inputs {
   public memory_meter: MemoryMeter;
   public host_paths: Option<HostPaths>;
   public process_id: Option<u64>;
+  public exit: ProcessExit;
 }
 
-public fn exit_status(code: u8) -> result: ExitStatus pure doc "Returns the status that reports code when the entry returns it.";
+public fn exit_status(code: u8) -> result: ExitStatus pure doc "Returns the status that reports code when the entry returns it or exit_now ends the execution with it.";
+
+public fn exit_share(exit: &ProcessExit) -> result: ProcessExit reads(exit) doc "Returns an exit capability that ends the same execution as exit.";
+
+public fn exit_now(exit: &ProcessExit, status: ExitStatus) -> result: unit writes(exit) waits doc "Ends the execution with status as WAIT-2 states; the call does not complete.";
 
 public fn stop_listen(factory: &HandleFactory, stops: &StopSignals) -> result: Result<StopListener, IoError> reads(stops), writes(factory) doc "Spends one handle credit and starts intercepting stop requests; a second listener while one is open returns ResourceBusy.";
 

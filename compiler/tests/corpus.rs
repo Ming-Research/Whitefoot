@@ -51,6 +51,7 @@ mod programs {
     mod package_fixtures;
     #[cfg(unix)]
     mod parallel;
+    mod process_exit;
     #[cfg(unix)]
     mod raw_deflate;
     #[cfg(unix)]

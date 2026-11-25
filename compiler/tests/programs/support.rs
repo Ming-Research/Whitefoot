@@ -360,6 +360,19 @@ pub fn build_app(name: &str, entry: &str) -> CompiledProgram {
 /// cases use.
 #[cfg(target_os = "linux")]
 fn compile_app(root: &Path, name: &str, entry: &str) -> whitefoot::LlvmModule {
+    compile_module_program_at(root, name, entry)
+}
+
+/// Compiles the named entry of the module program whose graph lies in the
+/// program corpus directory `name` [MOD-1, MOD-2, MOD-9], on every host.
+pub fn compile_corpus_module_program(name: &str, entry: &str) -> whitefoot::LlvmModule {
+    compile_module_program_at(&corpus_directory().join(name), name, entry)
+}
+
+/// Compiles the named entry of the module program rooted at `root`
+/// in-process, reading its graph and every record the graph registers, with
+/// the overlap lowering the program cases use.
+fn compile_module_program_at(root: &Path, name: &str, entry: &str) -> whitefoot::LlvmModule {
     let graph =
         whitefoot::form_module_program_graph(&root.join("modules.wfg"), CompilerLimits::default())
             .unwrap_or_else(|failure| panic!("{name}'s graph must form: {failure:?}"));

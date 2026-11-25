@@ -133,14 +133,15 @@ typedef struct { uint8_t tag; wf_value value; } wf_optional_value;
 #define WF_PATH_ENCODING_NATIVE_BYTES 0u
 #define WF_PATH_ENCODING_UTF8 1u
 /* `Inputs`, its fields in declaration order; `cwd` is the two halves of a
- * `Directory`, `host_paths` is an `Option<HostPaths>` and `process_id` is an
- * `Option<u64>`. */
+ * `Directory`, `host_paths` is an `Option<HostPaths>`, `process_id` is an
+ * `Option<u64>` and `exit` is the `ProcessExit` capability. */
 typedef struct {
     wf_value args;
     uint64_t drivers;
     wf_value cwd_read, cwd_write, out, err, handles, in, clock, wall_clock, stops, memory_meter;
     wf_optional_value host_paths;
     wf_optional_bytes process_id;
+    wf_value exit;
 } wf_inputs;
 
 _Static_assert(sizeof(wf_value) == 32 && _Alignof(wf_value) == 16, "ordinary opaque layout");
@@ -173,7 +174,8 @@ _Static_assert(offsetof(wf_inputs, drivers) == 32 &&
                offsetof(wf_inputs, cwd_read) == 48 &&
                offsetof(wf_inputs, host_paths) == 368 &&
                offsetof(wf_inputs, process_id) == 416 &&
-               sizeof(wf_inputs) == 432, "ordinary Inputs layout");
+               offsetof(wf_inputs, exit) == 432 &&
+               sizeof(wf_inputs) == 464, "ordinary Inputs layout");
 _Static_assert(offsetof(wf_optional_value, value) == 16 && sizeof(wf_optional_value) == 48,
                "ordinary Option<HostPaths> layout");
 _Static_assert(offsetof(wf_optional_bytes, value) == 8 && sizeof(wf_optional_bytes) == 16,
@@ -310,6 +312,7 @@ void wf__body_truncate_file(wf_close_result *result, wf_value *factory, wf_value
 void wf__body_close_write(wf_close_result *result, wf_value *factory, const wf_value *file);
 void wf__body_close_directory_write(wf_close_result *result, wf_value *factory, const wf_value *directory);
 void wf__body_meter_share(wf_value *result, const wf_value *meter);
+void wf__body_exit_share(wf_value *result, const wf_value *capability);
 uint64_t wf__body_heap_in_use(wf_value *meter);
 uint64_t wf__body_release_map_reserve(void *const *map, wf_value *meter);
 void wf__body_resident_bytes(wf_optional_bytes *result, wf_value *meter);

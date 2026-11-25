@@ -1958,6 +1958,46 @@ void wf__body_meter_share(wf_value *result, const wf_value *meter) {
     memset(result, 0, sizeof(*result));
 }
 
+/* The exit capability carries no state: every one ends the same process. */
+void wf__body_exit_share(wf_value *result, const wf_value *capability) {
+    (void)capability;
+    memset(result, 0, sizeof(*result));
+}
+
+/* Ends the process with the status at once, from whichever thread runs the
+ * calling context [WAIT-2]. Neither `exit` nor `ExitProcess` would do: `exit`
+ * runs the runtime's atexit shutdown while other drivers may still submit,
+ * and `ExitProcess` runs DLL detach after the other threads are killed, where
+ * a lock one of them held can stop it. So the process skips every atexit
+ * handler, the completion runtime's shutdown and the `WF_REQUIRE_WINDOWS_IOCP`
+ * check among them; that check requires every submission to have completed,
+ * which an exit that leaves operations outstanding cannot meet. Stream writes
+ * reach the host before their calls complete, so none is lost here. When two
+ * contexts exit at once, the host keeps the status of the first. */
+int wf__body_exit_now_start(uint8_t *result, const wf_value *capability,
+                            const wf_value *status, wf_host_operation *operation) {
+    (void)result;
+    (void)capability;
+    (void)operation;
+    uint8_t code = wf__ordinary_exit_code(status);
+#if defined(_WIN32)
+    (void)TerminateProcess(GetCurrentProcess(), code);
+    for (;;) {
+        Sleep(INFINITE);
+    }
+#else
+    _exit(code);
+#endif
+}
+
+void wf__body_exit_now_finish(uint8_t *result, const wf_value *capability,
+                              const wf_value *status, wf_host_operation *operation) {
+    (void)result;
+    (void)capability;
+    (void)status;
+    (void)operation;
+}
+
 uint64_t wf__body_heap_in_use(wf_value *meter) {
     wf_transition(meter);
     return wf__heap_in_use();

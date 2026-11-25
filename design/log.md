@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-11-25 Any context can end the execution at once with a status
+
+Nodes: language/system-interface/process-exit
+
+Summary: A program could end only by its entry's return, after every context its activations started had completed, so a server whose orderly stop was held up by a context waiting on a guard could not end at once on a second request. The new node records the owner's choice: a `ProcessExit` capability in `Inputs`, duplicated by `exit_share`, and a waiting `exit_now` that ends the execution with its status, running no join, release or scope exit. A non-waiting exit is refused because PAR-1 could overlap it with an adjacent statement, and an exit taking `StopSignals` because a capability that observes something else takes no unrelated function and the stop capability would then carry the authority to end the program. The specification's change log records the PRE-2, WAIT-2 and EFF-4 amendment.
+
 ## 2026-10-23 A returned computed integer expression proves a postcondition as a `let` of it would
 
 Nodes: language/checks-and-proofs/automatic-facts
