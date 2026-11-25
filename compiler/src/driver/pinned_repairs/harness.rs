@@ -54,6 +54,7 @@ fn all_pairs() -> impl Iterator<Item = &'static RepairPair> {
         .chain(super::shared_maps::SHARED_MAPS)
         .chain(super::floats::FLOATS)
         .chain(super::interface_applications::INTERFACE_APPLICATIONS)
+        .chain(super::kind_coverage::KIND_COVERAGE)
         .chain(super::lost_header_relations::LOST_HEADER_RELATIONS)
         .chain(super::lexical_syntax::LEXICAL_SYNTAX)
         .chain(super::qualified_names::QUALIFIED_NAMES)
@@ -203,7 +204,12 @@ pub(super) fn run() -> &'static Run {
         };
         let results = all_pairs()
             .map(check_pair)
-            .chain(super::module_pairs::MODULE_PAIRS.iter().map(super::module_pairs::check_module_pair));
+            .chain(
+                super::module_pairs::MODULE_PAIRS
+                    .iter()
+                    .chain(super::graph_pairs::GRAPH_PAIRS)
+                    .map(super::module_pairs::check_module_pair),
+            );
         for result in results {
             match result {
                 Ok(kind) => {

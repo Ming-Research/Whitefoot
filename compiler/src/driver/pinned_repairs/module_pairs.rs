@@ -1,12 +1,13 @@
 //! Repair pairs whose rejection is reached through a module graph [MOD-1,
 //! MOD-5, MOD-8], which no single source can spell.
 //!
-//! A module pair names a conformance case directory, a rejected module
-//! program, and gives each alternative as the records of that directory it
-//! replaces, by path below the case root. The rejection and every
-//! alternative run through the same assertions as a single-source pair; the
-//! alternative's whole program is checked through each of its entries and
-//! must run no judgment in a contradictory state.
+//! A module pair names a conformance case directory and gives each
+//! alternative as the records of that directory it replaces, by path below
+//! the case root. The directory is the rejected program, or, where it is
+//! accepted, the pair names the records a probe replaces to reject it. The
+//! rejection and every alternative run through the same assertions as a
+//! single-source pair; the alternative's whole program is checked through
+//! each of its entries and must run no judgment in a contradictory state.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -25,8 +26,14 @@ pub(super) type Replacement = (&'static str, &'static [u8]);
 
 /// One repair pair [DIAG-1] on a module program.
 pub(super) struct ModulePair {
-    /// The conformance case directory holding the rejected module program.
+    /// Names the pair in a failure: the case directory, and what a probe
+    /// writes over it.
+    pub(super) name: &'static str,
+    /// The conformance case directory holding the module program.
     pub(super) case: &'static str,
+    /// The records of that directory a probe replaces to reject an accepted
+    /// program; empty where the directory is rejected as it stands.
+    pub(super) rejected: &'static [Replacement],
     /// The numbered rule the rejection must cite.
     pub(super) rule: &'static str,
     /// Exact substrings of the rendered rejection, as for a source pair.
@@ -36,7 +43,9 @@ pub(super) struct ModulePair {
 }
 
 pub(super) const MODULE_PAIRS: &[ModulePair] = &[ModulePair {
+    name: "type11-neg-writable-public-field",
     case: "type11-neg-writable-public-field",
+    rejected: &[],
     rule: "TYPE-11",
     sentences: &[
         "\n  mechanical_fix: write the field `public readonly`, so that code outside the declaring module reads it and only that module writes it, or make it private\n",
@@ -177,8 +186,8 @@ fn contradictions(case: &str, root: &Path, declared: &[String]) -> Vec<String> {
 /// Checks one module pair like a source pair and returns the kind its
 /// rejection prints, or why the pair fails.
 pub(super) fn check_module_pair(pair: &ModulePair) -> Result<String, String> {
-    let name = pair.case;
-    let root = scratch_copy(name, &[]);
+    let name = pair.name;
+    let root = scratch_copy(pair.case, pair.rejected);
     let rejected = reach(name, &root);
     let _ = std::fs::remove_dir_all(&root);
     let failure = match rejected {
@@ -192,7 +201,7 @@ pub(super) fn check_module_pair(pair: &ModulePair) -> Result<String, String> {
         return Err(format!("{name}: the pair has no accepted program"));
     }
     for (alternative, replacements) in pair.repaired.iter().enumerate() {
-        let root = scratch_copy(name, replacements);
+        let root = scratch_copy(pair.case, replacements);
         let outcome = match reach(name, &root) {
             Reached::Rejected(failure) => Err(format!(
                 "{name}: alternative {alternative} is rejected:\n{failure}"

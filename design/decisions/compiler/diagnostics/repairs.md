@@ -24,6 +24,10 @@ Every repair is pinned by its rejected source and a source for each alternative 
 - rejected: an agent proposed pinning only the repair sentence; the owner rejected it, because the EFF-2 add-and-remove repair stayed pinned while applying it produced a row every call rejects [EFF-5].
 - rejected: an agent proposed running each repaired program for an exit status; the owner rejected it, because the contradiction check catches the dead code a guard around a refuted goal compiles to without running the program.
 
+### decision every-rejection-kind-has-a-repair-pair
+The compiler lists each rejection kind it can print, and a gate test fails for a listed kind no pair reaches, an unlisted kind a pair reaches, or a printed repair line no pair pins.
+- replaced: A note in the pairs' header asking each new repair to add a pair was on main; the owner changed it, because nothing failed when a kind came with no pair or a pair pinned other fields and left the repair line unchecked.
+
 ### decision callee-failed-proof-named-by-replay
 A caller's failed proof names the callee, its withheld summary and its own failed obligation when a private replay of the caller after the rejection discharges the goal with that summary.
 - rejected: an agent proposed naming the callee only where no replay is needed, when its result is returned or bound by a `let`; the owner rejected it, because Firn's two real cases fail elsewhere, and a discarded replay that adds one hypothesis is not the re-run [DIAG-2] forbids.

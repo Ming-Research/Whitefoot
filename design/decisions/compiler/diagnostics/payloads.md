@@ -7,6 +7,17 @@ Every payload string that names a source construct spells it as the writer would
 - replaced: Printing the checker's identities, such as field and variant ordinals, or `Debug` values was on main; the owner changed it, because the agent reading the payload repairs the source it wrote and cannot map those back to it.
 - rejected: an agent proposed inventing an expression for a captured value without its source text, or using a binding's current spelling after the binding was overwritten; the owner rejected it, because either can name a different value.
 
+### decision unwritable-values-are-described-in-words
+A value with no source spelling is written as a description in words between two marks no source text contains, never as `?`, in payload fields and repair sentences alike.
+- replaced: Printing `?` for a captured value with no source spelling, such as an index read before its binding was rewritten, was on main; the owner changed it, because `?` reads as source text and tells the writer nothing about which value the field names.
+- rejected: an agent proposed leaving out the field or repair sentence that needs such a value; the owner rejected it, because [FN-8], [EFF-5] and [OP-4] require the goal, paths and residual in the payload.
+- rejected: an agent proposed revising the specification to prescribe the description's words or to allow leaving the field out; the owner rejected it, because the amendment needs conformance cases and the model, and the specification leaves wording to the toolchain [DIAG-1].
+- rejected: an agent proposed keeping `?` and listing the allowed places in the text check; the owner rejected it, because the check exists to leave no placeholder and a list of exceptions keeps the known ones.
+
+### decision rejection-text-is-checked-as-a-whole
+A gate check reads the text of every pinned and conformance rejection: no `?` stands for a value, and each backtick-marked stretch is source the lexer reads or a line the writer wrote.
+- replaced: Pinning the sentences of one rejection at a time, with no scan of all rejection text, was on main; the owner changed it, because a placeholder or a stretch that is not source passed unseen unless someone pinned that rejection.
+
 ### decision recursive-row-repairs-widen-by-suffix
 For a recursive component, EFF-2's `expected_row` widens a growing parameter-cycle edge by the whole argument path it supplies, and the checker validates the rows before a repair is printed.
 - rejected: an agent proposed merging growing paths at their longest common prefix; the owner rejected it, because the merged `writes(root.inner)` makes EFF-5 refuse a recursive call that passes `child.inner.other` as a separate read, while the full path keeps the separation.

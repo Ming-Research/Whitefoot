@@ -6,8 +6,12 @@
 //! and the repair it carries, one program for each alternative the pair
 //! carries out, which must be accepted with the repaired construct live.
 //! Adding or rewording a repair means adding or updating a pair here or in
-//! its family module. Constructor, ownership, placement and linear-exit
-//! repairs are pinned in `remaining_repairs`, including multi-module fields.
+//! its family module. Every rejection kind the compiler lists has at least
+//! one pair, and a kind added without one fails
+//! `every_rejection_kind_has_a_repair_pair`; `kind_coverage` holds the pairs
+//! of kinds that no repair family above reaches. Constructor, ownership,
+//! placement and linear-exit repairs are pinned in `remaining_repairs`,
+//! including multi-module fields.
 
 use super::{CompilationFailureKind, CompilerLimits, compile};
 use crate::SourceInput;
@@ -24,8 +28,10 @@ mod effect_row_categories;
 mod enum_routed_ensures;
 mod entry_formers;
 mod floats;
+mod graph_pairs;
 mod harness;
 mod interface_applications;
+mod kind_coverage;
 mod lexical_syntax;
 mod lost_header_relations;
 mod module_pairs;

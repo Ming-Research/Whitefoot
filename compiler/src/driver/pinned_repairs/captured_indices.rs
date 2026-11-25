@@ -1,5 +1,6 @@
 //! [FN-8, REF-1] a measure of an element whose captured index no longer
-//! has a source spelling. Keep these programs while their repairs are printed.
+//! has a source spelling, so the rejection describes it in words. Keep these
+//! programs while their repairs are printed.
 
 use super::RepairPair;
 
@@ -30,8 +31,8 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "FN-8",
         sentences: &[
-            "\n  instantiated_goal: 0_u64 < rows^[?].len\n",
-            "\n  mechanical_fix: `0_u64 < rows^[?].len` reads an element selected by the old value of `k`, which was rewritten after the reference was formed; before forming that reference, save the index in a fresh binding (for example `let k0 = k;`), form the reference through the saved binding, establish the requirement through that reference before the write, and keep the saved binding unchanged so those facts survive the write\n",
+            "\n  instantiated_goal: 0_u64 < rows^[‹the value of k before it was rewritten›].len\n",
+            "\n  mechanical_fix: 0_u64 < rows^[‹the value of k before it was rewritten›].len reads an element selected by the old value of `k`, which was rewritten after the reference was formed; before forming that reference, save the index in a fresh binding (for example `let k0 = k;`), form the reference through the saved binding, establish the requirement through that reference before the write, and keep the saved binding unchanged so those facts survive the write\n",
         ],
         repaired: &[br#"fn need(row: &Slots<u64, 8>) -> result: unit reads(row) contract {
   requires 0_u64 < row^.len;
