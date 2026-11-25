@@ -207,7 +207,7 @@ not yet from the compiler:
 | --- | ---: | --- |
 | scatter `Option<Chunk>` | 4,120 | yes |
 | `Result<HuffmanTable, InflateError>` | 2,456 | yes |
-| `Held` of `short_lived_windows.wf` | 608 | yes |
+| `Held` of `short_lived_windows.wf` | 608 | yes, where its window-less variant is built, which the program does not do today |
 | `Option<Lease>` | 272 | yes |
 | firn `Option<Entry>` | 80 | no |
 | firn `Value`, `Option<Rank>` | 64 | no |
@@ -220,10 +220,11 @@ An instance of the ordered map whose key and value pass 104 bytes together
 would put its `Option<OrderedEntry<..>>` over the limit; no maintained source
 has one. The falsifier for the "no" rows and for the libraries without a
 window: a probe emits the modules of firn, of the hash map, slab and ordered
-map programs and of the four "yes" programs at the commit before the compiler
-change and at the commit after it, and reports each module's length and a
-hash of its text. The first group must be the same text at both commits, the
-second must differ.
+map programs and of the three programs that build a large value's window-less
+variant (the scatter, the dynamic inflate and the block pool) at the commit
+before the compiler change and at the commit after it, and reports each
+module's length and a hash of its text. The first group must be the same text
+at both commits, the second must differ.
 
 ## Acceptance measurement of the selected lowering
 
