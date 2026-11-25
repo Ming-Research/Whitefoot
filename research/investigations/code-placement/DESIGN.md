@@ -750,6 +750,7 @@ bytes past one, which is where `FR`, `O16`, `O32` and `O48` start it.
 | `wf__par_split_summarize_records.0` | 0x340, 21, at 0 | 0, 0, 0, 1 |
 | `wf_record_summary` | 0xb0, 21, at 48; 0x124, 31, at 36 | 2, 1, 0, 0 |
 | `wf_validate_record` | 0xc0, 21, at 0; 0x135, 32, at 53 | 1, 0, 0, 2 |
+| `wf_box_array_filled$instance$e194368921a477a7` | 0x70, 21, at 48; 0x8c, 13, at 12 | 1, 0, 0, 1 |
 | `wf__floor_record_latch` | 0x60, 4, at 32; 0x80, 31, at 0; 0x8a, 36, at 10 | 0, 0, 1, 2 |
 
 This differs from the October table: the multi-byte loop is 64 bytes long,
