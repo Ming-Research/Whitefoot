@@ -115,6 +115,7 @@ repository-invariants:
 	@sh .github/test-run-check.sh
 	@$(PY) .github/recompute-time-budgets.py --self-test
 	@sh .github/test-gate-scope.sh
+	@sh .github/test-completion-scratch.sh
 	@sh .github/test-gate-both-platforms.sh
 	@sh .github/test-compiler-release-retention.sh
 	@$(PY) .github/junit.py --self-test
