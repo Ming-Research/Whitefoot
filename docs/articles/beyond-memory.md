@@ -347,7 +347,7 @@ designed yet.
 | An opaque struct cannot be taken apart | TYPE-2 |
 | Every join agrees on what is live | LIV-1 |
 | The standard library's handles and `Inputs` | PRE-2 |
-| Handles close through explicit calls, with no hidden finalizer | [`design/language/system-interface.md`](../../design/language/system-interface.md) |
+| Handles close through explicit calls, with no hidden finalizer | decision `host-resource-owners-close-explicitly` in [`design/decisions/library/system-interface.md`](../../design/decisions/library/system-interface.md) |
 | An emptied container is released by `free_empty` | OP-14 |
 | Resource exhaustion stops the program, outside its meaning | SCOPE-3 |
 
