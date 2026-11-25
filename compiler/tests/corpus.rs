@@ -12,6 +12,7 @@ mod conformance {
     #[cfg(unix)]
     mod adapter;
     pub(super) mod corpus;
+    mod diagnostic_text;
     mod file_replacement;
     mod json;
 }
