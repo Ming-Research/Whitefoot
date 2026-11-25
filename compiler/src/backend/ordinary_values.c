@@ -2243,14 +2243,13 @@ void wf__body_tcp_accept(wf_accept_result *result, wf_value *factory, wf_value *
         wf__body_tcp_accept_finish(result, factory, listener, deadline, cancel, &operation);
 }
 
-/* [PRE-2] the host's report of the connection's own endpoint. Both halves of
- * one connection carry its one descriptor, which stays open until the second
- * half-close, so a live receiving half always names an open socket. The query
- * spends no handle credit and changes neither half. */
-void wf__body_local_address(wf_open_result *result, const wf_value *receive) {
+/* [PRE-2] the host's report of the endpoint one open socket is bound to,
+ * shared by the two queries below. The query spends no handle credit and
+ * changes nothing about the socket. */
+static void wf__socket_endpoint(wf_open_result *result, int descriptor) {
     uint64_t low, high;
     uint32_t tag;
-    int error = wf__completion_socket_local_address(wf_descriptor(receive), &low, &high, &tag);
+    int error = wf__completion_socket_local_address(descriptor, &low, &high, &tag);
     memset(result, 0, sizeof(*result));
     if (error != 0) {
         result->tag = 1;
@@ -2260,6 +2259,20 @@ void wf__body_local_address(wf_open_result *result, const wf_value *receive) {
     result->ok.value.words[0] = low;
     result->ok.value.words[1] = high;
     result->ok.value.words[2] = tag;
+}
+
+/* The connection's own endpoint. Both halves of one connection carry its one
+ * descriptor, which stays open until the second half-close, so a live
+ * receiving half always names an open socket. */
+void wf__body_local_address(wf_open_result *result, const wf_value *receive) {
+    wf__socket_endpoint(result, wf_descriptor(receive));
+}
+
+/* The endpoint a listener is bound to: the port the host chose when the bound
+ * address named port 0. A live listener's descriptor stays open until
+ * `close_listener` consumes it. */
+void wf__body_listener_address(wf_open_result *result, const wf_value *listener) {
+    wf__socket_endpoint(result, wf_descriptor(listener));
 }
 
 void wf__body_cancel_source(wf_cancel_handle *result) {
