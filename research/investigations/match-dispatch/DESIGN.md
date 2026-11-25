@@ -1960,10 +1960,10 @@ floating-point values in XMM1 to XMM6, against `preserve_nonecc`'s eleven
 integer and eight floating-point registers on the parts' tail-call transfer.
 Under the current decision a loop that needs the eleventh integer register would
 put one unchanging value in an enclosing-frame slot that every part reads. It
-has not been measured here whether v2h or Halo loops would still split, what
-those loads cost, or whether the tail-jump copy goes away; that comparison has
-not been made, and the owner's choice of the attribute follows the
-recommendation of the plan.
+has not been measured whether v2h or Halo loops would still split, what those
+loads cost, or whether the tail-jump copy goes away, so the decision records the
+attribute and leaves this convention as a refused alternative to reopen with
+that measurement.
 
 **Measurement protocol.** The machine-code check compiles v2h with
 `research/experiments/match-dispatch/wasm/gen.py` under the compiler of the
