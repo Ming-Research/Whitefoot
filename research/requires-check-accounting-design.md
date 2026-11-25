@@ -119,7 +119,7 @@ isolation:
   `proof_report` is an interim build-subgate input and does not yet satisfy the
   canonical DIAG-2 boundary.
 
-The [Constitution](../docs/constitution.md) makes safety and cheat-proofness
+The [Constitution](../design/constitution.md) makes safety and cheat-proofness
 floors. Performance pressure can create proof, guarded execution, or explicit
 project approval; it cannot create an unchecked access.
 
