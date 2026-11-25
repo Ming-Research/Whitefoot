@@ -51,7 +51,7 @@ describe evidence, not a workflow step.
 
 - Before a material choice, also read the relevant constitutional aims; the
   constitution's
-  [compatibility clause](docs/constitution.md#compatibility-and-evolution)
+  [compatibility clause](docs/constitution.md#article-6-evolve-everything-here-may-change-as-the-grounds-change)
   decides when compatibility starts to count.
 - `research/README.md` holds the method for attributing a performance loss or
   proof cost and for agent writer trials.
