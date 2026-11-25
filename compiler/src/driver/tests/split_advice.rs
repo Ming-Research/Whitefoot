@@ -46,13 +46,6 @@ const DEPENDENT_THROUGH_A_LOCAL: &[u8] = b"fn main() -> status: std::process::Ex
 }
 ";
 
-fn hint_lines(ledger: &[String]) -> Vec<&String> {
-    ledger
-        .iter()
-        .filter(|line| line.starts_with("PAR hint"))
-        .collect()
-}
-
 fn denied_by_three_accumulators(ledger: &[String]) {
     assert!(
         ledger.iter().any(|line| line.starts_with("PAR loop")
@@ -80,5 +73,4 @@ fn an_increment_reading_another_accumulator_through_a_local_gets_no_eligible_spl
         !ledger.iter().any(|line| line.contains("would be eligible")),
         "{ledger:#?}"
     );
-    let _ = hint_lines(&ledger);
 }
