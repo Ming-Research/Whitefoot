@@ -85,8 +85,8 @@ if ($child == 0) {
         defined setpgid(0, 0) or die "create check process group: $!\n";
         $ENV{WHITEFOOT_CHECK_PGID} = $$;
     }
-    # No external `time`: Git for Windows, whose msys perl runs this wrapper
-    # on the Windows hosts, has no /usr/bin/time. The CPU times come from this
+    # No external `time`: Git for Windows, whose perl runs this wrapper on the
+    # Windows hosts, has no /usr/bin/time. The CPU times come from this
     # process's own `times` below.
     exec { $ARGV[0] } @ARGV;
     die "execute check: $!\n";

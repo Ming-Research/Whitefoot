@@ -1358,76 +1358,112 @@ the host`; median 8), the llvm-mingw download at most 15 s and the driver links
 at most 27 s.
 
 **Probe on windows-latest.** Temporary workflow run 45622841522, commit
-a49185fdc, job `windows-probe` (139235247506). The step
-times and the job's annotations were read through the GraphQL API; the job log
-was not, because this collection had spent the REST API's hourly limit. Every
-step that might fail was marked to continue, and the job carries four failure
-annotations, exit statuses 2, 17, 1 and 1. Two steps were written to fail: a
-step run under the wrapper through `shell: bash <helper> LABEL {0}`, whose
-helper runs the step's script file under the wrapper with `bash --noprofile
---norc -eo pipefail` and whose script runs `false` (exit 1), and a step that
-runs `exit 17` the same way (exit 17). The shipped wrapper's own test script
-(`.github/test-run-check.sh`) under Git bash ended within a second, and the
-same script against a copy of the wrapper whose
-child runs the command itself (`exec { $ARGV[0] } @ARGV`) instead of through
-`/usr/bin/time -p` ran 21 s. A step whose custom shell started the shipped
-wrapper inline ran under a second. Inferred, to be confirmed from the log:
-the remaining 1 is the shipped test script and the 2 is the inline step, the
-status `die` leaves after `exec` fails with ENOENT, so Git for Windows has no
-`/usr/bin/time` while the rest of the wrapper (fork, its process group, the
-lock under `/tmp`, an absolute `/d/a/_temp/...` record) works under the perl
-Git bash reaches; the seven samples below, every step of which ran under the
-direct-exec copy and passed without being marked to continue, show the last
-part directly. Also to be read from that log: which perl the steps reach, the
-`/usr/bin` listing, Perl's `times` after a CPU-bound native and msys child, and
-whether the deadline stops a native child and its native child and whether a
-native process left running is seen.
+a49185fdc, job `windows-probe` (139235247506), read from its log. Every step
+that might fail was marked to continue, and the job carries four failure
+annotations, exit statuses 2, 17, 1 and 1.
+
+- *The host.* `shell: bash` is `C:\Program Files\Git\bin\bash.EXE --noprofile
+  --norc -e -o pipefail {0}`. Its `perl` is `/usr/bin/perl` (Perl 5.42.3), with
+  Strawberry Perl third on the path, and `$^O` is `cygwin`. `/usr/bin` has
+  `env`, `kill`, `ps` and `timeout` and no `time`; the one `time.exe` on the
+  image is MSYS2's, at `/c/msys64/usr/bin`. `$RUNNER_TEMP` is `D:\a\_temp`,
+  `/d/a/_temp` in the form the wrapper reads, and the step's script `{0}` is
+  a Windows path, `D:\a\_temp\<guid>.sh`.
+- *The shipped wrapper.* Its `exec '/usr/bin/time', '-p', @ARGV` fails with
+  "Can't exec /usr/bin/time" and exit status 2: that is the step whose custom
+  shell started the wrapper inline (`shell: bash -c 'exec perl
+  .github/run-check.pl probe-inline bash --noprofile --norc -eo pipefail "$0"'
+  {0}`), which shows that the single quotes and `"$0"` reach the wrapper
+  intact, and the shipped test script `.github/test-run-check.sh`, which fails
+  at its first check (status 2 where it expects 17). The same test script
+  against a copy whose child runs the command itself (`exec { $ARGV[0] }
+  @ARGV`) passed to its last line, "check runner: status, nesting, exclusion,
+  limits, timeout, cancellation, orphan cleanup and time budgets pass", in 21 s.
+  So the wrapper's fork, process group, lock under `/tmp` and absolute
+  `/d/a/_temp/...` record work under this perl.
+- *The helper form.* A step run as `shell: bash <helper> LABEL {0}`, whose
+  helper `exec`s the wrapper around `bash --noprofile --norc -eo pipefail
+  "$2"`, ran the step's script with `errexit` and `pipefail` on, kept its exit
+  status (1 for `false`, 17 for `exit 17`) and printed the `== END` line.
+- *Native processes under the wrapper.* A deadline of 3 s over `cmd //c "ping
+  -n 40 ..."` (a native child and its native child) and over `ping` alone
+  stopped both: `== STOP ...: deadline exceeded ==`, exit 124 after 5.15 s,
+  and `tasklist` listed no `ping` or `cmd` 3 s later. A native exit status
+  passes through (`cmd //c "exit 5"` gave 5). A native process left running
+  after the command exits is not seen: `cmd //c "start /b ping -n 20 ..."`
+  ended with exit 0 after 0.11 s and `ping.exe` stayed in `tasklist`; an msys
+  process left running (`sh -c 'sleep 20 & echo started'`) is seen, `== ...
+  left child processes after command exit ==`, exit 1.
+- *CPU times.* After a CPU-bound native child (`powershell` summing three
+  million integers) Perl's `times` gave children's user and system time 0 and
+  0; after a CPU-bound msys child (`sh` counting to 100,000) it gave 0.687 and
+  0.061. The wrapper's `user` and `sys` lines therefore count msys processes
+  only on this host: a native child such as `cargo`, `clang` or a test image
+  shows 0.
 
 **Seven wrapped samples.** The same run's seven `windows-wrapped` jobs
 (139235248500, 139235248315, 139235248002, 139235248029, 139235248120,
-139235247910, 139235247922) ran a copy of `completion-windows` with every run
-step under that helper and the direct-exec wrapper, the Rust step split into
-its build (`--no-run`) and its cases, and the host step also printing the
-processor's name. All seven passed every step. Step times in seconds (API, one
-second resolution), and the budget the Windows rule gives (1.25 times the
-slowest, rounded up to 5 s, at least 10 s):
+139235247910, 139235247922, in this order below) ran a copy of
+`completion-windows` with every run step under that helper and the direct-exec
+wrapper, the Rust step split into its build (`--no-run`) and its cases. All
+seven passed every step. Each time is the wrapper's `== END` line in seconds,
+and the budget is the Windows rule (1.25 times the slowest, rounded up to 5 s,
+at least 10 s):
 
 | Stage | Seven samples | Max | Budget |
 |---|---|---:|---:|
-| `windows-llvm-mingw` | 17 16 9 11 9 11 11 | 17 | 25 |
-| `windows-clang-identity` | 0 0 1 1 1 2 1 | 2 | 10 |
-| `windows-host` | 14 31 10 14 12 12 14 | 31 | 40 |
-| `windows-test-images` | 8 11 7 10 7 10 11 | 11 | 15 |
-| `windows-image-imports` | 1 1 1 2 1 2 1 | 2 | 10 |
-| `windows-sched-deque` | 0 0 0 0 1 0 0 | 1 | 10 |
-| `windows-sched-cpu-policy` | 2 2 1 2 1 2 2 | 2 | 10 |
-| `windows-sched-startup` | 0 0 1 0 0 0 0 | 1 | 10 |
-| `windows-default-route` | 0 1 0 0 0 1 1 | 1 | 10 |
-| `windows-adapter-probe` | 1 0 0 1 1 0 0 | 1 | 10 |
-| `windows-bounded-send` | 2 3 3 3 3 3 3 | 3 | 10 |
-| `windows-ordinary-values` | 1 1 0 0 0 0 1 | 1 | 10 |
-| `windows-bridge-init` | 0 0 1 0 0 1 0 | 1 | 10 |
-| `windows-corpus-build` | 213 317 179 267 188 255 266 | 317 | 400 |
-| `windows-corpus` | 37 45 31 43 34 42 51 | 51 | 65 |
-| `windows-driver-links` | 16 22 13 19 13 19 25 | 25 | 35 |
+| `windows-llvm-mingw` | 10.42 10.31 7.93 10.42 8.25 16.27 12.37 | 16.27 | 25 |
+| `windows-clang-identity` | 0.43 0.86 0.74 0.97 0.85 0.34 0.55 | 0.97 | 10 |
+| `windows-host` | 14.09 12.66 10.63 13.18 12.01 13.23 30.11 | 30.11 | 40 |
+| `windows-test-images` | 10.64 9.82 6.53 10.31 6.92 8.22 10.81 | 10.81 | 15 |
+| `windows-image-imports` | 1.39 1.38 0.84 1.40 0.86 1.08 1.40 | 1.40 | 10 |
+| `windows-sched-deque` | 0.11 0.21 0.11 0.21 0.11 0.11 0.11 | 0.21 | 10 |
+| `windows-sched-cpu-policy` | 1.49 1.38 0.95 1.44 0.95 1.08 1.38 | 1.49 | 10 |
+| `windows-sched-startup` | 0.31 0.33 0.31 0.32 0.32 0.22 0.44 | 0.44 | 10 |
+| `windows-default-route` | 0.34 0.34 0.32 0.34 0.32 0.33 0.33 | 0.34 | 10 |
+| `windows-adapter-probe` | 0.11 0.11 0.11 0.11 0.11 0.11 0.11 | 0.11 | 10 |
+| `windows-bounded-send` | 2.85 2.81 2.80 2.78 2.79 2.82 2.85 | 2.85 | 10 |
+| `windows-ordinary-values` | 0.33 0.33 0.22 0.34 0.22 0.21 0.33 | 0.34 | 10 |
+| `windows-bridge-init` | 0.22 0.21 0.12 0.21 0.11 0.11 0.22 | 0.22 | 10 |
+| `windows-corpus-build` | 266.31 255.13 179.01 266.58 188.11 212.70 317.18 | 317.18 | 400 |
+| `windows-corpus` | 50.53 42.17 31.39 42.58 33.46 36.75 45.06 | 50.53 | 65 |
+| `windows-driver-links` | 24.67 18.54 12.83 19.36 13.07 15.89 21.08 | 24.67 | 35 |
 
-The wrapper's own `== END` lines in those logs give each time to the
-hundredth and replace these one-second values once read. Against the 79
-earlier runs, the build and case budgets together (465 s) lie above the
-slowest earlier Rust step (404 s).
+The processors the host step printed were AMD EPYC 7763 (jobs 1 and 7), Intel
+Xeon Platinum 8573C (jobs 2 and 4), AMD EPYC 9V45 (jobs 3 and 5) and 9V74
+(job 6); the slowest build, 317.18 s, ran on a 7763, and the Windows column
+is one column for all of them. Against the 79 earlier
+runs, the build and case budgets together (465 s) lie above the slowest earlier
+Rust step (404 s).
 
 **Cold `compiler/build` on hosted Linux.** The same run's twenty `linux-build`
 jobs on `ubuntu-24.04` (four processors), each a fresh checkout, `cargo fetch
---locked`, then `make -C compiler build`: the build step took 81 to 115 s
-(seconds per job: 99 81 93 95 95 90 95 94 93 91 93 115 89 94 114 114 108 92 114
-87, jobs 1 to 20). Each job's log names its processor; not read yet, for the
-reason above. Earlier CI runs of the stage, from the logs of the
-`io-bench.yml` jobs read the same day before the API limit stopped the
-collection (26 jobs that ran it, one build per compared revision): 20.95 to
-33.64 s on the self-hosted runner `whitefoot-14900k` or `14900k` (2026-10-04 to
-2026-10-24), 107.42 and 60.40 s on `14900k-2` (2026-11-25), and 109.68 s on
-one hosted runner (2026-10-24). The `compute-bench.yml` logs were not read. No
-workflow that runs the stage names a budget record.
+--locked`, then `make -C compiler build`. The wrapper's `== END compiler/build`
+time of each job, by the processor in its log, in seconds:
+
+| Processor (`model name`) | Class column | Runs | Times | Max | Plus 10%, rounded up to 5 s |
+|---|---|---:|---|---:|---:|
+| AMD EPYC 7763 64-Core Processor | `epyc-7763` | 4 | 113.68 114.29 107.98 114.10 | 114.29 | 130 |
+| AMD EPYC 9V45 96-Core Processor | `epyc-9v45` | 2 | 81.04 87.44 | 87.44 | 100 |
+| AMD EPYC 9V74 80-Core Processor | `epyc-9v74` | 0 | | | |
+| INTEL(R) XEON(R) PLATINUM 8573C | `xeon-8573c` | 0 | | | |
+| Intel(R) Xeon(R) 6975P-C | none | 13 | 90.74 94.56 94.95 94.05 92.03 93.95 98.06 92.75 89.42 92.15 88.62 91.73 92.63 | 98.06 | |
+| Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz | none | 1 | 115.47 | 115.47 | |
+
+No class has the 20 runs the rule asks for; the 20 jobs are all the hosted
+runs of the stage there are. The row's cells, by the rule of the
+budget-row decision for a row new to the table (each class with runs, its
+maximum plus 10%, rounded up to 5 s with the 10 s floor; a class with no run,
+the row's largest value; a model without a column, the stage's largest Linux
+class value and a note): 130 for `epyc-7763`, 130 for `epyc-9v74`, 100 for
+`epyc-9v45` and 130 for `xeon-8573c`. The two models without a column ran
+within it. Earlier CI runs of the stage, from the logs of the `io-bench.yml`
+jobs read the same day (26 jobs that ran it, one build per compared revision):
+20.95 to 33.64 s on the self-hosted runner `whitefoot-14900k` or `14900k`
+(2026-10-04 to 2026-10-24), 107.42 and 60.40 s on `14900k-2` (2026-11-25), and
+109.68 s on one hosted runner (2026-10-24). The `compute-bench.yml` logs were
+not read. No workflow that runs the stage names a budget record, so an overrun
+there is printed in the log and fails no job.
 
 ## Daily loop
 

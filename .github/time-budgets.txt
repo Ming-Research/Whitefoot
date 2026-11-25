@@ -120,10 +120,13 @@ windows-driver-links            -          -          -          -           -  
 # on-request benchmark workflows and `make -C compiler check` run and no job of
 # the gate does. Set on 2026-11-25 from 20 cold builds on hosted Linux
 # (research/investigations/test-economy/time-budgets.md, "Windows I/O host
-# stages and the compiler build stage"), fewer than 20 in each class: each class
-# is its maximum plus 10%, rounded up to 5 s, and a class with no run takes the
-# row's largest. A class takes the rule's value once it has 20 runs.
-compiler/build                  130        130        130        130         -      -
+# stages and the compiler build stage"), fewer than 20 in each class: epyc-7763
+# (4 runs, slowest 114.29 s) and epyc-9v45 (2 runs, slowest 87.44 s) are each
+# their maximum plus 10%, rounded up to 5 s, and the two classes with no run,
+# epyc-9v74 and xeon-8573c, take the row's largest. Thirteen more runs were on
+# Intel Xeon 6975P-C and one on Xeon Platinum 8370C, which have no column. A
+# class takes the rule's value once it has 20 runs.
+compiler/build                  130        130        100        130         -      -
 
 # proof.yml: the Lean model's sentence coverage (building and running its
 # checker), the build of its model, proofs and conformance harness, and its run

@@ -228,15 +228,16 @@ for platform in linux windows; do
     test "$status" -eq 1
 done
 
-# Git for Windows' perl names its host msys; it reads the windows column.
-WHITEFOOT_TIME_BUDGET_RECORD=$work/msys-record \
-    perl "$work/run-host.pl" msys "$runner" host-over true > "$work/msys.log" 2>&1
-grep -q "== OVER BUDGET: enforced: host-over took [0-9.]* s, over its 0 s windows budget ==" "$work/msys.log"
-grep -q '^  ENFORCED: host-over took [0-9.]* s, over its 0 s windows budget$' "$work/msys-record"
-WHITEFOOT_TIME_BUDGET_RECORD=$work/msys-within-record \
-    perl "$work/run-host.pl" msys "$runner" host-within true > "$work/msys-within.log" 2>&1
-grep -q '== BUDGET host-within: [0-9.]* s of 600 s (windows) ==' "$work/msys-within.log"
-test ! -s "$work/msys-within-record"
+# Git for Windows' perl, which runs the wrapper in the Windows I/O host job,
+# reports its host as cygwin; it reads the windows column.
+WHITEFOOT_TIME_BUDGET_RECORD=$work/cygwin-record \
+    perl "$work/run-host.pl" cygwin "$runner" host-over true > "$work/cygwin.log" 2>&1
+grep -q "== OVER BUDGET: enforced: host-over took [0-9.]* s, over its 0 s windows budget ==" "$work/cygwin.log"
+grep -q '^  ENFORCED: host-over took [0-9.]* s, over its 0 s windows budget$' "$work/cygwin-record"
+WHITEFOOT_TIME_BUDGET_RECORD=$work/cygwin-within-record \
+    perl "$work/run-host.pl" cygwin "$runner" host-within true > "$work/cygwin-within.log" 2>&1
+grep -q '== BUDGET host-within: [0-9.]* s of 600 s (windows) ==' "$work/cygwin-within.log"
+test ! -s "$work/cygwin-within-record"
 
 # WHITEFOOT_BUDGET_REPORT_ONLY reports only the labels it names, on Linux too;
 # an unnamed label stays enforced, and so does a named label with no budget.
