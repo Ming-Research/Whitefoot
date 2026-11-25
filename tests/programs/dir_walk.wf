@@ -15,6 +15,8 @@ alias open_directory_source = std::fs::open_directory_source;
 alias write_once = std::io::write_once;
 
 const empty_prefix: Array<u8, 1> =[0_u8];
+const entry_limit_message: Array<u8, 54> =[100_u8, 105_u8, 114_u8, 95_u8, 119_u8, 97_u8, 108_u8, 107_u8, 58_u8, 32_u8, 109_u8, 111_u8, 114_u8, 101_u8, 32_u8, 116_u8, 104_u8, 97_u8, 110_u8, 32_u8, 54_u8, 52_u8, 32_u8, 101_u8, 110_u8, 116_u8, 114_u8, 105_u8, 101_u8, 115_u8, 44_u8, 32_u8, 108_u8, 105_u8, 115_u8, 116_u8, 105_u8, 110_u8, 103_u8, 32_u8, 105_u8, 115_u8, 32_u8, 105_u8, 110_u8, 99_u8, 111_u8, 109_u8, 112_u8, 108_u8, 101_u8, 116_u8, 101_u8, 10_u8];
+const path_limit_message: Array<u8, 77> =[100_u8, 105_u8, 114_u8, 95_u8, 119_u8, 97_u8, 108_u8, 107_u8, 58_u8, 32_u8, 97_u8, 32_u8, 114_u8, 101_u8, 108_u8, 97_u8, 116_u8, 105_u8, 118_u8, 101_u8, 32_u8, 112_u8, 97_u8, 116_u8, 104_u8, 32_u8, 108_u8, 111_u8, 110_u8, 103_u8, 101_u8, 114_u8, 32_u8, 116_u8, 104_u8, 97_u8, 110_u8, 32_u8, 49_u8, 50_u8, 54_u8, 32_u8, 98_u8, 121_u8, 116_u8, 101_u8, 115_u8, 32_u8, 119_u8, 97_u8, 115_u8, 32_u8, 115_u8, 107_u8, 105_u8, 112_u8, 112_u8, 101_u8, 100_u8, 32_u8, 119_u8, 105_u8, 116_u8, 104_u8, 32_u8, 105_u8, 116_u8, 115_u8, 32_u8, 115_u8, 117_u8, 98_u8, 116_u8, 114_u8, 101_u8, 101_u8, 10_u8];
 
 fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(factory), writes(output) waits contract {
   define source_length = source^.len;
@@ -42,6 +44,28 @@ fn publish_all(factory: &HandleFactory, output: &OutputStream, source: &[u8], le
     }
   }
   return Ok<unit, IoError>(value: unit);
+}
+
+fn report_if_set(factory: &HandleFactory, output: &OutputStream, limits: &[u8], index: u64, message: &[u8]) -> result: u8 reads(limits), reads(message), writes(factory), writes(output) waits {
+  doc "Publishes one limit message when the walk raised the flag at the index, delivering 3 for a message published, 2 when the host refused it, and 0 when the flag is clear or the index lies outside the flags.";
+  let room = limits^.len;
+  let readable = index < room;
+  if readable {
+    let flag = limits^[index];
+    if flag == 1_u8 {
+      let length = message^.len;
+      let code = 3_u8;
+      match publish_all(factory: factory, output: output, source: message, length: length) {
+        Ok(value: published) => {
+        }
+        Err(error: problem) => {
+          set code = 2_u8;
+        }
+      }
+      return code;
+    }
+  }
+  return 0_u8;
 }
 
 fn stored_byte(records: &Slots<u8, 8192>, index: u64) -> result: u8 reads(records) {
@@ -155,13 +179,9 @@ fn open_directory_from_factory(factory: &HandleFactory, root: &DirectoryRead, na
   return open_directory(factory: factory, root: root, name: name, start: start, end: end);
 }
 
-fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_length: u64, records: &Slots<u8, 8192>, used: u64, depth: u64) -> count: u64 reads(dir), reads(prefix), writes(factory), writes(records) waits {
-  doc "Enumerates one directory, records every entry's relative path, and descends into every subdirectory it names. The record table stays in its caller and is reached through one reference parameter whose row declares the write; the two scratch runs are frame-resident arrays of this activation [STOR-1].";
+fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_length: u64, records: &Slots<u8, 8192>, used: u64, limits: &[u8]) -> count: u64 reads(dir), reads(prefix), writes(factory), writes(records), writes(limits) waits {
+  doc "Enumerates one directory, records the relative path of each entry the record table still holds, and descends into every subdirectory whose path it records. The table holds 64 records and a path holds 126 bytes: an entry past the 64th raises the flag at index 0 of the limits reference and is not recorded, and an entry whose path is longer raises the flag at index 1 and is neither recorded nor descended into. The record table and the flags stay in their caller and are reached through reference parameters whose rows declare the writes; the two scratch runs are frame-resident arrays of this activation [STOR-1].";
   let total = used;
-  let too_deep = depth >= 8_u64;
-  if too_deep {
-    return total;
-  }
   let entries = array_filled::<u8, 4096>(value: 0_u8);
   let child = array_filled::<u8, 256>(value: 0_u8);
   match open_source_from_factory(factory: factory, directory: dir) {
@@ -327,20 +347,33 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
                 }
               }
               set total = total +wrap 1_u64;
+            } else {
+              let limit_room = limits^.len;
+              let entry_flag_at = 0_u64;
+              let entry_flag_writable = entry_flag_at < limit_room;
+              if entry_flag_writable {
+                set limits^[entry_flag_at] = 1_u8;
+              }
             }
             let descending = kind == 2_u8;
             if descending {
               let name_view = &entries[0_u64..4096_u64];
               match open_directory_from_factory(factory: factory, root: dir, name: name_view, start: name_at, end: name_end) {
                 Ok(value: opened) => {
-                  let deeper = depth +wrap 1_u64;
                   let child_view = &child[0_u64..256_u64];
-                  set total = walk(factory: factory, dir: &opened, prefix: child_view, prefix_length: cursor, records: records, used: total, depth: deeper);
+                  set total = walk(factory: factory, dir: &opened, prefix: child_view, prefix_length: cursor, records: records, used: total, limits: limits);
                   close_directory(factory: factory, directory: move opened);
                 }
                 Err(error: problem) => {
                 }
               }
+            }
+          } else {
+            let limit_room = limits^.len;
+            let path_flag_at = 1_u64;
+            let path_flag_writable = path_flag_at < limit_room;
+            if path_flag_writable {
+              set limits^[path_flag_at] = 1_u8;
             }
           }
         }
@@ -353,14 +386,16 @@ fn walk(factory: &HandleFactory, dir: &DirectoryRead, prefix: &[u8], prefix_leng
   return total;
 }
 
-fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> status: ExitStatus reads(cwd), writes(out), writes(files) waits {
-  doc "Walks the invocation directory recursively and publishes every entry's kind and relative path in sorted order.";
+fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputStream, files: &HandleFactory) -> status: ExitStatus reads(cwd), writes(out), writes(err), writes(files) waits {
+  doc "Walks the invocation directory recursively and publishes the kind and relative path of every entry the walk recorded, in sorted order. The walk records at most 64 entries and no path longer than 126 bytes. When it dropped an entry for either limit, this function publishes that limit's message on standard error after the entries and exits 3, so a listing that lacks entries never succeeds; a refused write exits 2 and takes precedence.";
   let status = 0_u8;
+  let limits = array_filled::<u8, 2>(value: 0_u8);
   let records = slots_new::<u8, 8192>();
   let line = array_filled::<u8, 256>(value: 0_u8);
   let order = array_filled::<u64, 64>(value: 0_u64);
   let root_view = &empty_prefix[0_u64..1_u64];
-  let stored = walk(factory: files, dir: cwd, prefix: root_view, prefix_length: 0_u64, records: &records, used: 0_u64, depth: 0_u64);
+  let limit_view = &limits[0_u64..2_u64];
+  let stored = walk(factory: files, dir: cwd, prefix: root_view, prefix_length: 0_u64, records: &records, used: 0_u64, limits: limit_view);
   let seed = 0_u64;
   loop @seed_order {
     let order_room = order.len;
@@ -462,6 +497,20 @@ fn exercise(args: &Args, cwd: &DirectoryRead, out: &OutputStream, err: &OutputSt
       break @emit;
     }
     set emitted = emitted +wrap 1_u64;
+  }
+  if status == 0_u8 {
+    let report_view = &limits[0_u64..2_u64];
+    let entry_message = &entry_limit_message[0_u64..53_u64];
+    set status = report_if_set(factory: files, output: err, limits: report_view, index: 0_u64, message: entry_message);
+    if status == 2_u8 {
+    } else {
+      let path_message = &path_limit_message[0_u64..76_u64];
+      let path_status = report_if_set(factory: files, output: err, limits: report_view, index: 1_u64, message: path_message);
+      if path_status == 0_u8 {
+      } else {
+        set status = path_status;
+      }
+    }
   }
   return exit_status(code: status);
 }
