@@ -309,6 +309,28 @@ its timers must be what they were. Three arguments, `control-bound`,
 comparison and the blocking-mode probe fail on purpose, and the job requires
 each to fail through that check.
 
+Five more cases were added to those, each aimed at something the first seven
+cannot show. F: a bound that is never reached (a watch, a far deadline, both)
+still returns a blocking-mode connection at once, which the first cases only
+show for a connect with no bound. G: thirty firings, 0 to 29 ms after the
+submit, meet the helper before it has claimed the record, while it creates the
+socket, inside the connect and inside the wait, where A fires at one phase
+only. H: a deadline and a watch on one connect, the one reached first deciding
+the outcome, which no earlier case combines. I: deadlines of 1 to 99 ms, on
+both sides of the 50 ms slice, where B1 uses one deadline. J: a connect that
+can succeed raced by a deadline a few tens of microseconds away, the deadline
+twin of C. Their outcome after the change is read from the same temporary
+workflow on commit `d11a8051c`: it passed on the helper route and on the
+completion-port route in three runs
+([45614928392](https://github.com/Ming-Research/Whitefoot/actions/runs/45614928392),
+[45615539500](https://github.com/Ming-Research/Whitefoot/actions/runs/45615539500),
+[45615539854](https://github.com/Ming-Research/Whitefoot/actions/runs/45615539854)),
+and the connect step took 45 s there, against about 35 s for the first seven
+cases. The code before the change stops at case A, 21 s in, so G, H and I were
+never observed red on it one by one; each would wait for the host's connect
+timeout in the same way, which is a reading of the code and not an
+observation.
+
 Results, on windows-latest, of a temporary workflow that built and ran the
 test on the engine's pushes of the work's commits. Before the change
 ([run 45610437036](https://github.com/Ming-Research/Whitefoot/actions/runs/45610437036),
