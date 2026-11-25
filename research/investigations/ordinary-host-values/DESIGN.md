@@ -19,7 +19,7 @@ ordinary signature, ownership rules, effect row, and written contracts are the
 entire source boundary. Native definitions are supplied by the build and link.
 
 The unconditional principle in
-[the constitution](../../../docs/constitution.md#external-interaction-through-ordinary-objects)
+[the constitution](../../../docs/constitution.md#article-4-ordinary-objects-io-is-ordinary-program-state)
 states the selected boundary. C2 removes the earlier departure clause rather
 than making a host-specific distinction an available fallback.
 

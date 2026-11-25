@@ -3,7 +3,8 @@
 # base revision's, in three groups: the ordinary HashMap cells of
 # research/experiments/hash-map-compare, the Halo interpreter's fib and the
 # wasm interpreter's CoreMark timed in interleaved rounds against a twin of the
-# base, and perf stat counts of those two programs (14900K only). The README
+# base, and perf stat counts of those two programs with their wall time, CPU
+# time and page faults (14900K only). The README
 # beside research/experiments/compiler-compare gives the cells, the decision
 # rule and the controls; the stages are research/experiments/compiler-compare/
 # run.sh, which a temporary workflow on a work branch can run too.

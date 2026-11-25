@@ -31,7 +31,7 @@ Creating AOF entries *inside an existing selected directory* is intended.
 
 ## Current authority and evidence
 
-The [constitution](../../../docs/constitution.md#external-interaction-through-ordinary-objects)
+The [constitution](../../../docs/constitution.md#article-4-ordinary-objects-io-is-ordinary-program-state)
 requires ordinary objects, ownership, effects and callable contracts for
 external interaction. Its development objectives include kernels and small
 embedded systems. It does not require the process working directory to be a

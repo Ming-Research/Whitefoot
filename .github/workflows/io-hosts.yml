@@ -20,13 +20,34 @@
 # request's included, ends after the first job with both checks skipped; the
 # author starts this workflow by hand once, after the review has passed
 # (AGENTS.md, "Checks").
+#
+# The wf-agents engine runs this workflow as one of its full workflows
+# (`ci.full` of wf-agents.toml), by hand on main's file, giving the commit to
+# merge (`commit`) and a value only its request knows (`call`), which the
+# run's name holds. Such a run checks out that commit, has a concurrency group
+# of its own that no other run cancels, and ends with the job `Test results`,
+# which says how each other job ended as JUnit XML (.github/junit.py) in the
+# artifact `test-results`, which the engine reads. These jobs report no test
+# of their own: a failure on Windows or under a sanitizer is not one a run of
+# the named test on Linux would show again. Every other run skips that job.
 name: io-hosts
+
+run-name: ${{ inputs.call && format('io-hosts {0}', inputs.call) || '' }}
 
 on:
   push:
   pull_request:
     types: [opened, reopened, ready_for_review]
   workflow_dispatch:
+    inputs:
+      commit:
+        description: The commit to check, for the wf-agents engine; empty for the branch the run is asked on
+        required: false
+        default: ''
+      call:
+        description: A value only the engine's request knows, which the run's name holds; empty otherwise
+        required: false
+        default: ''
 
 permissions:
   actions: read
@@ -43,9 +64,11 @@ permissions:
 # Each main commit gets its own group, as in gate.yml: a shared main group
 # would cancel the run of every merge but the last of a quick succession, and
 # the cancelled commit would show red on the main line.
+# A run the engine asked for has a group of its own, named by its `call`, and
+# is never cancelled: the engine waits for it.
 concurrency:
-  group: io-hosts-${{ github.event.action == 'ready_for_review' && 'ready-' || github.event_name == 'pull_request' && 'opened-' || github.event_name == 'workflow_dispatch' && 'manual-' || '' }}${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
-  cancel-in-progress: true
+  group: io-hosts-${{ inputs.call && format('call-{0}-', inputs.call) || '' }}${{ github.event.action == 'ready_for_review' && 'ready-' || github.event_name == 'pull_request' && 'opened-' || github.event_name == 'workflow_dispatch' && 'manual-' || '' }}${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
+  cancel-in-progress: ${{ !inputs.call }}
 
 env:
   CARGO_TERM_COLOR: never
@@ -62,7 +85,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ inputs.commit || github.event.pull_request.head.sha || github.sha }}
           sparse-checkout: .github
       # A failed query fails the run rather than quietly skipping the checks.
       - name: Choose whether to check
@@ -88,7 +111,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ inputs.commit || github.event.pull_request.head.sha || github.sha }}
 
       # `completion-test` writes its harness under this root, and the step below
       # runs that harness by path. Naming the root here keeps the two agreed; it
@@ -190,7 +213,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ inputs.commit || github.event.pull_request.head.sha || github.sha }}
 
       - name: Install the pinned llvm-mingw
         timeout-minutes: 8
@@ -459,3 +482,26 @@ jobs:
           test -n "$(ls -A "$out/cache")"
           "$wfc" --full-lto -o "$out/full.exe" tests/programs/geometry_vectors.wf
           "$out/full.exe"; check_imports "$out/full.exe"
+
+  # Only in a run the engine asked for: how each other job ended, as JUnit XML
+  # in the artifact `test-results`, which the engine reads (.github/junit.py).
+  results:
+    name: Test results
+    needs: [scope, completion-linux, completion-windows]
+    if: ${{ !cancelled() && inputs.call }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+          sparse-checkout: .github
+          persist-credentials: false
+      - name: Name the results
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 -B .github/junit.py needs --out "$RUNNER_TEMP/junit/Test results.xml"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: ${{ runner.temp }}/junit

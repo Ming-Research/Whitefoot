@@ -43,7 +43,23 @@
 # the run while a `tmp-` workflow file exists in the checked head: a temporary
 # workflow never merges, and the last run before a merge, started by hand, is
 # the one that stops a forgotten one; main's own run stops one that got in.
+#
+# The wf-agents engine runs this workflow as one of its full workflows
+# (`ci.full` of wf-agents.toml), by hand on main's file, giving the commit to
+# merge (`commit`) and a value only its request knows (`call`), which the
+# run's name holds so that the engine finds the run it asked for. Such a run
+# checks out that commit in every job, compares the design tree with the
+# commit's fork point from main, has a concurrency group of its own that no
+# other run cancels, and judges `Gate on both platforms` by this run's own
+# group jobs, since the run belongs to main's head and not to the commit; its
+# group jobs are named `<group> (<os>) of <commit>`, so that main's own run
+# never reads them. Each group job then writes what became of each Rust test
+# it ran, and of its own steps, as JUnit XML (.github/junit.py), and `Gate on
+# both platforms` puts them together in the artifact `test-results`, which
+# the engine reads. Every other run leaves those steps out.
 name: gate
+
+run-name: ${{ inputs.call && format('gate {0}', inputs.call) || '' }}
 
 on:
   push:
@@ -55,6 +71,14 @@ on:
         description: Also run every group on macOS (a release needs such a run of its commit)
         type: boolean
         default: false
+      commit:
+        description: The commit to check, for the wf-agents engine; empty for the branch the run is asked on
+        required: false
+        default: ''
+      call:
+        description: A value only the engine's request knows, which the run's name holds; empty otherwise
+        required: false
+        default: ''
 
 permissions:
   actions: read
@@ -80,9 +104,11 @@ permissions:
 # Each main commit gets its own group: a release needs the gate of that exact
 # commit, and a group keeps only one pending run, so a shared main group would
 # cancel the run of every merge but the last of a quick succession.
+# A run the engine asked for has a group of its own, named by its `call`, and
+# is never cancelled: the engine waits for it.
 concurrency:
-  group: gate-${{ github.event.action == 'ready_for_review' && 'ready-' || github.event_name == 'pull_request' && 'opened-' || github.event_name == 'workflow_dispatch' && (inputs.macos && 'manual-macos-' || 'manual-') || '' }}${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
-  cancel-in-progress: true
+  group: gate-${{ inputs.call && format('call-{0}-', inputs.call) || '' }}${{ github.event.action == 'ready_for_review' && 'ready-' || github.event_name == 'pull_request' && 'opened-' || github.event_name == 'workflow_dispatch' && (inputs.macos && 'manual-macos-' || 'manual-') || '' }}${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
+  cancel-in-progress: ${{ !inputs.call }}
 
 env:
   CARGO_TERM_COLOR: never
@@ -101,7 +127,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ inputs.commit || github.event.pull_request.head.sha || github.sha }}
       - name: Read the canonical group inventory
         id: select
         run: |
@@ -158,7 +184,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ inputs.commit || github.event.pull_request.head.sha || github.sha }}
           sparse-checkout: .github/workflows
       - name: Fail while a temporary workflow exists
         run: |
@@ -172,7 +198,11 @@ jobs:
   gate:
     needs: [groups, no-tmp-workflow]
     if: needs.groups.outputs.run == 'true'
-    name: ${{ matrix.stage }} (${{ matrix.os }})
+    # A run the engine asked for belongs to main's head but checks another
+    # commit, so its jobs name that commit: `Gate on both platforms` of a run
+    # on main's head reads the jobs `<group> (<os>)` of every run of that
+    # head, and must not read these.
+    name: ${{ matrix.stage }} (${{ matrix.os }})${{ inputs.call && format(' of {0}', inputs.commit) || '' }}
     runs-on: ${{ matrix.os }}
     # This bounds a job, never a language verdict. Corpus assertions now share
     # one executable and job; phase logs distinguish construction from runs.
@@ -187,7 +217,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ inputs.commit || github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           # The design-tree skill's lint and CI base script, design/skill.
           submodules: true
@@ -221,12 +251,20 @@ jobs:
       # A main push must compare with its previous tip, not origin/main after
       # checkout. Work branches use their fork point; manual main runs use
       # the first parent. Missing bases fail instead of skipping the check.
+      # A run the engine asked for checks a commit that is not main's head
+      # though the run is asked on main: its change is what it holds beyond
+      # main, so its base is its fork point from main.
       - name: Select the design review base
         if: matrix.stage == 'static'
         env:
           PUSH_BEFORE: ${{ github.event.before }}
+          ENGINE_COMMIT: ${{ inputs.commit }}
         run: |
-          design_review_base=$(sh design/skill/review-base.sh "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$PUSH_BEFORE")
+          if [ -n "$ENGINE_COMMIT" ]; then
+            design_review_base=$(git merge-base refs/remotes/origin/main HEAD)
+          else
+            design_review_base=$(sh design/skill/review-base.sh "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$PUSH_BEFORE")
+          fi
           echo "DESIGN_REVIEW_BASE=$design_review_base" >> "$GITHUB_ENV"
           git log --oneline -1 "$design_review_base"
 
@@ -310,6 +348,7 @@ jobs:
       # stage completing in one instant and destroys the timestamps the raw log
       # is read for.
       - name: ${{ matrix.stage }}
+        id: stage
         env:
           STAGE_LOG: ${{ runner.temp }}/stage.log
           CHECK_GROUP: ${{ matrix.stage }}
@@ -358,6 +397,7 @@ jobs:
       # summary; the verdict fails only on enforcing entries. The stages
       # themselves kept their own statuses.
       - name: Hold every stage to its time budget
+        id: budget
         if: always()
         run: |
           if [ -s "$WHITEFOOT_TIME_BUDGET_RECORD" ]; then
@@ -371,12 +411,39 @@ jobs:
           fi
           perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD"
 
+      # Only in a run the engine asked for: what became of each Rust test the
+      # group ran, read from the stage's log, and of the job's own steps, as
+      # JUnit XML in a file named by the job (.github/junit.py). A failed
+      # stage that its failed tests explain is said by those tests alone, so
+      # that the engine may run them again by name; any other failure, a time
+      # budget's included, is said as an error of the job.
+      - name: Name the results
+        if: ${{ !cancelled() && inputs.call }}
+        env:
+          JOB: ${{ matrix.stage }} (${{ matrix.os }}) of ${{ inputs.commit }}
+          STAGE: ${{ matrix.stage }}
+          STAGE_OUTCOME: ${{ steps.stage.outcome }}
+          BUDGET_OUTCOME: ${{ steps.budget.outcome }}
+        run: |
+          python3 -B .github/junit.py job --job "$JOB" --out "$RUNNER_TEMP/junit/$JOB.xml" \
+            --log "$RUNNER_TEMP/stage.log" --stamped --tests-step "$STAGE" \
+            --step "$STAGE_OUTCOME" "$STAGE" --step "$BUDGET_OUTCOME" "Hold every stage to its time budget"
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && inputs.call }}
+        with:
+          name: junit-${{ matrix.stage }}-${{ matrix.os }}
+          path: ${{ runner.temp }}/junit
+          if-no-files-found: ignore
+
   # The merge precondition, read from the revision's own check runs rather
   # than from this run's matrix: every group green on the checked platforms.
   # Unchecked revisions skip it, so its success marks a revision that may be
   # merged. A cancelled run skips it too: a later push in its concurrency
   # group supersedes it, and a verdict read from cancelled jobs would only
-  # stand red beside that run's answer.
+  # stand red beside that run's answer. A run the engine asked for belongs to
+  # main's head, not to the commit it checks, so it is judged by its own group
+  # jobs instead, and puts their results in the artifact `test-results`.
   platforms:
     name: Gate on both platforms
     needs: [groups, no-tmp-workflow, gate]
@@ -391,7 +458,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ inputs.commit || github.event.pull_request.head.sha || github.sha }}
       # A branch cut before main gained the script judges with main's copy.
       - uses: actions/checkout@v4
         with:
@@ -399,6 +466,7 @@ jobs:
           path: default-branch
           sparse-checkout: .github
       - name: Require every group green on the checked platforms
+        if: ${{ !inputs.call }}
         env:
           # The platforms the run was asked for: Linux, and macOS if its
           # manual run asked for it (wf-gate-no-macos).
@@ -410,3 +478,19 @@ jobs:
           script=.github/gate-both-platforms.sh
           [ -f "$script" ] || script=default-branch/.github/gate-both-platforms.sh
           sh "$script"
+      # The results of every group job, in the one artifact the engine reads.
+      # Where no job kept results there is nothing to put together, and the
+      # engine says the run uploaded none.
+      - uses: actions/upload-artifact/merge@v4
+        if: ${{ inputs.call }}
+        continue-on-error: true
+        with:
+          name: test-results
+          pattern: junit-*
+      - name: Require every group job of this run green
+        if: ${{ inputs.call }}
+        env:
+          GATE: ${{ needs.gate.result }}
+        run: |
+          echo "The group jobs of this run: $GATE"
+          [ "$GATE" = success ]

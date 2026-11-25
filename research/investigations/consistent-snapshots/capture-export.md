@@ -46,7 +46,7 @@ The constitution says: “Their required relations belong in ordinary callable
 contracts. An external role grants no source-language exception. No declaration,
 type, ownership, effect, proof, diagnostic or semantic rule distinguishes a value
 or function by whether its implementation crosses the host boundary.”
-[Source](../../../docs/constitution.md#external-interaction-through-ordinary-objects).
+[Source](../../../docs/constitution.md#article-4-ordinary-objects-io-is-ordinary-program-state).
 The former SNAP-1 direct-call admission violates this condition; an owner choice
 to retain it would require changing the constitution, not just approving a host
 API. It is rejected in the revised draft.

@@ -17,3 +17,6 @@ import WhitefootProof.Holds
 import WhitefootProof.DischargeSound
 import WhitefootProof.ObligationSound
 import WhitefootProof.ValueSound
+import WhitefootProof.Sealing
+import WhitefootProof.SealingCases
+import WhitefootProof.SealingSound
