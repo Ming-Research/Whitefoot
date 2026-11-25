@@ -409,7 +409,7 @@ def save(path, samples):
     os.replace(path + ".tmp", path)
 
 
-REQUESTS_PER_RUN = 8
+REQUESTS_PER_RUN = 10
 RUNS_PER_CHECK = 10
 
 
@@ -417,8 +417,9 @@ def affordable(left, reserve):
     """How many more runs `collect` may fetch with `left` requests of the hour left, `reserve` kept back.
 
     A run costs a listing of its jobs and a log per job kept: REQUESTS_PER_RUN
-    is an upper estimate for the gate's runs, so the reserve survives the
-    runs fetched together with it.
+    is an upper estimate for the gate's runs (about 5 with the jobs of three
+    groups) and the sanitizers' (9), so the reserve survives the runs fetched
+    together with it.
     """
     return max(0, (left - reserve) // REQUESTS_PER_RUN)
 
@@ -759,11 +760,11 @@ def self_test():
     assert [status for _, status, *_ in reds(12600)] == ["still red"], reds(12600)
     assert [status for _, status, *_ in reds(11200, "Small CPU")] == ["not judgeable"], reds(11200, "Small CPU")
     assert reds(10100) == [], "a stage within its logged budget is not a red job"
-    # `collect` leaves the reserve of the hour's requests to others: at 8
-    # requests a run, 1,000 left with 920 kept back is 10 runs, and nothing
+    # `collect` leaves the reserve of the hour's requests to others: at 10
+    # requests a run, 1,000 left with 920 kept back is 8 runs, and nothing
     # is fetched at or below the reserve.
-    assert [affordable(left, 920) for left in (1000, 999, 927, 920, 100, 0)] == [10, 9, 0, 0, 0, 0]
-    assert affordable(5000, 1000) == 500
+    assert [affordable(left, 920) for left in (1000, 999, 929, 920, 100, 0)] == [8, 7, 0, 0, 0, 0]
+    assert affordable(5000, 1000) == 400
     # The same through `collect` with a stubbed `gh`: 25 runs listed, 60
     # requests left at the start and 20 kept in reserve; every request lowers
     # the count, and fetching stops with the reserve intact and runs unfetched.
