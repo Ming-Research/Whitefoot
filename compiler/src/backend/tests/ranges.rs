@@ -1062,6 +1062,72 @@ define i64 @wf_copy_run(ptr %values, ptr %output, i64 %output.len) {\n\
     }
 }
 
+/// One whole fixed-capacity run of the scatter, `Slots<u64, 256>`'s 2,048
+/// payload bytes; a clear or copy this large moves a whole block.
+const SCATTER_BLOCK_BYTES: u64 = 2048;
+
+/// Each clear or copy of at least [`SCATTER_BLOCK_BYTES`] constant bytes in
+/// one optimized module, as `function: operation bytes` lines.
+fn whole_block_transfers(module: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut function = "";
+    for line in module.lines() {
+        if line.starts_with("define ") {
+            function = line
+                .split_once(" @")
+                .and_then(|(_, rest)| rest.split_once('('))
+                .map_or("", |(name, _)| name);
+            continue;
+        }
+        let line = line.trim();
+        for operation in ["llvm.memset", "llvm.memcpy", "llvm.memmove"] {
+            let Some(at) = line.find(&format!("@{operation}.")) else {
+                continue;
+            };
+            let Some(open) = line[at..].find('(') else {
+                continue;
+            };
+            let bytes = line[at + open + 1..]
+                .split(',')
+                .nth(2)
+                .and_then(|length| length.split_whitespace().next_back())
+                .and_then(|length| length.parse::<u64>().ok());
+            if let Some(bytes) = bytes.filter(|bytes| *bytes >= SCATTER_BLOCK_BYTES) {
+                found.push(format!("{function}: {operation} {bytes}"));
+            }
+        }
+        if let Some(rest) = line.strip_prefix("store [") {
+            let bytes = rest
+                .split_once(" x i8] zeroinitializer")
+                .and_then(|(count, _)| count.parse::<u64>().ok());
+            if let Some(bytes) = bytes.filter(|bytes| *bytes >= SCATTER_BLOCK_BYTES) {
+                found.push(format!("{function}: zero store {bytes}"));
+            }
+        }
+    }
+    found
+}
+
+/// Building the scatter's chunks and filling them appends one empty slot per
+/// block and writes each block's runs once; neither step clears or copies a
+/// whole unused block in the optimized code of either world.
+#[test]
+fn stable_scatter_builds_its_chunks_without_whole_block_clears_or_copies() {
+    let source = include_bytes!("../../../../tests/programs/compute/radix_scatter.wf");
+    let mut report = Vec::new();
+    for overlap in [OverlapLowering::Off, OverlapLowering::On] {
+        let optimized = host_optimized_module(&emit_lowered(source, overlap));
+        for transfer in whole_block_transfers(&optimized) {
+            report.push(format!("{overlap:?} {transfer}"));
+        }
+    }
+    assert!(
+        report.is_empty(),
+        "whole-block clears or copies remain:\n{}",
+        report.join("\n")
+    );
+}
+
 #[test]
 fn stencil_matches_an_independent_dimension_and_step_matrix() {
     let source = include_bytes!("../../../../tests/programs/compute/stencil.wf");
