@@ -1338,6 +1338,56 @@ chose on 2026-10-09 (above): it is path-filtered and rare, and a path-filtered
 workflow that listed `ready_for_review` would be waited for after a ready mark
 even when no path matched.
 
+### The first compiler build's extra time (2026-11-25)
+
+`compute-regression.yml` times the candidate compiler's cold build
+(`performance-candidate-compiler`) as the first heavy step of its job, and
+since the merge-base compiler is cached ("Xeon Platinum 8573C column" above)
+it is usually the only compiler the job builds. The first cold build of a job
+is the slower one whichever compiler it builds ("`performance-candidate-compiler`
+raised to 130 s" above), so the stage's budget covers time that is not the
+candidate's. This section asks where that time goes.
+
+**What the logs already show.** `run-check.pl` runs each stage under
+`/usr/bin/time -p`, so the job logs carry its user and system time. In the two
+dispatched runs that swapped the build order, read again on 2026-11-25:
+
+| run | first build | real s | user s | sys s | second build | real s | user s | sys s |
+|---|---|---:|---:|---:|---|---:|---:|---:|
+| 37395372973 | candidate | 101.55 | 164.15 | 1.54 | baseline | 93.17 | 162.36 | 1.37 |
+| 37395370468 | baseline | 107.10 | 163.19 | 1.56 | candidate | 93.20 | 162.37 | 1.42 |
+
+The first build used about 1% more user time and took 9% and 15% more wall
+time: its extra time is spent waiting, not computing. The host step of a
+2026-11-25 pull request run (45604514931, an Intel Xeon 6975P-C) shows the
+same kind of wait on a smaller scale: `/usr/bin/clang --version`, which reads
+clang's binary and libraries for the first time in the job, took 5.0 s.
+
+**Question and comparison, fixed before measuring.** A temporary workflow
+(`tmp-first-build.yml`, run on the work branch, not kept) builds the
+compiler's current source twice in each of 18 hosted `ubuntu-24.04` jobs, with
+the job's two Cargo jobs, each build into its own empty target directory
+after `cargo fetch`, so the two builds do the same work. Before the first
+build each job applies one of three preparations, six jobs each: none;
+reading every file of the active Rust toolchain (`rustc --print sysroot`) into
+the page cache; or a 60 s wait that reads nothing. Each build records its wall,
+user and system time, major page faults and file-system inputs (GNU `time`),
+and the host's I/O and CPU pressure (`/proc/pressure`), page-ins and
+`/proc/stat` counters around it.
+
+- The cold page cache of the Rust toolchain (rustc, LLVM, the standard
+  library, the linker) is the cause if, with no preparation, the first build
+  takes at least 5% longer than the second in most jobs with user time within
+  3% and far more file-system inputs and I/O stall, while after reading the
+  toolchain the first build is within 3% of the second in at least five of six
+  jobs and its inputs fall to the second's.
+- It is not the cause if reading the toolchain removes less than half of the
+  first build's median excess, or if the 60 s wait removes it as well (median
+  ratio within 3%), which would point to something that passes with time at
+  the start of a job, such as other activity on the host.
+- A preparation is sufficient for the stage if the first build is within 5% of
+  the second in every job of its arm.
+
 ## Daily loop
 
 One edit, measured in the local container with the new defaults: an unused
