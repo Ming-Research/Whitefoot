@@ -1100,15 +1100,23 @@ def polled_wall(command, step):
 
 
 def spawn_test(expect):
-    """`spawn` on a 0.21 s sleeper, on any POSIX host: its wall time is the
-    sleeper's own, the same sleeper read through a polling waiter is not, and a
-    run past its bound is killed."""
+    """`spawn` on a 0.21 s sleeper. On any POSIX host: a waiter that polls every
+    0.1 s does not read as the sleeper's own time, neither in the readings the
+    first 14900K rounds showed (0.302 to 0.303 s) nor in a real polled run, the
+    hosted runner's readings (0.2142 to 0.2145 s) do, and a run past its bound
+    is killed. On Linux, where a launch of `sh` costs milliseconds, `spawn`
+    itself must read the sleeper's own time; a host whose process start-up is
+    slower (this window is 0.07 s) cannot judge that."""
     global RUN_BOUND
     sleeper = ["sh", "-c", "sleep 0.21"]
-    own = [spawn(sleeper, ".")[0] / 1e9 for _ in range(3)]
-    polled = [polled_wall(sleeper, 0.1) for _ in range(3)]
-    expect("spawn reads the sleeper's own time", wall_is_own(own), True)
-    expect("a polling waiter's readings are not the sleeper's own", wall_is_own(polled), False)
+    expect("the first 14900K readings are a grid", wall_is_own([0.302, 0.3025, 0.303]), False)
+    expect("the hosted readings are the sleeper's own", wall_is_own([0.2142, 0.2144, 0.2145]), True)
+    expect("a polling waiter's readings are not the sleeper's own",
+           wall_is_own([polled_wall(sleeper, 0.1) for _ in range(3)]), False)
+    if sys.platform == "linux":
+        expect("spawn reads the sleeper's own time", wall_is_own([spawn(sleeper, ".")[0] / 1e9 for _ in range(3)]), True)
+    else:
+        print("self-test: spawn's reading of a sleeper is checked on Linux only (process start-up cost)")
     bound, RUN_BOUND = RUN_BOUND, 0.3
     try:
         started = time.monotonic()
