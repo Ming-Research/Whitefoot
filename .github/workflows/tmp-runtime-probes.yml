@@ -69,8 +69,10 @@ jobs:
       - name: Frames and probes under each variant
         env:
           COMPILER: ${{ matrix.compiler }}
+        # macOS's /bin/bash is 3.2: no `set -u` with empty arrays. Every
+        # variant runs whatever an earlier one printed.
         run: |
-          set -uo pipefail
+          set +e
           "$CLANG" --version
           src=compiler/src/backend
           units="wf_floor.c ordinary_values.c heap.c sched/core.c sched/prim_host.c sched/entry.c
@@ -127,13 +129,26 @@ jobs:
             probe clash-cc1-size -Xclang -fstack-clash-protection -mstack-probe-size=4096
           fi
 
-  # The runtime frame test itself on macOS, with Apple's clang, the gate's
-  # macOS compiler: whether it reads Darwin assembly and what it reports.
+  # The runtime frame test itself, with the gate's compiler on each platform:
+  # LLVM 22 as /usr/bin/clang on Linux, Apple's clang on macOS.
   frame-test:
-    runs-on: macos-15
+    name: frame-test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
     steps:
       - uses: actions/checkout@v4
+      - name: Install LLVM as the gate does
+        if: runner.os == 'Linux'
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
       # From compiler/, so that rustup takes the toolchain its
       # rust-toolchain.toml names.
       - name: Set up Rust

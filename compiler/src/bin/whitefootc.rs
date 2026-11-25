@@ -1297,8 +1297,6 @@ fn unit_arguments(command: &mut Command, directory: &Path, sanitizer: Option<San
         .arg("-I")
         .arg(directory.join("completion"))
         .args(sanitizer_arguments(sanitizer));
-    #[cfg(target_os = "linux")]
-    command.arg("-fstack-clash-protection");
 }
 
 /// The arguments a sanitized build adds to every compile and its link.
@@ -3827,9 +3825,20 @@ mod tests {
                 "{relative_path}: {}",
                 String::from_utf8_lossy(&output.stderr)
             );
-            let usage = std::fs::read_to_string(assembly.with_extension("su"))
-                .expect("read the stack-usage report");
             let text = std::fs::read_to_string(&assembly).expect("read the assembly");
+            let usage = match std::fs::read_to_string(assembly.with_extension("su")) {
+                Ok(usage) => usage,
+                // clang opens the report at the first function it emits, so a
+                // unit that defines none on this host leaves none.
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    assert!(
+                        !text.contains(".cfi_startproc"),
+                        "{relative_path}: functions but no stack-usage report"
+                    );
+                    continue;
+                }
+                Err(error) => panic!("{relative_path}: read the stack-usage report: {error}"),
+            };
             for row in usage.lines() {
                 let fields: Vec<&str> = row.split('\t').collect();
                 let (Some(bytes), Some(kind)) = (fields.get(1), fields.get(2)) else {
