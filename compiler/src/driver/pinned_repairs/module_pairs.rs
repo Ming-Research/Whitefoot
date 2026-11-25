@@ -8,6 +8,11 @@
 //! rejection and every alternative run through the same assertions as a
 //! single-source pair; the alternative's whole program is checked through
 //! each of its entries and must run no judgment in a contradictory state.
+//!
+//! Two rejections only the toolchain's own standard library can meet [MOD-10]
+//! are reached through its records: a module pair rewrites a stretch of a
+//! carried library record, and a library graph pair forms a graph record as
+//! the library's own.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
