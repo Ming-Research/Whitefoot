@@ -28,6 +28,7 @@ mod harness;
 mod interface_applications;
 mod lexical_syntax;
 mod lost_header_relations;
+mod module_pairs;
 mod postcondition_places;
 mod prelude_opaque;
 mod proof_place_spellings;

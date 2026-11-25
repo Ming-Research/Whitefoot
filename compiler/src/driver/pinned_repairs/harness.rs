@@ -72,6 +72,52 @@ fn all_pairs() -> impl Iterator<Item = &'static RepairPair> {
         .chain(super::reserved_names::RESERVED_NAMES)
 }
 
+/// What a pinned rejection must show [DIAG-1]: a source rejection under the
+/// pinned rule whose rendering carries every pinned sentence, pins whole
+/// every repair line it prints, and has sound words.
+pub(super) fn check_rejection(
+    name: &str,
+    rule: &str,
+    sentences: &[&str],
+    failure: &crate::CompilationFailure,
+) -> Result<(), String> {
+    if failure.kind() != CompilationFailureKind::Source {
+        return Err(format!("{name}: not a source rejection: {failure}"));
+    }
+    if failure.rule_id() != Some(rule) {
+        return Err(format!("{name}: expected {rule}: {failure}"));
+    }
+    let rendered = format!("{failure}\n");
+    if sentences.is_empty() && rendered.contains("\n  mechanical_fix:") {
+        return Err(format!(
+            "{name}: this position must not offer an unverified repair: {rendered}"
+        ));
+    }
+    for sentence in sentences {
+        if !rendered.contains(sentence) {
+            return Err(format!(
+                "{name}: the rejection no longer carries this repair.\nwanted: {sentence}\ngot:    {rendered}"
+            ));
+        }
+    }
+    // Every repair line a rendering prints is one the pair carries out: a
+    // pair that pins other fields only would leave the repair unchecked.
+    for line in rendered.lines().filter(|line| line.starts_with("  mechanical_fix:")) {
+        let whole = format!("\n{line}\n");
+        if !sentences.iter().any(|sentence| sentence.contains(&whole)) {
+            return Err(format!("{name}: this repair line is not pinned whole: {line}"));
+        }
+    }
+    let defects: Vec<String> = failure
+        .diagnostics()
+        .flat_map(crate::CompilationFailure::text_defects)
+        .collect();
+    if !defects.is_empty() {
+        return Err(format!("{name}: its words are unsound: {defects:?}"));
+    }
+    Ok(())
+}
+
 /// Checks one pair [DIAG-1] and returns the kind its rejection prints, or why
 /// the pair fails: the source is rejected under the pinned rule, the
 /// rendering carries every pinned sentence and every repair line it prints is
@@ -87,12 +133,6 @@ fn check_pair(pair: &RepairPair) -> Result<String, String> {
         Err(failure) => failure,
     };
     super::entry_formers::assert_span(pair, &failure);
-    if failure.kind() != CompilationFailureKind::Source {
-        return Err(format!("{name}: not a source rejection: {failure}"));
-    }
-    if failure.rule_id() != Some(pair.rule) {
-        return Err(format!("{name}: expected {}: {failure}", pair.rule));
-    }
     // [TYPE-9] semantic tests pin the complete call or written targ
     // span. Pin its rendered start here with the existing repair run.
     let citation = match pair.name {
@@ -123,36 +163,9 @@ fn check_pair(pair: &RepairPair) -> Result<String, String> {
             return Err(format!("{name}: cited at the wrong place: {failure}"));
         }
     }
-    let rendered = format!("{failure}\n");
-    if pair.sentences.is_empty() && rendered.contains("\n  mechanical_fix:") {
-        return Err(format!(
-            "{name}: this position must not offer an unverified repair: {rendered}"
-        ));
-    }
-    for sentence in pair.sentences {
-        if !rendered.contains(sentence) {
-            return Err(format!(
-                "{name}: the rejection no longer carries this repair.\nwanted: {sentence}\ngot:    {rendered}"
-            ));
-        }
-    }
-    // Every repair line a rendering prints is one the pair carries out: a
-    // pair that pins other fields only would leave the repair unchecked.
-    for line in rendered.lines().filter(|line| line.starts_with("  mechanical_fix:")) {
-        let whole = format!("\n{line}\n");
-        if !pair.sentences.iter().any(|sentence| sentence.contains(&whole)) {
-            return Err(format!("{name}: this repair line is not pinned whole: {line}"));
-        }
-    }
+    check_rejection(name, pair.rule, pair.sentences, &failure)?;
     if pair.repaired.is_empty() {
         return Err(format!("{name}: the pair has no accepted program"));
-    }
-    let defects: Vec<String> = failure
-        .diagnostics()
-        .flat_map(crate::CompilationFailure::text_defects)
-        .collect();
-    if !defects.is_empty() {
-        return Err(format!("{name}: its words are unsound: {defects:?}"));
     }
     for (alternative, source) in pair.repaired.iter().enumerate() {
         match contradictory_successes(pair.name, source) {
@@ -188,8 +201,11 @@ pub(super) fn run() -> &'static Run {
             reached: BTreeSet::new(),
             failures: Vec::new(),
         };
-        for pair in all_pairs() {
-            match check_pair(pair) {
+        let results = all_pairs()
+            .map(check_pair)
+            .chain(super::module_pairs::MODULE_PAIRS.iter().map(super::module_pairs::check_module_pair));
+        for result in results {
+            match result {
                 Ok(kind) => {
                     run.reached.insert(kind);
                 }
