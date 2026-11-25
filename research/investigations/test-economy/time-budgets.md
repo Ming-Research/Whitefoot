@@ -735,8 +735,9 @@ in run 37395370468, with the two build steps swapped, the first took 107.2 s
 and the second 93.2 s. The owner set the budget directly to 130 s on
 2026-10-05, about 10 s over that slowest run, in the same ruling that fixed
 every later raise at 10 s; `performance-baseline-compiler` then kept 105 s, over its slowest run of 97.3 s. Why the first cold build is
-slower was not measured; an untimed warm-up before both builds would remove
-the difference instead of covering it.
+slower was not measured then; an untimed warm-up before both builds would
+remove the difference instead of covering it. The section "The first compiler
+build's extra time (2026-11-25)" below measures it.
 
 **`performance-baseline-compiler` raised to 115 s.** The baseline build
 compiles main's source, which no pull request changes, yet it overran 105 s on
