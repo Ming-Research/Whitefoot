@@ -158,7 +158,9 @@ fn main() -> status: std::process::ExitStatus pure {
             "../../../../tests/conformance/cases/gram12-neg-duplicate-const-value.wf"
         ),
         rule: "GRAM-12",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: remove the later arm or give it a distinct integer value\n",
+        ],
         repaired: &[br#"const first: u64 = 7_u64;
 
 const alias_of_first: u64 = first;
@@ -222,7 +224,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/type7-neg-deref-nonref.wf"
         ),
         rule: "TYPE-7",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: a Box's content is its field inner [TYPE-9]; an owned place is named as itself\n",
+        ],
         repaired: &[br#"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -241,7 +245,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/own1-neg-use-after-move.wf"
         ),
         rule: "OWN-1",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: introduce a new `let` binding before reuse\n",
+        ],
         repaired: &[br#"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -487,24 +493,30 @@ fn main() -> status: std::process::ExitStatus pure {
     // [GIVE-1] a branch of a value conditional that gives nothing.
     RepairPair {
         name: "probe-give-missing-in-branch.wf",
-        rejected: br#"fn main() -> status: std::process::ExitStatus pure {
-  let flag = True();
-  let result = if flag {
+        rejected: br#"fn pick(flag: Bool) -> result: i32 pure {
+  let chosen = if flag {
   } else {
     give 0_i32;
   }
+  return chosen;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#,
         rule: "GIVE-1",
         sentences: &[],
-        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure {
-  let flag = True();
-  let result = if flag {
+        repaired: &[br#"fn pick(flag: Bool) -> result: i32 pure {
+  let chosen = if flag {
     give 1_i32;
   } else {
     give 0_i32;
   }
+  return chosen;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "#],
@@ -555,7 +567,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/gram12-neg-float-label.wf"
         ),
         rule: "GRAM-12",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: write an integer literal or named const of type u64\n",
+        ],
         repaired: &[br#"fn selected(value: u64) -> result: unit pure {
   match value {
     1_u64 => {
@@ -579,7 +593,9 @@ fn main() -> status: std::process::ExitStatus pure {
             "../../../../tests/conformance/cases/gram12-neg-else-only.wf"
         ),
         rule: "GRAM-12",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: add a literal or named-const value arm\n",
+        ],
         repaired: &[br#"fn selected(value: u64) -> result: unit pure {
   match value {
     1_u64 => {
@@ -771,7 +787,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/const1-neg-runtime-arithmetic-mode.wf"
         ),
         rule: "CONST-1",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: write the bare operator: const evaluation rejects overflow at compile time and has no runtime arithmetic modes\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -836,7 +854,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/prov6-neg-linear-value-not-consumed.wf"
         ),
         rule: "PROV-6",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: move `lease` whole into a function that consumes it, or return it; or destructure the whole struct with `let N(f: a, ...) = move lease;`, replacing `N` and `f` with its declared struct and field names and consuming every linear field\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -859,7 +879,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/prov6-neg-linear-value-partially-consumed.wf"
         ),
         rule: "PROV-6",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: destructure the whole value with let N(f: a, ...) = move v;\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -918,7 +940,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/liv1-neg-branches-disagree-on-liveness.wf"
         ),
         rule: "LIV-1",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: every predecessor of a join agrees on a binding's live-or-dead status: consume it on every predecessor, on none, or commit a value back into it before the predecessor that consumed it reaches the join; alternatively, if this owner is no longer needed, consume it unconditionally outside the `if`: write `release::<Slots<u8, 4>>(value: move c);` before the code that needs it released and remove the conditional consume\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -950,7 +974,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/win3-neg-overwrite-linear-place.wf"
         ),
         rule: "WIN-3",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: take the linear value out and consume it before writing this place\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -980,7 +1006,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/op11-neg-swap-copy-place.wf"
         ),
         rule: "OP-11",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: read the two values and assign them back\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -1006,7 +1034,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/stor8-neg-no-heap-names-box.wf"
         ),
         rule: "STOR-8",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: use a constant-capacity shape, or withdraw the no-heap declaration\n",
+        ],
         repaired: &[br##"program no_heap;
 
 alias ExitStatus = std::process::ExitStatus;
@@ -1029,7 +1059,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/win3-neg-arm-rest-covers-linear-payload.wf"
         ),
         rule: "WIN-3",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: bind the linear payload in the arm and consume it: V(f: a, ..) => { ... }\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -1070,7 +1102,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/own1-neg-return-borrowed-box.wf"
         ),
         rule: "OWN-1",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: consume a place rooted in a live own-mode binding of this function\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -1095,7 +1129,9 @@ fn main() -> return_value: ExitStatus pure {
             "../../../../tests/conformance/cases/win2-neg-window-part-write-target.wf"
         ),
         rule: "TYPE-10",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: use the operation that moves the window boundary [OP-10]\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -1118,7 +1154,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/type2-neg-readonly-measure-write-target.wf"
         ),
         rule: "TYPE-2",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: use the operation that changes it, or replace the whole value\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -1141,7 +1179,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/share1-neg-frozen-shared-part.wf"
         ),
         rule: "SHARE-1",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: replace `MutablePart.state` with immutable owned data or a Frozen handle before freezing the value\n",
+        ],
         repaired: &[br##"struct MutablePart {
   state: u8;
 }
@@ -1158,7 +1198,9 @@ fn denied(value: MutablePart) -> result: Frozen<MutablePart> pure {
             "../../../../tests/conformance/cases/share1-neg-linear-state-holds-its-own-handle.wf"
         ),
         rule: "SHARE-1",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: keep `Left.right.Some.value[state].left.Some.value` out of the state: hold the `Shared<Left>` outside the object, or give the inner object a state type of its own\n",
+        ],
         repaired: &[br##"struct Left {
   right: Option<Shared<Right>>;
 }
@@ -1179,7 +1221,9 @@ fn main() -> status: std::process::ExitStatus pure {
             "../../../../tests/conformance/cases/share1-neg-frozen-move-inner.wf"
         ),
         rule: "SHARE-1",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: read copy-typed parts without move, borrow `&f.inner` or its descendants, or retain a nested frozen handle with frozen_share\n",
+        ],
         repaired: &[br##"fn denied() -> result: u8 pure {
   let cell = box_new::<u8>(value: 7_u8);
   let observed = frozen_new::<Box<u8>>(value: move cell);
@@ -1194,7 +1238,9 @@ fn main() -> status: std::process::ExitStatus pure {
             "../../../../tests/conformance/cases/type2-neg-storage-shape-constructor-call.wf"
         ),
         rule: "TYPE-2",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: build it with a construction function [OP-13]\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -1217,7 +1263,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/ref2-neg-use-after-move.wf"
         ),
         rule: "REF-2",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: form the reference again after that event\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -1247,7 +1295,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/ref1-neg-body-payload-without-arm.wf"
         ),
         rule: "REF-1",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: match the enum again and select the payload inside its variant arm before any overlapping write\n",
+        ],
         repaired: &[br##"fn unselected(cell: &Option<u64>) -> result: u64 reads(cell) {
   doc "An arbitrary Option reference supplies no current Some fact for selecting its payload.";
   match &cell^ {
@@ -1273,7 +1323,9 @@ fn main() -> status: std::process::ExitStatus pure {
             "../../../../tests/conformance/cases/ref1-neg-reference-to-reference-variable.wf"
         ),
         rule: "REF-1",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: name the path the reference names\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -1298,7 +1350,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/ref3-neg-returned-reference.wf"
         ),
         rule: "REF-3",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: return an index and let the caller form the reference\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -1329,7 +1383,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/ref4-neg-range-over-ring.wf"
         ),
         rule: "REF-4",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: a ring hands out single slots; take the elements one at a time\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -1353,7 +1409,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/share-neg-map-entries-as-a-range.wf"
         ),
         rule: "REF-4",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: keyed entries are entries of a table, not a run of storage; reach them one at a time as `entries^[i]`\n",
+        ],
         repaired: &[br##"const names: Array<u8, 2> =[97_u8, 98_u8];
 
 fn main() -> status: std::process::ExitStatus pure waits {
@@ -1376,7 +1434,9 @@ fn main() -> status: std::process::ExitStatus pure waits {
             "../../../../tests/conformance/cases/win3-neg-move-out-of-window-slot.wf"
         ),
         rule: "WIN-3",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: use take_back, remove_at, or swap [OP-10, OP-11]\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -1402,7 +1462,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/liv1-neg-loop-leaves-an-outer-binding-dead.wf"
         ),
         rule: "OWN-11",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: one iteration must leave every outer binding in the status the next one starts from: commit a value back into it before the backedge, or declare and consume it inside the body\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -1431,7 +1493,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/gram6-neg-bool-match.wf"
         ),
         rule: "GRAM-6",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: spell the Bool conditional `if`\n",
+        ],
         repaired: &[br##"fn selected(value: Bool) -> result: unit pure {
   if value {
     return unit;
@@ -1452,7 +1516,9 @@ fn main() -> status: std::process::ExitStatus pure {
             "../../../../tests/conformance/cases/op14-neg-free-empty-nonempty-window.wf"
         ),
         rule: "OP-14",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: the window still holds elements here: take every element out and consume it before `free_empty`\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -1475,7 +1541,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/op2-neg-overflow-obligation-undischarged.wf"
         ),
         rule: "OP-2",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: add `requires x +defined 1_u64;` to the `contract` of `add_one`, which each caller then establishes; or guard the operation with `if x +defined 1_u64` where skipping it is the intended behavior; or write the `+wrap`, `+checked` or `+sat` form\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -1498,7 +1566,9 @@ fn main() -> return_value: ExitStatus pure {
             "../../../../tests/conformance/cases/op6-neg-unproved-domain.wf"
         ),
         rule: "OP-6",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: add `requires cvt.defined::<u32, u8>(value);` to the `contract` of `narrow`, which each caller then establishes; or guard the conversion with `if cvt.defined::<u32, u8>(value)` where skipping it is the intended behavior; or use `cvt.checked::<u32, u8>` and handle its `Err`\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -1520,7 +1590,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/view2-neg-range-end-outside-source.wf"
         ),
         rule: "REF-4",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: `5_u64 <= values.len` is false where this range is formed: choose endpoints that satisfy it\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -1539,7 +1611,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/eff5-neg-overlapping-substituted-write.wf"
         ),
         rule: "EFF-5",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: pass places that do not overlap, or pass the shared place through one argument only\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -1575,7 +1649,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/op12-neg-callee-writes-target-prefix.wf"
         ),
         rule: "OP-12",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: declare a row that reaches no prefix of the updated place: reading anything and writing storage disjoint from it is admitted, and an update whose callee must reach the place is written as ordinary statements instead\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -1609,7 +1685,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/fn8-neg-constant-call-requirement.wf"
         ),
         rule: "FN-8",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: `0_u8 == 1_u8` is false for the values that reach this call, so no fact can establish it here: pass arguments that satisfy it, or change the statements or requirements that fix those values\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -1632,7 +1710,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/ent2-neg-counted-subscript-endpoint.wf"
         ),
         rule: "ENT-2",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: bind the computed u64 value with one preceding ordinary let and use that term as the endpoint\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -1658,7 +1738,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/range1-neg-define-nonlinear-requirement-index.wf"
         ),
         rule: "RANGE-1",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: multiply one term by an integer literal or a named integer const\n",
+        ],
         repaired: &[br##"fn need_small(source: &[u64], i: u64, j: u64) -> result: unit reads(source) contract {
   define next = i * 2_u64;
   requires next < source^.len;
@@ -1680,7 +1762,9 @@ fn main() -> status: std::process::ExitStatus pure {
             "../../../../tests/conformance/cases/range2-neg-fill-overwritten.wf"
         ),
         rule: "RANGE-3",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: establish the fact before this site: a range `requires`, a range invariant of the enclosing counted loop, or a guard that excludes the uncovered elements\n",
+        ],
         repaired: &[br##"fn all_zero(cells: &[u64]) -> result: u64 reads(cells) contract {
   requires forall zero(k in 0_u64..cells^.len): cells^[k] == 0_u64;
 } {
@@ -1714,7 +1798,9 @@ fn main() -> status: std::process::ExitStatus pure {
             "../../../../tests/conformance/cases/inv1-neg-an-affine-factor-is-not-a-measure-former.wf"
         ),
         rule: "INV-1",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: write P.len, P.cap or P.head over a measured place\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -1747,7 +1833,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/inv1-neg-base-unproved.wf"
         ),
         rule: "INV-1",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: `limit` is false on entry to the loop: correct it, or change the values the loop starts from\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -1768,7 +1856,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/inv1-neg-local-relation-unproved.wf"
         ),
         rule: "INV-1",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: `within_cap` is not proved from the facts that reach it: establish them before it, add `use` steps naming the facts it follows from, or weaken it\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -1791,7 +1881,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/prf1-neg-explicit-factor-one.wf"
         ),
         rule: "PRF-1",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: omit `1 *` from this use\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -1818,7 +1910,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/prf1-neg-unproved-premise.wf"
         ),
         rule: "PRF-1",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: establish this use relation from facts already available before the invariant statement, or replace it with a relation AUTO can prove in that same entering context\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -1842,7 +1936,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/share-neg-map-key-not-bytes.wf"
         ),
         rule: "SHARE-2",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: name one key as a `&[u8]` range, such as `&bytes[start..end]` or a reference variable holding one, or several keys as a place of type `KeySet` built before the statement, such as `keys` or, through a reference to one, `keys^`\n",
+        ],
         repaired: &[br##"const names: Array<u8, 2> =[97_u8, 98_u8];
 
 fn main() -> status: std::process::ExitStatus pure waits {
@@ -1862,7 +1958,9 @@ fn main() -> status: std::process::ExitStatus pure waits {
             "../../../../tests/conformance/cases/decision-cell-neg-guard-read.wf"
         ),
         rule: "SHARE-2",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: read or claim the decision cell in the atomic body; use ordinary shared state for a waiting guard dependency\n",
+        ],
         repaired: &[br##"fn is_written(cell: &DecisionCell) -> result: Bool reads(cell) {
   let seen = decision_cell_read(cell: cell);
   let written = Written();
@@ -1899,7 +1997,9 @@ fn main() -> status: std::process::ExitStatus pure waits {
             "../../../../tests/conformance/cases/hold-neg-waiting-contract.wf"
         ),
         rule: "HOLD-1",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: declare one nonempty held group of distinct reference parameters on a nonwaiting callable with a pure or reads row; pass references from one atomic block or the enclosing declared held group, and prove writes disjoint from their protected regions or move those writes outside the block\n",
+        ],
         repaired: &[br##"fn sample(value: &u64) -> result: u64 reads(value) contract {
   requires held(value);
 } {
@@ -1914,7 +2014,9 @@ fn main() -> status: std::process::ExitStatus pure waits {
             "../../../../tests/conformance/cases/snapshot-neg-shared.wf"
         ),
         rule: "SNAP-1",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: select a value type whose complete owned graph contains only primitives, declared structs and enums, storage shapes and owned Box contents\n",
+        ],
         repaired: &[br##"alias Reserve = std::snapshot::Reserve;
 alias Job = std::snapshot::Job;
 alias CreateError = std::snapshot::CreateError;
@@ -1941,7 +2043,9 @@ fn capture(reserve: Reserve, table: &Shared<ConcurrentHashMap<Entry>>, sequence:
             "../../../../tests/conformance/cases/call4-neg-enum-ambiguous-ordinal.wf"
         ),
         rule: "CALL-4",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: more than one result can carry this route: name the one it applies to, writing `when r is` before its variant with `r` one of `left`, `right`\n",
+        ],
         repaired: &[br##"enum RoutedOrdinal {
   Item(index: u64);
 }
@@ -1986,7 +2090,9 @@ fn main() -> status: ExitStatus pure {
             "../../../../tests/conformance/cases/range5-neg-fact-does-not-separate.wf"
         ),
         rule: "RANGE-5",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: add `use` steps whose instances separate the two accesses, or remove `apart` to leave the loop sequential\n",
+        ],
         repaired: &[br##"fn scatter(order: &[u64], pos: &[u64], out: &[u64]) -> result: unit reads(order), writes(out) contract {
   requires pos^.len == out^.len;
   requires forall inv(k in 0_u64..order^.len) when order^[k] < out^.len: pos^[order^[k]] == k;
@@ -2089,7 +2195,9 @@ fn main() -> status: std::process::ExitStatus pure {
             "../../../../tests/conformance/cases/call6-neg-contradictory-published-relations.wf"
         ),
         rule: "CALL-6",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: state one consistent relation set: a contract whose clauses cannot hold together publishes every fact at every caller\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -2146,7 +2254,9 @@ fn main() -> status: std::process::ExitStatus pure {
             "../../../../tests/conformance/cases/fn9-neg-no-selected-normal-exit.wf"
         ),
         rule: "FN-9",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: no `return` of this function delivers a value this clause's route selects: return such a value on some path, or delete the clause\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -2190,7 +2300,9 @@ fn main() -> return_value: ExitStatus pure {
             "../../../../tests/conformance/cases/eff1-neg-wrong-order-row.wf"
         ),
         rule: "EFF-1",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: write every `reads` entry before the first `writes` entry, and delete each entry whose path is a `writes` entry's path or lies below it, which that `writes` already covers\n",
+        ],
         repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
@@ -2406,5 +2518,116 @@ fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
 "##],
+    },
+    // [SHARE-2] a map key read from a state the same statement holds.
+    RepairPair {
+        name: "share-neg-map-key-reads-a-target.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/share-neg-map-key-reads-a-target.wf"
+        ),
+        rule: "SHARE-2",
+        sentences: &[
+            "\n  mechanical_fix: read handles and keys before the statement: copy a handle held in a state out with `shared_share` in an earlier atomic statement, and compute a key that comes from a state into a local the same way; a statement reads its handles and keys when it begins, before it holds any state\n",
+        ],
+        repaired: &[br#"fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<u8>(capacity: 1_u64);
+  let name = array_filled::<u8, 2>(value: 97_u8);
+  atomic slot = &store[&name[0_u64..1_u64]] {
+    set slot^ = Some<u8>(value: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    // [ERR-2] an integer match with no final `else` arm.
+    RepairPair {
+        name: "err2-neg-integer-missing-else.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/err2-neg-integer-missing-else.wf"
+        ),
+        rule: "ERR-2",
+        sentences: &[
+            "\n  mechanical_fix: add one final `else => { ... }` arm to cover every other value\n",
+        ],
+        repaired: &[br#"fn selected(value: u8) -> result: unit pure {
+  match value {
+    0_u8 => {
+      return unit;
+    }
+    else => {
+      return unit;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    // [FN-9] a postcondition clause that relates a conversion the type does not make total.
+    RepairPair {
+        name: "fn9-neg-narrowing-conversion-relation.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/fn9-neg-narrowing-conversion-relation.wf"
+        ),
+        rule: "FN-9",
+        sentences: &[],
+        repaired: &[br#"fn low_half(value: u64) -> result: u32 pure {
+  let low = cvt.wrap::<u64, u32>(value);
+  return low;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    // [TYPE-7] a borrow of the run a reference parameter names, taken whole.
+    RepairPair {
+        name: "type7-neg-range-referent-borrow-parameter.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/type7-neg-range-referent-borrow-parameter.wf"
+        ),
+        rule: "TYPE-7",
+        sentences: &[
+            "\n  mechanical_fix: write `let q = r;` to alias the reference, `&r^[i]` to borrow one element, or `&r^[a..b]` to borrow a subrange\n",
+        ],
+        repaired: &[br#"fn probe(r: &[u64]) -> result: unit pure {
+  let q = r;
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
+    },
+    // [FN-9] a later definition that takes the name a routed result binder wrote.
+    RepairPair {
+        name: "probe-postcondition-local-shadows-result.wf",
+        rejected: br#"fn some_value(limit: u64) -> result: Option<u64> pure contract {
+  ensures when Some(value: found): found <= limit;
+  define found = limit;
+} {
+  return Some<u64>(value: limit);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#,
+        rule: "FN-9",
+        sentences: &[],
+        repaired: &[br#"fn some_value(limit: u64) -> result: Option<u64> pure contract {
+  ensures when Some(value: found): found <= limit;
+} {
+  return Some<u64>(value: limit);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#],
     },
 ];

@@ -1138,14 +1138,14 @@ fn a_question_mark_standing_for_a_value_is_a_text_defect() {
 fn a_marked_stretch_that_is_not_source_is_a_text_defect() {
     let defects = with_field(
         "mechanical_fix",
-        Value::Text("write `a $ b` here".to_owned()),
+        Value::Text("write `a # b` here".to_owned()),
     )
     .text_defects();
     assert_eq!(defects.len(), 1, "{defects:?}");
     assert!(defects[0].contains("is not source text"), "{defects:?}");
     let defects = with_field(
         "mechanical_fix",
-        Value::Text("the value of k before it was rewritten, then `a $ b".to_owned()),
+        Value::Text("the value of k before it was rewritten, then `a # b".to_owned()),
     )
     .text_defects();
     assert!(defects.is_empty(), "{defects:?}");

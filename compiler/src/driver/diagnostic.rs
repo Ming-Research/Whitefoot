@@ -285,9 +285,9 @@ impl Record {
     /// What is wrong with the words of this record: a `?` standing for a
     /// value the renderer could not write, and a stretch the text marks as
     /// source with backticks that is not source. A stretch is source when the
-    /// lexer reads it, bare or as the body of a character literal (the
-    /// spelling of an escape), or when the writer wrote it on the line the
-    /// record quotes. Exact values are the writer's own source bytes and are
+    /// lexer reads it, bare or, where it begins with a backslash, as the body
+    /// of a character literal (the spelling of an escape), or when the writer
+    /// wrote it on the line the record quotes. Exact values are the writer's own source bytes and are
     /// not read; the marker line is not part of the payload.
     pub(super) fn text_defects(&self) -> Vec<String> {
         let written = self.at.as_ref().map(Place::line_text).unwrap_or_default();
@@ -340,7 +340,7 @@ fn text_defects(label: &str, text: &str, written: &str, defects: &mut Vec<String
             && !piece.is_empty()
             && !written.contains(piece)
             && !lexes_as_source(piece)
-            && !lexes_as_source(&format!("'{piece}'"))
+            && !(piece.starts_with('\\') && lexes_as_source(&format!("'{piece}'")))
         {
             defects.push(format!("{label}: `{piece}` is marked as source but is not source text"));
         }
@@ -1197,7 +1197,6 @@ report_kind_fn!(report_semantic_kind, SEMANTIC_KINDS, SemanticIssueKind;
     InvalidEffectRow { reason, mechanical_fix };
     SubsumedEffectEntry { entry, covering };
     EffectMismatch { expected_row, found_row, missing, extra, mechanical_fix };
-    SourceContractGenericBound;
 );
 
 impl Report for SemanticIssueKind {

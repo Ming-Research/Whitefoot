@@ -343,7 +343,9 @@ entry main = pkg::main;
         rejected: &[],
         library: &[],
         rule: "MOD-5",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: replace `secret` with an accessible name declared in `pkg::data` for this grammar position: `sign_of` [MOD-5]\n",
+        ],
         repaired: &[&[(
             "data/module.wfm",
             br#"public enum Sign {
@@ -582,7 +584,9 @@ fn main() -> status: ExitStatus pure {
         rejected: &[],
         library: &[],
         rule: "MOD-3",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: a registered child module already occupies this qualified name, so a lowercase declaration of its parent module cannot take it; rename the declaration or the module directory\n",
+        ],
         repaired: &[&[(
             "main.wf",
             br#"alias ExitStatus = std::process::ExitStatus;
@@ -619,7 +623,9 @@ entry small = pkg::main;
         rejected: &[],
         library: &[],
         rule: "MOD-5",
-        sentences: &[],
+        sentences: &[
+            "\n  mechanical_fix: a qualified path names only a callee, type, construction or destructuring target, never a value [MOD-5]: to read the const `marker` here, add `alias marker = pkg::data::marker;` to this record's alias header and write `marker` in place of `pkg::data::marker` [MOD-4]; a const of this record's own module is written `marker` with no alias\n",
+        ],
         repaired: &[&[(
             "main.wf",
             br#"alias ExitStatus = std::process::ExitStatus;
@@ -712,6 +718,59 @@ fn main() -> status: ExitStatus pure {
             "alias IoError = std::io::IoError;",
         )],
         rule: "MOD-10",
+        sentences: &[],
+        repaired: &[&[]],
+    },
+    ModulePair {
+        name: "mod5-neg-public-variant-without-edge",
+        case: "mod5-neg-public-variant-without-edge",
+        rejected: &[],
+        library: &[],
+        rule: "MOD-5",
+        sentences: &[],
+        repaired: &[&[(
+            "modules.wfg",
+            b"pkg::a: [];
+pkg::b: [pkg::a];
+pkg: [pkg::a, pkg::b, std::process];
+
+entry main = pkg::main;
+",
+        )]],
+    },
+    ModulePair {
+        name: "mod5-neg-qualified-private-interface-group",
+        case: "mod5-neg-qualified-private-interface-group",
+        rejected: &[],
+        library: &[],
+        rule: "MOD-5",
+        sentences: &[],
+        repaired: &[&[(
+            "main.wf",
+            br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  let code = pkg::lib::seven();
+  return exit_status(code: code);
+}
+"#,
+        )]],
+    },
+    ModulePair {
+        name: "probe-entry-function-missing",
+        case: "mod1-pos-ordered-graph-and-entries",
+        rejected: &[(
+            "modules.wfg",
+            b"pkg::data: [];
+pkg::report: [pkg::data, std::process];
+pkg: [pkg::data, pkg::report, std::process];
+
+entry main = pkg::absent;
+",
+        )],
+        library: &[],
+        rule: "MOD-9",
         sentences: &[],
         repaired: &[&[]],
     },
