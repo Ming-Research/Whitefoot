@@ -6,7 +6,9 @@
 # --jq would print it; it answers only the queries the script must make
 # (workflow gate.yml, the head_sha, filter=latest, --paginate). FAKE_FAIL_FIRST
 # makes that many calls fail before it answers, and FAKE_FAIL_ALWAYS makes
-# every call fail. Waits are zero, so each case takes a moment.
+# every call fail. GATE_RUN_RESULT, set per case, is the result of the run's own
+# group matrix: `success` is judged without a listing, anything else lists as
+# before. Waits are zero, so each case takes a moment.
 set -eu
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 script=$here/gate-both-platforms.sh
