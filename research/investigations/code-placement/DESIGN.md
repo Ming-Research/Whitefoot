@@ -633,13 +633,19 @@ Criterion, with the per-round ratio and interval defined above:
   not separated otherwise.
 - The loop reading compares, among `FR`, `O16`, `O32` and `O48`, the arm the
   recomputed table gives the fewest crossing loops in the width's hot
-  function with the arm it gives the most. It holds at a width if the first
-  is faster than the second by the gate's rule on both 9V74 jobs, and is
-  rejected if that interval spans 1 or lies below it. It accounts for the
-  cost if, besides, `FR` is not the first arm and the first arm's interval
-  against `U` does not lie wholly below 1. It is read whether or not the
-  cost is established: a present layout that shows no cost while the reading
-  holds stands at a good offset under this toolchain and nothing more.
+  function with the arm it gives the most. The width's hot function is the
+  module function with the most software-clock samples of `FR` at `p0` at
+  that width in the sizing run. Of arms that tie, the one whose functions
+  start nearest the line's start is taken (`FR`, then `O16`, `O32`, `O48`),
+  as `P` breaks its ties; where all four give the same count, the table
+  predicts no difference and the reading is not made at that width. It
+  holds at a width if the first is faster than the second by the gate's rule
+  on both 9V74 jobs, and is rejected if that interval spans 1 or lies below
+  it. It accounts for the cost if, besides, `FR` is not the first arm and
+  the first arm's interval against `U` does not lie wholly below 1. It is
+  read whether or not the cost is established: a present layout that shows
+  no cost while the reading holds stands at a good offset under this
+  toolchain and nothing more.
 - The data reading holds on a host if a data placement moves `FR` against
   its `p0` by the gate's rule, or `U` at `p0` under `dFR` differs from `U` at
   `p0` by it, and is rejected otherwise. If it holds on a 9V74, the arms are
