@@ -13,6 +13,23 @@ typedef struct { SRWLOCK lock; CONDITION_VARIABLE signal; } wf_prim_wait;
 typedef struct { pthread_mutex_t lock; pthread_cond_t signal; } wf_prim_wait;
 #endif
 typedef struct { void (*entry)(void *); void *argument; } wf_prim_thread;
+/* A process-lifetime cleanup key, initialized once before binding it. The
+ * registration and its argument must remain valid through thread exit; keys
+ * cannot be rebound while a prior registration owns live shared addresses.
+ * Native cleanup runs before this thread's TLS storage is reclaimed; Windows
+ * callers that publish TLS addresses must use native PE TLS, not emutls. */
+typedef struct {
+#if defined(_WIN32)
+    DWORD native;
+#else
+    pthread_key_t native;
+#endif
+    void (*cleanup)(void *);
+} wf_prim_exit_key;
+typedef struct { wf_prim_exit_key *key; void *argument; } wf_prim_exit_registration;
+int wf_prim_exit_key_init(wf_prim_exit_key *key, void (*cleanup)(void *));
+int wf_prim_exit_bind(wf_prim_exit_registration *registration,
+                     wf_prim_exit_key *key, void *argument);
 /* One spin round's hint to the core: a spinning lane should give up issue
  * slots to its SMT sibling rather than run the loop at full rate. Windows has
  * YieldProcessor (which mingw and MSVC define as `pause` on x86 and

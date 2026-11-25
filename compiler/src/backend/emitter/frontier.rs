@@ -6,7 +6,7 @@
 //! else: no source name, signature, shape, project or test identity reaches
 //! this decision. Neither does any acceptance judgment read its result — the
 //! budget selects which permitted offers a run actualizes, exactly as the loop
-//! splitter's allowance does, and the same programs are accepted and the same
+//! splitter's request poll does, and the same programs are accepted and the same
 //! values computed whichever way it is fixed.
 
 use std::collections::HashSet;

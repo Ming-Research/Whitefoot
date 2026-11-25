@@ -728,7 +728,6 @@ impl CompiledProgram {
         command
             .current_dir(&self.directory)
             .args(arguments.iter().map(|bytes| invocation_argument(bytes)))
-            .env_remove("WF_SPLIT_WORK")
             .env_remove("WF_SCHED_REPORT");
         match workers {
             Some(count) => command.env("WF_WORKERS", count),

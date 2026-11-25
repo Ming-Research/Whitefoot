@@ -34,6 +34,23 @@
 #include <sys/sysctl.h>
 #endif
 
+static void wf_prim_exit_dispatch(void *opaque) {
+    wf_prim_exit_registration *registration = opaque;
+    registration->key->cleanup(registration->argument);
+}
+
+int wf_prim_exit_key_init(wf_prim_exit_key *key, void (*cleanup)(void *)) {
+    key->cleanup = cleanup;
+    return pthread_key_create(&key->native, wf_prim_exit_dispatch);
+}
+
+int wf_prim_exit_bind(wf_prim_exit_registration *registration,
+                     wf_prim_exit_key *key, void *argument) {
+    registration->key = key;
+    registration->argument = argument;
+    return pthread_setspecific(key->native, registration);
+}
+
 static void *wf_prim_thread_main(void *opaque) {
     wf_prim_thread *thread = opaque;
     thread->entry(thread->argument);

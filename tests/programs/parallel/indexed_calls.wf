@@ -422,7 +422,7 @@ fn add_field(p: &Holder) -> result: unit writes(p.cells) {
   return unit;
 }
 
-fn nested_alias_blocks() -> result: Bool pure {
+fn nested_alias_blocks(inner: u64) -> result: Bool pure {
   doc "The inner array alias inherits the enclosing helper's private Holder block.";
   let seed = Cell(sum: 1_u64, product: 1_u64);
   let values = array_filled::<Cell, 1>(value: seed);
@@ -431,7 +431,7 @@ fn nested_alias_blocks() -> result: Bool pure {
   let second = &owner.cells;
   for (i in 0_u64..16_u64) {
     add_field(p: first);
-    for (j in 0_u64..16_u64) {
+    for (j in 0_u64..inner) {
       set second^[0_u64].sum = second^[0_u64].sum +wrap 1_u64;
     }
   }
@@ -444,7 +444,7 @@ fn nested_alias_blocks() -> result: Bool pure {
   return True();
 }
 
-fn nested_alias_dense() -> result: Bool pure {
+fn nested_alias_dense(inner: u64) -> result: Bool pure {
   doc "Direct nested aliases with different owner depths share the enclosing dense family.";
   let seed = Cell(sum: 1_u64, product: 1_u64);
   let values = array_filled::<Cell, 1>(value: seed);
@@ -453,7 +453,7 @@ fn nested_alias_dense() -> result: Bool pure {
   let second = &owner.cells;
   for (i in 0_u64..16_u64) {
     set first^.cells[0_u64].sum = first^.cells[0_u64].sum +wrap 1_u64;
-    for (j in 0_u64..16_u64) {
+    for (j in 0_u64..inner) {
       set second^[0_u64].sum = second^[0_u64].sum +wrap 1_u64;
     }
   }
@@ -503,12 +503,12 @@ fn main() -> status: std::process::ExitStatus pure {
   if empty_bad {
     return std::process::exit_status(code: 7_u8);
   }
-  let blocks_ok = nested_alias_blocks();
+  let blocks_ok = nested_alias_blocks(inner: 16_u64);
   let blocks_bad = bnot(blocks_ok);
   if blocks_bad {
     return std::process::exit_status(code: 8_u8);
   }
-  let dense_ok = nested_alias_dense();
+  let dense_ok = nested_alias_dense(inner: 16_u64);
   let dense_bad = bnot(dense_ok);
   if dense_bad {
     return std::process::exit_status(code: 9_u8);

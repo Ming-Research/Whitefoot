@@ -28,7 +28,8 @@
 //! function of its own definitions and of the signatures they name. With
 //! stable symbols and type names, an unchanged function keeps the bytes of
 //! its fragment across an edit elsewhere, and with them its cached object.
-//! A missing symbol, type or attribute definition fails the split.
+//! Numbered metadata accompanies every fragment. A missing symbol, type,
+//! attribute or metadata definition fails the split.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -99,6 +100,12 @@ fn split_emission(
     }
     if let Some(id) = module.repeated_attribute_group() {
         return Err(failure(format!("attribute group #{id} is defined twice")));
+    }
+    if let Some(id) = module.repeated_metadata() {
+        return Err(failure(format!("metadata !{id} is defined twice")));
+    }
+    if let Some(id) = module.missing_metadata() {
+        return Err(failure(format!("metadata !{id} is used but not defined")));
     }
     let mut names = module.declarations.keys().cloned().collect::<BTreeSet<_>>();
     for entity in &module.entities {
@@ -429,6 +436,11 @@ fn fragment(
     for line in &module.header {
         text.push_str(line);
         text.push('\n');
+    }
+    // Preserve the existing full-metadata fragment contract, now from the
+    // explicit graph (validated before partitioning) instead of header text.
+    for (id, node) in &module.metadata {
+        text.push_str(&format!("!{id} = {}\n", node.body));
     }
     text.push('\n');
     for name in &types {
@@ -946,6 +958,35 @@ mod tests {
         );
         let f = defining(&fragments, "define i64 @wf_a.f(")[0];
         assert!(!f.contains("define i32 @wf_b.g("), "{f}");
+    }
+
+    #[test]
+    fn metadata_roots_edges_and_conflicts_are_checked_before_partitioning() {
+        for defect in ["missing root", "missing edge", "conflicting node"] {
+            let mut module = module("  %v9 = add i32 %v0, 1");
+            module.entities[0].references.metadata.insert(100);
+            match defect {
+                "missing root" => {}
+                "missing edge" => module.metadata_node(100, "!{!101}".to_owned(), [101].into()),
+                "conflicting node" => {
+                    module.metadata_node(100, "distinct !{!100}".to_owned(), [100].into());
+                    module.metadata_node(100, "distinct !{!100, i64 1}".to_owned(), [100].into());
+                }
+                _ => unreachable!(),
+            }
+            for granularity in [FragmentGranularity::Function, FragmentGranularity::Module] {
+                let error = split_emission(&module, granularity)
+                    .unwrap_err()
+                    .to_string();
+                let expected = match defect {
+                    "missing root" => "metadata !100 is used but not defined",
+                    "missing edge" => "metadata !101 is used but not defined",
+                    "conflicting node" => "metadata !100 is defined twice",
+                    _ => unreachable!(),
+                };
+                assert!(error.contains(expected), "{error}");
+            }
+        }
     }
 
     /// Editing one function's body leaves every other fragment's bytes as

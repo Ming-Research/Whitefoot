@@ -10,7 +10,8 @@ NATIVE_C := ordinary_values.c keyed_table.c sched/core.c sched/entry.c \
 ifeq ($(OS),Windows_NT)
 NATIVE_C += wf_floor_windows.c windows_runtime.c sched/prim_windows.c \
             completion/wait_windows.c completion/file_windows.c completion/windows_iocp.c
-NATIVE_COMPILE_FLAGS :=
+# Match the driver's native TLS ABI and FLS cleanup lifetime on Windows.
+NATIVE_COMPILE_FLAGS := -fno-emulated-tls
 NATIVE_LINK_FLAGS := -lws2_32 -lshell32
 else
 NATIVE_C += wf_floor.c sched/prim_host.c completion/wait_host.c \

@@ -55,8 +55,8 @@ fn assert_self_tail_lowering(source: &[u8]) {
         });
         let mut names = vec!["sum", "exchange", "swap_pairs", "accumulate"];
         if overlap == OverlapLowering::On {
-            // Only functions that can reach an offer need a sequential clone.
-            // Accumulate offers ordinary calls before its self-tail edge.
+            // Accumulate offers calls before its self-tail edge, so its
+            // ordinary version must retain that same guaranteed backedge.
             names.push("_par_seq_accumulate");
         }
         for name in names {

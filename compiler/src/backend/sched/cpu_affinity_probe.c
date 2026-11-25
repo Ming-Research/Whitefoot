@@ -162,7 +162,6 @@ int main(void) {
     reset(GROW);
     CHECK(unsetenv("WF_WORKERS") == 0);
     CHECK(unsetenv("WF_SCHED_REPORT") == 0);
-    CHECK(unsetenv("WF_SPLIT_WORK") == 0);
     CHECK(wf__sched_lanes() == 3);
     CHECK(attempts == 3u && unmaps == mappings && mappings == 2u && online_reads == 0u);
     return 0;

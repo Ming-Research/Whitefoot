@@ -1,215 +1,234 @@
-//! Indexed split implementation obligations; complete value oracles live in
-//! the program fixture and are also run through its ordinary sequential build.
+//! Indexed range-driver obligations; complete value oracles live in the
+//! program fixtures and are also run through their ordinary sequential build.
+//!
+//! The forced observer changes only scheduling inputs: it prices every driver
+//! entered from source or a chunk so its whole range is exactly one hand-out
+//! wide, and answers each request poll itself instead of the lane word, so
+//! the split tree and the private allocations are deterministic at every
+//! worker count. Results are the program's own oracles.
 
 use super::{BoundedOutput, build_linked_executable, emit, emit_with_overlap, test_directory};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 const PROGRAM: &[u8] = include_bytes!("../../../../tests/programs/parallel/indexed_reductions.wf");
 
 const CALL_PROGRAM: &[u8] = include_bytes!("../../../../tests/programs/parallel/indexed_calls.wf");
 
-#[test]
-fn indexed_helper_calls_execute_private_blocks_and_preserve_sequential_values() {
-    let directory = test_directory();
-    let sequential_directory = test_directory();
-    let sequential = build_linked_executable(&emit(CALL_PROGRAM), None, &[], &sequential_directory);
-    let reference = Command::new(&sequential)
-        .env("WF_WORKERS", "1")
-        .bounded_output()
-        .expect("run sequential helper-call oracle");
-    assert_eq!(reference.status.code(), Some(0), "{reference:?}");
-    assert!(reference.stderr.is_empty(), "{reference:?}");
-    let module = observed_with(
-        &emit_with_overlap(CALL_PROGRAM),
-        &[
-            "call_histogram",
-            "slots_histogram",
-            "call_marks",
-            "shared_call_fields",
-            "nested_helper_fields",
-            "measure_guarded_calls",
-            "empty_call_fields",
-            "nested_alias",
-        ],
-    );
-    let executable = build_linked_executable(&module, Some(OBSERVER), &[], &directory);
-    for zero in [false, true] {
-        let mut command = Command::new(&executable);
-        command.env("WF_WORKERS", "4");
-        if zero {
-            command.env("WF_TEST_ZERO", "1");
-        }
-        let output = command.bounded_output().expect("run helper-call observer");
-        assert_eq!(output.status.code(), Some(0), "zero={zero}: {output:?}");
-        assert_eq!(output.stdout, reference.stdout);
-        let report = String::from_utf8_lossy(&output.stderr);
-        let allocations: u32 = report
-            .split_once("indexed allocations=")
-            .expect("allocation counter")
-            .1
-            .split_once(' ')
-            .expect("allocation count delimiter")
-            .0
-            .parse()
-            .expect("numeric allocation count");
-        if zero {
-            assert_eq!(allocations, 0, "{report}");
-            // The first seven tags total 13 leaves; each alias shape adds 1 outer + 16 inner: 13 + 2 * 17 = 47.
-            assert!(
-                report.contains("indexed allocations=0 leaves=47\n"),
-                "{report}"
-            );
-            assert!(
-                report.contains("indexed loops=1,1,1,1,5,2,2,34\n"),
-                "{report}"
-            );
-        } else {
-            // Ten nonnested roots cost five allocations each (directory
-            // plus four blocks). The nested root costs five plus four inner
-            // splits of five. Sibling families must share each allocation.
-            // Alias shapes add 17 * 5 block allocations and 17 dense slabs: 75 + 85 + 17 = 177.
-            assert_eq!(allocations, 177, "{report}");
-            // Budget 2 gives four leaves per 16-iteration alias loop: 52 + 2 * (4 + 16 * 4) = 188.
-            assert!(
-                report.contains("indexed allocations=177 leaves=188\n"),
-                "{report}"
-            );
-            assert!(
-                report.contains("indexed loops=4,4,4,4,20,8,8,136\n"),
-                "{report}"
-            );
-        }
+/// Every range-driver definition synthesized for `function`.
+fn driver_bodies<'module>(module: &'module str, function: &str) -> Vec<&'module str> {
+    let prefix = format!("@wf__par_split_{function}.");
+    module
+        .lines()
+        .filter(|line| line.starts_with("define "))
+        .filter_map(|line| {
+            let (_, tail) = line.split_once(&prefix)?;
+            let (number, _) = tail.split_once('(')?;
+            number.parse::<u32>().ok()?;
+            Some(super::parallel::function_body(
+                module,
+                &format!("{prefix}{number}"),
+            ))
+        })
+        .collect()
+}
+
+/// A fixture whose named literal loop extents are read from a parameter
+/// instead, so a call-free loop that the compile-time small-site rule makes
+/// ordinary code keeps its range driver. Each replaced text occurs once.
+fn with_runtime_extents(source: &[u8], replacements: &[(&str, &str)]) -> Vec<u8> {
+    let mut text = std::str::from_utf8(source)
+        .expect("UTF-8 fixture")
+        .to_owned();
+    for (literal, runtime) in replacements {
+        assert_eq!(text.matches(literal).count(), 1, "{literal}");
+        text = text.replacen(literal, runtime, 1);
     }
-    // Fail directories and leaf blocks, including later roots of one
-    // multi-root split. The observer checks the acquired prefixes are freed.
-    for fail in (1..=5).chain([16, 17, 20, 21, 25]) {
-        let output = Command::new(&executable)
-            .env("WF_WORKERS", "4")
-            .env("WF_TEST_FAIL", fail.to_string())
-            .bounded_output()
-            .expect("fail a private directory or block acquisition");
-        assert_eq!(output.status.code(), Some(90), "failure {fail}: {output:?}");
-    }
-    std::fs::remove_dir_all(directory).expect("remove helper-call observer artifacts");
-    std::fs::remove_dir_all(sequential_directory).expect("remove sequential helper-call artifacts");
+    text.into_bytes()
+}
+
+/// `direct`, the alias case's one call-free loop, with its extent a parameter.
+const RUNTIME_DIRECT: &[(&str, &str)] = &[
+    (
+        "fn direct() -> result: u64 pure {",
+        "fn direct(limit: u64) -> result: u64 pure {",
+    ),
+    (
+        "  for (i in 0_u64..16_u64) {\n    set first^[0_u64]",
+        "  for (i in 0_u64..limit) {\n    set first^[0_u64]",
+    ),
+    (
+        "let updated = direct();",
+        "let updated = direct(limit: 16_u64);",
+    ),
+];
+
+/// The field case's call-free `reduce` loop with its extent a parameter.
+const RUNTIME_FIELDS: &[(&str, &str)] = &[
+    (
+        "fn reduce() -> result: u64 pure {",
+        "fn reduce(limit: u64) -> result: u64 pure {",
+    ),
+    ("for (i in 0_u64..128_u64)", "for (i in 0_u64..limit)"),
+    (
+        "let result = reduce();",
+        "let result = reduce(limit: 128_u64);",
+    ),
+];
+
+fn position(body: &str, needle: &str) -> usize {
+    body.find(needle)
+        .unwrap_or_else(|| panic!("missing {needle}:\n{body}"))
 }
 
 #[test]
-fn indexed_aliases_execute_one_private_storage_per_resolved_root() {
-    let source =
-        include_str!("../../../../tests/conformance/cases/par2-pos-indexed-aliased-updates.wf");
-    let directory = test_directory();
-    let executable = observed_executable(
-        source,
-        &["calls", "direct", "fields_reversed", "fields", "mixed"],
-        &directory,
-    );
-    for zero in [false, true] {
-        let report = run_observed(&executable, zero);
-        if zero {
-            assert!(
-                report.contains("indexed allocations=0 leaves=5\n"),
-                "{report}"
-            );
-            assert!(
-                report.contains("indexed loops=1,1,1,1,1,0,0,0\n"),
-                "{report}"
-            );
-        } else {
-            // One dense family allocation, plus four root directories each
-            // with four leaf blocks. Aliased sibling fields share a block.
-            assert!(
-                report.contains("indexed allocations=21 leaves=20\n"),
-                "{report}"
-            );
-            assert!(
-                report.contains("indexed loops=4,4,4,4,4,0,0,0\n"),
-                "{report}"
-            );
-        }
-    }
-    std::fs::remove_dir_all(directory).expect("remove alias observer artifacts");
-}
-
-#[test]
-fn indexed_ir_contains_private_fill_ordered_combine_and_release() {
+fn indexed_drivers_privatize_only_granted_far_halves() {
     let module = emit_with_overlap(PROGRAM);
-    for expected in [
-        ".allocation = call ptr @wf__heap_take",
-        ".fill.head:",
-        "store i64 9223372036854775807, ptr %indexed.",
-        "store i64 -9223372036854775808, ptr %indexed.",
-        "store i64 1, ptr %indexed.",
-        ".combine.head:",
-        " = urem i64 %indexed.",
-        "call void @wf__heap_give(ptr %indexed.",
-        "@llvm.umul.with.overflow.i64",
-        "@llvm.uadd.with.overflow.i64",
-        ".pays = icmp ugt i64",
+    for (name, identities) in [
+        ("histogram", &["store i64 0, ptr %indexed.far."][..]),
+        (
+            "extrema",
+            &[
+                "store i64 9223372036854775807, ptr %indexed.far.",
+                "store i64 -9223372036854775808, ptr %indexed.far.",
+            ][..],
+        ),
+        ("products", &["store i64 1, ptr %indexed.far."][..]),
     ] {
-        assert!(module.contains(expected), "missing {expected}:\n{module}");
+        let site = super::emitted_body(&module, name);
+        assert!(site.contains("@wf__par_split_"), "{name}: {site}");
+        assert!(
+            !site.contains("@wf__heap_take("),
+            "{name}: the site predicts and allocates no private storage:\n{site}"
+        );
+        let drivers = driver_bodies(&module, name);
+        let [driver] = drivers.as_slice() else {
+            panic!("{name}: one range driver\n{module}");
+        };
+        // The request word is read directly, once, at the eligible boundary,
+        // after the far half's setup charge has been compared.
+        assert_eq!(
+            driver
+                .matches("load atomic i64, ptr @wf__par_demand_word monotonic")
+                .count(),
+            1,
+            "{name}: {driver}"
+        );
+        assert!(driver.contains("@llvm.uadd.sat.i64"), "{name}: {driver}");
+        for identity in identities {
+            assert!(
+                driver.contains(identity),
+                "{name}: missing {identity}:\n{driver}"
+            );
+        }
+        // Granted edge: lane, then allocation and identity fill, then publish.
+        let acquire = position(driver, "call ptr @wf__par_acquire_lane(");
+        let take = position(driver, ".allocation = call ptr @wf__heap_take(");
+        let fill = position(driver, ".fill.head:");
+        let publish = position(driver, "call void @wf__par_publish(");
+        assert!(
+            acquire < take && take < fill && fill < publish,
+            "{name}: {driver}"
+        );
+        // Wait edge: join, combine into the destination, free, then the lane.
+        let join = position(driver, "call void @wf__par_join(");
+        let combine = position(driver, ".combine.head:");
+        let free = position(driver, "call void @wf__heap_give(ptr %indexed.join.");
+        let release = position(driver, "call void @wf__par_release(");
+        assert!(
+            publish < join && join < combine && combine < free && free < release,
+            "{name}: {driver}"
+        );
+        // The retained and the refused far calls name the current
+        // destinations; only frame fields receive private storage.
+        let recursive: Vec<_> = driver
+            .lines()
+            .filter(|line| line.contains(" call ") && line.contains("@wf__par_split_"))
+            .collect();
+        assert_eq!(recursive.len(), 2, "{name}: near and refused far: {driver}");
+        assert!(
+            recursive.iter().all(|line| !line.contains("%indexed.")),
+            "{name}: {driver}"
+        );
     }
     assert!(!emit(PROGRAM).contains("%indexed."));
-    // The site folds ascending flat offsets (leaf-major, cell-minor), after
-    // the structured splitter call has joined, and releases afterwards.
-    for name in ["histogram", "extrema", "products"] {
-        let body = super::emitted_body(&module, name);
-        let split = body.find("@wf__par_split_").expect("split call");
-        let combine = body.find(".combine.head:").expect("combine loop");
-        let free = body[combine..]
-            .find("call void @wf__heap_give")
-            .expect("release after combine");
-        assert!(split < combine && free > 0);
-        assert!(body.contains(".next = add i64 %indexed."));
+}
+
+#[test]
+fn a_call_updated_root_acquires_one_block_shared_by_its_families() {
+    let module = emit_with_overlap(CALL_PROGRAM);
+    // Two helper families and a direct third family share one root.
+    for name in ["call_histogram", "shared_call_fields"] {
+        let drivers = driver_bodies(&module, name);
+        let [driver] = drivers.as_slice() else {
+            panic!("{name}: one range driver\n{module}");
+        };
+        assert_eq!(
+            driver
+                .matches(".allocation = call ptr @wf__heap_take(")
+                .count(),
+            1,
+            "{name}: {driver}"
+        );
+        assert_eq!(
+            driver
+                .matches("call void @wf__heap_give(ptr %indexed.join.")
+                .count(),
+            1,
+            "{name}: {driver}"
+        );
+        assert!(driver.contains(".zero.head:"), "{name}: {driver}");
+        assert!(!super::emitted_body(&module, name).contains("@wf__heap_take("));
     }
 }
 
-/// Force an allowance at the ordinary runtime query, then observe actual
-/// private allocations and leaf invocations. A correct answer reached only
-/// through the sequential clone fails the observer.
+/// See the module comment. Private allocations and frees are counted; a
+/// heap-exhaustion termination is checked against the acquired prefix. Every
+/// entry choice enters the parallel body, so each forced driver is reached.
 fn observed(module: &str) -> String {
-    observed_with(module, &["histogram", "extrema", "products"])
-}
-
-/// [`observed`] with the leaf counters tagged by the position of the first
-/// listed source function name found in a chunk's symbol; any other chunk
-/// carries the tag after the last name.
-fn observed_with(module: &str, names: &[&str]) -> String {
+    let module = super::without_entry_selection(module);
     let mut output = String::new();
-    let mut chunk_entry = None;
+    let mut source_or_chunk = false;
+    let mut ordinal = 0;
     for line in module.lines() {
-        if line.starts_with("define ") && line.contains("@wf__par_chunk_") {
-            chunk_entry = Some(
-                names
-                    .iter()
-                    .position(|name| line.contains(name))
-                    .unwrap_or(names.len()),
-            );
+        if line.starts_with("define ") {
+            let symbol = line.split_once('@').unwrap().1.split_once('(').unwrap().0;
+            source_or_chunk = (!symbol.starts_with("wf__par_")
+                || symbol.starts_with("wf__par_chunk_"))
+                && !symbol.starts_with("wf__ctx_thunk_");
         }
-        let line = if line.contains(".allocation = call ptr @wf__heap_take(") {
+        if source_or_chunk && line.contains(" call ") && line.contains("@wf__par_split_") {
+            let (_, arguments) = line.split_once("@wf__par_split_").unwrap();
+            let (_, arguments) = arguments.split_once('(').unwrap();
+            let (arguments, _) = arguments.rsplit_once(')').unwrap();
+            let values: Vec<_> = arguments.split(", ").collect();
+            let lower = values[1].strip_prefix("i64 ").unwrap();
+            let upper = values[2].strip_prefix("i64 ").unwrap();
+            output.push_str(&format!(
+                "  %force.{ordinal}.ascending = icmp ult i64 {lower}, {upper}\n  %force.{ordinal}.difference = sub i64 {upper}, {lower}\n  %force.{ordinal}.span = select i1 %force.{ordinal}.ascending, i64 %force.{ordinal}.difference, i64 1\n  %force.{ordinal}.quotient = udiv i64 149999, %force.{ordinal}.span\n  %force.{ordinal}.price = add i64 %force.{ordinal}.quotient, 1\n"
+            ));
+            let (prefix, _) = line.rsplit_once(", i64 ").unwrap();
+            output.push_str(&format!("{prefix}, i64 %force.{ordinal}.price)\n"));
+            ordinal += 1;
+            continue;
+        }
+        let line = if line.contains("load atomic i64, ptr @wf__par_demand_word") {
+            let (result, _) = line.split_once(" = ").unwrap();
+            format!("{result} = call i64 @wf_test_indexed_request()")
+        } else if line.contains(".allocation = call ptr @wf__heap_take(") {
             line.replace("@wf__heap_take(", "@wf_test_private_allocate(")
         } else if line.contains("call void @wf__heap_give(ptr %indexed.") {
             line.replace("@wf__heap_give(", "@wf_test_private_free(")
         } else {
             line.replace(
-                "call i64 @wf__par_split_budget(",
-                "call i64 @wf_test_indexed_budget(",
-            )
-            .replace(
                 "call void @wf_resource_abort()",
                 "call void @wf_test_indexed_abort()",
             )
         };
         output.push_str(&line);
         output.push('\n');
-        if line.ends_with(':')
-            && let Some(tag) = chunk_entry.take()
-        {
-            output.push_str(&format!("  call void @wf_test_indexed_leaf(i32 {tag})\n"));
-        }
     }
-    output.push_str("\ndeclare ptr @wf_test_private_allocate(i64)\ndeclare void @wf_test_private_free(ptr, i64)\ndeclare i64 @wf_test_indexed_budget(i64, i64)\ndeclare void @wf_test_indexed_abort()\ndeclare void @wf_test_indexed_leaf(i32)\n");
+    output.push_str("\ndeclare i64 @wf_test_indexed_request()\ndeclare ptr @wf_test_private_allocate(i64)\ndeclare void @wf_test_private_free(ptr, i64)\ndeclare void @wf_test_indexed_abort()\n");
     output
 }
 
@@ -218,33 +237,32 @@ const OBSERVER: &str = r#"
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdatomic.h>
-static _Atomic unsigned allocations, releases, live, leaves, loops[8];
-uint64_t wf_test_indexed_budget(uint64_t span, uint64_t weight) {
-    (void)span; (void)weight;
-    return getenv("WF_TEST_ZERO") ? 0 : 2;
-}
-void wf_test_indexed_leaf(unsigned tag) {
-    if (tag >= 8) _Exit(113);
-    atomic_fetch_add(&leaves, 1);
-    atomic_fetch_add(&loops[tag], 1);
+static _Atomic unsigned allocations, releases, live, requests, polls;
+uint64_t wf_test_indexed_request(void) {
+    unsigned poll = atomic_fetch_add(&polls, 1);
+    const char *limit = getenv("WF_TEST_REQUESTS");
+    if (limit && poll >= (unsigned)atoi(limit)) return 0;
+    atomic_fetch_add(&requests, 1);
+    return 1;
 }
 void *wf_test_private_allocate(uint64_t bytes) {
     unsigned n = atomic_fetch_add(&allocations, 1) + 1;
     const char *fail = getenv("WF_TEST_FAIL");
     if (fail && n == (unsigned)atoi(fail)) return NULL;
-    uint64_t *block = malloc(sizeof(*block) + (size_t)bytes);
-    void *p = block ? block + 1 : NULL;
+    uint64_t *block = malloc(sizeof(*block) * 2 + (size_t)bytes);
+    void *p = block ? block + 2 : NULL;
     if (block) {
         *block = bytes;
         atomic_fetch_add(&live, 1);
     }
+    /* Poison: a missed identity fill or a copied seed reads garbage. */
     for (uint64_t i = 0; p && i < bytes; ++i)
         ((unsigned char *)p)[i] = (unsigned char)((i * 0x9E3779B1u) >> 11);
     return p;
 }
 void wf_test_private_free(void *p, uint64_t bytes) {
     if (!p || !atomic_load(&live)) _Exit(110);
-    uint64_t *block = (uint64_t *)p - 1;
+    uint64_t *block = (uint64_t *)p - 2;
     if (*block != bytes) _Exit(116);
     atomic_fetch_sub(&live, 1);
     atomic_fetch_add(&releases, 1);
@@ -259,137 +277,242 @@ void wf_test_indexed_abort(void) {
 }
 static void report(void) {
     unsigned a = atomic_load(&allocations), r = atomic_load(&releases);
-    unsigned l = atomic_load(&leaves);
-    int zero = getenv("WF_TEST_ZERO") || getenv("WF_TEST_TINY");
-    if (atomic_load(&live) || a != r || (!zero && (!a || l < 4)) ||
-        (zero && a) || getenv("WF_TEST_FAIL")) _Exit(112);
-    if (getenv("WF_TEST_PROGRAM")) {
-        unsigned expected = zero ? 1 : 4;
-        if (a != (zero ? 0 : 4)) _Exit(114);
-        for (unsigned i = 0; i < 3; ++i)
-            if (atomic_load(&loops[i]) != expected) _Exit(115);
-    }
-    fprintf(stderr, "indexed allocations=%u leaves=%u\n", a, l);
-    fprintf(stderr, "indexed loops=%u,%u,%u,%u,%u,%u,%u,%u\n",
-            atomic_load(&loops[0]), atomic_load(&loops[1]), atomic_load(&loops[2]),
-            atomic_load(&loops[3]), atomic_load(&loops[4]), atomic_load(&loops[5]),
-            atomic_load(&loops[6]), atomic_load(&loops[7]));
+    if (atomic_load(&live) || a != r || getenv("WF_TEST_FAIL")) _Exit(112);
+    fprintf(stderr, "indexed allocations=%u requests=%u polls=%u\n", a,
+            atomic_load(&requests), atomic_load(&polls));
 }
 __attribute__((constructor)) static void setup(void) { atexit(report); }
 "#;
 
-#[test]
-fn indexed_split_executes_private_leaves_and_zero_budget_executes_source() {
-    let directory = test_directory();
-    let module = observed(&emit_with_overlap(PROGRAM));
-    let executable = build_linked_executable(&module, Some(OBSERVER), &[], &directory);
-    for zero in [false, true] {
-        let mut command = Command::new(&executable);
-        command.env("WF_WORKERS", "4").env("WF_TEST_PROGRAM", "1");
-        if zero {
-            command.env("WF_TEST_ZERO", "1");
-        }
-        let output = command.bounded_output().expect("run indexed program");
-        assert_eq!(output.status.code(), Some(0), "zero={zero}: {output:?}");
-        assert!(String::from_utf8_lossy(&output.stderr).contains("indexed allocations="));
+/// What one observed run allocated and asked.
+#[derive(Debug, Eq, PartialEq)]
+struct Report {
+    allocations: u32,
+    requests: u32,
+    polls: u32,
+}
+
+fn observed_executable(source: &[u8], directory: &Path) -> std::path::PathBuf {
+    build_linked_executable(
+        &observed(&emit_with_overlap(source)),
+        Some(OBSERVER),
+        &[],
+        directory,
+    )
+}
+
+/// Run an observed program; `requests` limits how many polls the observer
+/// answers with a request (`None` answers every poll). A nonzero exit is the
+/// program's own failing comparison or the observer's accounting failure:
+/// leaked, unmatched or double-freed private storage.
+fn run_observed(executable: &Path, workers: u32, requests: Option<u32>) -> Report {
+    let mut command = Command::new(executable);
+    command.env("WF_WORKERS", workers.to_string());
+    if let Some(requests) = requests {
+        command.env("WF_TEST_REQUESTS", requests.to_string());
     }
-    std::fs::remove_dir_all(directory).expect("remove indexed native artifacts");
+    let output = command.bounded_output().expect("run observed program");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "workers={workers} requests={requests:?}: {output:?}"
+    );
+    let report = String::from_utf8_lossy(&output.stderr);
+    let field = |name: &str| -> u32 {
+        report
+            .split_once(&format!("{name}="))
+            .unwrap_or_else(|| panic!("{name} in {report}"))
+            .1
+            .split(|c: char| !c.is_ascii_digit())
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap()
+    };
+    Report {
+        allocations: field("allocations"),
+        requests: field("requests"),
+        polls: field("polls"),
+    }
 }
 
-const TWO_ROOTS: &str = r#"fn main() -> status: std::process::ExitStatus pure {
-  doc "Two live private roots exercise release when the second allocation fails.";
-  let low = array_filled::<i64, 4>(value: 100_i64);
-  let high = array_filled::<i64, 4>(value: -100_i64);
-  for (i in 0_u64..262144_u64) {
-    set low[0_u64] = imin(low[0_u64], 7_i64);
-    set high[0_u64] = imax(high[0_u64], -7_i64);
-  }
-  if low[0_u64] != 7_i64 {
-    return std::process::exit_status(code: 1_u8);
-  }
-  if high[0_u64] != -7_i64 {
-    return std::process::exit_status(code: 2_u8);
-  }
-  return std::process::exit_status(code: 0_u8);
-}
-"#;
-
-#[test]
-fn indexed_allocation_failure_releases_every_previously_acquired_buffer() {
-    let directory = test_directory();
-    let module = observed(&emit_with_overlap(TWO_ROOTS.as_bytes()));
-    let executable = build_linked_executable(&module, Some(OBSERVER), &[], &directory);
-    for fail in ["1", "2"] {
-        let output = Command::new(&executable)
+/// A forced allocation failure must free the bundle's acquired prefix and
+/// terminate through heap exhaustion [STOR-8], never complete.
+fn assert_failures_terminate(executable: &Path, failures: &[u32]) {
+    for fail in failures {
+        let output = Command::new(executable)
             .env("WF_WORKERS", "4")
-            .env("WF_TEST_FAIL", fail)
+            .env("WF_TEST_FAIL", fail.to_string())
             .bounded_output()
-            .expect("run resource failure");
+            .expect("run private allocation failure");
         assert_eq!(
             output.status.code(),
             Some(90),
             "allocation {fail}: {output:?}"
         );
     }
+}
+
+#[test]
+fn indexed_split_results_and_private_storage_match_at_every_width() {
+    let directory = test_directory();
+    let executable = observed_executable(PROGRAM, &directory);
+    for workers in [1, 2, 4, 8] {
+        let forced = run_observed(&executable, workers, None);
+        // One worker selects the sequential computation: no driver runs.
+        // Otherwise each loop splits once and its granted far half owns one
+        // contribution per root: histogram 1, extrema 2, products 1.
+        let expected = if workers == 1 {
+            Report {
+                allocations: 0,
+                requests: 0,
+                polls: 0,
+            }
+        } else {
+            Report {
+                allocations: 4,
+                requests: 3,
+                polls: 3,
+            }
+        };
+        assert_eq!(forced, expected, "workers={workers}");
+        // Unrequested slices on the current destinations allocate nothing.
+        let unrequested = run_observed(&executable, workers, Some(0));
+        assert_eq!(unrequested.allocations, 0, "workers={workers}");
+        assert_eq!(unrequested.requests, 0, "workers={workers}");
+    }
+    std::fs::remove_dir_all(directory).expect("remove indexed native artifacts");
+}
+
+#[test]
+fn indexed_helper_calls_execute_private_blocks_and_preserve_sequential_values() {
+    let directory = test_directory();
+    let sequential_directory = test_directory();
+    let sequential = build_linked_executable(&emit(CALL_PROGRAM), None, &[], &sequential_directory);
+    let reference = Command::new(&sequential)
+        .env("WF_WORKERS", "1")
+        .bounded_output()
+        .expect("run sequential helper-call oracle");
+    assert_eq!(reference.status.code(), Some(0), "{reference:?}");
+    assert!(reference.stderr.is_empty(), "{reference:?}");
+    let executable = observed_executable(CALL_PROGRAM, &directory);
+    for workers in [2, 4, 8] {
+        for requests in [None, Some(0)] {
+            let mut command = Command::new(&executable);
+            command.env("WF_WORKERS", workers.to_string());
+            if let Some(requests) = requests {
+                command.env("WF_TEST_REQUESTS", requests.to_string());
+            }
+            let output = command.bounded_output().expect("run helper-call observer");
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "{workers} {requests:?}: {output:?}"
+            );
+            assert_eq!(output.stdout, reference.stdout);
+        }
+        // The first seven functions enter 13 drivers holding 15 roots; each
+        // alias shape enters 1 outer and 16 inner drivers of one root each.
+        assert_eq!(
+            run_observed(&executable, workers, None),
+            Report {
+                allocations: 15 + 2 * 17,
+                requests: 13 + 2 * 17,
+                polls: 13 + 2 * 17,
+            },
+            "workers={workers}"
+        );
+    }
+    // The first three allocations belong to unnested loops, so nothing else
+    // is live when one fails.
+    assert_failures_terminate(&executable, &[1, 2, 3]);
+    std::fs::remove_dir_all(directory).expect("remove helper-call observer artifacts");
+    std::fs::remove_dir_all(sequential_directory).expect("remove sequential helper-call artifacts");
+}
+
+#[test]
+fn indexed_aliases_acquire_one_private_storage_per_resolved_root() {
+    let source = with_runtime_extents(
+        include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-aliased-updates.wf"),
+        RUNTIME_DIRECT,
+    );
+    let directory = test_directory();
+    let executable = observed_executable(&source, &directory);
+    // One dense family and four call-updated roots; aliased sibling fields
+    // share one block.
+    assert_eq!(
+        run_observed(&executable, 4, None),
+        Report {
+            allocations: 5,
+            requests: 5,
+            polls: 5,
+        }
+    );
+    assert_eq!(run_observed(&executable, 4, Some(0)).allocations, 0);
+    std::fs::remove_dir_all(directory).expect("remove alias observer artifacts");
+}
+
+/// The extent is a parameter: over a literal range this call-free loop is a
+/// compile-time small site and keeps no driver.
+const TWO_ROOTS: &str = r#"fn two_roots(limit: u64) -> result: u8 pure {
+  doc "Two live private roots exercise release when the second allocation fails.";
+  let low = box_array_filled::<i64>(count: 4_u64, value: 100_i64);
+  let high = box_array_filled::<i64>(count: 4_u64, value: -100_i64);
+  for (i in 0_u64..limit) {
+    set low.inner[0_u64] = imin(low.inner[0_u64], 7_i64);
+    set high.inner[0_u64] = imax(high.inner[0_u64], -7_i64);
+  }
+  if low.inner[0_u64] != 7_i64 {
+    return 1_u8;
+  }
+  if high.inner[0_u64] != -7_i64 {
+    return 2_u8;
+  }
+  if low.inner[3_u64] != 100_i64 {
+    return 3_u8;
+  }
+  return 0_u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let code = two_roots(limit: 4096_u64);
+  return std::process::exit_status(code: code);
+}
+"#;
+
+#[test]
+fn indexed_allocation_failure_releases_the_acquired_prefix_and_terminates() {
+    let directory = test_directory();
+    let executable = observed_executable(TWO_ROOTS.as_bytes(), &directory);
+    assert_eq!(
+        run_observed(&executable, 4, None),
+        Report {
+            allocations: 2,
+            requests: 1,
+            polls: 1,
+        }
+    );
+    // The second root's failure frees the first root's contribution.
+    assert_failures_terminate(&executable, &[1, 2]);
     std::fs::remove_dir_all(directory).expect("remove resource test artifacts");
 }
 
 #[test]
-fn indexed_tiny_loop_refuses_buffers_even_when_runtime_offers_a_split() {
-    let source = TWO_ROOTS
-        .replace("i64, 4>", "i64, 4096>")
-        .replace("262144_u64", "4_u64");
+fn a_far_half_that_cannot_pay_for_its_cells_reads_no_request() {
+    // At the forced grain the far half carries about 75,000 work units; two
+    // 16,384-cell roots charge 3 * 32,768 = 98,304 for one contribution.
+    let source = TWO_ROOTS.replace("count: 4_u64", "count: 16384_u64");
     let directory = test_directory();
-    let module = observed(&emit_with_overlap(source.as_bytes()));
-    let executable = build_linked_executable(&module, Some(OBSERVER), &[], &directory);
-    let output = Command::new(&executable)
-        .env("WF_WORKERS", "4")
-        .env("WF_TEST_TINY", "1")
-        .bounded_output()
-        .expect("run refused indexed split");
-    assert_eq!(output.status.code(), Some(0), "{output:?}");
-    let report = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        report.contains("indexed allocations=0 leaves=1"),
-        "{report}"
+    let executable = observed_executable(source.as_bytes(), &directory);
+    assert_eq!(
+        run_observed(&executable, 4, None),
+        Report {
+            allocations: 0,
+            requests: 0,
+            polls: 0,
+        }
     );
-    std::fs::remove_dir_all(directory).expect("remove grain test artifacts");
-}
-
-#[test]
-fn indexed_storage_shapes_and_all_operations_emit_private_ranges() {
-    // These formal fixtures already own the type/operation coverage. This
-    // checks their lowering payload, without changing conformance verdicts.
-    let shapes = include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-shapes.wf");
-    let module = emit_with_overlap(shapes);
-    for name in [
-        "slots",
-        "inline_array",
-        "referenced",
-        "several_roots",
-        "branches",
-        "overlapping_maps",
-        "measured_index",
-        "borrowed_index",
-    ] {
-        let body = super::emitted_body(&module, name);
-        assert!(
-            body.contains(".allocation = call ptr @wf__heap_take"),
-            "{name}: {body}"
-        );
-    }
-    for source in [
-        include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-band.wf").as_slice(),
-        include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-bor.wf").as_slice(),
-        include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-bxor.wf").as_slice(),
-        include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-iand.wf").as_slice(),
-        include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-ior.wf").as_slice(),
-        include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-ixor.wf").as_slice(),
-    ] {
-        let module = emit_with_overlap(source);
-        assert!(module.contains(".fill.head:"));
-        assert!(module.contains(".combine.head:"));
-    }
+    std::fs::remove_dir_all(directory).expect("remove setup charge artifacts");
 }
 
 #[test]
@@ -421,29 +544,31 @@ fn main() -> status: std::process::ExitStatus pure {{
 "#
         );
         let module = emit_with_overlap(source.as_bytes());
-        let body = super::emitted_body(&module, "folded");
         assert_eq!(
-            body.contains(".allocation = call ptr @wf__heap_take"),
-            splits,
-            "length={length}: {body}"
+            driver_bodies(&module, "folded").len(),
+            usize::from(splits),
+            "length={length}"
         );
         let directory = test_directory();
-        let executable =
-            build_linked_executable(&observed(&module), Some(OBSERVER), &[], &directory);
-        let mut command = Command::new(&executable);
-        command.env("WF_WORKERS", "4");
-        if !splits {
-            command.env("WF_TEST_ZERO", "1");
-        }
-        let output = command.bounded_output().expect("run indexed capture frame");
-        assert_eq!(output.status.code(), Some(0), "length={length}: {output:?}");
-        let report = String::from_utf8_lossy(&output.stderr);
+        let executable = observed_executable(source.as_bytes(), &directory);
         let expected = if splits {
-            "indexed allocations=1 leaves=4"
+            Report {
+                allocations: 1,
+                requests: 1,
+                polls: 1,
+            }
         } else {
-            "indexed allocations=0 leaves=0"
+            Report {
+                allocations: 0,
+                requests: 0,
+                polls: 0,
+            }
         };
-        assert!(report.contains(expected), "length={length}: {report}");
+        assert_eq!(
+            run_observed(&executable, 4, None),
+            expected,
+            "length={length}"
+        );
         std::fs::remove_dir_all(directory).expect("remove capture frame artifacts");
     }
 }
@@ -598,8 +723,8 @@ fn fold_flags(
     cells
 }
 
-/// Quarter q of the iterations is leaf q once a budget of two halves the range
-/// twice; its lane is the bit q.
+/// Quarter q of the iterations contributes the lane bit q, so a lost or
+/// duplicated contribution of any part of the range changes a cell.
 fn lane_bits(i: u64) -> u64 {
     (1_u64 << (i / QUARTER)) | 256 | ((i % TOUCHED + 1) * 65_536)
 }
@@ -696,62 +821,30 @@ fn operations_source() -> String {
     source
 }
 
-/// Instrument `source` with the forced-allowance observer and link it.
-fn observed_executable(source: &str, names: &[&str], directory: &Path) -> PathBuf {
-    let module = observed_with(&emit_with_overlap(source.as_bytes()), names);
-    build_linked_executable(&module, Some(OBSERVER), &[], directory)
-}
-
-/// Run an observed program with four workers and return the observer's
-/// report. A nonzero exit is the program's own failing comparison or the
-/// observer's accounting failure (leaked or unmatched private storage).
-fn run_observed(executable: &Path, zero: bool) -> String {
-    let mut command = Command::new(executable);
-    command.env("WF_WORKERS", "4");
-    if zero {
-        command.env("WF_TEST_ZERO", "1");
-    }
-    let output = command.bounded_output().expect("run observed program");
-    assert_eq!(
-        output.status.code(),
-        Some(0),
-        "zero={zero}: exit code 10*(operation+1)+cell names the first wrong cell: {output:?}"
-    );
-    String::from_utf8_lossy(&output.stderr).into_owned()
-}
-
 #[test]
-fn indexed_bitwise_and_boolean_combines_match_an_independent_oracle_across_forced_leaves() {
+fn indexed_bitwise_and_boolean_combines_match_an_independent_oracle_across_forced_splits() {
     let source = operations_source();
     let module = emit_with_overlap(source.as_bytes());
     for name in OPERATION_FUNCTIONS {
-        let body = super::emitted_body(&module, name);
-        assert!(
-            body.contains(".allocation = call ptr @wf__heap_take"),
-            "{name} must be permitted to split:\n{body}"
-        );
+        assert_eq!(driver_bodies(&module, name).len(), 1, "{name}: {module}");
     }
     let directory = test_directory();
-    let executable = observed_executable(&source, &OPERATION_FUNCTIONS, &directory);
-    // Budget two halves the range twice: every loop runs four leaves over
-    // four private ranges, each combined into the root after the join. The
-    // observer fails the run unless every private range was freed.
-    let report = run_observed(&executable, false);
-    assert!(
-        report.contains("indexed allocations=6 leaves=24\n"),
-        "{report}"
-    );
-    assert!(
-        report.contains("indexed loops=4,4,4,4,4,4,0,0\n"),
-        "{report}"
-    );
-    // The same source with no allowance allocates nothing and still matches
-    // the oracle, so the oracle and the fixture agree on the sequential meaning.
-    let report = run_observed(&executable, true);
-    assert!(
-        report.contains("indexed allocations=0 leaves=6\n"),
-        "{report}"
-    );
+    let executable = observed_executable(source.as_bytes(), &directory);
+    // Every loop splits once and combines one private contribution into the
+    // root after the join; exit code 10*(operation+1)+cell names the first
+    // wrong cell. The unrequested run checks the oracle's sequential meaning.
+    for workers in [2, 4, 8] {
+        assert_eq!(
+            run_observed(&executable, workers, None),
+            Report {
+                allocations: 6,
+                requests: 6,
+                polls: 6,
+            },
+            "workers={workers}"
+        );
+    }
+    assert_eq!(run_observed(&executable, 4, Some(0)).allocations, 0);
     std::fs::remove_dir_all(directory).expect("remove operation artifacts");
 }
 
@@ -761,11 +854,11 @@ const INNER: u64 = 4096;
 
 /// The outer loop and the inner loop both update `cells`, so the inner split
 /// runs inside an outer leaf and must combine into that leaf's private range.
-const SHARED_CELLS: &str = r#"fn shared_cells() -> made: Box<Array<u64>> pure {
+const SHARED_CELLS: &str = r#"fn shared_cells(inner: u64) -> made: Box<Array<u64>> pure {
   doc "Both counted loops update the same cells; the inner updates reach the enclosing leaf's private range.";
   let cells = box_array_filled::<u64>(count: 8_u64, value: 5_u64);
   for (batch in 0_u64..32_u64) {
-    for (offset in 0_u64..4096_u64) {
+    for (offset in 0_u64..inner) {
       let base = batch *wrap 4096_u64;
       let item = base +wrap offset;
       let bucket = item % 5_u64;
@@ -779,12 +872,12 @@ const SHARED_CELLS: &str = r#"fn shared_cells() -> made: Box<Array<u64>> pure {
 "#;
 
 /// Each outer iteration owns a row; only the inner loop updates it by index.
-const OWNED_ROWS: &str = r#"fn owned_rows() -> result: u64 pure {
+const OWNED_ROWS: &str = r#"fn owned_rows(inner: u64) -> result: u64 pure {
   doc "Every outer iteration owns a four-cell row that its inner loop updates by index; the outer loop folds the rows into a scalar.";
   let total = 0_u64;
   for (batch in 0_u64..64_u64) {
     let row = array_filled::<u64, 4>(value: 0_u64);
-    for (offset in 0_u64..4096_u64) {
+    for (offset in 0_u64..inner) {
       let bucket = offset % 4_u64;
       let amount = batch +wrap offset;
       set row[bucket] = row[bucket] +wrap amount;
@@ -833,7 +926,7 @@ fn owned_rows_expectation() -> u64 {
 
 fn nested_source() -> String {
     let mut source = format!("{SHARED_CELLS}\n{OWNED_ROWS}\n");
-    source.push_str("fn main() -> status: std::process::ExitStatus pure {\n  let res_shared = shared_cells();\n  let len_shared = res_shared.inner.len;\n  if len_shared != 8_u64 {\n    return std::process::exit_status(code: 1_u8);\n  }\n");
+    source.push_str("fn main() -> status: std::process::ExitStatus pure {\n  let res_shared = shared_cells(inner: 4096_u64);\n  let len_shared = res_shared.inner.len;\n  if len_shared != 8_u64 {\n    return std::process::exit_status(code: 1_u8);\n  }\n");
     for (cell, value) in shared_cells_expectation().into_iter().enumerate() {
         source.push_str(&format!(
             "  if res_shared.inner[{cell}_u64] != {value}_u64 {{\n    return std::process::exit_status(code: {}_u8);\n  }}\n",
@@ -841,7 +934,7 @@ fn nested_source() -> String {
         ));
     }
     source.push_str(&format!(
-        "  let rows = owned_rows();\n  if rows != {}_u64 {{\n    return std::process::exit_status(code: 2_u8);\n  }}\n  return std::process::exit_status(code: 0_u8);\n}}\n",
+        "  let rows = owned_rows(inner: 4096_u64);\n  if rows != {}_u64 {{\n    return std::process::exit_status(code: 2_u8);\n  }}\n  return std::process::exit_status(code: 0_u8);\n}}\n",
         owned_rows_expectation()
     ));
     source
@@ -869,15 +962,15 @@ fn chunk_bodies<'module>(module: &'module str, function: &str) -> Vec<&'module s
     bodies
 }
 
-fn enters_a_splitter(body: &str) -> bool {
-    body.matches("@wf__par_split_").count() > body.matches("@wf__par_split_budget").count()
+fn enters_a_driver(body: &str) -> bool {
+    body.contains("@wf__par_split_")
 }
 
 #[test]
 fn indexed_reductions_split_inside_a_split_and_release_every_nested_private_range() {
     let source = nested_source();
     let module = emit_with_overlap(source.as_bytes());
-    for (function, outer_allocates_in_caller) in [("shared_cells", true), ("owned_rows", false)] {
+    for (function, outer_privatizes) in [("shared_cells", true), ("owned_rows", false)] {
         let chunks = chunk_bodies(&module, function);
         assert_eq!(
             chunks.len(),
@@ -886,59 +979,45 @@ fn indexed_reductions_split_inside_a_split_and_release_every_nested_private_rang
         );
         let outer: Vec<_> = chunks
             .iter()
-            .filter(|chunk| enters_a_splitter(chunk))
+            .filter(|chunk| enters_a_driver(chunk))
             .collect();
-        let [outer] = outer.as_slice() else {
-            panic!("{function}: exactly the outer chunk enters the inner splitter\n{module}");
-        };
-        assert!(
-            outer.contains(".allocation = call ptr @wf__heap_take")
-                && outer.contains(".combine.head:")
-                && outer.contains("call void @wf__heap_give(ptr %indexed."),
-            "{function}: the inner split must own its private ranges inside the outer leaf:\n{outer}"
-        );
-        let inner: Vec<_> = chunks
-            .iter()
-            .filter(|chunk| !enters_a_splitter(chunk))
-            .collect();
-        assert!(
-            inner
-                .iter()
-                .all(|chunk| !chunk.contains(".allocation = call ptr @wf__heap_take")),
-            "{function}: a leaf never allocates for itself"
-        );
         assert_eq!(
-            super::emitted_body(&module, function)
-                .contains(".allocation = call ptr @wf__heap_take"),
-            outer_allocates_in_caller,
-            "{function}"
+            outer.len(),
+            1,
+            "{function}: the outer chunk enters the inner driver"
         );
+        assert!(
+            chunks
+                .iter()
+                .all(|chunk| !chunk.contains("@wf__heap_take(")),
+            "{function}: a chunk never allocates private storage"
+        );
+        let drivers = driver_bodies(&module, function);
+        assert_eq!(drivers.len(), 2, "{function}: outer and inner driver");
+        let privatizing = drivers
+            .iter()
+            .filter(|driver| driver.contains(".allocation = call ptr @wf__heap_take("))
+            .count();
+        assert_eq!(privatizing, 1 + usize::from(outer_privatizes), "{function}");
     }
     let directory = test_directory();
-    let executable = observed_executable(&source, &["shared_cells", "owned_rows"], &directory);
-    // Each program has four outer leaves under a budget of two. Every outer
-    // iteration runs its own inner split of four leaves with one private
-    // allocation; the shared-cells program adds the outer split's allocation.
-    // The observer fails the run unless frees equal allocations.
-    let report = run_observed(&executable, false);
-    let allocations = (1 + OUTER_SHARED) + OUTER_OWNED;
-    let leaves = (4 + 4 * OUTER_SHARED) + (4 + 4 * OUTER_OWNED);
-    let expected = format!("indexed allocations={allocations} leaves={leaves}\n");
-    assert!(report.contains(&expected), "{expected}{report}");
-    let expected = format!(
-        "indexed loops={},{},0,0,0,0,0,0\n",
-        4 + 4 * OUTER_SHARED,
-        4 + 4 * OUTER_OWNED
-    );
-    assert!(report.contains(&expected), "{expected}{report}");
-    // No allowance: no private range, one chunk call per splitter call, and
-    // the same exact answers.
-    let report = run_observed(&executable, true);
-    let expected = format!(
-        "indexed allocations=0 leaves={}\n",
-        (1 + OUTER_SHARED) + (1 + OUTER_OWNED)
-    );
-    assert!(report.contains(&expected), "{expected}{report}");
+    let executable = observed_executable(source.as_bytes(), &directory);
+    // Each outer driver splits once; every source outer iteration enters an
+    // inner driver that splits once into the current destination, private
+    // for the shared cells' far half. The owned-row outer loop is scalar.
+    let entries = 1 + OUTER_SHARED + 1 + OUTER_OWNED;
+    for workers in [2, 4, 8] {
+        assert_eq!(
+            run_observed(&executable, workers, None),
+            Report {
+                allocations: u32::try_from((1 + OUTER_SHARED) + OUTER_OWNED).unwrap(),
+                requests: u32::try_from(entries).unwrap(),
+                polls: u32::try_from(entries).unwrap(),
+            },
+            "workers={workers}"
+        );
+    }
+    assert_eq!(run_observed(&executable, 4, Some(0)).allocations, 0);
     std::fs::remove_dir_all(directory).expect("remove nested artifacts");
 }
 
@@ -1036,23 +1115,29 @@ fn main() -> status: std::process::ExitStatus pure {
 fn extended_forms_lower_to_private_ranges_and_unsigned_saturating_combines() {
     let module = emit_with_overlap(EXTENDED_FORMS.as_bytes());
     for name in ["measured", "temporaries", "indexed_saturation"] {
-        let body = super::emitted_body(&module, name);
+        let drivers = driver_bodies(&module, name);
+        let [driver] = drivers.as_slice() else {
+            panic!("{name}: one range driver\n{module}");
+        };
         for expected in [
-            ".allocation = call ptr @wf__heap_take",
+            ".allocation = call ptr @wf__heap_take(",
             ".fill.head:",
             ".combine.head:",
-            "call void @wf__heap_give(ptr %indexed.",
+            "call void @wf__heap_give(ptr %indexed.join.",
         ] {
             assert!(
-                body.contains(expected),
-                "{name}: missing {expected}:\n{body}"
+                driver.contains(expected),
+                "{name}: missing {expected}:\n{driver}"
             );
         }
     }
-    let indexed = super::emitted_body(&module, "indexed_saturation");
-    assert!(indexed.contains("store i32 0, ptr %indexed."), "{indexed}");
+    let indexed = driver_bodies(&module, "indexed_saturation")[0];
     assert!(
-        indexed.contains("= call i32 @llvm.uadd.sat.i32(i32 %indexed."),
+        indexed.contains("store i32 0, ptr %indexed.far."),
+        "{indexed}"
+    );
+    assert!(
+        indexed.contains("= call i32 @llvm.uadd.sat.i32(i32 %indexed.join."),
         "{indexed}"
     );
     assert!(!emit(EXTENDED_FORMS.as_bytes()).contains("%indexed."));
@@ -1061,36 +1146,18 @@ fn extended_forms_lower_to_private_ranges_and_unsigned_saturating_combines() {
 #[test]
 fn extended_forms_execute_forced_splits_against_literal_oracles() {
     let directory = test_directory();
-    let executable = observed_executable(
-        EXTENDED_FORMS,
-        &[
-            "measured",
-            "temporaries",
-            "indexed_saturation",
-            "scalar_saturation",
-        ],
-        &directory,
+    let executable = observed_executable(EXTENDED_FORMS.as_bytes(), &directory);
+    // Three indexed loops own one contribution each; the scalar loop splits
+    // without private storage and keeps its own saturating-result assertion.
+    assert_eq!(
+        run_observed(&executable, 4, None),
+        Report {
+            allocations: 3,
+            requests: 4,
+            polls: 4,
+        }
     );
-    let report = run_observed(&executable, false);
-    // Budget 2 gives 2^2 leaves per 262144-iteration loop: 4 * 4 = 16; only three use indexed slabs.
-    assert!(
-        report.contains("indexed allocations=3 leaves=16\n"),
-        "{report}"
-    );
-    assert!(
-        report.contains("indexed loops=4,4,4,4,0,0,0,0\n"),
-        "{report}"
-    );
-    let report = run_observed(&executable, true);
-    // Budget 0 gives 4 * 1 = 4 leaves and no slabs; the 8-iteration verification loop has returns and never splits.
-    assert!(
-        report.contains("indexed allocations=0 leaves=4\n"),
-        "{report}"
-    );
-    assert!(
-        report.contains("indexed loops=1,1,1,1,0,0,0,0\n"),
-        "{report}"
-    );
+    assert_eq!(run_observed(&executable, 4, Some(0)).allocations, 0);
     std::fs::remove_dir_all(directory).expect("remove extended-form artifacts");
 }
 
@@ -1101,15 +1168,23 @@ const MARKS_FIELDS: &str =
 fn indexed_marks_and_fields_execute_private_dense_slabs_and_nested_joins() {
     let module = emit_with_overlap(MARKS_FIELDS.as_bytes());
     for function in ["marks_one", "marks_zero", "marks_bool"] {
-        let body = super::emitted_body(&module, function);
-        assert!(body.contains("store i1 0, ptr %indexed."), "{body}");
-        assert!(body.contains(".merged = or i1"), "{body}");
-        assert!(body.contains(".is_private = or i1"), "{body}");
+        let drivers = driver_bodies(&module, function);
+        let [driver] = drivers.as_slice() else {
+            panic!("{function}: one range driver\n{module}");
+        };
+        // False masks, the granted lane's private mode, and a mask-guarded
+        // mark into the destination's own mode.
+        assert!(driver.contains("store i1 0, ptr %indexed.far."), "{driver}");
+        assert!(driver.contains("store i1 true, ptr %"), "{driver}");
+        assert!(driver.contains(".mark:"), "{driver}");
     }
-    let fields = super::emitted_body(&module, "field_values");
+    let fields = driver_bodies(&module, "field_values");
+    let [fields] = fields.as_slice() else {
+        panic!("field_values: one range driver\n{module}");
+    };
     assert_eq!(
         fields
-            .matches(".allocation = call ptr @wf__heap_take")
+            .matches(".allocation = call ptr @wf__heap_take(")
             .count(),
         2
     );
@@ -1117,62 +1192,33 @@ fn indexed_marks_and_fields_execute_private_dense_slabs_and_nested_joins() {
     assert!(fields.contains(".stride = select i1"), "{fields}");
     assert!(!emit(MARKS_FIELDS.as_bytes()).contains("%indexed."));
     let directory = test_directory();
-    let names = [
-        "marks_one",
-        "marks_zero",
-        "marks_bool",
-        "field_values",
-        "nested_families",
-    ];
-    let executable = build_linked_executable(
-        &observed_with(&module, &names),
-        Some(OBSERVER),
-        &[],
-        &directory,
-    );
-    let report = run_observed(&executable, false);
-    assert!(
-        report.contains("indexed allocations=22 leaves=36\n"),
-        "{report}"
-    );
-    assert!(
-        report.contains("indexed loops=4,4,4,4,20,0,0,0\n"),
-        "{report}"
-    );
-    let report = run_observed(&executable, true);
-    assert!(
-        report.contains("indexed allocations=0 leaves=9\n"),
-        "{report}"
-    );
-    assert!(
-        report.contains("indexed loops=1,1,1,1,5,0,0,0\n"),
-        "{report}"
-    );
+    let executable = observed_executable(MARKS_FIELDS.as_bytes(), &directory);
+    // marks_one 2 roots, marks_zero 1, marks_bool 1, field_values 2; the
+    // nested outer driver owns 4 dense families and each of its 4 inner
+    // drivers owns 3.
+    for workers in [2, 4, 8] {
+        assert_eq!(
+            run_observed(&executable, workers, None),
+            Report {
+                allocations: 22,
+                requests: 9,
+                polls: 9,
+            },
+            "workers={workers}"
+        );
+    }
+    assert_eq!(run_observed(&executable, 4, Some(0)).allocations, 0);
     std::fs::remove_dir_all(directory).expect("remove mark/field native artifacts");
 }
 
 #[test]
 fn indexed_field_family_acquisition_failure_releases_earlier_sibling_slabs() {
-    let source = include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-fields.wf");
-    let module = emit_with_overlap(source);
-    let directory = test_directory();
-    let executable = build_linked_executable(
-        &observed_with(&module, &["reduce"]),
-        Some(OBSERVER),
-        &[],
-        &directory,
+    let source = with_runtime_extents(
+        include_bytes!("../../../../tests/conformance/cases/par2-pos-indexed-fields.wf"),
+        RUNTIME_FIELDS,
     );
-    for fail in ["1", "2"] {
-        let output = Command::new(&executable)
-            .env("WF_WORKERS", "4")
-            .env("WF_TEST_FAIL", fail)
-            .bounded_output()
-            .expect("run field slab acquisition failure");
-        assert_eq!(
-            output.status.code(),
-            Some(90),
-            "allocation {fail}: {output:?}"
-        );
-    }
+    let directory = test_directory();
+    let executable = observed_executable(&source, &directory);
+    assert_failures_terminate(&executable, &[1, 2]);
     std::fs::remove_dir_all(directory).expect("remove field acquisition artifacts");
 }

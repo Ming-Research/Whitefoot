@@ -1,7 +1,6 @@
 //! Root-shaped private allocations and borrowed helper arguments.
 
-use super::indexed::PrivateRoot;
-use super::parallel::LoopSplitSite;
+use super::indexed::FarGroup;
 use super::*;
 use crate::ir::{IrIndexedFamilyKind, IrIndexedReduction, IrIndexedRootReference, IrPlaceStep};
 
@@ -445,26 +444,33 @@ impl FunctionEmitter<'_, '_> {
         Ok(format!("%{pointer}"))
     }
 
-    pub(super) fn emit_indexed_blocks_prepare(
+    /// A call-updated root's contribution: one allocation holding a
+    /// singleton directory slot, its own byte size, and one root-shaped block
+    /// shared by the root's families. The block preserves the destination's
+    /// initialized measures and borrowed measure-only Box subtrees; every
+    /// family cell holds its operation identity or its mark sentinel.
+    /// Returns base, bytes and the directory length.
+    pub(super) fn emit_far_block(
         &mut self,
-        split: &LoopSplitSite<'_>,
-        ordinal: usize,
-        leaves: &str,
-        previous: &[PrivateRoot],
+        families: &[IrIndexedReduction],
+        first: usize,
+        arguments: &[IrValueId],
+        acquired: &[FarGroup],
         prefix: &str,
-    ) -> Result<PrivateRoot, BackendFailure> {
-        let spec = &split.indexed[ordinal];
+    ) -> Result<(String, String, String), BackendFailure> {
+        let spec = &families[first];
         let root = spec.root.as_ref().ok_or(BackendFailure::InvalidIr)?;
-        let range = split.captures[spec.capture];
-        let original = self.value_name(range);
+        let destination = Self::far_argument(arguments, spec.capture)?;
         let range_type = self.output.type_name(
             self.program,
-            self.value_type(range).ok_or(BackendFailure::InvalidIr)?,
+            self.value_type(destination)
+                .ok_or(BackendFailure::InvalidIr)?,
         )?;
         let block_type = self.output.type_name(self.program, root.block_type)?;
         writeln!(
             self.output,
-            "  %{prefix}.source.directory = extractvalue {range_type} {original}, 0\n  %{prefix}.source = load ptr, ptr %{prefix}.source.directory"
+            "  %{prefix}.source.directory = extractvalue {range_type} {}, 0\n  %{prefix}.source = load ptr, ptr %{prefix}.source.directory",
+            self.value_name(destination)
         )?;
         let source = format!("%{prefix}.source");
         let failed = format!("{prefix}.failed");
@@ -515,69 +521,35 @@ impl FunctionEmitter<'_, '_> {
             "  %{prefix}.empty = icmp eq i64 {block_bytes}, 0\n  %{prefix}.block.bytes = select i1 %{prefix}.empty, i64 1, i64 {block_bytes}"
         )?;
         let block_bytes = format!("%{prefix}.block.bytes");
+        // The block follows the directory slot and the size word at its
+        // own alignment, so the allocator's alignment covers it.
+        let offset = format!(
+            "ptrtoint (ptr getelementptr ({{ ptr, i64, {block_type} }}, ptr null, i32 0, i32 2) to i64)"
+        );
         let bytes = self.emit_allocation_size(
-            leaves,
-            "ptrtoint (ptr getelementptr (ptr, ptr null, i64 1) to i64)",
-            "0",
+            "1",
+            &block_bytes,
+            &offset,
             &failed,
-            &format!("{prefix}.directory.size"),
+            &format!("{prefix}.size"),
         )?;
-        let pointer = format!("%{prefix}.directory.allocation");
+        let pointer = format!("%{prefix}.allocation");
         self.output.symbol("wf__heap_take");
         writeln!(
             self.output,
-            "  {pointer} = call ptr @wf__heap_take(i64 {bytes})\n  %{prefix}.directory.ok = icmp ne ptr {pointer}, null\n  br i1 %{prefix}.directory.ok, label %{prefix}.init, label %{failed}"
+            "  {pointer} = call ptr @wf__heap_take(i64 {bytes})\n  %{prefix}.ok = icmp ne ptr {pointer}, null\n  br i1 %{prefix}.ok, label %{prefix}.init, label %{failed}"
         )?;
-        self.output.open_block(failed);
-        self.emit_indexed_release(previous, &format!("{prefix}.earlier"))?;
-        self.output.symbol("wf_resource_abort");
-        writeln!(
-            self.output,
-            "  call void @wf_resource_abort()\n  unreachable"
-        )?;
+        self.emit_far_failure(acquired, &failed)?;
         self.output.open_block(format!("{prefix}.init"));
-        writeln!(self.output, "  br label %{prefix}.leaves")?;
-        self.output.open_block(format!("{prefix}.leaves"));
+        let block = format!("%{prefix}.block");
         writeln!(
             self.output,
-            "  %{prefix}.leaf = phi i64 [ 0, %{prefix}.init ], [ %{prefix}.nextleaf, %{prefix}.filled ]\n  %{prefix}.more = icmp ult i64 %{prefix}.leaf, {leaves}\n  br i1 %{prefix}.more, label %{prefix}.allocate, label %{prefix}.done"
-        )?;
-        self.output.open_block(format!("{prefix}.allocate"));
-        let block = format!("%{prefix}.block.allocation");
-        writeln!(
-            self.output,
-            "  {block} = call ptr @wf__heap_take(i64 {block_bytes})\n  %{prefix}.ok = icmp ne ptr {block}, null\n  br i1 %{prefix}.ok, label %{prefix}.zero.entry, label %{prefix}.block.failed"
-        )?;
-        let private = PrivateRoot {
-            pointer,
-            bytes,
-            cells: self.value_name(split.captures[spec.count]),
-            total: leaves.to_owned(),
-            original,
-            spec: ordinal,
-            block_bytes: Some(block_bytes.clone()),
-        };
-        self.output.open_block(format!("{prefix}.block.failed"));
-        let mut acquired = previous.to_vec();
-        acquired.push(PrivateRoot {
-            total: format!("%{prefix}.leaf"),
-            ..private.clone()
-        });
-        self.emit_indexed_release(&acquired, &format!("{prefix}.partial"))?;
-        writeln!(
-            self.output,
-            "  call void @wf_resource_abort()\n  unreachable"
-        )?;
-        self.output.open_block(format!("{prefix}.zero.entry"));
-        writeln!(
-            self.output,
-            "  %{prefix}.slot = getelementptr inbounds ptr, ptr {}, i64 %{prefix}.leaf\n  store ptr {block}, ptr %{prefix}.slot\n  br label %{prefix}.zero.head",
-            private.pointer
+            "  {block} = getelementptr inbounds {{ ptr, i64, {block_type} }}, ptr {pointer}, i32 0, i32 2\n  store ptr {block}, ptr {pointer}\n  %{prefix}.size.slot = getelementptr inbounds {{ ptr, i64, {block_type} }}, ptr {pointer}, i32 0, i32 1\n  store i64 {bytes}, ptr %{prefix}.size.slot\n  br label %{prefix}.zero.head"
         )?;
         self.output.open_block(format!("{prefix}.zero.head"));
         writeln!(
             self.output,
-            "  %{prefix}.byte = phi i64 [ 0, %{prefix}.zero.entry ], [ %{prefix}.nextbyte, %{prefix}.zero.body ]\n  %{prefix}.hasbyte = icmp ult i64 %{prefix}.byte, {block_bytes}\n  br i1 %{prefix}.hasbyte, label %{prefix}.zero.body, label %{prefix}.zero.done"
+            "  %{prefix}.byte = phi i64 [ 0, %{prefix}.init ], [ %{prefix}.nextbyte, %{prefix}.zero.body ]\n  %{prefix}.hasbyte = icmp ult i64 %{prefix}.byte, {block_bytes}\n  br i1 %{prefix}.hasbyte, label %{prefix}.zero.body, label %{prefix}.zero.done"
         )?;
         self.output.open_block(format!("{prefix}.zero.body"));
         writeln!(
@@ -591,16 +563,15 @@ impl FunctionEmitter<'_, '_> {
             &source,
             &format!("{prefix}.measures"),
         )?;
-        for (family, spec) in split
-            .indexed
+        for (family, member) in families
             .iter()
             .enumerate()
-            .filter(|(_, family)| family.capture == spec.capture)
+            .filter(|(_, member)| member.capture == spec.capture)
         {
             let fill = format!("{prefix}.family.{family}");
-            let cells = self.value_name(split.captures[spec.count]);
-            let ty = self.output.type_name(self.program, spec.private_type())?;
-            let identity = constant_operand(spec.private_identity(), spec.private_type())?;
+            let cells = self.far_count(member, arguments)?;
+            let ty = self.output.type_name(self.program, member.private_type())?;
+            let identity = constant_operand(member.private_identity(), member.private_type())?;
             writeln!(self.output, "  br label %{fill}.entry")?;
             self.output.open_block(format!("{fill}.entry"));
             writeln!(self.output, "  br label %{fill}.head")?;
@@ -610,110 +581,65 @@ impl FunctionEmitter<'_, '_> {
                 "  %{fill}.cell = phi i64 [ 0, %{fill}.entry ], [ %{fill}.next, %{fill}.body ]\n  %{fill}.more = icmp ult i64 %{fill}.cell, {cells}\n  br i1 %{fill}.more, label %{fill}.body, label %{fill}.done"
             )?;
             self.output.open_block(format!("{fill}.body"));
-            let address = self.indexed_block_cell(&block, spec, &format!("%{fill}.cell"))?;
+            let address = self.indexed_block_cell(&block, member, &format!("%{fill}.cell"))?;
             writeln!(
                 self.output,
                 "  store {ty} {identity}, ptr {address}\n  %{fill}.next = add i64 %{fill}.cell, 1\n  br label %{fill}.head"
             )?;
             self.output.open_block(format!("{fill}.done"));
         }
-        writeln!(self.output, "  br label %{prefix}.filled")?;
-        self.output.open_block(format!("{prefix}.filled"));
-        writeln!(
-            self.output,
-            "  %{prefix}.nextleaf = add i64 %{prefix}.leaf, 1\n  br label %{prefix}.leaves"
-        )?;
-        self.output.open_block(format!("{prefix}.done"));
-        Ok(private)
+        Ok((pointer, bytes, "1".to_owned()))
     }
 
-    /// Release complete groups or an acquired prefix of the current directory.
-    /// Size and malloc failures reach this before the STOR-8 termination.
-    pub(super) fn emit_indexed_release(
+    /// Combine a granted root-shaped contribution into the destination block
+    /// its far call named, family by family in ascending cells, then free
+    /// its one raw allocation. `pointer` is the contribution's directory.
+    pub(super) fn emit_far_block_combine(
         &mut self,
-        roots: &[PrivateRoot],
+        families: &[IrIndexedReduction],
+        first: usize,
+        arguments: &[IrValueId],
+        pointer: &str,
         prefix: &str,
     ) -> Result<(), BackendFailure> {
-        self.output.symbol("wf__heap_give");
-        for (ordinal, root) in roots.iter().enumerate() {
-            if let Some(bytes) = &root.block_bytes {
-                let release = format!("{prefix}.{ordinal}.release");
-                writeln!(self.output, "  br label %{release}.entry")?;
-                self.output.open_block(format!("{release}.entry"));
-                writeln!(self.output, "  br label %{release}.head")?;
-                self.output.open_block(format!("{release}.head"));
-                writeln!(
-                    self.output,
-                    "  %{release}.i = phi i64 [ 0, %{release}.entry ], [ %{release}.next, %{release}.body ]\n  %{release}.more = icmp ult i64 %{release}.i, {}\n  br i1 %{release}.more, label %{release}.body, label %{release}.done",
-                    root.total
-                )?;
-                self.output.open_block(format!("{release}.body"));
-                writeln!(
-                    self.output,
-                    "  %{release}.slot = getelementptr inbounds ptr, ptr {}, i64 %{release}.i\n  %{release}.block = load ptr, ptr %{release}.slot\n  call void @wf__heap_give(ptr %{release}.block, i64 {bytes})\n  %{release}.next = add i64 %{release}.i, 1\n  br label %{release}.head",
-                    root.pointer
-                )?;
-                self.output.open_block(format!("{release}.done"));
-            }
-            writeln!(
-                self.output,
-                "  call void @wf__heap_give(ptr {}, i64 {})",
-                root.pointer, root.bytes
-            )?;
-        }
-        Ok(())
-    }
-
-    pub(super) fn emit_indexed_blocks_finish(
-        &mut self,
-        split: &LoopSplitSite<'_>,
-        root: &PrivateRoot,
-        prefix: &str,
-    ) -> Result<(), BackendFailure> {
-        let first = &split.indexed[root.spec];
+        let capture = families[first].capture;
+        let root = families[first]
+            .root
+            .as_ref()
+            .ok_or(BackendFailure::InvalidIr)?;
+        let block_type = self.output.type_name(self.program, root.block_type)?;
+        let destination = Self::far_argument(arguments, capture)?;
         let range_type = self.output.type_name(
             self.program,
-            self.value_type(split.captures[first.capture])
+            self.value_type(destination)
                 .ok_or(BackendFailure::InvalidIr)?,
         )?;
         writeln!(
             self.output,
-            "  %{prefix}.destination.directory = extractvalue {range_type} {}, 0\n  %{prefix}.destination = load ptr, ptr %{prefix}.destination.directory",
-            root.original
+            "  %{prefix}.far = load ptr, ptr {pointer}\n  %{prefix}.destination.directory = extractvalue {range_type} {}, 0\n  %{prefix}.destination = load ptr, ptr %{prefix}.destination.directory",
+            self.value_name(destination)
         )?;
-        for (ordinal, spec) in split
-            .indexed
+        for (ordinal, spec) in families
             .iter()
             .enumerate()
-            .filter(|(_, spec)| spec.capture == first.capture)
+            .filter(|(_, spec)| spec.capture == capture)
         {
             let family = format!("{prefix}.family.{ordinal}");
-            let cells = self.value_name(split.captures[spec.count]);
+            let cells = self.far_count(spec, arguments)?;
             let ty = self
                 .output
                 .type_name(self.program, spec.projection.value_type)?;
-            // Pricing admitted this product only when three such traversals
-            // fit; an overflowing price refuses before any allocation.
-            writeln!(
-                self.output,
-                "  %{family}.total = mul i64 {cells}, {}\n  br label %{family}.entry",
-                root.total
-            )?;
+            writeln!(self.output, "  br label %{family}.entry")?;
             self.output.open_block(format!("{family}.entry"));
             writeln!(self.output, "  br label %{family}.combine.head")?;
             self.output.open_block(format!("{family}.combine.head"));
             writeln!(
                 self.output,
-                "  %{family}.i = phi i64 [ 0, %{family}.entry ], [ %{family}.next, %{family}.advance ]\n  %{family}.more = icmp ult i64 %{family}.i, %{family}.total\n  br i1 %{family}.more, label %{family}.body, label %{family}.done"
+                "  %{family}.cell = phi i64 [ 0, %{family}.entry ], [ %{family}.next, %{family}.advance ]\n  %{family}.more = icmp ult i64 %{family}.cell, {cells}\n  br i1 %{family}.more, label %{family}.body, label %{family}.done"
             )?;
             self.output.open_block(format!("{family}.body"));
-            writeln!(
-                self.output,
-                "  %{family}.cell = urem i64 %{family}.i, {cells}\n  %{family}.leaf = udiv i64 %{family}.i, {cells}\n  %{family}.slot = getelementptr inbounds ptr, ptr {}, i64 %{family}.leaf\n  %{family}.block = load ptr, ptr %{family}.slot",
-                root.pointer
-            )?;
             let from = self.indexed_block_cell(
-                &format!("%{family}.block"),
+                &format!("%{prefix}.far"),
                 spec,
                 &format!("%{family}.cell"),
             )?;
@@ -735,6 +661,9 @@ impl FunctionEmitter<'_, '_> {
                         "  store {ty} %{family}.value, ptr {destination}\n  br label %{family}.advance"
                     )?;
                 }
+                // The sentinel is the constant with its lowest bit inverted,
+                // so only a touched cell equals the constant; zero is a
+                // legitimate mark constant.
                 IrIndexedFamilyKind::Mark { constant } => {
                     let constant = constant_operand(constant, spec.projection.value_type)?;
                     writeln!(
@@ -751,10 +680,15 @@ impl FunctionEmitter<'_, '_> {
             self.output.open_block(format!("{family}.advance"));
             writeln!(
                 self.output,
-                "  %{family}.next = add i64 %{family}.i, 1\n  br label %{family}.combine.head"
+                "  %{family}.next = add i64 %{family}.cell, 1\n  br label %{family}.combine.head"
             )?;
             self.output.open_block(format!("{family}.done"));
         }
-        self.emit_indexed_release(std::slice::from_ref(root), &format!("{prefix}.complete"))
+        self.output.symbol("wf__heap_give");
+        writeln!(
+            self.output,
+            "  %{prefix}.size.slot = getelementptr inbounds {{ ptr, i64, {block_type} }}, ptr {pointer}, i32 0, i32 1\n  %{prefix}.bytes = load i64, ptr %{prefix}.size.slot\n  call void @wf__heap_give(ptr {pointer}, i64 %{prefix}.bytes)"
+        )?;
+        Ok(())
     }
 }

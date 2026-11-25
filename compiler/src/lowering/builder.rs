@@ -6,6 +6,8 @@ mod atomic;
 mod buffers;
 mod call_grain;
 mod contexts;
+mod demand;
+mod entry_versions;
 mod indexed;
 mod lock_ledger;
 mod loops;
@@ -63,6 +65,29 @@ pub(crate) fn lower_checked_with_layout(
 /// are given: a module program entry's build [MOD-9].
 pub(crate) fn lower_checked_from(
     checked: CheckedProgram,
+    overlap: OverlapLowering,
+    target: TargetLayout,
+    roots: Option<&[crate::semantic::FunctionId]>,
+) -> Result<IrProgram, LoweringFailure> {
+    // Preserve ordinary computation before optional extraction changes its CFG.
+    // Both worlds consume the same checked judgments and physical roots.
+    let canonical_sequential = if overlap != OverlapLowering::Off {
+        Some(Box::new(lower_checked_in_world(
+            &checked,
+            OverlapLowering::Off,
+            target,
+            roots,
+        )?))
+    } else {
+        None
+    };
+    let mut program = lower_checked_in_world(&checked, overlap, target, roots)?;
+    program.canonical_sequential = canonical_sequential;
+    Ok(program)
+}
+
+fn lower_checked_in_world(
+    checked: &CheckedProgram,
     overlap: OverlapLowering,
     target: TargetLayout,
     roots: Option<&[crate::semantic::FunctionId]>,
@@ -230,6 +255,12 @@ pub(crate) fn lower_checked_from(
     if call_grain == CallGrain::WorkUnit {
         call_grain::prune(&mut functions, &weights, &mut actualization);
     }
+    // After call grain: a group it dissolved no longer blocks entry choice.
+    let entry_versions = if overlap == OverlapLowering::Off {
+        Default::default()
+    } else {
+        entry_versions::plan(&functions)
+    };
     let nominal_ceilings = nominals
         .iter()
         .map(|nominal| {
@@ -238,6 +269,8 @@ pub(crate) fn lower_checked_from(
         })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(IrProgram {
+        canonical_sequential: None,
+        entry_versions,
         nominal_ceilings,
         nominals,
         elements,
@@ -1122,7 +1155,10 @@ impl<'program> IrBuilder<'program> {
             if members.len() >= 2 {
                 let members: Vec<_> = members.into_iter().map(|(value, _)| value).collect();
                 claimed.extend(members.iter().copied());
-                overlaps.push(IrOverlap { members });
+                overlaps.push(IrOverlap {
+                    members,
+                    indexed: Vec::new(),
+                });
             }
         };
         let runs = permissions

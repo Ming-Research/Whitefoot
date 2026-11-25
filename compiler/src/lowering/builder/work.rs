@@ -68,7 +68,7 @@ fn product(left: Work, right: Work) -> Work {
     }
 }
 
-fn difference(left: Work, right: Work) -> Work {
+pub(super) fn difference(left: Work, right: Work) -> Work {
     if left == right {
         return Work::Constant(0);
     }
@@ -120,7 +120,7 @@ impl Observation {
     }
 }
 
-struct Environment<'ir> {
+pub(super) struct Environment<'ir> {
     function: &'ir IrFunction,
     definitions: HashMap<IrValueId, &'ir IrOperation>,
     incoming: HashMap<IrValueId, Vec<IrValueId>>,
@@ -128,7 +128,7 @@ struct Environment<'ir> {
 }
 
 impl<'ir> Environment<'ir> {
-    fn new(function: &'ir IrFunction) -> Self {
+    pub(super) fn new(function: &'ir IrFunction) -> Self {
         let mut definitions = HashMap::new();
         let mut incoming: HashMap<IrValueId, Vec<IrValueId>> = HashMap::new();
         for block in function.blocks() {
@@ -158,8 +158,22 @@ impl<'ir> Environment<'ir> {
         }
     }
 
-    fn scalar(&mut self, value: IrValueId) -> Work {
+    pub(super) fn definition(&self, value: IrValueId) -> Option<&'ir IrOperation> {
+        self.definitions.get(&value).copied()
+    }
+
+    pub(super) fn scalar(&mut self, value: IrValueId) -> Work {
         self.observe(Observation::Scalar, value, &mut Vec::new())
+    }
+
+    /// A descriptor length leaf, observed as the split-site pricing does.
+    pub(super) fn length(&mut self, value: IrValueId) -> Work {
+        self.observe(Observation::Length, value, &mut Vec::new())
+    }
+
+    /// A read-only Box-array length leaf, observed as the split-site pricing does.
+    pub(super) fn box_array_length(&mut self, value: IrValueId) -> Work {
+        self.observe(Observation::BoxArrayLength, value, &mut Vec::new())
     }
 
     fn observe(
@@ -307,7 +321,7 @@ impl<'ir> Environment<'ir> {
         }
     }
 
-    fn available(&self, work: &Work) -> bool {
+    pub(super) fn available(&self, work: &Work) -> bool {
         match work {
             Work::Constant(_) => true,
             Work::Value(value) => self.function.parameters().contains(&(*value, U64)),
