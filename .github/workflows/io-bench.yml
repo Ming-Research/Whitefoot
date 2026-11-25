@@ -73,6 +73,26 @@ on:
         description: Give each profile sample its DWARF-unwound callers
         type: boolean
         default: false
+      scale_echo:
+        description: Run the TCP echo core-count sweep (research/investigations/echo-scaling) on the runner compare_runner names
+        type: boolean
+        default: false
+      scale_cores:
+        description: Server core counts of the echo sweep
+        type: string
+        default: "1 2 4 8"
+      scale_rounds:
+        description: Recorded passes of the echo sweep; probe with 2 first
+        type: string
+        default: "5"
+      scale_roundtrips:
+        description: Round trips of every connection in the echo sweep; probe with 200 first
+        type: string
+        default: "2000"
+      scale_connections:
+        description: Client connections of the echo sweep, the same at every core count
+        type: string
+        default: "1024"
 
 # Every shell step runs under `bash -eo pipefail`, so a protocol that fails
 # behind `| tee` fails the step. Before this, the compiler rejecting a bench
@@ -260,8 +280,106 @@ jobs:
             ${{ runner.temp }}/compare/*.csv
             ${{ runner.temp }}/compare/*.txt
 
+  # The TCP echo server written in Whitefoot, pinned to 1, 2, 4 and 8 CPUs
+  # against one fixed client and the two C references, by linux-net-bench.sh's
+  # scale mode; its summary judges each doubling against the criteria of
+  # research/investigations/echo-scaling/DESIGN.md. It runs on the owner's
+  # i9-14900K when compare_runner names it, where the server's performance
+  # cores and the client's efficiency cores are separate CPUs.
+  scale-echo:
+    if: ${{ inputs.scale_echo }}
+    name: scale-echo (${{ inputs.compare_runner }})
+    runs-on: ${{ inputs.compare_runner == '14900k' && fromJSON('["self-hosted", "14900k"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the host toolchain
+        if: ${{ runner.environment == 'github-hosted' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld
+          rustup default stable
+
+      - name: Check the host's tools
+        run: |
+          # A cancelled run on a self-hosted machine can leave its servers and
+          # load generator behind; they would load the host this run measures,
+          # so stop the ones this sweep starts first. Other processes are left
+          # alone.
+          if [ "$RUNNER_ENVIRONMENT" != github-hosted ]; then
+            ps -eo pid,args | grep -E 'linux-net-bench\.sh scale|echo-scale/(netload|uring_echo|epoll_echo|wf_echo)' |
+              grep -v grep | tee "$RUNNER_TEMP/leftover.txt" || true
+            awk '{print $1}' "$RUNNER_TEMP/leftover.txt" | xargs -r kill 2>/dev/null || true
+            sleep 2
+          fi
+          if [ -d "$HOME/.cargo/bin" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          missing=
+          for tool in clang ld.lld cargo rustc taskset perl python3 awk make; do
+            command -v "$tool" >/dev/null || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "missing:$missing"
+            exit 1
+          fi
+
+      - name: Fetch the recorded crate dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+
+      # The summary's own check first: it feeds fabricated samples, and the
+      # sweep is worth running only if the summary still rejects what it
+      # must.
+      - name: Check the summary against fabricated samples
+        run: sh research/experiments/io-completion-bench/echo-scale-summary-check.sh
+
+      - name: Run the core-count sweep
+        env:
+          ROOT: ${{ github.workspace }}
+          ROUNDS: ${{ inputs.scale_rounds }}
+          WARMUP: "1"
+          SCALE_CORES: ${{ inputs.scale_cores }}
+          SCALE_CONNECTIONS: ${{ inputs.scale_connections }}
+          SCALE_ROUNDTRIPS: ${{ inputs.scale_roundtrips }}
+          WHITEFOOT_CHECK_TIMEOUT: "7200"
+        run: |
+          export OUT="$RUNNER_TEMP/echo-scale"
+          export CARGO_TARGET_DIR="$GITHUB_WORKSPACE/compiler/target"
+          {
+            echo "revision: $(git rev-parse HEAD)"
+            echo "runner: $RUNNER_NAME ($RUNNER_ENVIRONMENT)"
+          } | tee "$RUNNER_TEMP/scale-run.txt"
+          perl .github/run-check.pl echo-scale/sweep \
+            sh research/experiments/io-completion-bench/linux-net-bench.sh scale \
+            2>&1 | tee "$RUNNER_TEMP/scale.txt"
+
+      - name: Publish the table
+        if: always()
+        run: |
+          {
+            echo '## scale-echo'
+            echo
+            echo '```text'
+            cat "$RUNNER_TEMP/scale-run.txt" 2>/dev/null
+            cat "$RUNNER_TEMP/scale.txt" 2>/dev/null || echo "the sweep did not run"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scale-echo-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/echo-scale/raw.tsv
+            ${{ runner.temp }}/echo-scale/scale-host.txt
+            ${{ runner.temp }}/echo-scale/placements.txt
+            ${{ runner.temp }}/scale.txt
+            ${{ runner.temp }}/scale-run.txt
+
   bench-linux:
-    if: ${{ !inputs.compare_windows_workers && !inputs.compare_firn }}
+    if: ${{ !inputs.compare_windows_workers && !inputs.compare_firn && !inputs.scale_echo }}
     name: bench-linux (ubuntu-24.04)
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -377,7 +495,7 @@ jobs:
   # not known in advance; a table whose probe refused the label says so on its
   # own label line.
   bench-linux-read:
-    if: ${{ !inputs.compare_windows_workers && !inputs.compare_firn }}
+    if: ${{ !inputs.compare_windows_workers && !inputs.compare_firn && !inputs.scale_echo }}
     name: bench-linux-read (ubuntu-24.04)
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -456,7 +574,7 @@ jobs:
             bench-read.txt
 
   bench-macos-read:
-    if: ${{ !inputs.compare_windows_workers && !inputs.compare_firn }}
+    if: ${{ !inputs.compare_windows_workers && !inputs.compare_firn && !inputs.scale_echo }}
     name: bench-macos-read (macos-15)
     runs-on: macos-15
     timeout-minutes: 120
@@ -554,7 +672,7 @@ jobs:
   # worker and a used, fully reaped IOCP path. C2 has ordinary synchronous call
   # boundaries; no cross-call completion overlap or speed threshold is required.
   bench-windows:
-    if: ${{ !inputs.compare_firn }}
+    if: ${{ !inputs.compare_firn && !inputs.scale_echo }}
     name: bench-windows-measured (windows-latest)
     runs-on: windows-latest
     timeout-minutes: 120
