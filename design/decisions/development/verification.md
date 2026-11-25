@@ -41,10 +41,7 @@ Each labeled stage has a Linux budget per CPU model with at least 20 recorded ru
 A Linux column the owner adds for a model with fewer than 20 runs of a stage takes the larger of the row's largest recomputed class budget and the model's own runs by the budget rule.
 - rejected: an agent proposed that the recompute script leave such columns untouched for hand edits; the owner rejected it, because those cells would fall behind as other models rise, bringing back false overruns unless someone remembered to edit them.
 - rejected: an agent proposed dropping the owner-added column and using the unmapped-model fallback; the owner rejected it, because it undoes the column the owner chose, and the fallback ignores the model's own runs where they need more.
-
-### decision candidate-compiler-build-budget-is-set-per-processor
-The budget for building the candidate compiler in the performance comparison is set by the owner per processor class: 165 s on the EPYC 7763, 150 s on the 9V74, 135 s on the 9V45, and 165 s on the Xeon 8573C.
-- replaced: One budget of 145 s for every Linux class was on main; the owner changed it, because the build exceeded it four times in recent runs, up to 152.0 s, while the classes differ in speed.
+- rejected: an agent proposed setting the Xeon 8573C column of the candidate-compiler build row from that model's own few runs alone; the owner rejected it, because the row's largest value must not be lowered by a model with few runs, as for every other owner-added column.
 
 ### decision candidate-compiler-build-budget-is-set-per-processor
 The candidate compiler's build budget in the performance comparison is set by the owner per processor class: 165 s on the EPYC 7763, 150 s on the 9V74, 135 s on the 9V45 and 165 s on the Xeon 8573C.
@@ -99,22 +96,13 @@ Paired performance compiles each revision's own formal version of the same workl
 - rejected: an agent proposed running the code-placement control on every measured comparison; the owner rejected it, because that adds a campaign to each run, while the emitter's own test already fails on a definition without the alignment (data: `research/investigations/code-placement/DESIGN.md`).
 
 ### decision paired-timing-skips-byte-identical-images
-Both arms of the paired performance comparison build their runtime, runner and oracle with one source-path prefix map, and a program whose two linked images are byte-identical is not timed and passes.
-- replaced: Timing all five programs, after a host control of the candidate's images as both arms for every program, was on main; the owner changed it, because the arms' images differed in every retained run through the embedded checkout path, so unchanged programs were timed and failed (data: `research/investigations/identical-code-noise/README.md`).
-
-### decision an-undecided-program-is-retested-once
-A timed program is judged against the null control of its own image on the host; a failing comparison whose null control is also adverse is measured once more alone, and one still undecided is inconclusive and does not fail the job.
-- replaced: Ending the comparison as inconclusive when any program's host control failed, with no retry, was on main; the owner changed it, because the control reads at the threshold in 2.3% of its cells, so a program that did not change could stop the whole comparison (data: `research/investigations/identical-code-noise/README.md`).
-- rejected: the owner proposed judging an undecided program on the owner's 14900K machine instead; the owner took the same-host retest, because only it can be checked against the 182 retained runs, while the other adds a self-hosted job and queueing.
-
-### decision paired-timing-skips-byte-identical-images
 Both arms of the paired comparison build their runtime, runner and oracle with one source-path prefix map, and a program whose two linked images are byte-identical is not timed and passes.
 - replaced: Timing all five programs behind one host control was on main; the owner changed it, because the arms' images differed in every retained run through the embedded checkout path, so unchanged programs were timed and failed (data: `research/investigations/identical-code-noise/README.md`).
 
 ### decision an-undecided-program-is-retested-once
 A timed program is judged against its own null control; a failing comparison with an adverse null is measured once more alone, and one still undecided is inconclusive and passes the job.
 - replaced: Ending the whole comparison as inconclusive when any host control failed, with no retry, was on main; the owner changed it, because the control reads at the threshold in 2.3% of cells (data: `research/investigations/identical-code-noise/README.md`).
-- rejected: the owner proposed judging an undecided program on the 14900K machine; the owner took the same-host retest, because only it can be checked against the 182 retained runs, and the other adds a self-hosted job and queueing.
+- rejected: the owner proposed judging an undecided program on the 14900K machine; the owner rejected it, because only the same-host retest can be checked against the 182 retained runs, and the other adds a self-hosted job and queueing.
 
 ### decision conformance-cases-are-only-runnable
 Conformance has only the `runnable` manifest status and pass or fail outcomes; an unexpected unsupported stop fails the case.
