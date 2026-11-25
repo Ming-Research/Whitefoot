@@ -73,7 +73,7 @@ A green hosted gate on the exact revision to be merged, a head current with main
 
 ### decision branch-checks-share-one-merge-base
 The checks that compare a branch with main read the merge base of origin/main and HEAD, which one script fetches first unless GITHUB_ACTIONS=true, then reads as checked out, and names in each run.
-- replaced: Taking the merge base with the local branch main was on main for the specification archives and the README translation; the owner changed it, because a stale local main charged a branch that had merged newer origin/main with archives and log entries it never added.
+- replaced: Taking the specification archives' and the README translation's merge base with the local branch main was on main; the owner changed it, because a stale local main charged a branch that had merged newer origin/main with archives and log entries it never added.
 - replaced: Comparing the specification's readiness with origin/main's latest commit was on main; the owner changed it, because main's later changes then read as the branch's own and asked it for log entries it did not owe.
 - rejected: an agent proposed taking the local origin/main as it stands and naming the base in the output; the owner rejected it, because a stale origin/main puts the base before the fork point once the branch has merged newer main, so the same false reports stay and the base can differ from CI's.
 
