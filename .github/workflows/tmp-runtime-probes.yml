@@ -1,10 +1,9 @@
-# Temporary: the runtime frame test on macOS with Apple's clang, the gate's
-# macOS compiler, and with the pinned upstream clang 22.1.8 placed beside a
-# copy of the test binary, which the toolchain resolution then selects as a
-# packaged clang, as the macOS bundle's compiler is; on the pushes the
-# wf-agents engine makes of this work's commits (the
-# `wf-try/work-208-26e0fade/` refs). Each result is also written as a notice.
-# Removed before the full check (AGENTS.md, "Checks").
+# Temporary: research/experiments/runtime-c-stack-probes/probe.sh under each
+# candidate argument with Linux LLVM 22, Apple's clang and the pinned upstream
+# clang 22.1.8 on macOS, its probe lines also written as notices; on the
+# pushes the wf-agents engine makes of this work's commits (the
+# `wf-try/work-208-26e0fade/` refs). Removed before the full check (AGENTS.md,
+# "Checks").
 name: tmp-runtime-probes
 
 on:
@@ -15,65 +14,74 @@ permissions:
   contents: read
 
 jobs:
-  frame-test:
-    runs-on: macos-15
-    timeout-minutes: 40
+  probes:
+    name: probes (${{ matrix.compiler }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - compiler: linux-llvm-22
+            os: ubuntu-24.04
+          - compiler: apple
+            os: macos-15
+          - compiler: upstream-22.1.8
+            os: macos-15
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install the pinned upstream clang
+      - name: Install the compiler
+        env:
+          COMPILER: ${{ matrix.compiler }}
         run: |
           set -euo pipefail
-          asset=$(python3 -c 'import json; print(json.load(open(".github/toolchain/llvm-assets.json"))["platforms"]["macos-arm64"]["asset"])')
-          digest=$(python3 -c 'import json; print(json.load(open(".github/toolchain/llvm-assets.json"))["platforms"]["macos-arm64"]["sha256"])')
-          tag=$(python3 -c 'import json; print(json.load(open(".github/toolchain/llvm-assets.json"))["llvm_tag"])')
-          curl --fail --location --retry 3 --max-time 600 \
-            "https://github.com/llvm/llvm-project/releases/download/$tag/$asset" -o "$RUNNER_TEMP/$asset"
-          echo "$digest  $RUNNER_TEMP/$asset" | shasum -a 256 -c -
-          mkdir -p "$RUNNER_TEMP/llvm"
-          tar -xJf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP/llvm"
-          root=$(echo "$RUNNER_TEMP"/llvm/*)
-          echo "UPSTREAM_CLANG=$root/bin/clang" >> "$GITHUB_ENV"
+          case "$COMPILER" in
+            linux-llvm-22)
+              curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+              version=$(tr -d '[:space:]' < .github/llvm-major)
+              sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+              echo "CLANG=/usr/bin/clang-$version" >> "$GITHUB_ENV"
+              echo "SYSROOT=" >> "$GITHUB_ENV"
+              ;;
+            apple)
+              echo "CLANG=/usr/bin/clang" >> "$GITHUB_ENV"
+              echo "SYSROOT=" >> "$GITHUB_ENV"
+              ;;
+            upstream-22.1.8)
+              asset=$(python3 -c 'import json; print(json.load(open(".github/toolchain/llvm-assets.json"))["platforms"]["macos-arm64"]["asset"])')
+              digest=$(python3 -c 'import json; print(json.load(open(".github/toolchain/llvm-assets.json"))["platforms"]["macos-arm64"]["sha256"])')
+              tag=$(python3 -c 'import json; print(json.load(open(".github/toolchain/llvm-assets.json"))["llvm_tag"])')
+              curl --fail --location --retry 3 --max-time 600 \
+                "https://github.com/llvm/llvm-project/releases/download/$tag/$asset" -o "$RUNNER_TEMP/$asset"
+              echo "$digest  $RUNNER_TEMP/$asset" | shasum -a 256 -c -
+              mkdir -p "$RUNNER_TEMP/llvm"
+              tar -xJf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP/llvm"
+              root=$(echo "$RUNNER_TEMP"/llvm/*)
+              echo "CLANG=$root/bin/clang" >> "$GITHUB_ENV"
+              echo "SYSROOT=$(/usr/bin/xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
+              ;;
+          esac
 
-      - name: Fetch locked compiler dependencies
-        working-directory: compiler
-        run: cargo fetch --locked
-
-      - name: Build the test binary
-        working-directory: compiler
-        run: |
-          set -euo pipefail
-          perl ../.github/run-check.pl tmp/runtime-frame-build \
-            cargo test --profile gate --locked --offline --bin whitefootc --no-run
-          exe=$(cargo test --profile gate --locked --offline --bin whitefootc --no-run --message-format=json \
-            | python3 -c 'import json, sys
-          for line in sys.stdin:
-              m = json.loads(line)
-              if m.get("reason") == "compiler-artifact" and m.get("executable") and m["target"]["name"] == "whitefootc" and m["profile"]["test"]:
-                  print(m["executable"])')
-          echo "TEST_BINARY=$exe" >> "$GITHUB_ENV"
-          mkdir -p "$RUNNER_TEMP/packaged"
-          cp "$exe" "$RUNNER_TEMP/packaged/whitefootc-tests"
-          ln -s "$UPSTREAM_CLANG" "$RUNNER_TEMP/packaged/clang"
-          ls -l "$RUNNER_TEMP/packaged"
-
-      # Both runs are shown and noted before the step reads their statuses.
-      - name: Runtime frame test with each clang
+      - name: Frames and probes under each variant
+        env:
+          COMPILER: ${{ matrix.compiler }}
         run: |
           set +e
-          note() {
-            label="$1"; file="$2"; status="$3"
-            body=$(grep -E '^test |panicked|probed=|probe|args=|chkstk|xzr|\(%rsp\)|sub.*sp|toolchain|error' "$file" | head -45 \
-              | sed -e 's/%/%25/g' | awk '{ printf "%s%%0A", $0 }')
-            echo "::notice title=$label (exit $status)::$body"
-          }
-          "$TEST_BINARY" --exact tests::every_runtime_c_frame_over_a_page_is_probed --nocapture > apple.txt 2>&1
-          apple=$?
-          cat apple.txt
-          note "Apple clang" apple.txt "$apple"
-          "$RUNNER_TEMP/packaged/whitefootc-tests" --exact tests::every_runtime_c_frame_over_a_page_is_probed --nocapture > upstream.txt 2>&1
-          upstream=$?
-          cat upstream.txt
-          note "Upstream clang 22.1.8 as packaged" upstream.txt "$upstream"
-          echo "apple=$apple upstream=$upstream"
-          [ "$apple" -eq 0 ] && [ "$upstream" -eq 0 ]
+          probe=research/experiments/runtime-c-stack-probes/probe.sh
+          {
+            "$CLANG" --version | head -1
+            bash "$probe" "$CLANG" "$SYSROOT" none
+            bash "$probe" "$CLANG" "$SYSROOT" clash-driver -fstack-clash-protection
+            if [ "$COMPILER" != linux-llvm-22 ]; then
+              bash "$probe" "$CLANG" "$SYSROOT" clash-cc1 -Xclang -fstack-clash-protection
+              bash "$probe" "$CLANG" "$SYSROOT" stack-check -fstack-check
+              bash "$probe" "$CLANG" "$SYSROOT" no-stack-check -fno-stack-check
+              bash "$probe" "$CLANG" "$SYSROOT" no-stack-check-clash-cc1 -fno-stack-check -Xclang -fstack-clash-protection
+            fi
+          } > probes.txt 2>&1
+          cat probes.txt
+          # The lines that answer the questions, as one notice.
+          body=$(grep -E '^(clang|Apple|Ubuntu|====|--- probe|\(none\)|"|### |!!!)|chkstk|xzr|\$0, \(%rsp\)|lsl #12|warning:|error:' probes.txt \
+            | grep -v '^--- driver' | head -220 | sed -e 's/%/%25/g' | awk '{ printf "%s%%0A", $0 }')
+          echo "::notice title=probes $COMPILER::$body"
