@@ -179,5 +179,6 @@ keys is.
 
 ## Results
 
-None yet. No probe has run: GitHub refused the request to start them for an
-exhausted API budget, last at 18:35 UTC on 2026-11-25.
+None yet. No probe has run: GitHub refused each request to start them for an
+exhausted API budget, on 2026-11-25 at 18:35 UTC and again at 19:16 UTC, less
+than ten minutes after the budget's hourly reset at 19:06:39 UTC.
