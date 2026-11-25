@@ -542,4 +542,38 @@ fn main() -> status: ExitStatus pure {
 "#,
         )]],
     },
+    ModulePair {
+        name: "stor8-neg-entry-closure-allocates",
+        case: "stor8-neg-entry-closure-allocates",
+        rejected: &[],
+        rule: "STOR-8",
+        sentences: &[],
+        repaired: &[&[(
+            "modules.wfg",
+            br#"pkg: [std::process];
+
+entry small = pkg::main;
+"#,
+        )]],
+    },
+    ModulePair {
+        name: "mod5-neg-qualified-const-in-let",
+        case: "mod5-neg-qualified-const-in-let",
+        rejected: &[],
+        rule: "MOD-5",
+        sentences: &[],
+        repaired: &[&[(
+            "main.wf",
+            br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias marker = pkg::data::marker;
+
+fn main() -> status: ExitStatus pure {
+  let wanted = marker;
+  let other = 1_u32;
+  return exit_status(code: 0_u8);
+}
+"#,
+        )]],
+    },
 ];
