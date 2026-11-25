@@ -3377,6 +3377,34 @@ static void tables_read_selection(void) {
         fail("read selections leaked blocks", atomic_load(&blocks_out), before);
 }
 
+/* Runs body(arg) in a child with its standard error in a pipe, an alarm and
+ * no core, and returns the child's wait status; what it wrote is in report. */
+static int child_status(int (*body)(unsigned), unsigned arg, char *report, size_t room) {
+    int fds[2];
+    if (pipe(fds) != 0) fail("a pipe for the child's report was not made", 0, 0);
+    fflush(stdout);
+    pid_t pid = fork();
+    if (pid < 0) fail("a child was not made", 0, 0);
+    if (pid == 0) {
+        struct rlimit no_core = {0, 0};
+        setrlimit(RLIMIT_CORE, &no_core);
+        alarm(2);
+        close(fds[0]);
+        dup2(fds[1], 2);
+        close(fds[1]);
+        _exit(body(arg));
+    }
+    close(fds[1]);
+    size_t length = 0;
+    for (ssize_t n; length < room - 1 && (n = read(fds[0], report + length, room - 1 - length)) > 0;)
+        length += (size_t)n;
+    report[length] = 0;
+    close(fds[0]);
+    int status = 0;
+    if (waitpid(pid, &status, 0) != pid) fail("a child was not waited for", 0, 0);
+    return status;
+}
+
 /* The child of read_hold_write_selection: a statement that only reads holds
  * the map whole, and something asks the runtime to select an entry for
  * write. Reaching the end of the selection means the runtime did it; the
@@ -3384,9 +3412,6 @@ static void tables_read_selection(void) {
  * waits for ever on the cell the selection left locked, until the alarm.
  * A selection of no key locks none, so that statement then goes through. */
 static int read_hold_child(unsigned kind) {
-    struct rlimit no_core = {0, 0};
-    setrlimit(RLIMIT_CORE, &no_core);
-    alarm(2);
     wf_cmap *map = wf_cmap_create_entries(16, 8, 1);
     wf_cmap_holding hold;
     wf__table_hold_begin(&hold, map);
@@ -3420,59 +3445,13 @@ static int read_hold_child(unsigned kind) {
  * stops the next statement on that key far from the fault. The request runs
  * in a child process, whose end the parent reads. */
 static void read_hold_write_selection(unsigned kind) {
-    int fds[2];
-    if (pipe(fds) != 0) fail("a pipe for the child's report was not made", 0, 0);
-    fflush(stdout);
-    pid_t pid = fork();
-    if (pid < 0) fail("a child for the write selection was not made", 0, 0);
-    if (pid == 0) {
-        close(fds[0]);
-        dup2(fds[1], 2);
-        close(fds[1]);
-        _exit(read_hold_child(kind));
-    }
-    close(fds[1]);
     char report[512];
-    size_t length = 0;
-    for (ssize_t n; length < sizeof report - 1 && (n = read(fds[0], report + length, sizeof report - 1 - length)) > 0;)
-        length += (size_t)n;
-    report[length] = 0;
-    close(fds[0]);
-    int status = 0;
-    if (waitpid(pid, &status, 0) != pid) fail("the write selection's child was not waited for", 0, 0);
+    int status = child_status(read_hold_child, kind, report, sizeof report);
     if (!WIFSIGNALED(status) || WTERMSIG(status) != SIGABRT)
         fail("a write selection under a read-only whole hold did not stop the program (kind, signal or exit status + 1000)",
              kind, WIFSIGNALED(status) ? (unsigned)WTERMSIG(status) : 1000u + (unsigned)WEXITSTATUS(status));
     if (strstr(report, "whitefoot runtime: write selection under a read-only whole hold") == NULL)
-        fail("the program stopped for another reason than a write selection under a read-only whole hold", kind, length);
-}
-
-/* Runs body in a child with its standard error in a pipe, an alarm and no
- * core, and returns the child's wait status; what it wrote is in report. */
-static int child_status(int (*body)(void), char *report, size_t room) {
-    int fds[2];
-    if (pipe(fds) != 0) fail("a pipe for the child's report was not made", 0, 0);
-    fflush(stdout);
-    pid_t pid = fork();
-    if (pid < 0) fail("a child was not made", 0, 0);
-    if (pid == 0) {
-        struct rlimit no_core = {0, 0};
-        setrlimit(RLIMIT_CORE, &no_core);
-        alarm(5);
-        close(fds[0]);
-        dup2(fds[1], 2);
-        close(fds[1]);
-        _exit(body());
-    }
-    close(fds[1]);
-    size_t length = 0;
-    for (ssize_t n; length < room - 1 && (n = read(fds[0], report + length, room - 1 - length)) > 0;)
-        length += (size_t)n;
-    report[length] = 0;
-    close(fds[0]);
-    int status = 0;
-    if (waitpid(pid, &status, 0) != pid) fail("a child was not waited for", 0, 0);
-    return status;
+        fail("the program stopped for another reason than a write selection under a read-only whole hold", kind, strlen(report));
 }
 
 /* A statement that holds the map whole and only reads: its reads of present
@@ -3480,7 +3459,8 @@ static int child_status(int (*body)(void), char *report, size_t room) {
  * leaves its key free for the next statement, and the same record, begun
  * again as a write hold of the whole map, selects for write one key and a set
  * of none without stopping the program. */
-static int read_then_write_child(void) {
+static int read_then_write_child(unsigned unused) {
+    (void)unused;
     wf_cmap *map = wf_cmap_create_entries(16, 8, 1);
     wf_table_entry entry;
     uint64_t *seed = wf__table_lock_entry(map, (const unsigned char *)"a", 1, 0, &entry);
@@ -3528,7 +3508,8 @@ static int read_then_write_child(void) {
 /* A group on one map that merges a target that reads the whole map with one
  * that writes a key is a write hold: the merge keeps the mark only when every
  * target is read-only (`primary->read &= secondary->read`). */
-static int merged_read_write_child(void) {
+static int merged_read_write_child(unsigned unused) {
+    (void)unused;
     void *object = wf__shared_map_new(16, 8, 2);
     wf_cmap *map = *(wf_cmap **)((char *)object + WF_SHARED_STATE_OFFSET);
     wf_cmap_holding first, second;
@@ -3542,13 +3523,14 @@ static int merged_read_write_child(void) {
     uint64_t *slot = wf__table_held_entry(map, (const unsigned char *)"k", 1, 1);
     slot[0] = 1; slot[1] = 5;
     wf__atomic_group_release(group, 2, 0, sizeof *slot, 0);
-    if (wf_cmap_count(map) != 1) return 10;
+    if (wf_cmap_count_held(map, 0, sizeof *slot, 0) != 1) return 10;
     return 0;
 }
 
 /* The same group of two targets that only read the map: its record is a
  * read-only whole hold, and a write selection under it stops the program. */
-static int merged_read_read_child(void) {
+static int merged_read_read_child(unsigned unused) {
+    (void)unused;
     void *object = wf__shared_map_new(16, 8, 2);
     wf_cmap *map = *(wf_cmap **)((char *)object + WF_SHARED_STATE_OFFSET);
     wf_cmap_holding first, second;
@@ -3569,10 +3551,10 @@ static int merged_read_read_child(void) {
  * hold in the same record, and a merged group that holds a writer all go on
  * and end the child with status 0 [old behaviour, kept]. */
 static void read_hold_writes_still_allowed(void) {
-    int (*bodies[])(void) = {read_then_write_child, merged_read_write_child};
+    int (*bodies[])(unsigned) = {read_then_write_child, merged_read_write_child};
     for (unsigned i = 0; i < 2; i++) {
         char report[512];
-        int status = child_status(bodies[i], report, sizeof report);
+        int status = child_status(bodies[i], i, report, sizeof report);
         if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
             fail("a read-only hold's neighbours were stopped or did not end (case, exit status or signal + 1000)", i,
                  WIFEXITED(status) ? (unsigned)WEXITSTATUS(status) : 1000u + (unsigned)WTERMSIG(status));
@@ -3583,7 +3565,7 @@ static void read_hold_writes_still_allowed(void) {
  * write selection under it stops the program with the runtime's reason. */
 static void read_hold_merged_write_selection(void) {
     char report[512];
-    int status = child_status(merged_read_read_child, report, sizeof report);
+    int status = child_status(merged_read_read_child, 0, report, sizeof report);
     if (!WIFSIGNALED(status) || WTERMSIG(status) != SIGABRT)
         fail("a write selection under a merged read-only whole hold did not stop the program (signal or exit status + 1000)",
              WIFSIGNALED(status) ? (unsigned)WTERMSIG(status) : 1000u + (unsigned)WEXITSTATUS(status), 0);
@@ -4803,10 +4785,10 @@ int main(int argc, char **argv) {
         tables_held_selection();
         tables_read_selection();
         read_hold_writes_still_allowed();
+        read_hold_merged_write_selection();
         read_hold_write_selection(0);
         read_hold_write_selection(1);
         read_hold_write_selection(2);
-        read_hold_merged_write_selection();
         shared_map_groups();
         if (atomic_load(&mapped_bytes_out) != 0)
             fail("selection checks leaked counted map storage", atomic_load(&mapped_bytes_out), 0);
@@ -4866,10 +4848,10 @@ int main(int argc, char **argv) {
         tables_held_selection();
         tables_read_selection();
         read_hold_writes_still_allowed();
+        read_hold_merged_write_selection();
         read_hold_write_selection(0);
         read_hold_write_selection(1);
         read_hold_write_selection(2);
-        read_hold_merged_write_selection();
         shared_map_groups();
         holds_move_amounts(0, PATIENCE);
         holds_move_amounts(1, PATIENCE);
