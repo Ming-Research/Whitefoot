@@ -204,7 +204,7 @@ tests directly.
 The authority is [the active specification](../../../spec/kernel-spec.md),
 particularly GRAM-4, WAIT-1 through WAIT-3, EFF-1 through EFF-5, HOST-1,
 SHARE-1 through SHARE-3, PRE-1 and PRE-2. The
-[constitution](../../../docs/constitution.md) requires checked safety,
+[constitution](../../../design/constitution.md) requires checked safety,
 practical compilation, and support for small embedded systems as well as
 large systems. No proposal uses SMT, a timeout to decide acceptance, a
 writer-visible trap, or a runtime substitute for a missing proof. Runtime
