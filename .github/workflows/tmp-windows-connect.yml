@@ -1,0 +1,69 @@
+# Temporary: the Windows connect test and the send test it shares a header
+# with, on the pushes the wf-agents engine makes of this work's commits (the
+# `wf-try/work-209-26e0fade/` refs), without the rest of io-hosts. Removed
+# before the full check (AGENTS.md, "Checks").
+name: tmp-windows-connect
+
+on:
+  push:
+    branches: ['wf-try/work-209-26e0fade/**']
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      WINDOWS_CLANG: clang --target=x86_64-w64-windows-gnu
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned llvm-mingw
+        run: |
+          set -euo pipefail
+          root=$(bash .github/toolchain/fetch-llvm-mingw.sh .github/toolchain/llvm-assets.json \
+            "$RUNNER_TEMP/llvm-mingw-archives" "$RUNNER_TEMP/llvm-mingw" | tail -n 1)
+          echo "LLVM_MINGW_ROOT=$root" >> "$GITHUB_ENV"
+          cygpath -w "$root/bin" >> "$GITHUB_PATH"
+
+      - name: Construct the two test images
+        run: |
+          if ! command -v make > /dev/null; then
+            choco install make --yes --no-progress
+          fi
+          out="$(cygpath -u "$RUNNER_TEMP")/completion"
+          make -C compiler -j2 WINDOWS_CC="$WINDOWS_CLANG" WINDOWS_LLVM_CC="$WINDOWS_CLANG" SHELL=bash \
+            COMPLETION_TMP="$out" \
+            "$out/windows-bounded-send-test.exe" "$out/windows-bounded-connect-test.exe"
+
+      - name: Send test
+        run: |
+          WF_IO_NO_NATIVE_RING=1 WF_IO_HELPERS=2 "$RUNNER_TEMP/completion/windows-bounded-send-test.exe"
+
+      # Every run is shown before the step judges them.
+      - name: Connect test on both routes and both controls
+        run: |
+          exe="$RUNNER_TEMP/completion/windows-bounded-connect-test.exe"
+          failed=0
+          run_one() {
+            label="$1"; shift
+            echo "=== $label ==="
+            set +e
+            "$@"
+            status=$?
+            set -e
+            echo "=== $label: exit status $status ==="
+            if [ "$status" -ne 0 ]; then failed=1; fi
+          }
+          run_one "helper route" env WF_IO_NO_NATIVE_RING=1 WF_IO_HELPERS=2 "$exe"
+          run_one "completion port route" "$exe"
+          set +e
+          WF_IO_NO_NATIVE_RING=1 WF_IO_HELPERS=2 "$exe" control-bound; echo "control-bound exit $?"
+          WF_IO_NO_NATIVE_RING=1 WF_IO_HELPERS=2 "$exe" control-leak; echo "control-leak exit $?"
+          WF_IO_NO_NATIVE_RING=1 WF_IO_HELPERS=2 "$exe" control-blocking; echo "control-blocking exit $?"
+          exit "$failed"

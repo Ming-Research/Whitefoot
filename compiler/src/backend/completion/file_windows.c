@@ -24,10 +24,7 @@
  * address conversion, the backlog, the send flags and the pair's two-count are
  * shared (`socket_address.h`, `file_adapter.c`), and what is written here is
  * the call. A socket reached from this unit is normally a blocking socket;
- * bounded sends temporarily use nonblocking mode and return the first prefix,
- * and a connect is made in nonblocking mode and waited for in bounded slices
- * (`wf_file_windows_await_connect`), because `CancelSynchronousIo` is not
- * documented to end a blocking Winsock connect, accept, receive or send:
+ * bounded sends temporarily use nonblocking mode and return the first prefix:
  * `WSA_FLAG_OVERLAPPED` says the completion port may carry a request issued
  * with an `OVERLAPPED`, and says nothing about a call made without one, so
  * `recv`, `send`, `accept` and `connect` here wait on the helper thread the
@@ -466,71 +463,7 @@ static wf_file_result wf_file_windows_socket_listen(
     return result;
 }
 
-/* One slice of a bounded wait, which every readiness wait here takes before
- * it waits: zero with `*milliseconds` set to how long this slice may last --
- * at most 50 ms, or -1 with no bound at all -- or the error that ends the
- * wait because the running operation's bound is over.  A bound is a deadline,
- * or a watch [PRE-2] the driver marks fired; a passed deadline is marked
- * fired here, so the driver and the helper agree it was reached. */
-static int wf_file_windows_bound_slice(int *milliseconds) {
-    uint64_t deadline = wf_file_running_deadline();
-    *milliseconds = -1;
-    if (deadline == WF_COMPLETION_DEADLINE_FIRED) return (int)ERROR_OPERATION_ABORTED;
-    if (deadline != 0) {
-        uint64_t now = wf_file_monotonic_ns();
-        uint64_t remaining;
-        if (now >= deadline) {
-            wf_file_running_fire();
-            return (int)ERROR_OPERATION_ABORTED;
-        }
-        remaining = (deadline - now + 999999u) / 1000000u;
-        *milliseconds = remaining > 50u ? 50 : (int)remaining;
-    }
-    return 0;
-}
-
-/* Waits until the socket's nonblocking connect has an outcome or the running
- * operation's bound ends: zero for a connection, or the error that ends the
- * call -- the host's own refusal, or the bound's.  A blocking Winsock connect
- * is not one `CancelSynchronousIo` is documented to end, so the connect is
- * made nonblocking and waited for here in slices, as an accept is; `select`
- * rather than `WSAPoll`, because the except set is where Windows reports a
- * refused connect.  Before it gives up on a bound it looks once more with no
- * wait, so an outcome the host had already produced is the call's outcome
- * [PRE-2]. */
-static int wf_file_windows_await_connect(SOCKET target) {
-    for (;;) {
-        int milliseconds;
-        int bound = wf_file_windows_bound_slice(&milliseconds);
-        fd_set writable;
-        fd_set failed;
-        struct timeval slice;
-        int ready;
-        FD_ZERO(&writable);
-        FD_ZERO(&failed);
-        FD_SET(target, &writable);
-        FD_SET(target, &failed);
-        if (bound != 0) milliseconds = 0;
-        slice.tv_sec = milliseconds / 1000;
-        slice.tv_usec = (milliseconds % 1000) * 1000;
-        ready = select(0, NULL, &writable, &failed, milliseconds < 0 ? NULL : &slice);
-        if (ready == SOCKET_ERROR) return wf_file_windows_socket_error();
-        if (ready > 0) {
-            int outcome = 0;
-            int length = (int)sizeof(outcome);
-            if (getsockopt(target, SOL_SOCKET, SO_ERROR, (char *)&outcome, &length)
-                    == SOCKET_ERROR) {
-                return wf_file_windows_socket_error();
-            }
-            return outcome == 0 ? 0 : wf__windows_error_from_socket(outcome);
-        }
-        if (bound != 0) return bound;
-    }
-}
-
-/* One connect, and the same disposal on refusal or on a bound's end.  The
- * socket is nonblocking for the connect and blocking again once it is
- * connected, as every other socket of this unit is when it is handed out. */
+/* One connect, and the same disposal on refusal. */
 static wf_file_result wf_file_windows_socket_connect(
     const wf_file_request *request
 ) {
@@ -550,29 +483,17 @@ static wf_file_result wf_file_windows_socket_connect(
     }
     {
         SOCKET native_socket = wf_file_windows_socket(endpoint);
-        u_long mode = 1;
         wf_file_windows_disable_nagle(native_socket);
-        if (ioctlsocket(native_socket, FIONBIO, &mode) == 0) {
-            refusal = 0;
-            if (connect(
-                    native_socket,
-                    (const struct sockaddr *)native.bytes,
-                    (int)length
-                ) == SOCKET_ERROR) {
-                refusal = WSAGetLastError() == WSAEWOULDBLOCK
-                    ? wf_file_windows_await_connect(native_socket)
-                    : wf_file_windows_socket_error();
-            }
-            mode = 0;
-            if (refusal == 0 && ioctlsocket(native_socket, FIONBIO, &mode) == 0) {
-                result.head.value = endpoint;
-                return result;
-            }
-            if (refusal == 0) refusal = wf_file_windows_socket_error();
-        } else {
-            refusal = wf_file_windows_socket_error();
+        if (connect(
+                native_socket,
+                (const struct sockaddr *)native.bytes,
+                (int)length
+            ) == 0) {
+            result.head.value = endpoint;
+            return result;
         }
     }
+    refusal = wf_file_windows_socket_error();
     (void)wf__windows_socket_close(endpoint);
     result.head.error_code = refusal;
     return result;
@@ -589,13 +510,22 @@ static wf_file_result wf_file_windows_socket_connect(
  * after WSAEWOULDBLOCK it waits for readiness even without a bound. */
 static int wf_file_windows_await_socket(SOCKET target, SHORT events, int retry) {
     for (;;) {
-        int milliseconds;
-        int bound;
+        uint64_t deadline = wf_file_running_deadline();
+        uint64_t now;
+        int milliseconds = -1;
         WSAPOLLFD entry;
         int ready;
-        if (wf_file_running_deadline() == 0 && !retry) return 0;
-        bound = wf_file_windows_bound_slice(&milliseconds);
-        if (bound != 0) return bound;
+        if (deadline == 0 && !retry) return 0;
+        if (deadline == WF_COMPLETION_DEADLINE_FIRED) return (int)ERROR_OPERATION_ABORTED;
+        if (deadline != 0) {
+            now = wf_file_monotonic_ns();
+            if (now >= deadline) {
+                wf_file_running_fire();
+                return (int)ERROR_OPERATION_ABORTED;
+            }
+            uint64_t remaining = (deadline - now + 999999u) / 1000000u;
+            milliseconds = remaining > 50u ? 50 : (int)remaining;
+        }
         memset(&entry, 0, sizeof(entry));
         entry.fd = target;
         entry.events = events;

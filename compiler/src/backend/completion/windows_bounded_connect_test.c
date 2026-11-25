@@ -20,7 +20,18 @@
  *      or Cancelled and nothing else;
  *   D  a connect with no bound at all returns a blocking-mode connection;
  *   E  a connect to a closed port returns the host's refusal, with and
- *      without a watch, and never Cancelled.
+ *      without a watch, and never Cancelled;
+ *   F  a connect that carries a bound it does not reach (a watch, a far
+ *      deadline, both) returns a blocking-mode connection at once;
+ *   G  the firing arrives at every phase of the helper's connect (30
+ *      firings, 0 to 29 ms after the submit, some before the helper has
+ *      claimed it) and each ends Cancelled;
+ *   H  a deadline and a watch together: the deadline reached first is
+ *      DeadlinePassed, the watch fired first is Cancelled;
+ *   I  deadlines of 1 to 99 ms, straddling the 50 ms slice, each end
+ *      DeadlinePassed;
+ *   J  a connect that can succeed raced by a deadline: a usable connection or
+ *      DeadlinePassed and nothing else.
  * After a warm-up pass (helpers and the completion port are created on first
  * use and kept), the handle count, the factory credit, the driver's
  * cancellation list and its timers must be what they were.
@@ -152,6 +163,17 @@ static void expect_error(const wf_connect_result *result, unsigned tag, const ch
         fprintf(stderr, "%s: %s: result tag %u, error tag %u, expected error tag %u\n",
                 WF_BOUNDED_TEST_NAME, what, (unsigned)result->tag,
                 result->tag == 1 ? (unsigned)result->err.error.tag : 0u, tag);
+        exit(1);
+    }
+}
+
+/* The same bound without the line per call, for the repeated cases. */
+static void expect_quickly(const char *what, uint64_t elapsed) {
+    if (elapsed > bound_ns) {
+        fprintf(stderr, "%s: %s took %llu ms, over the %llu ms bound\n",
+                WF_BOUNDED_TEST_NAME, what,
+                (unsigned long long)(elapsed / MILLISECOND_NS),
+                (unsigned long long)(bound_ns / MILLISECOND_NS));
         exit(1);
     }
 }
@@ -304,22 +326,19 @@ static void case_race(void) {
     drain_ordinary_listener();
 }
 
-/* D: no bound at all returns a connection in blocking mode that carries data. */
-static void case_unbounded(void) {
-    wf_connect_result result;
-    wf_value address;
+/* What a connection a connect returned must be: connected to the ordinary
+ * listener's next peer, in blocking mode, carrying data both ways; closes it
+ * and the peer. */
+static void probe_connection(wf_connect_result *result) {
     SOCKET peer, client;
     DWORD timeout = 300;
     char byte = 0;
     uint64_t start;
     int received;
-    wf_test_guard_phase("connect D: no bound");
-    wf__body_socket_address_v4(&address, 127, 0, 0, 1, (uint16_t)ordinary_port);
-    wf__body_tcp_connect(&result, &factory, &address, NULL, &never);
-    CHECK(result.tag == 0);
+    CHECK(result->tag == 0);
     peer = accept(ordinary_listener, NULL, NULL);
     CHECK(peer != INVALID_SOCKET);
-    client = (SOCKET)wf__windows_socket_handle((int)result.ok.value.send.words[0]);
+    client = (SOCKET)wf__windows_socket_handle((int)result->ok.value.send.words[0]);
     if (control_nonblocking) {
         /* What a connect that forgot to restore blocking mode would hand out. */
         u_long on = 1;
@@ -336,8 +355,177 @@ static void case_unbounded(void) {
     CHECK(setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout, sizeof(timeout)) == 0);
     CHECK(send(peer, "x", 1, 0) == 1);
     CHECK(recv(client, &byte, 1, 0) == 1 && byte == 'x');
+    CHECK(send(client, "y", 1, 0) == 1);
+    CHECK(recv(peer, &byte, 1, 0) == 1 && byte == 'y');
     CHECK(closesocket(peer) == 0);
-    close_connection(&result.ok.value);
+    close_connection(&result->ok.value);
+}
+
+/* D: no bound at all returns a connection in blocking mode that carries data. */
+static void case_unbounded(void) {
+    wf_connect_result result;
+    wf_value address;
+    wf_test_guard_phase("connect D: no bound");
+    wf__body_socket_address_v4(&address, 127, 0, 0, 1, (uint16_t)ordinary_port);
+    wf__body_tcp_connect(&result, &factory, &address, NULL, &never);
+    probe_connection(&result);
+}
+
+/* F: a bound that is never reached changes neither the outcome nor the mode
+ * of the socket handed out, and costs no slice of waiting. */
+static void case_bounded_success(void) {
+    wf_cancel_handle source, watch;
+    wf_deadline deadline = {0};
+    wf_connect_result result;
+    uint64_t start;
+    int state;
+    for (int variant = 0; variant < 3; variant++) {
+        const wf_cancel_handle *used = variant == 1 ? &never : &watch;
+        const wf_deadline *limit = variant == 0 ? NULL : &deadline;
+        wf_test_guard_phase("connect F: bounded connect that succeeds");
+        wf__body_cancel_source(&source);
+        wf__body_cancel_watch(&watch, &source);
+        deadline.tag = WF_OPTION_SOME;
+        deadline.value.ticks = wf_file_monotonic_ns() + 60 * SECOND_NS;
+        start = wf_file_monotonic_ns();
+        state = connect_start(&result, ordinary_port, limit, used);
+        connect_finish(&result, state, ordinary_port, limit, used);
+        CHECK(result.tag == 0);
+        expect_within(variant == 0 ? "F: watch only, success"
+                      : variant == 1 ? "F: deadline only, success"
+                                     : "F: watch and deadline, success",
+                      wf_file_monotonic_ns() - start);
+        probe_connection(&result);
+        wf__body_close_cancel_watch(&watch);
+        wf__body_close_cancel_source(&source);
+    }
+}
+
+/* G: the firing meets the helper at each phase of its connect: not yet
+ * claimed, creating the socket, inside the connect, inside the wait. */
+static void case_cancel_phases(void) {
+    enum { FIRINGS = 30 };
+    wf_test_guard_phase("connect G: cancellation at every phase");
+    for (unsigned i = 0; i < FIRINGS; i++) {
+        wf_cancel_handle source, watch;
+        wf_connect_result result;
+        uint64_t start;
+        int state;
+        wf__body_cancel_source(&source);
+        wf__body_cancel_watch(&watch, &source);
+        state = connect_start(&result, silent_port, NULL, &watch);
+        expect_route();
+        if (helper_route && (i & 1u)) await_helper_claim();
+        if (i != 0) Sleep(i);
+        CHECK(wf_bridge_record_state(&operation()->record) != WF_COMPLETION_DONE);
+        start = wf_file_monotonic_ns();
+        end_bound(1, &source, NULL);
+        connect_finish(&result, state, silent_port, NULL, &watch);
+        expect_error(&result, WF_IO_CANCELLED, "G: cancellation at a phase");
+        expect_quickly("G: cancellation to return", wf_file_monotonic_ns() - start);
+        wf__body_close_cancel_watch(&watch);
+        wf__body_close_cancel_source(&source);
+    }
+    printf("%s: G: %u firings ended Cancelled\n", WF_BOUNDED_TEST_NAME, (unsigned)FIRINGS);
+    fflush(stdout);
+}
+
+/* H: a deadline and a real watch on one connect: whichever is reached first
+ * decides, and the other changes nothing. */
+static void case_both_bounds(void) {
+    wf_cancel_handle source, watch;
+    wf_deadline deadline = {0};
+    wf_connect_result result;
+    uint64_t start, finished;
+    int state;
+    wf_test_guard_phase("connect H1: deadline reached before the watch fires");
+    wf__body_cancel_source(&source);
+    wf__body_cancel_watch(&watch, &source);
+    deadline.tag = WF_OPTION_SOME;
+    deadline.value.ticks = wf_file_monotonic_ns() + 300 * MILLISECOND_NS;
+    state = connect_start(&result, silent_port, &deadline, &watch);
+    expect_route();
+    if (helper_route) await_helper_claim();
+    end_bound(0, NULL, &deadline);
+    connect_finish(&result, state, silent_port, &deadline, &watch);
+    finished = wf_file_monotonic_ns();
+    expect_error(&result, WF_IO_DEADLINE_PASSED, "H1: deadline with a watch");
+    CHECK(finished >= deadline.value.ticks);
+    expect_within("H1: deadline to return", finished - deadline.value.ticks);
+    wf__body_close_cancel_watch(&watch);
+    wf__body_close_cancel_source(&source);
+
+    wf_test_guard_phase("connect H2: watch fires before the deadline");
+    wf__body_cancel_source(&source);
+    wf__body_cancel_watch(&watch, &source);
+    deadline.value.ticks = wf_file_monotonic_ns() + 60 * SECOND_NS;
+    state = connect_start(&result, silent_port, &deadline, &watch);
+    expect_route();
+    if (helper_route) await_helper_claim();
+    Sleep(100);
+    start = wf_file_monotonic_ns();
+    end_bound(1, &source, NULL);
+    connect_finish(&result, state, silent_port, &deadline, &watch);
+    finished = wf_file_monotonic_ns();
+    expect_error(&result, WF_IO_CANCELLED, "H2: watch with a deadline");
+    CHECK(finished < deadline.value.ticks);
+    expect_within("H2: cancellation to return", finished - start);
+    wf__body_close_cancel_watch(&watch);
+    wf__body_close_cancel_source(&source);
+}
+
+/* I: short deadlines on both sides of the 50 ms slice. */
+static void case_deadline_slices(void) {
+    static const unsigned milliseconds[] = {1, 2, 10, 49, 50, 51, 99};
+    wf_test_guard_phase("connect I: deadlines around one slice");
+    for (size_t i = 0; i < sizeof(milliseconds) / sizeof(milliseconds[0]); i++) {
+        wf_deadline deadline = {0};
+        wf_connect_result result;
+        uint64_t finished;
+        int state;
+        deadline.tag = WF_OPTION_SOME;
+        deadline.value.ticks = wf_file_monotonic_ns() + (uint64_t)milliseconds[i] * MILLISECOND_NS;
+        state = connect_start(&result, silent_port, &deadline, &never);
+        end_bound(0, NULL, &deadline);
+        connect_finish(&result, state, silent_port, &deadline, &never);
+        finished = wf_file_monotonic_ns();
+        expect_error(&result, WF_IO_DEADLINE_PASSED, "I: short deadline");
+        CHECK(finished >= deadline.value.ticks);
+        expect_quickly("I: short deadline to return", finished - deadline.value.ticks);
+    }
+}
+
+/* J: a connect that can succeed, raced by a deadline a few tens of
+ * microseconds away: a connection or DeadlinePassed, nothing else. */
+static void case_deadline_race(void) {
+    enum { ITERATIONS = 100 };
+    unsigned connected = 0, passed = 0;
+    wf_test_guard_phase("connect J: success racing a deadline");
+    for (unsigned i = 0; i < ITERATIONS; i++) {
+        wf_deadline deadline = {0};
+        wf_connect_result result;
+        uint64_t finished;
+        int state;
+        deadline.tag = WF_OPTION_SOME;
+        deadline.value.ticks = wf_file_monotonic_ns() + (uint64_t)(i % 50) * 40000u;
+        state = connect_start(&result, ordinary_port, &deadline, &never);
+        connect_finish(&result, state, ordinary_port, &deadline, &never);
+        finished = wf_file_monotonic_ns();
+        if (result.tag == 0) {
+            connected++;
+            CHECK(wf_test_socket_open((int)result.ok.value.send.words[0]));
+            close_connection(&result.ok.value);
+        } else {
+            expect_error(&result, WF_IO_DEADLINE_PASSED, "J: raced connect");
+            CHECK(finished >= deadline.value.ticks);
+            passed++;
+        }
+        expect_quickly("J: raced call to return",
+                       finished > deadline.value.ticks ? finished - deadline.value.ticks : 0);
+    }
+    printf("%s: J: %u connected, %u deadline passed\n", WF_BOUNDED_TEST_NAME, connected, passed);
+    fflush(stdout);
+    drain_ordinary_listener();
 }
 
 /* E: a connect to a closed port is the host's refusal. */
@@ -398,8 +586,13 @@ int main(int argc, char **argv) {
     case_cancel();
     case_deadline();
     case_bound_over_at_call();
+    case_cancel_phases();
+    case_both_bounds();
+    case_deadline_slices();
     case_race();
+    case_deadline_race();
     case_unbounded();
+    case_bounded_success();
     case_refused();
     if (control_leak) {
         leaked = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
