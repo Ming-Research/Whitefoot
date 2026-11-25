@@ -32,7 +32,7 @@ jobs:
       # after it B shows its own. (ii): both started together. (iii): both name
       # one directory as COMPLETION_TMP, in the order of (i).
       - name: Run the map test in two checkouts
-        shell: bash
+        shell: 'bash {0}'
         run: |
           set -u
           base=7ed842e2842a8e3dcbd41edba4645791a1da2b4b
@@ -45,6 +45,7 @@ jobs:
           a=$RUNNER_TEMP/a
           b=$RUNNER_TEMP/b
           problems=0
+          echo "::notice title=preflight::base $(git cat-file -t $base 2>&1), head $(git rev-parse --short HEAD), $($cc --version | head -1), perl $(perl -e 'print $]')"
 
           fresh() {
             git worktree remove --force "$a" 2>/dev/null || true
@@ -61,6 +62,9 @@ jobs:
                 make -j4 -C compiler concurrent-map-test CC=$cc ) > "$2" 2>&1
             last_status=$?
             echo "$3: exit $last_status"
+            if [ $last_status != 0 ]; then
+              echo "::error title=$3::exit $last_status in $1: $(tail -c 700 "$2" | tr '\n' ' ')"
+            fi
           }
           # The run page shows annotations without a sign-in, so each trial
           # leaves one: both exits, the lines that say a run finished, and the
