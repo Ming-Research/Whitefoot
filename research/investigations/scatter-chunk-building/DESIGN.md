@@ -93,6 +93,16 @@ Fixed before measuring:
 - **The proposal is rejected** if neither `tag-only` nor `in-place-tag-only`
   resolves an improvement at eight workers. The remaining cost is then
   recorded here, which is the item's second outcome.
+- **The selected lowering** ([below](#the-lowering-the-owner-selected)) builds
+  this program's empty slots as `no-clear` does, so `no-clear` decides it
+  before any compiler change: the change is made if `no-clear`'s wall
+  interval at eight workers lies wholly below 1, its wall and CPU intervals at
+  one worker do not lie wholly above 1, and its optimized `radix_scatter`
+  holds no constant clear or copy of at least 2,048 bytes. If the interval at
+  eight workers contains 1, no compiler change is made and the cost is
+  recorded. If the time improves and a whole-block copy stays, the lowering
+  does not give the item's first outcome alone, and that is reported before
+  any compiler change.
 
 Limits known in advance: the i9-14900K runner is a hybrid processor and the
 probe pins nothing, so eight workers may land on either kind of core; other
@@ -176,6 +186,64 @@ removing it cannot lower that ratio and, by shortening both, raises it a
 little. The ratio also predates the demand-driven hand-out of work. It is
 therefore not the measure of this investigation; the whole call on 1,048,593
 keys is.
+
+## The lowering the owner selected
+
+On 2026-11-25 the owner chose, among leaving the inactive window fields
+unwritten in large values only, leaving them unwritten at every size, leaving
+every inactive payload unwritten, and changing nothing: **in a value of more
+than 128 bytes, a field of an inactive variant that holds constant-capacity
+window storage is not zero-filled; a value of at most 128 bytes is built as
+today.** The choice holds if the probes resolve a cost of the empty slots at
+eight workers; 128 is the bounded transfer's limit. The other two lowerings
+lost on what they would change without a measurement: the second firn's byte
+strings and the ordered map's links, the third also the two consumers of the
+2026-09-23 comparison.
+
+Sizes of the values above on x86-64, worked out from their declarations and
+not yet from the compiler:
+
+| Value | Bytes | Changes |
+| --- | ---: | --- |
+| scatter `Option<Chunk>` | 4,120 | yes |
+| `Result<HuffmanTable, InflateError>` | 2,456 | yes |
+| `Held` of `short_lived_windows.wf` | 608 | yes |
+| `Option<Lease>` | 272 | yes |
+| firn `Option<Entry>` | 80 | no |
+| firn `Value`, `Option<Rank>` | 64 | no |
+| firn `Option<Key>` | 56 | no |
+| firn `Bytes` | 40 | no |
+| ordered map `Option<OrderedEntry<..>>`, firn's instance | 80 | no |
+| ordered map `Option<OrderedEntry<..>>`, the test program's instances | 40 | no |
+
+An instance of the ordered map whose key and value pass 104 bytes together
+would put its `Option<OrderedEntry<..>>` over the limit; no maintained source
+has one. The falsifier for the "no" rows and for the libraries without a
+window: a probe emits the modules of firn, of the hash map, slab and ordered
+map programs and of the four "yes" programs at the commit before the compiler
+change and at the commit after it, and reports each module's length and a
+hash of its text. The first group must be the same text at both commits, the
+second must differ.
+
+## Acceptance measurement of the selected lowering
+
+Fixed before the first result. One build of the changed compiler makes three
+images of the unchanged scatter with `--par`: `before`, built under the
+present construction rule through a switch that exists only in the compiler's
+own tests and leaves the branch with the probes; an identical twin of
+`before`; and `after`. The protocol is the timing probe's: 1,048,593 mixed
+keys, one unreported and 20 timed calls a process, nine passes rotating the
+image order at 1, 8 and 32 workers, each image checked against the
+independent oracle first, the per-pass ratio of `after` to `before`, and the
+distribution-free 95% interval of the median of the nine ratios.
+
+- The item's first outcome holds if the wall interval at eight workers has
+  its upper end below 1.00, and the wall and the CPU interval at one worker
+  do not lie wholly above 1.00.
+- A width counts only if the twin's wall interval there contains 1. A width
+  that fails this is run once more; if it fails again the result is reported
+  as unresolved, not as passed.
+- 32 workers is reported and decides nothing.
 
 ## Results
 
