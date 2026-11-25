@@ -118,6 +118,10 @@ the work-branch and merge boundary.
   rules. A [complete source demo](investigations/modular-compilation/demo/README.md)
   follows a queue through shared libraries, a no-heap entry and a heap-using
   tool.
+- [Echo-server scaling with core count](investigations/echo-scaling/DESIGN.md):
+  whether a Whitefoot echo server, one context per connection, gets at least
+  1.6 times faster each time its cores double from 1 to 8 on Linux, against an
+  io_uring and an epoll server in C, with the criteria fixed before measuring.
 - [Concurrent hash index](investigations/concurrent-map/DESIGN.md): a
   keyed concurrent index in the trusted runtime under atomic statements on one
   key, its standalone measurement against other languages' concurrent maps,
