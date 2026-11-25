@@ -6,6 +6,7 @@
 //! record and the judgment that answered it. [DIAG-1] admits one rule and one
 //! location, selected by the order in which obligations are decided.
 
+use crate::diagnostic_repairs::described;
 use crate::semantic::check::DeclarationInventory;
 use crate::semantic::check::TypeContext;
 use crate::syntax::NodeId;
@@ -1092,7 +1093,10 @@ impl<'unit> TypeContext<'unit> {
                     .ok_or(SemanticCompilerFailure::InvalidResolution)?;
                 Ok((self.declarations.tree.source_spelling(node)?, false))
             }
-            RangeEndpointReading::Unspelled(None) => Ok(("?".to_owned(), false)),
+            RangeEndpointReading::Unspelled(None) => Ok((
+                described("a range endpoint with no source spelling"),
+                false,
+            )),
         }
     }
     /// [FN-9] the first failed exit of one relation, or its missing exit.

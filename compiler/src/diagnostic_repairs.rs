@@ -6,6 +6,46 @@ pub(crate) use reserved_names::{reserved_name_fix, source_word};
 
 use crate::syntax::LayoutDifference;
 
+/// The mark that opens a described value.
+const DESCRIBED_OPEN: char = '\u{2039}';
+/// The mark that closes a described value.
+const DESCRIBED_CLOSE: char = '\u{203a}';
+
+/// What a rendering writes where a value has no source spelling [DIAG-1]: the
+/// value described in words between two marks no source text contains, never
+/// a stand-in character a reader could take for source. A stretch of text
+/// that holds one is not marked as source, which [`unmark_described`] sees
+/// to when the text becomes a payload field.
+pub(crate) fn described(what: &str) -> String {
+    format!("{DESCRIBED_OPEN}{what}{DESCRIBED_CLOSE}")
+}
+
+/// Takes the backticks off each backtick-marked stretch that holds a
+/// described value: a stretch is marked as source only when all of it is.
+/// A closing backtick missing leaves the text as it is.
+pub(crate) fn unmark_described(text: &str) -> String {
+    if !text.contains(DESCRIBED_OPEN) {
+        return text.to_owned();
+    }
+    let pieces: Vec<&str> = text.split('`').collect();
+    let mut unmarked = String::with_capacity(text.len());
+    for (index, piece) in pieces.iter().enumerate() {
+        let marked = index % 2 == 1;
+        let closed = index + 1 < pieces.len();
+        if marked && closed && !piece.contains(DESCRIBED_OPEN) {
+            unmarked.push('`');
+            unmarked.push_str(piece);
+            unmarked.push('`');
+        } else if marked && !closed {
+            unmarked.push('`');
+            unmarked.push_str(piece);
+        } else {
+            unmarked.push_str(piece);
+        }
+    }
+    unmarked
+}
+
 pub(crate) const BOOLEAN_OPERATION_FIX: &str = "write `band(a, b)` for boolean conjunction and `bor(a, b)` for boolean disjunction; both operations are eager, so bind computed operands first with `let` in a body, or with preceding `define` bindings in a contract definition initializer when [FN-8] admits those operations [OP-1, GRAM-5, GRAM-9]";
 
 /// RANGE-1's repair for `&&`, selected by the grammar position of a

@@ -1,5 +1,6 @@
 //! Written postcondition clauses, independently of their normalized proof relation.
 
+use crate::diagnostic_repairs::described;
 use super::*;
 use crate::semantic::postcondition::{
     ParameterDenotation, PostconditionClause, SelectedPostconditionReturn,
@@ -140,7 +141,7 @@ impl Input<'_, '_> {
         denotation: ParameterDenotation,
     ) -> String {
         let Some(parameter) = self.function.parameters.get(ordinal as usize) else {
-            return "?".to_owned();
+            return described("a parameter with no source spelling");
         };
         let mut base = self.binding_name(parameter.binding);
         if denotation == ParameterDenotation::EntryDatum {
@@ -175,7 +176,7 @@ impl Input<'_, '_> {
         returned: &[&CheckedExpression],
     ) -> String {
         let Some(mut expression) = returned.get(ordinal as usize).copied() else {
-            return "?".to_owned();
+            return described("a returned value with no source spelling");
         };
         let mut source = self.context.postcondition_sources.get(&selected.statement);
         if selected.values.len() > 1 {

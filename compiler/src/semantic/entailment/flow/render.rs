@@ -1,6 +1,7 @@
 //! Canonical rendering [ENT-6]: residuals, relations, terms, goals
 //! and places spelled in the source's own terms.
 
+use crate::diagnostic_repairs::described;
 use super::*;
 
 /// How a source rendering spells one counted loop binder.
@@ -177,12 +178,12 @@ impl Input<'_, '_> {
                 // former over the place, never an internal term identity.
                 CheckedAffineExpressionKind::Measure(measure) => self
                     .render_affine_measure(measure, counted)
-                    .unwrap_or_else(|| "?".to_owned()),
+                    .unwrap_or_else(|| described("a measure with no source spelling")),
                 // [INV-1, ENT-6] a tracked field place factor renders as the
                 // writer wrote it, through a reference root's `^`.
                 CheckedAffineExpressionKind::Field(field) => match self.read_place_path(field) {
                     Some(place) => self.render_header_place(&place, counted),
-                    None => "?".to_owned(),
+                    None => described("a field with no source spelling"),
                 },
                 CheckedAffineExpressionKind::ConstGeneric { name, .. } => name.clone(),
                 CheckedAffineExpressionKind::Add(_, _)
@@ -270,7 +271,7 @@ impl Input<'_, '_> {
             .binding_names
             .get(binding.0 as usize)
             .cloned()
-            .unwrap_or_else(|| "?".to_owned())
+            .unwrap_or_else(|| described("a binding with no source spelling"))
     }
 
     /// [RANGE-1] a name for a suggested range clause or bound variable: the
@@ -310,7 +311,10 @@ impl Input<'_, '_> {
         self.context
             .declarations
             .get(declaration.index())
-            .map_or_else(|| "?".to_owned(), |record| record.spelling().to_owned())
+            .map_or_else(
+                || described("a declaration with no source spelling"),
+                |record| record.spelling().to_owned(),
+            )
     }
 
     fn render_header_offset(
@@ -326,13 +330,21 @@ impl Input<'_, '_> {
                 self.render_header_place(&self.context.captured_places.get(id), counted)
             }
             // [REF-1] the binding's spelling names a later value than the one
-            // this index read, and no source spelling names that one.
-            CapturedTerm::Superseded(_) | CapturedTerm::SupersededPlace(_) => "?".to_owned(),
+            // this index read, and no source spelling names that one, so the
+            // value is described.
+            CapturedTerm::Superseded(binding) => described(&format!(
+                "the value of {} before it was rewritten",
+                self.render_header_binding(binding, counted)
+            )),
+            CapturedTerm::SupersededPlace(id) => described(&format!(
+                "the value of {} before it was rewritten",
+                self.render_header_place(&self.context.captured_places.get(id), counted)
+            )),
             CapturedTerm::Opaque => offset
                 .source
                 .and_then(|node| self.context.source_spellings.get(&node))
                 .cloned()
-                .unwrap_or_else(|| "?".to_owned()),
+                .unwrap_or_else(|| described("a computed value with no source spelling")),
         }
     }
 
@@ -387,7 +399,7 @@ impl Input<'_, '_> {
                     .constants
                     .get(id.0 as usize)
                     .map(|constant| constant.name.clone())
-                    .unwrap_or_else(|| "?".to_owned()),
+                    .unwrap_or_else(|| described("a constant with no source spelling")),
                 self.context
                     .constants
                     .get(id.0 as usize)
@@ -642,7 +654,7 @@ impl Input<'_, '_> {
                 ..
             } => {
                 let (name, ty) = self.context.constant(*declaration).map_or_else(
-                    || ("?".to_owned(), None),
+                    || (described("a constant with no source spelling"), None),
                     |constant| (constant.name.clone(), Some(constant.declared_type)),
                 );
                 self.render_goal_projections(name, ty, projections)
@@ -725,7 +737,7 @@ impl Input<'_, '_> {
                         self.context.elements.get(element.index())
                     }) {
                         Some(CheckedType::Integer(IntegerType::U8)) => "\"\"".to_owned(),
-                        _ => "?".to_owned(),
+                        _ => described("an empty array with no source spelling"),
                     };
                 }
                 format!(
@@ -746,10 +758,10 @@ impl Input<'_, '_> {
                         .map(|nominal| &nominal.kind),
                     _ => None,
                 }) else {
-                    return "?".to_owned();
+                    return described("a value with no source spelling");
                 };
                 let Some(name) = self.context.type_spellings.get(ty) else {
-                    return "?".to_owned();
+                    return described("a type with no source spelling");
                 };
                 let arguments = declared
                     .iter()
@@ -772,7 +784,7 @@ impl Input<'_, '_> {
             CheckedType::GenericInt(declaration) | CheckedType::GenericFloat(declaration) => {
                 self.declaration_name(declaration)
             }
-            _ => "?".to_owned(),
+            _ => described("a type with no source spelling"),
         }
     }
 
@@ -941,7 +953,7 @@ impl Input<'_, '_> {
                         }
                         _ => None,
                     })
-                    .unwrap_or_else(|| "?".to_owned());
+                    .unwrap_or_else(|| described("a field with no source spelling"));
                 format!("{}.{field_name}", self.render_expression(value))
             }
             CheckedExpression::ArrayIndex { root, offset, .. } => {
@@ -971,7 +983,7 @@ impl Input<'_, '_> {
                 base.path.extend(place.place_path());
                 self.render_place(&base)
             }
-            _ => "?".to_owned(),
+            _ => described("an expression with no source spelling"),
         }
     }
 }
@@ -1125,7 +1137,12 @@ impl Reasoning<'_, '_, '_> {
             } => {
                 let parameter = self.input.function.parameters.get(*formal as usize);
                 let (base, ty, range, projections) = parameter.map_or_else(
-                    || ("?".to_owned(), None, false, projections.as_slice()),
+                    || (
+                        described("a parameter with no source spelling"),
+                        None,
+                        false,
+                        projections.as_slice(),
+                    ),
                     |parameter| {
                         if parameter.mode.is_reference() {
                             // The clause retains its leading reference step;

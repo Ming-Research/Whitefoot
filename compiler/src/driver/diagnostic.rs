@@ -708,7 +708,7 @@ impl<Field: FieldValue> FieldValue for Vec<Field> {
 
 impl FieldValue for str {
     fn value(&self, _: &SourceBundle) -> Option<Value> {
-        Some(Value::Text(self.to_owned()))
+        Some(Value::Text(crate::diagnostic_repairs::unmark_described(self)))
     }
 }
 

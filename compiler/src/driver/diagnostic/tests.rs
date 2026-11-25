@@ -1158,3 +1158,34 @@ fn quoted_source_bytes_are_not_read_for_defects() {
     let defects = with_field("found", Value::Exact(b"\"why?\"".to_vec())).text_defects();
     assert!(defects.is_empty(), "{defects:?}");
 }
+
+/// A value with no source spelling is written as a description between two
+/// marks, and a backtick-marked stretch that holds one is not marked as
+/// source; other stretches and text without a description are untouched.
+#[test]
+fn a_described_value_leaves_its_stretch_unmarked() {
+    use crate::diagnostic_repairs::{described, unmark_described};
+
+    let value = described("the value of k before it was rewritten");
+    let text = format!("`0_u64 < rows^[{value}].len` reads `k`, then `let k0 = k;`");
+    assert_eq!(
+        unmark_described(&text),
+        format!("0_u64 < rows^[{value}].len reads `k`, then `let k0 = k;`")
+    );
+    assert_eq!(unmark_described("a `b` c"), "a `b` c");
+    assert_eq!(
+        unmark_described(&format!("open `{value} and no close")),
+        format!("open `{value} and no close")
+    );
+}
+
+/// The payload a rendering shows for a described value passes the text check:
+/// it holds no `?` and no stretch marked as source that is not.
+#[test]
+fn a_described_value_in_a_field_is_sound_words() {
+    use crate::diagnostic_repairs::described;
+
+    let goal = format!("2_u64 < rows[{}].len", described("the value of k before it was rewritten"));
+    let defects = with_field("instantiated_goal", Value::Text(goal)).text_defects();
+    assert!(defects.is_empty(), "{defects:?}");
+}
