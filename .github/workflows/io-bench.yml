@@ -238,7 +238,9 @@ jobs:
             done
           } | tee "$OUT/host.txt"
           if [ "$PROFILE" = true ]; then
-            PERF=${PERF:-$(ls /usr/lib/linux-tools/*/perf /usr/lib/linux-tools-*/perf 2>/dev/null | head -1)}
+            # ls exits 2 when a pattern matches nothing, and under pipefail
+            # that would end the step before the skip below.
+            PERF=${PERF:-$(ls /usr/lib/linux-tools/*/perf /usr/lib/linux-tools-*/perf 2>/dev/null | head -1 || true)}
             if [ -n "$PERF" ]; then
               if [ "$RUNNER_ENVIRONMENT" = github-hosted ]; then
                 sudo sysctl -w kernel.perf_event_paranoid=-1 kernel.kptr_restrict=0
