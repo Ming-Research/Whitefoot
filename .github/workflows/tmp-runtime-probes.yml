@@ -1,9 +1,12 @@
-# Temporary: research/experiments/runtime-c-stack-probes/probe.sh under each
-# candidate argument with Linux LLVM 22, Apple's clang and the pinned upstream
-# clang 22.1.8 on macOS, its probe lines also written as notices; on the
-# pushes the wf-agents engine makes of this work's commits (the
-# `wf-try/work-208-26e0fade/` refs). Removed before the full check (AGENTS.md,
-# "Checks").
+# Temporary: shows the runtime frame test
+# (compiler/src/bin/whitefootc/runtime_frames.rs) green as implemented and red
+# when each probe argument it demands is removed, on Linux with LLVM 22, with
+# Apple's clang and with the pinned upstream clang 22.1.8 selected as a
+# packaged clang; and shows the cc1 option that upstream Darwin needs leaves
+# the four link modes working. Each result is written as a notice, since the
+# log API may refuse this work's token. On the pushes the wf-agents engine
+# makes of this work's commits (the `wf-try/work-208-26e0fade/` refs). Removed
+# before the full check (AGENTS.md, "Checks").
 name: tmp-runtime-probes
 
 on:
@@ -13,75 +16,211 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_INCREMENTAL: 0
+
 jobs:
-  probes:
-    name: probes (${{ matrix.compiler }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - compiler: linux-llvm-22
-            os: ubuntu-24.04
-          - compiler: apple
-            os: macos-15
-          - compiler: upstream-22.1.8
-            os: macos-15
+  linux:
+    name: frame test (Linux, LLVM 22)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install the compiler
-        env:
-          COMPILER: ${{ matrix.compiler }}
+      - name: Install the host toolchain as the gate does
         run: |
-          set -euo pipefail
-          case "$COMPILER" in
-            linux-llvm-22)
-              curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
-              version=$(tr -d '[:space:]' < .github/llvm-major)
-              sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
-              echo "CLANG=/usr/bin/clang-$version" >> "$GITHUB_ENV"
-              echo "SYSROOT=" >> "$GITHUB_ENV"
-              ;;
-            apple)
-              echo "CLANG=/usr/bin/clang" >> "$GITHUB_ENV"
-              echo "SYSROOT=" >> "$GITHUB_ENV"
-              ;;
-            upstream-22.1.8)
-              asset=$(python3 -c 'import json; print(json.load(open(".github/toolchain/llvm-assets.json"))["platforms"]["macos-arm64"]["asset"])')
-              digest=$(python3 -c 'import json; print(json.load(open(".github/toolchain/llvm-assets.json"))["platforms"]["macos-arm64"]["sha256"])')
-              tag=$(python3 -c 'import json; print(json.load(open(".github/toolchain/llvm-assets.json"))["llvm_tag"])')
-              curl --fail --location --retry 3 --max-time 600 \
-                "https://github.com/llvm/llvm-project/releases/download/$tag/$asset" -o "$RUNNER_TEMP/$asset"
-              echo "$digest  $RUNNER_TEMP/$asset" | shasum -a 256 -c -
-              mkdir -p "$RUNNER_TEMP/llvm"
-              tar -xJf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP/llvm"
-              root=$(echo "$RUNNER_TEMP"/llvm/*)
-              echo "CLANG=$root/bin/clang" >> "$GITHUB_ENV"
-              echo "SYSROOT=$(/usr/bin/xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
-              ;;
-          esac
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          /usr/bin/clang --version
+          rustup default stable
 
-      - name: Frames and probes under each variant
-        env:
-          COMPILER: ${{ matrix.compiler }}
+      - name: The frame test as implemented, then with each probe removed
         run: |
           set +e
-          probe=research/experiments/runtime-c-stack-probes/probe.sh
-          {
-            "$CLANG" --version | head -1
-            bash "$probe" "$CLANG" "$SYSROOT" none
-            bash "$probe" "$CLANG" "$SYSROOT" clash-driver -fstack-clash-protection
-            if [ "$COMPILER" != linux-llvm-22 ]; then
-              bash "$probe" "$CLANG" "$SYSROOT" clash-cc1 -Xclang -fstack-clash-protection
-              bash "$probe" "$CLANG" "$SYSROOT" stack-check -fstack-check
-              bash "$probe" "$CLANG" "$SYSROOT" no-stack-check -fno-stack-check
-              bash "$probe" "$CLANG" "$SYSROOT" no-stack-check-clash-cc1 -fno-stack-check -Xclang -fstack-clash-protection
+          failed=0
+          name=runtime_frames::every_runtime_c_frame_over_a_page_is_probed
+          notice() { # title file
+            python3 - "$1" "$2" <<'PY'
+          import re, sys
+          lines = [l for l in open(sys.argv[2], errors='replace').read().splitlines()
+                   if re.search(r'compiled by|large frame|rsp|wf_file_wait|host_copy|test result|panicked|without a stack probe|\$0,', l)]
+          body = '\n'.join(lines[:60]).replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          print('::notice title=' + sys.argv[1] + '::' + body)
+          PY
+          }
+          run_test() { # label
+            perl .github/run-check.pl "$1" cargo test --manifest-path compiler/Cargo.toml \
+              --profile gate --locked --bin whitefootc -- --exact "$name" --nocapture \
+              > "$RUNNER_TEMP/$1.txt" 2>&1
+            echo $? > "$RUNNER_TEMP/$1.status"
+          }
+          run_test implemented
+          notice 'linux implemented' "$RUNNER_TEMP/implemented.txt"
+          [ "$(cat "$RUNNER_TEMP/implemented.status")" = 0 ] || { echo 'implemented: expected green'; failed=1; }
+
+          python3 - <<'PY'
+          import pathlib
+          p = pathlib.Path('compiler/src/target.rs')
+          s = p.read_text()
+          old = '"inline-asm" => &["-fstack-clash-protection"],'
+          assert s.count(old) == 1
+          p.write_text(s.replace(old, '"inline-asm" => &[],'))
+          p = pathlib.Path('compiler/src/backend/ordinary_values.ll')
+          s = p.read_text()
+          old = '  %view = alloca { ptr, i64 }, align 8\n  store ptr %destination.data, ptr %view, align 8\n  %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1\n  store i64 %destination.len, ptr %view.len, align 8\n  call void @wf__body_host_copy_bytes('
+          assert s.count(old) == 1
+          new = old.replace('  %view = alloca', '  %wide = alloca [65536 x i8], align 16\n  store volatile i8 1, ptr %wide, align 1\n  %view = alloca', 1)
+          p.write_text(s.replace(old, new))
+          PY
+          run_test ablated
+          notice 'linux ablated' "$RUNNER_TEMP/ablated.txt"
+          [ "$(cat "$RUNNER_TEMP/ablated.status")" != 0 ] || { echo 'ablated: expected red'; failed=1; }
+          grep -q 'wf_file_wait_readiness' "$RUNNER_TEMP/ablated.txt" || { echo 'ablated: the C frame is not named'; failed=1; }
+          grep -q 'wf_std.text.host_copy_bytes' "$RUNNER_TEMP/ablated.txt" || { echo 'ablated: the LLVM definition is not named'; failed=1; }
+          echo "::notice title=linux verdict::failed=$failed"
+          exit $failed
+
+  macos:
+    name: frame test (macOS, Apple clang and upstream 22.1.8)
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch the pinned upstream clang
+        run: |
+          set -euo pipefail
+          asset=$(python3 -c 'import json; print(json.load(open(".github/toolchain/llvm-assets.json"))["platforms"]["macos-arm64"]["asset"])')
+          digest=$(python3 -c 'import json; print(json.load(open(".github/toolchain/llvm-assets.json"))["platforms"]["macos-arm64"]["sha256"])')
+          tag=$(python3 -c 'import json; print(json.load(open(".github/toolchain/llvm-assets.json"))["llvm_tag"])')
+          curl --fail --location --retry 3 --max-time 600 \
+            "https://github.com/llvm/llvm-project/releases/download/$tag/$asset" -o "$RUNNER_TEMP/$asset"
+          echo "$digest  $RUNNER_TEMP/$asset" | shasum -a 256 -c -
+          mkdir -p "$RUNNER_TEMP/llvm"
+          tar -xJf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP/llvm"
+          root=$(echo "$RUNNER_TEMP"/llvm/*)
+          echo "UPSTREAM=$root" >> "$GITHUB_ENV"
+          "$root/bin/clang" --version
+          rustup default stable
+
+      - name: The frame test as implemented and with each probe removed, under each clang
+        run: |
+          set +e
+          failed=0
+          name=runtime_frames::every_runtime_c_frame_over_a_page_is_probed
+          notice() { # title file
+            python3 - "$1" "$2" <<'PY'
+          import re, sys
+          lines = [l for l in open(sys.argv[2], errors='replace').read().splitlines()
+                   if re.search(r'compiled by|large frame|chkstk|xzr|lsl #12|wf_file_wait|host_copy|test result|panicked|without a stack probe|\bsp\b', l)]
+          body = '\n'.join(lines[:60]).replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          print('::notice title=' + sys.argv[1] + '::' + body)
+          PY
+          }
+          build() { # label: the test executable into $RUNNER_TEMP/test-$1
+            perl .github/run-check.pl "build-$1" cargo test --manifest-path compiler/Cargo.toml \
+              --profile gate --locked --bin whitefootc --no-run --message-format=json \
+              > "$RUNNER_TEMP/build-$1.json" 2> "$RUNNER_TEMP/build-$1.err"
+            exe=$(python3 - "$RUNNER_TEMP/build-$1.json" <<'PY'
+          import json, sys
+          found = []
+          for line in open(sys.argv[1]):
+              if not line.startswith('{'):
+                  continue
+              m = json.loads(line)
+              if (m.get('reason') == 'compiler-artifact' and m['target']['name'] == 'whitefootc'
+                      and m['profile']['test'] and m.get('executable')):
+                  found.append(m['executable'])
+          print(found[-1] if found else '')
+          PY
+            )
+            [ -x "$exe" ] || { echo "no test executable for $1"; tail -20 "$RUNNER_TEMP/build-$1.err"; exit 1; }
+            cp "$exe" "$RUNNER_TEMP/test-$1"
+          }
+          # The test binary beside a symlink to the upstream clang: the
+          # toolchain resolution then takes it as a packaged clang.
+          beside_upstream() { # label
+            rm -rf "$RUNNER_TEMP/up-$1"; mkdir -p "$RUNNER_TEMP/up-$1/bin"
+            ln -s "$UPSTREAM/bin/clang" "$RUNNER_TEMP/up-$1/bin/clang"
+            cp "$RUNNER_TEMP/test-$1" "$RUNNER_TEMP/up-$1/bin/test"
+          }
+          run_apple() { "$RUNNER_TEMP/test-$1" --exact "$name" --nocapture > "$RUNNER_TEMP/apple-$1.txt" 2>&1; echo $? > "$RUNNER_TEMP/apple-$1.status"; }
+          run_upstream() { "$RUNNER_TEMP/up-$1/bin/test" --exact "$name" --nocapture > "$RUNNER_TEMP/upstream-$1.txt" 2>&1; echo $? > "$RUNNER_TEMP/upstream-$1.status"; }
+
+          build implemented
+          beside_upstream implemented
+          run_apple implemented
+          run_upstream implemented
+          notice 'apple implemented' "$RUNNER_TEMP/apple-implemented.txt"
+          notice 'upstream implemented' "$RUNNER_TEMP/upstream-implemented.txt"
+          [ "$(cat "$RUNNER_TEMP/apple-implemented.status")" = 0 ] || { echo 'apple implemented: expected green'; failed=1; }
+          [ "$(cat "$RUNNER_TEMP/upstream-implemented.status")" = 0 ] || { echo 'upstream implemented: expected green'; failed=1; }
+          grep -q 'compiled by .*/up-implemented/bin/clang' "$RUNNER_TEMP/upstream-implemented.txt" || \
+            { echo 'upstream implemented: the packaged clang was not the one used'; failed=1; }
+
+          python3 - <<'PY'
+          import pathlib
+          p = pathlib.Path('compiler/src/target.rs')
+          s = p.read_text()
+          for old, new in (
+              ('"__chkstk_darwin" if darwin_helper => &["-fstack-check"],', '"__chkstk_darwin" if darwin_helper => &["-fno-stack-check"],'),
+              ('"__chkstk_darwin" => &["-Xclang", "-fstack-clash-protection"],', '"__chkstk_darwin" => &[],'),
+          ):
+              assert s.count(old) == 1, old
+              s = s.replace(old, new)
+          p.write_text(s)
+          p = pathlib.Path('compiler/src/backend/ordinary_values.ll')
+          s = p.read_text()
+          old = '  %view = alloca { ptr, i64 }, align 8\n  store ptr %destination.data, ptr %view, align 8\n  %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1\n  store i64 %destination.len, ptr %view.len, align 8\n  call void @wf__body_host_copy_bytes('
+          assert s.count(old) == 1
+          p.write_text(s.replace(old, old.replace('  %view = alloca', '  %wide = alloca [65536 x i8], align 16\n  store volatile i8 1, ptr %wide, align 1\n  %view = alloca', 1)))
+          PY
+          build ablated
+          beside_upstream ablated
+          run_apple ablated
+          run_upstream ablated
+          notice 'apple ablated' "$RUNNER_TEMP/apple-ablated.txt"
+          notice 'upstream ablated' "$RUNNER_TEMP/upstream-ablated.txt"
+          [ "$(cat "$RUNNER_TEMP/apple-ablated.status")" != 0 ] || { echo 'apple ablated: expected red'; failed=1; }
+          grep -q 'wf_file_wait_readiness' "$RUNNER_TEMP/apple-ablated.txt" || { echo 'apple ablated: the C frame is not named'; failed=1; }
+          [ "$(cat "$RUNNER_TEMP/upstream-ablated.status")" != 0 ] || { echo 'upstream ablated: expected red'; failed=1; }
+          grep -q 'wf_file_wait_readiness' "$RUNNER_TEMP/upstream-ablated.txt" || { echo 'upstream ablated: the C frame is not named'; failed=1; }
+          grep -q 'wf_std.text.host_copy_bytes' "$RUNNER_TEMP/upstream-ablated.txt" || { echo 'upstream ablated: the LLVM definition is not named'; failed=1; }
+          # Apple probes an LLVM definition by target default, so whether its
+          # run names the definition is recorded, not required.
+          if grep -q 'wf_std.text.host_copy_bytes' "$RUNNER_TEMP/apple-ablated.txt"; then
+            echo '::notice title=apple LLVM definition::named'
+          else
+            echo '::notice title=apple LLVM definition::not named'
+          fi
+          git checkout -- compiler/src/target.rs compiler/src/backend/ordinary_values.ll
+
+          # The four link modes with the cc1 option, beside the upstream clang.
+          perl .github/run-check.pl build-whitefootc cargo build --manifest-path compiler/Cargo.toml \
+            --profile gate --locked --bin whitefootc
+          package="$RUNNER_TEMP/up-link"; rm -rf "$package"; mkdir -p "$package/bin"
+          cp compiler/target/gate/whitefootc "$package/bin/whitefootc"
+          ln -s "$UPSTREAM/bin/clang" "$package/bin/clang"
+          python3 .github/toolchain/stage-language.py "$package"
+          for mode in ordinary full-lto cache fragments; do
+            case "$mode" in
+              ordinary) flags=() ;;
+              full-lto) flags=(--full-lto) ;;
+              cache) flags=(--cache "$RUNNER_TEMP/cache-objects") ;;
+              fragments) flags=(--cache "$RUNNER_TEMP/cache-fragments" --fragments module) ;;
+            esac
+            "$package/bin/whitefootc" ${flags[@]+"${flags[@]}"} -o "$RUNNER_TEMP/waiting-$mode" tests/package-fixtures/waiting.wf > "$RUNNER_TEMP/waiting-build-$mode.txt" 2>&1 \
+              && "$RUNNER_TEMP/waiting-$mode" > /dev/null 2>&1; waiting=$?
+            "$package/bin/whitefootc" ${flags[@]+"${flags[@]}"} -o "$RUNNER_TEMP/stack-$mode" tests/package-fixtures/stack-exhaustion.wf > "$RUNNER_TEMP/stack-build-$mode.txt" 2>&1 \
+              && "$RUNNER_TEMP/stack-$mode" > "$RUNNER_TEMP/stack-out-$mode.txt" 2>&1; stack=$?
+            record=$(cat "$RUNNER_TEMP/stack-out-$mode.txt" 2>/dev/null)
+            echo "::notice title=link $mode::waiting=$waiting stack=$stack record=$record"
+            if [ "$waiting" != 0 ] || [ "$stack" != 134 ] || [ "$record" != '{"resource":"stack"}' ]; then
+              echo "link $mode failed"; head -5 "$RUNNER_TEMP/waiting-build-$mode.txt" "$RUNNER_TEMP/stack-build-$mode.txt"; failed=1
             fi
-          } > probes.txt 2>&1
-          cat probes.txt
-          # The lines that answer the questions, as one notice.
-          body=$(grep -E '^(clang|Apple|Ubuntu|====|--- probe|\(none\)|"|### |!!!)|chkstk|xzr|\$0, \(%rsp\)|lsl #12|warning:|error:' probes.txt \
-            | grep -v '^--- driver' | head -220 | sed -e 's/%/%25/g' | awk '{ printf "%s%%0A", $0 }')
-          echo "::notice title=probes $COMPILER::$body"
+          done
+          echo "::notice title=macos verdict::failed=$failed"
+          exit $failed

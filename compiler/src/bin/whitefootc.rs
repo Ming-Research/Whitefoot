@@ -1204,6 +1204,7 @@ fn compile_executable(
     report: &mut BuildReport,
 ) -> Result<(), String> {
     whitefoot::require_executable_runner(llvm)?;
+    let probe = whitefoot::runtime_stack_probe_arguments()?;
     // The ordinary prelude implementation library links its private engine.
     // Each build stages in its own directory, so two builds of one process
     // never share or remove each other's inputs.
@@ -1229,12 +1230,13 @@ fn compile_executable(
         }
         if let Some(cache) = cache {
             return link_cached_objects(
-                cache, &directory, &staged, &compiled, llvm, output, fragments, sanitizer, report,
+                cache, &directory, &staged, &compiled, llvm, output, fragments, sanitizer, probe,
+                report,
             );
         }
         let linking = std::time::Instant::now();
         let mut command = resolved_toolchain()?.link_command();
-        unit_arguments(&mut command, &directory, sanitizer);
+        unit_arguments(&mut command, &directory, sanitizer, probe);
         for relative_path in &compiled {
             let restricted = restricted_child_arguments(relative_path);
             if !restricted.is_empty() {
@@ -1242,7 +1244,7 @@ fn compile_executable(
                 // sanitizers. Compile only the child closure separately.
                 let object = directory.join(relative_path).with_extension("o");
                 let mut child = resolved_toolchain()?.command();
-                unit_arguments(&mut child, &directory, sanitizer);
+                unit_arguments(&mut child, &directory, sanitizer, probe);
                 child.args(HOST_OPTIMIZATION_ARGUMENTS).args(restricted);
                 if full_lto {
                     child.arg("-flto=full");
@@ -1282,8 +1284,16 @@ fn compile_executable(
 
 /// The arguments every compiler-owned runtime unit compiles with. A
 /// sanitizer's arguments come before any restricted child unit's, whose
-/// `-fno-sanitize=all` then keeps that closure uninstrumented.
-fn unit_arguments(command: &mut Command, directory: &Path, sanitizer: Option<Sanitizer>) {
+/// `-fno-sanitize=all` then keeps that closure uninstrumented. `probe` is
+/// [`whitefoot::runtime_stack_probe_arguments`]: the stack probing of every
+/// runtime C frame over a page, in the method generated code carries
+/// (compiler/resource-exhaustion-floor).
+fn unit_arguments(
+    command: &mut Command,
+    directory: &Path,
+    sanitizer: Option<Sanitizer>,
+    probe: &[&str],
+) {
     // The compiler-owned C units are written to C11 and the repository gate
     // compiles them as `-std=c11`. Naming the dialect here too is what makes
     // that gate a statement about this link: clang's default is a GNU
@@ -1296,11 +1306,8 @@ fn unit_arguments(command: &mut Command, directory: &Path, sanitizer: Option<San
         .arg(directory)
         .arg("-I")
         .arg(directory.join("completion"))
-        .args(sanitizer_arguments(sanitizer));
-    #[cfg(target_os = "linux")]
-    command.arg("-fstack-clash-protection");
-    #[cfg(target_os = "macos")]
-    command.args(["-Xclang", "-fstack-clash-protection"]);
+        .args(sanitizer_arguments(sanitizer))
+        .args(probe);
 }
 
 /// The arguments a sanitized build adds to every compile and its link.
@@ -1348,6 +1355,7 @@ fn link_cached_objects(
     output: &Path,
     fragments: Option<&[String]>,
     sanitizer: Option<Sanitizer>,
+    probe: &[&str],
     report: &mut BuildReport,
 ) -> Result<(), String> {
     let host = host_compiler_identity()?;
@@ -1373,7 +1381,7 @@ fn link_cached_objects(
         material.extend_from_slice(&runtime);
         material.extend_from_slice(
             format!(
-                "\n{relative_path}\n{TARGET_COMPILE_ARGUMENTS:?} {HOST_OPTIMIZATION_ARGUMENTS:?} {thin:?} {sanitizing:?} {:?}\n", restricted_child_arguments(relative_path)
+                "\n{relative_path}\n{TARGET_COMPILE_ARGUMENTS:?} {HOST_OPTIMIZATION_ARGUMENTS:?} {thin:?} {sanitizing:?} {probe:?} {:?}\n", restricted_child_arguments(relative_path)
             )
             .as_bytes(),
         );
@@ -1385,7 +1393,7 @@ fn link_cached_objects(
                     .args(sanitizing)
                     .arg("-Wno-override-module");
             } else {
-                unit_arguments(command, directory, sanitizer);
+                unit_arguments(command, directory, sanitizer, probe);
             }
             command
                 .args(thin)
@@ -2218,6 +2226,12 @@ impl Options {
 #[path = "../../tests/support/process.rs"]
 #[allow(dead_code)]
 mod process;
+
+// The runtime's frames over a page, read from the assembly the driver's own
+// compile arguments give each runtime unit.
+#[cfg(all(test, not(target_os = "windows")))]
+#[path = "whitefootc/runtime_frames.rs"]
+mod runtime_frames;
 
 #[cfg(test)]
 mod tests {
@@ -3787,119 +3801,6 @@ mod tests {
             );
         }
         let _ = std::fs::remove_dir_all(&root);
-    }
-
-    /// The runtime's C frames over one page, read from the same compile the
-    /// driver gives each runtime unit: every such frame must reach its probe
-    /// in the assembly, because a frame that steps over the guard page writes
-    /// into whatever is mapped below it instead of ending in the floor's
-    /// `{"resource":"stack"}` record.
-    #[cfg(not(target_os = "windows"))]
-    #[test]
-    fn every_runtime_c_frame_over_a_page_is_probed() {
-        const PAGE: u64 = 4096;
-        let (staged, compiled) = runtime_units("");
-        let directory = std::env::temp_dir().join(format!(
-            "whitefootc-runtime-frames-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&directory);
-        let mut report = Vec::new();
-        let mut unprobed = Vec::new();
-        for unit in &staged {
-            let path = directory.join(unit.relative_path);
-            std::fs::create_dir_all(path.parent().unwrap()).expect("stage a runtime directory");
-            std::fs::write(&path, unit.source).expect("stage a runtime unit");
-        }
-        for relative_path in compiled.iter().filter(|name| name.ends_with(".c")) {
-            let assembly = directory.join(relative_path).with_extension("s");
-            let mut command = super::resolved_toolchain().expect("the toolchain resolves").command();
-            super::unit_arguments(&mut command, &directory, None);
-            #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
-            let output = command
-                .args(whitefoot::HOST_OPTIMIZATION_ARGUMENTS)
-                .args(super::restricted_child_arguments(relative_path))
-                .args(["-S", "-fstack-usage", "-o"])
-                .arg(&assembly)
-                .arg(directory.join(relative_path))
-                .output()
-                .expect("start the host compiler");
-            assert!(
-                output.status.success(),
-                "{relative_path}: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
-            let text = std::fs::read_to_string(&assembly).expect("read the assembly");
-            let usage = match std::fs::read_to_string(assembly.with_extension("su")) {
-                Ok(usage) => usage,
-                // clang opens the report at the first function it emits, so a
-                // unit that defines none on this host leaves none.
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    assert!(
-                        !text.contains(".cfi_startproc"),
-                        "{relative_path}: functions but no stack-usage report"
-                    );
-                    continue;
-                }
-                Err(error) => panic!("{relative_path}: read the stack-usage report: {error}"),
-            };
-            for row in usage.lines() {
-                let fields: Vec<&str> = row.split('\t').collect();
-                let (Some(bytes), Some(kind)) = (fields.get(1), fields.get(2)) else {
-                    continue;
-                };
-                let bytes: u64 = bytes.parse().expect("a frame size");
-                let name = fields[0].rsplit(':').next().unwrap_or_default();
-                if bytes <= PAGE && *kind == "static" {
-                    continue;
-                }
-                // clang writes a definition's label with a comment after it
-                // (`name:  # @name`, `_name:  ## @name` on Darwin), so the
-                // label is the line's first word.
-                let labels = [format!("{name}:"), format!("_{name}:")];
-                let body: Vec<&str> = text
-                    .lines()
-                    .skip_while(|line| {
-                        !line
-                            .split_whitespace()
-                            .next()
-                            .is_some_and(|word| labels.iter().any(|label| label == word))
-                    })
-                    .take_while(|line| !line.trim_start().starts_with(".cfi_endproc"))
-                    .collect();
-                assert!(
-                    !body.is_empty(),
-                    "{relative_path}: the assembly holds no body for {name}"
-                );
-                let probed = body.iter().any(|line| {
-                    ["___chkstk_darwin", "___chkstk_ms", "str\txzr, [sp]", "$0, (%rsp)"]
-                        .iter()
-                        .any(|probe| line.contains(probe))
-                });
-                let stack_lines: Vec<&str> = body
-                    .iter()
-                    .copied()
-                    .filter(|line| ["sp", "chkstk"].iter().any(|word| line.contains(word)))
-                    .take(24)
-                    .collect();
-                report.push(format!(
-                    "{relative_path} {name} {bytes} {kind} probed={probed}\n{}",
-                    stack_lines.join("\n")
-                ));
-                if !probed {
-                    unprobed.push(format!(
-                        "{relative_path} {name} {bytes} {kind} args={:?}\n{}",
-                        command.get_args().collect::<Vec<_>>(),
-                        stack_lines.join("\n")
-                    ));
-                }
-            }
-        }
-        let _ = std::fs::remove_dir_all(&directory);
-        assert!(
-            unprobed.is_empty(),
-            "runtime C frames over a page without a stack probe: {unprobed:#?}\nall large frames: {report:#?}"
-        );
     }
 
     #[test]
