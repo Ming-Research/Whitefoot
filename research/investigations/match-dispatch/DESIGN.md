@@ -1868,3 +1868,109 @@ host conventions. This repair changes no specification rule, conformance
 verdict or runtime map initialization, and leaves the implementations of
 the existing dispatch forms unchanged; it changes which form the affected
 enums receive, from handler-word addressing to tag-and-table dispatch.
+
+### Handler RBP preservation and tail targets on LLVM 22
+
+**Question and rejection criterion, written before measuring.** The v2h
+interpreter's small handlers run 6 to 10 instructions more than wasmi's
+(checked on the pinned LLVM 22 on 2026-10-13, seventeen handlers). Two of the
+extra instructions are the backend's, not the interpreter's: handlers that use
+RBP as a scratch register save and restore it, and each indirect tail jump
+loads its target into one register and copies it to another. Can ordinary LLVM
+emission remove either without changing the eleven-integer-argument budget?
+
+- RBP: the change is kept only if (1) no handler of the interpreter built on
+  the pinned LLVM 22 pushes or pops RBP while the C-convention boundary around
+  the chain preserves it once, (2) CoreMark prints its recorded CRCs, (3) on
+  the 14900K the candidate's CPU time on CoreMark is below the merge-base
+  compiler's by more than the same-binary twin differs from the base in the
+  same run, and Halo's `fib` is not slower, and (4) a host whose clang does not
+  honor the attribute, Apple clang included, emits the text it did before.
+  It is rejected if the attribute only parses, leaves a temporary-register
+  save in a handler, loses the caller's RBP, or breaks direct or indirect
+  `musttail`.
+- Tail target: an emitter change is rejected if it changes the parameter budget
+  or needs a physical-register workaround.
+
+**RBP mapping.** In LLVM 22.1.8 the save set of a function with the string
+attribute `"no_callee_saved_registers"` is empty: [`getCalleeSavedRegs`
+returns `CSR_NoRegs_SaveList` before it looks at the calling
+convention](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/Target/X86/X86RegisterInfo.cpp#L258),
+overriding the set that `preserve_nonecc` keeps RBP in. [Call
+lowering](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/Target/X86/X86ISelLoweringCall.cpp#L2602)
+gives a call that carries the attribute the preserved-register mask of the GHC
+convention, which preserves nothing. Both sides are needed: a callee that saves
+nothing under a caller that still counts on RBP surviving would be wrong code.
+The change puts the attribute on every part definition and every call into or
+between parts, including the enclosing function's call of the dispatch
+function, and not on the enclosing definition, which keeps the C convention, so
+RBP is saved once around the whole chain. The [musttail
+verifier](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/IR/Verifier.cpp)
+checks conventions, prototypes and ABI attributes of parameters, not agreement
+on this target-specific string attribute, so the emission tests check every
+definition and call explicitly. The always-inlined dispatcher's cloned
+`musttail` becomes an ordinary call in the enclosing function when inlined, and
+keeps the attribute.
+
+An unknown string attribute is accepted by every LLVM, so acceptance does not
+qualify it. The host probe assembles a module with handlers that clobber RBP
+through inline assembly, direct and indirect guaranteed tail calls, an
+always-inlined dispatcher and a C entry, with the attribute on every definition
+and call, and requires no mention of `%rbp` in the handlers and one push and
+one pop in the entry. Its module without the attribute must fail the same
+requirement, and so must the module that carries the attribute on definitions
+only; the toolchain tests check both. The probe runs only where the compiler's
+own host is x86-64 and `preserve_nonecc` was accepted; elsewhere, Apple clang
+and AArch64 included, no attribute is written and the emitted text is what it
+was. The probe's fact is part of the entry-module cache key, so a host-clang
+change does not reuse text with the old private ABI.
+
+This removes callee preservation of RBP used as a temporary. It does not remove
+a frame pointer a function genuinely requires: [frame
+lowering](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/Target/X86/X86FrameLowering.cpp)
+can independently require RBP, and an enclosing function with an active frame
+pointer around a clobbering call needs extra frame maintenance besides saving
+its caller's RBP.
+
+**Tail target: no emitter repair.** The target of an indirect tail call must be
+in the register class [`GR64_TC`](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/Target/X86/X86RegisterInfo.td#L631),
+RAX, RCX, RDX, RSI, RDI, R8, R9 and R11 outside Win64: R10 is not in it, and
+[the patterns for an indirect
+`X86tcret`](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/Target/X86/X86InstrCompiler.td#L1360)
+take a target of `ptr_rc_tailcall`, [that
+class](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/Target/X86/X86InstrOperands.td#L137)
+on this target. Folding the target's load into the jump is allowed only
+through [the pattern for a tail call with at most six register
+operands](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/Target/X86/X86InstrCompiler.td#L1374)
+([`X86tcret_6regs`](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/Target/X86/X86InstrFragments.td#L679)).
+With eleven outgoing integer arguments the parts' tail jump has one register of
+`GR64_TC` left and may not fold the load, so the extra load and register copy
+are the backend's. Ordinary IR has no operand that chooses the register class.
+Changing the convention, passing more arguments on the stack, weakening
+`musttail` or writing inline assembly would change the agreed lowering rather
+than lift the constraint, so no emitter change was made for it. An allocation
+might incidentally avoid the copy after another change; that would not remove
+the constraint.
+
+**Convention alternative.** The GHC convention has no callee-saved registers,
+so it needs neither the attribute nor its probe, and it exists in LLVM 18.
+[`CC_X86_64_GHC`](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.8/llvm/lib/Target/X86/X86CallingConv.td#L691)
+passes integers in R13, RBP, R12, RBX, R14, RSI, RDI, R8, R9 and R15, ten, and
+floating-point values in XMM1 to XMM6, against `preserve_nonecc`'s eleven
+integer and eight floating-point registers on the parts' tail-call transfer.
+Under the current decision a loop that needs the eleventh integer register would
+put one unchanging value in an enclosing-frame slot that every part reads. It
+has not been measured here whether v2h or Halo loops would still split, what
+those loads cost, or whether the tail-jump copy goes away; that comparison has
+not been made, and the owner's choice of the attribute follows the
+recommendation of the plan.
+
+**Measurement protocol.** The machine-code check compiles v2h with
+`research/experiments/match-dispatch/wasm/gen.py` under the compiler of the
+candidate and of the merge base, takes every `wf_run.arm.*` and cold symbol's
+disassembly, counts pushes and pops of RBP and tail-jump register copies, and
+runs the 2000-iteration CoreMark with its four CRCs. The timing uses
+[`compiler-compare.yml`](../../experiments/compiler-compare/README.md): the
+same interpreter built by the candidate and the merge-base compilers and a
+byte copy of the base as the control, on the 14900K, the interval rule and
+noise floor of its README, and CPU time (user plus system) from its perf group.
