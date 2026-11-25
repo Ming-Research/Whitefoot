@@ -118,6 +118,16 @@ completion criterion were refused.
   once the twin resolves each cell, plus deterministic memory cells and the
   candidate's scan hold times. Run on request by `hash-map-bench.yml`, on a
   hosted runner or the i9-14900K; never a gate. No result is recorded yet.
+- `par-default/` — the stage-3 acceptance tools for demand splitting in default
+  `--par`: `accept.py` (the arm matrix, the oracles, the reducers and the
+  registered rules, over a prototype runner it extracts) and `identity.py`
+  (the machine-code identity check) with their unit tests. The prototype
+  runner is the one frozen at the commit `accept.py` names, reached through
+  the retention tag `par-demand-prototype`; it is extracted at run time and
+  never committed. Run on request by `par-default-accept.yml`, whose smoke
+  mode runs on a hosted runner and whose pilot and main modes run only on the
+  i9-14900K; never a gate, and no gate group runs the tools' self-tests. No
+  result is recorded yet.
 
 ## Completed current-compiler bounded research
 
