@@ -725,4 +725,1235 @@ fn main() -> status: ExitStatus pure {
 }
 "#],
     },
+    // [FORM-7] an integer literal outside its type.
+    RepairPair {
+        name: "form7-neg-out-of-range.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/form7-neg-out-of-range.wf"
+        ),
+        rule: "FORM-7",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "An out-of-range integer literal is a hard error at check time [FORM-7].";
+  let a = 999999999_i32;
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [CONST-2] a constant of a type no constant may have.
+    RepairPair {
+        name: "const2-neg-noneligible.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/const2-neg-noneligible.wf"
+        ),
+        rule: "CONST-2",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+const bad: i32 = 0_i32;
+
+fn main() -> status: ExitStatus pure {
+  doc "CONST-2 rejects a runtime-capacity owned container as a named constant; the container is reachable only as Box content, and neither Box nor Slots is const-eligible. The original integer initializer remains.";
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [CONST-1] a const expression written with a runtime overflow mode.
+    RepairPair {
+        name: "const1-neg-runtime-arithmetic-mode.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/const1-neg-runtime-arithmetic-mode.wf"
+        ),
+        rule: "CONST-1",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn doubled<const n: u64>(count: u64) -> result: Slots<u64, n * 2> pure {
+  doc "Forms a run whose capacity is written with a mode-suffixed operator.";
+  return slots_new::<u64, n * 2>();
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The const-expression tail reuses infix_op but its spelling must be one of the five bare operators. Const evaluation has no runtime overflow mode, so a mode-suffixed spelling is a hard error citing CONST-1 at the infix_op node; the grammar admits and the checker restricts.";
+  let cells = doubled::<3>(count: 7_u64);
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [TYPE-5] an argument of another type than its parameter.
+    RepairPair {
+        name: "type5-neg-arg-mismatch.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/type5-neg-arg-mismatch.wf"
+        ),
+        rule: "TYPE-5",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn takes_i32(x: i32) -> function_result: unit pure {
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "A unit argument where i32 is declared violates exact argument typing [TYPE-5].";
+  let r = takes_i32(x: 1_i32);
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [SET-1] a write to a counted loop binder.
+    RepairPair {
+        name: "set1-neg-counted-binder-write.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/set1-neg-counted-binder-write.wf"
+        ),
+        rule: "SET-1",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "A counted binder is immutable compiler-updated state, never source-writable storage [SET-1].";
+  for @items (i in 0_u64..1_u64) {
+    let copied = i;
+  }
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [PROV-6] a linear value that leaves its scope unconsumed.
+    RepairPair {
+        name: "prov6-neg-linear-value-not-consumed.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/prov6-neg-linear-value-not-consumed.wf"
+        ),
+        rule: "PROV-6",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+nodrop struct Lease {
+  slot: u8;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "PROV-6: a value linear in this scope is live on the edge leaving it, where no compiler-derived release exists to carry it. The modifier holds in every scope, so the two routes that remain are the whole move and the whole destructuring.";
+  let lease = Lease(slot: 3_u8);
+  let Lease(slot: s) = move lease;
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [PROV-6] a consume of a part of a value whose other part is linear.
+    RepairPair {
+        name: "prov6-neg-linear-value-partially-consumed.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/prov6-neg-linear-value-partially-consumed.wf"
+        ),
+        rule: "PROV-6",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Token {
+  id: u8;
+}
+
+struct Chunk {
+  page: Slots<u8, 4>;
+  tickets: Slots<Token, 2>;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "PROV-6: a consume of a proper sub-place of a value one of whose remaining parts is linear abandons the residual the obligation was written for. The refusal is stated over the consume, so it reaches every consuming use of that sub-place, and its restructuring is the destructuring consume of the whole value.";
+  let values = array_filled::<u8, 4>(value: 0_u8);
+  let run = slots_from_array::<u8, 4>(values: values);
+  let tickets = slots_new::<Token, 2>();
+  let chunk = Chunk(page: move run, tickets: move tickets);
+  let page = move chunk.page;
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [PROV-6] a type argument whose linearity class is not the written bound.
+    RepairPair {
+        name: "prov6-neg-linearity-bound-refuses-the-instantiation.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/prov6-neg-linearity-bound-refuses-the-instantiation.wf"
+        ),
+        rule: "PROV-6",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+nocopy struct Lease {
+  slot: u8;
+}
+
+fn discard<T: drop>(value: T) -> count: u8 pure {
+  doc "The same body written for the affine class.";
+  return 2_u8;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "PROV-6, S32: an instantiation whose type argument's linearity class is not the written bound is refused at the call, naming the parameter, the bound and the argument. The declaration keeps one verdict; the call is where the class is decided.";
+  let lease = Lease(slot: 3_u8);
+  let n = discard::<Lease>(value: move lease);
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [LIV-1] branches that disagree on whether a value is live.
+    RepairPair {
+        name: "liv1-neg-branches-disagree-on-liveness.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/liv1-neg-branches-disagree-on-liveness.wf"
+        ),
+        rule: "LIV-1",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn measure(cell: Slots<u8, 4>) -> size: u64 pure {
+  doc "Consumes the window it is handed and reports its length.";
+  let n = cell.len;
+  return n;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "LIV-1: one branch consumes the window and the other does not, so the two predecessors of the join disagree about whether it is live there.";
+  let values = array_filled::<u8, 4>(value: 0_u8);
+  let c = slots_from_array::<u8, 4>(values: values);
+  let flag = 1_u64;
+  let taken = 0_u64;
+  if flag == 1_u64 {
+    set taken = measure(cell: move c);
+  } else {
+    set taken = measure(cell: move c);
+  }
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [WIN-3] an assignment over a linear place.
+    RepairPair {
+        name: "win3-neg-overwrite-linear-place.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/win3-neg-overwrite-linear-place.wf"
+        ),
+        rule: "WIN-3",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+nodrop struct Token {
+  value: u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "WIN-3: assigning over an owned place is a hard error at the target place when the old value is linear.";
+  let first = Token(value: 1_u64);
+  let second = Token(value: 2_u64);
+  let Token(value: old) = move first;
+  set first = move second;
+  let Token(value: v) = move first;
+  if v == 2_u64 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [OP-11] a swap over copy places.
+    RepairPair {
+        name: "op11-neg-swap-copy-place.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/op11-neg-swap-copy-place.wf"
+        ),
+        rule: "OP-11",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "OP-11: a swap over a copy place is a hard error at the first borrow expression; the restructuring is to read the two values and assign them back.";
+  let a = 1_u64;
+  let b = 2_u64;
+  let held = a;
+  set a = b;
+  set b = held;
+  if a == 2_u64 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [STOR-8] a Box named under the no-heap declaration.
+    RepairPair {
+        name: "stor8-neg-no-heap-names-box.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/stor8-neg-no-heap-names-box.wf"
+        ),
+        rule: "STOR-8",
+        sentences: &[],
+        repaired: &[br##"program no_heap;
+
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Cell {
+  content: u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "STOR-8: a program whose compilation unit carries the no-heap declaration cannot name Box or the runtime-capacity shapes; naming such a type is a hard error at the complete type.";
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [WIN-3] an arm whose rest covers a linear payload.
+    RepairPair {
+        name: "win3-neg-arm-rest-covers-linear-payload.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/win3-neg-arm-rest-covers-linear-payload.wf"
+        ),
+        rule: "WIN-3",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+nodrop struct Token {
+  id: u8;
+}
+
+enum Held {
+  Full(code: u8, token: Token);
+  Empty();
+}
+
+fn spend(token: Token) -> result: u8 pure {
+  let Token(id: id) = move token;
+  return id;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "A final `..` would cover the linear `token`, which has no release, so the arm is refused; binding it and consuming it is the route.";
+  let token = Token(id: 3_u8);
+  let observed = Held::Full(code: 7_u8, token: move token);
+  match move observed {
+    Full(code: found, token: kept) => {
+      let id = spend(token: move kept);
+      return exit_status(code: found);
+    }
+    Empty() => {
+      return exit_status(code: 1_u8);
+    }
+  }
+}
+"##],
+    },
+    // [OWN-1] a move out through a reference.
+    RepairPair {
+        name: "own1-neg-return-borrowed-box.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/own1-neg-return-borrowed-box.wf"
+        ),
+        rule: "OWN-1",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum State {
+  Ready();
+}
+
+fn steal(holder: Box<State>) -> return_value: Box<State> pure {
+  doc "A reference names the cell's path; the cell itself is affine and is owned by the binding the reference reaches, so it cannot be moved out through that reference.";
+  return move holder;
+}
+
+fn main() -> return_value: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [TYPE-10] a write to a window part.
+    RepairPair {
+        name: "win2-neg-window-part-write-target.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/win2-neg-window-part-write-target.wf"
+        ),
+        rule: "TYPE-10",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "WIN-2: parts are vocabulary for effect rows and the overlap judgment only, so no program writes one; a write to a part in source position is a hard error at the complete target place.";
+  let r = slots_new::<u64, 4>();
+  let n = r.len;
+  if n == 0_u64 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [TYPE-2] a write to a readonly measure.
+    RepairPair {
+        name: "type2-neg-readonly-measure-write-target.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/type2-neg-readonly-measure-write-target.wf"
+        ),
+        rule: "TYPE-2",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "TYPE-2: len is a readonly field of the prelude's Slots declaration, and a path that ends at a readonly field is never a set target; the restructuring is to use the operation that changes it, or replace the whole value.";
+  let r = slots_new::<u64, 4>();
+  let n = r.len;
+  if n == 0_u64 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [SHARE-1] a frozen value that holds shared state.
+    RepairPair {
+        name: "share1-neg-frozen-shared-part.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/share1-neg-frozen-shared-part.wf"
+        ),
+        rule: "SHARE-1",
+        sentences: &[],
+        repaired: &[br##"struct MutablePart {
+  state: u8;
+}
+
+fn denied(value: MutablePart) -> result: Frozen<MutablePart> pure {
+  return frozen_new::<MutablePart>(value: move value);
+}
+"##],
+    },
+    // [SHARE-1] shared state that holds a linear handle to itself.
+    RepairPair {
+        name: "share1-neg-linear-state-holds-its-own-handle.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/share1-neg-linear-state-holds-its-own-handle.wf"
+        ),
+        rule: "SHARE-1",
+        sentences: &[],
+        repaired: &[br##"struct Left {
+  right: Option<Shared<Right>>;
+}
+
+struct Right {
+  left: Option<Shared<Left>>;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [SHARE-1] a move out of a frozen value.
+    RepairPair {
+        name: "share1-neg-frozen-move-inner.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/share1-neg-frozen-move-inner.wf"
+        ),
+        rule: "SHARE-1",
+        sentences: &[],
+        repaired: &[br##"fn denied() -> result: u8 pure {
+  let cell = box_new::<u8>(value: 7_u8);
+  let observed = frozen_new::<Box<u8>>(value: move cell);
+  return observed.inner.inner;
+}
+"##],
+    },
+    // [TYPE-2] a constructor call of a storage shape.
+    RepairPair {
+        name: "type2-neg-storage-shape-constructor-call.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/type2-neg-storage-shape-constructor-call.wf"
+        ),
+        rule: "TYPE-2",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "TYPE-2: the storage shapes are the prelude's opaque structs, and an opaque struct's constructor entry exists to be refused, so a constructor call naming Slots is a hard error at the complete call; the repair is to build it with a construction function.";
+  let s = slots_new::<u64, 4>();
+  let n = s.len;
+  if n == 0_u64 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [REF-2] a reference used after its owner moved.
+    RepairPair {
+        name: "ref2-neg-use-after-move.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/ref2-neg-use-after-move.wf"
+        ),
+        rule: "REF-2",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+nocopy struct Owner {
+  values: Array<u64, 4>;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "REF-2: a move never re-roots an existing reference, so after let w = move v the references formed from v are invalid and are not reinterpreted as references into w.";
+  let values = array_filled::<u64, 4>(value: 6_u64);
+  let v = Owner(values: values);
+  let w = move v;
+  let p = &w.values[1_u64];
+  let seen = p^;
+  if seen == 6_u64 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [REF-1] a payload selected where no arm establishes its variant.
+    RepairPair {
+        name: "ref1-neg-body-payload-without-arm.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/ref1-neg-body-payload-without-arm.wf"
+        ),
+        rule: "REF-1",
+        sentences: &[],
+        repaired: &[br##"fn unselected(cell: &Option<u64>) -> result: u64 reads(cell) {
+  doc "An arbitrary Option reference supplies no current Some fact for selecting its payload.";
+  match &cell^ {
+    None() => {
+      return 0_u64;
+    }
+    Some(value: inner) => {
+      let direct = cell^.Some.value;
+      return direct;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [REF-1] a reference formed over a reference variable.
+    RepairPair {
+        name: "ref1-neg-reference-to-reference-variable.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/ref1-neg-reference-to-reference-variable.wf"
+        ),
+        rule: "REF-1",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "REF-1: a reference variable names a path and is not storage of its own, so &p where p is a reference variable is a hard error.";
+  let a = 5_u64;
+  let p = &a;
+  let q = &a;
+  let seen = q^;
+  if seen == 5_u64 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [REF-3] a returned reference.
+    RepairPair {
+        name: "ref3-neg-returned-reference.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/ref3-neg-returned-reference.wf"
+        ),
+        rule: "REF-3",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn leak(values: &[u64]) -> result: u64 reads(values) contract {
+  requires values^.len > 0_u64;
+} {
+  doc "REF-3: a reference may not be returned; the restructuring is to return an index and let the caller form the reference.";
+  return values^[0_u64];
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "REF-3: the caller of a function that tried to return a reference.";
+  let a = array_filled::<u64, 4>(value: 6_u64);
+  let part = &a[0_u64..4_u64];
+  let seen = leak(values: part);
+  if seen == 6_u64 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [REF-4] a range reference over a ring.
+    RepairPair {
+        name: "ref4-neg-range-over-ring.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/ref4-neg-range-over-ring.wf"
+        ),
+        rule: "REF-4",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "REF-4: a range reference over a Ring is a hard error, because a wrapped window is two extents and the range-reference kind has one len.";
+  let r = array_filled::<u64, 4>(value: 1_u64);
+  let part = &r[0_u64..2_u64];
+  let n = part^.len;
+  if n == 2_u64 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [REF-4] a range reference over map entries.
+    RepairPair {
+        name: "share-neg-map-entries-as-a-range.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/share-neg-map-entries-as-a-range.wf"
+        ),
+        rule: "REF-4",
+        sentences: &[],
+        repaired: &[br##"const names: Array<u8, 2> =[97_u8, 98_u8];
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<u8>(capacity: 0_u64);
+  let tally = shared_new::<u8>(value: 0_u8);
+  let name = &names[0_u64..1_u64];
+  let keys = key_set_new(capacity: 1_u64);
+  key_set_insert(keys: &keys, key: name);
+  atomic entries = &store[keys], c = &tally {
+    set c^ = 1_u8;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [WIN-3] a move out of a window slot.
+    RepairPair {
+        name: "win3-neg-move-out-of-window-slot.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/win3-neg-move-out-of-window-slot.wf"
+        ),
+        rule: "WIN-3",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "WIN-3: there is no take operation and no hole, so a move out of a window slot is a hard error; the restructuring is take_back, remove_at, or swap.";
+  let r = slots_new::<Box<u64>, 2>();
+  let cell = box_new::<u64>(value: 4_u64);
+  place_back(window: &r, value: move cell);
+  let taken = take_back(window: &r);
+  let seen = taken.inner;
+  if seen == 4_u64 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [OWN-11] a loop that leaves an outer binding dead.
+    RepairPair {
+        name: "liv1-neg-loop-leaves-an-outer-binding-dead.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/liv1-neg-loop-leaves-an-outer-binding-dead.wf"
+        ),
+        rule: "OWN-11",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn measure(cell: Slots<u8, 4>) -> size: u64 pure {
+  doc "Consumes the window it is handed and reports its length.";
+  let n = cell.len;
+  return n;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "OWN-11: the body consumes an outer binding and does not commit a value back into it, so the backedge disagrees with the entering edge.";
+  let values = array_filled::<u8, 4>(value: 0_u8);
+  let c = slots_from_array::<u8, 4>(values: values);
+  for (i in 0_u64..2_u64) {
+    let taken = measure(cell: move c);
+    set c = slots_new::<u8, 4>();
+  }
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [GRAM-6] a match over a Bool.
+    RepairPair {
+        name: "gram6-neg-bool-match.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/gram6-neg-bool-match.wf"
+        ),
+        rule: "GRAM-6",
+        sentences: &[],
+        repaired: &[br##"fn selected(value: Bool) -> result: unit pure {
+  if value {
+    return unit;
+  } else {
+    return unit;
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [OP-14] freeing a window that is not empty.
+    RepairPair {
+        name: "op14-neg-free-empty-nonempty-window.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/op14-neg-free-empty-nonempty-window.wf"
+        ),
+        rule: "OP-14",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+nodrop struct Token {
+  value: u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "OP-14: an undischarged requires window.len == 0_u64 is a hard error at the complete call; the restructuring is to empty the window and establish its zero length at this point.";
+  let r = slots_new::<Token, 2>();
+  free_empty(window: move r);
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [OP-2] an addition whose overflow is not excluded.
+    RepairPair {
+        name: "op2-neg-overflow-obligation-undischarged.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/op2-neg-overflow-obligation-undischarged.wf"
+        ),
+        rule: "OP-2",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn add_one(x: u64) -> return_value: u64 pure {
+  doc "OP-2 constant-operand class: `x + 1_u64` carries the overflow obligation that the exact mathematical result belongs to u64. Nothing bounds x, so the fact state does not discharge the upper conjunct and the call is rejected citing OP-2 with residual `x <= 18446744073709551614`. Repairs include a dominating branch, requirement, invariant, checked source proof, or the explicit wrap, checked, or sat spelling.";
+  let y = x +wrap 1_u64;
+  return y;
+}
+
+fn main() -> return_value: ExitStatus pure {
+  let raised = add_one(x: 7_u64);
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [OP-6] a conversion whose domain is not proved.
+    RepairPair {
+        name: "op6-neg-unproved-domain.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/op6-neg-unproved-domain.wf"
+        ),
+        rule: "OP-6",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn narrow(value: u32) -> result: u8 pure contract {
+  requires cvt.defined::<u32, u8>(value);
+} {
+  return cvt::<u32, u8>(value);
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [REF-4] a range end past the source length.
+    RepairPair {
+        name: "view2-neg-range-end-outside-source.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/view2-neg-range-end-outside-source.wf"
+        ),
+        rule: "REF-4",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "A range reference must prove its end no greater than the source length [REF-4]; a written end past the array length is unproved and the formation is refused.";
+  let values = array_filled::<u64, 4>(value: 0_u64);
+  let view = &values[0_u64..4_u64];
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [EFF-5] two substituted effects that overlap.
+    RepairPair {
+        name: "eff5-neg-overlapping-substituted-write.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/eff5-neg-overlapping-substituted-write.wf"
+        ),
+        rule: "EFF-5",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Cell {
+  value: u64;
+}
+
+fn copy_across(source: &Cell, destination: &Cell) -> result: unit reads(source.value), writes(destination.value) {
+  doc "EFF-5: the callee declares one formal-path row that the call site substitutes.";
+  let v = source^.value;
+  set destination^.value = v;
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "EFF-5: two substituted effects on overlapping paths where at least one is a write must be proved disjoint, and are otherwise a hard error at the complete call; with no position to separate the two paths, the repair passes places that do not overlap.";
+  let a = Cell(value: 4_u64);
+  let b = Cell(value: 0_u64);
+  copy_across(source: &a, destination: &b);
+  let seen = a.value;
+  if seen == 4_u64 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [OP-12] a callee that writes a prefix of the update target.
+    RepairPair {
+        name: "op12-neg-callee-writes-target-prefix.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/op12-neg-callee-writes-target-prefix.wf"
+        ),
+        rule: "OP-12",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Counter {
+  value: u64;
+}
+
+fn recomputed(current: u64, holder: &Box<Counter>) -> result: u64 reads(holder) {
+  doc "OP-12 refuses this callee at the update site: its declared row writes a proper prefix of the target place.";
+  return current;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "OP-12: f's declared row must not write, move out of, or free any prefix of the target place; a row that does is a hard error at the complete call.";
+  let start = Counter(value: 1_u64);
+  let cell = box_new::<Counter>(value: start);
+  set cell.inner.value = recomputed(current: cell.inner.value, holder: &cell);
+  let seen = cell.inner.value;
+  if seen == 1_u64 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [FN-8] a call that fails a requirement at a constant.
+    RepairPair {
+        name: "fn8-neg-constant-call-requirement.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/fn8-neg-constant-call-requirement.wf"
+        ),
+        rule: "FN-8",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn only_one(value: u8) -> result: unit pure contract {
+  requires value == 1_u8;
+} {
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  only_one(value: 1_u8);
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [ENT-2] a counted endpoint that is a subscripted element.
+    RepairPair {
+        name: "ent2-neg-counted-subscript-endpoint.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/ent2-neg-counted-subscript-endpoint.wf"
+        ),
+        rule: "ENT-2",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn probe(bounds: Array<u64, 2>) -> result: unit pure {
+  doc "A subscript is a valid atom whose own constant bounds discharge, but a subscripted place is a counted endpoint term only when its final step selects a readonly field, and a scalar element is none [ENT-2].";
+  let lo = bounds[0_u64];
+  let hi = bounds[1_u64];
+  for @items (i in lo..hi) {
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "No construction is needed to exercise the endpoint admission.";
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [RANGE-1] a definition that multiplies two parameters.
+    RepairPair {
+        name: "range1-neg-define-nonlinear-requirement-index.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/range1-neg-define-nonlinear-requirement-index.wf"
+        ),
+        rule: "RANGE-1",
+        sentences: &[],
+        repaired: &[br##"fn need_small(source: &[u64], i: u64, j: u64) -> result: unit pure contract {
+  define next = i * 2_u64;
+  requires forall small(k in 0_u64..1_u64): source^[next] <= 7_u64;
+} {
+  doc "Expanding next exposes multiplication of two integer parameters, which is not a range term.";
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [RANGE-3] a fill fact overwritten before it is used.
+    RepairPair {
+        name: "range2-neg-fill-overwritten.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/range2-neg-fill-overwritten.wf"
+        ),
+        rule: "RANGE-3",
+        sentences: &[],
+        repaired: &[br##"fn all_zero(cells: &[u64]) -> result: u64 reads(cells) contract {
+  requires forall zero(k in 0_u64..cells^.len): cells^[k] == 0_u64;
+} {
+  doc "Returns the first cell, which its requirement makes zero.";
+  if 0_u64 < cells^.len {
+    let first = cells^[0_u64];
+    return first;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "A box_array_filled result holds its fill value in every element, which discharges the requirement at the call; after one element is written with another value the fact no longer holds at it.";
+  let cells = box_array_filled::<u64>(count: 8_u64, value: 0_u64);
+  let first = all_zero(cells: &cells.inner[0_u64..8_u64]);
+  let again = all_zero(cells: &cells.inner[0_u64..8_u64]);
+  if first != 0_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if again != 0_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [INV-1] a call as an affine factor of an invariant.
+    RepairPair {
+        name: "inv1-neg-an-affine-factor-is-not-a-measure-former.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/inv1-neg-an-affine-factor-is-not-a-measure-former.wf"
+        ),
+        rule: "INV-1",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "[INV-1] a `call` in an affine-factor position is refused at the call node. The admitted atoms are a measure member on an admitted measure place [OP-15], a bare IDENT place, and an integer literal, so widening the production admits one closed set of factors rather than every runtime expression form.";
+  let run = slots_new::<u8, 8>();
+  for (
+    at in 0_u64..8_u64,
+    invariant grown: run.len >= at,
+    invariant spare: run.cap - run.len + at >= 8_u64
+  ) {
+    place_back(window: &run, value: 0_u8);
+  }
+  let seen = 0_u64;
+  let limit = 4_u64;
+  for (
+    step in 0_u64..4_u64,
+    invariant bounded: seen <= limit
+  ) {
+    let byte = run[step];
+  }
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [INV-1] a loop invariant not proved at the base.
+    RepairPair {
+        name: "inv1-neg-base-unproved.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/inv1-neg-base-unproved.wf"
+        ),
+        rule: "INV-1",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  for (
+    i in 0_u64..1_u64,
+    invariant limit: i <= 1_u64
+  ) {
+  }
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [INV-1] a local invariant that nothing proves.
+    RepairPair {
+        name: "inv1-neg-local-relation-unproved.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/inv1-neg-local-relation-unproved.wf"
+        ),
+        rule: "INV-1",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn clamp_hint(x: u8, limit: u8) -> result: u8 pure contract {
+  requires x <= limit;
+} {
+  invariant within_cap: x <= limit;
+  return x;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [PRF-1] a source proof with the noncanonical factor one.
+    RepairPair {
+        name: "prf1-neg-explicit-factor-one.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/prf1-neg-explicit-factor-one.wf"
+        ),
+        rule: "PRF-1",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn scale_pair(first: u64, first_limit: u64, second: u64, second_limit: u64) -> result: unit pure contract {
+  requires first <= first_limit;
+  requires second <= second_limit;
+} {
+  invariant pair_bound: first + second <= first_limit + second_limit;
+  invariant scaled_bound: 3_u64 * first + 3_u64 * second <= 3_u64 * first_limit + 3_u64 * second_limit {
+    use 3 times pair_bound;
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [PRF-1] a source proof whose premise nothing establishes.
+    RepairPair {
+        name: "prf1-neg-unproved-premise.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/prf1-neg-unproved-premise.wf"
+        ),
+        rule: "PRF-1",
+        sentences: &[],
+        repaired: &[br##"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn increment(x: u8, middle: u8) -> result: u8 pure contract {
+  requires x <= middle;
+  requires middle <= 254_u8;
+} {
+  invariant upper_bound: x <= 254_u8;
+  return x;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [SHARE-2] a map key that is no byte window.
+    RepairPair {
+        name: "share-neg-map-key-not-bytes.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/share-neg-map-key-not-bytes.wf"
+        ),
+        rule: "SHARE-2",
+        sentences: &[],
+        repaired: &[br##"const names: Array<u8, 2> =[97_u8, 98_u8];
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let store = shared_map_new::<u8>(capacity: 0_u64);
+  let name = &names[0_u64..1_u64];
+  atomic slot = &store[name] {
+    set slot^ = Some<u8>(value: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [SHARE-2] a guard that reads a decision cell.
+    RepairPair {
+        name: "decision-cell-neg-guard-read.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/decision-cell-neg-guard-read.wf"
+        ),
+        rule: "SHARE-2",
+        sentences: &[],
+        repaired: &[br##"fn is_written(cell: &DecisionCell) -> result: Bool reads(cell) {
+  let seen = decision_cell_read(cell: cell);
+  let written = Written();
+  return seen == written;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = decision_cell_new();
+  let target = shared_new::<u8>(value: 0_u8);
+  atomic byte = &target {
+    set byte^ = 1_u8;
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"##],
+    },
+    // [FN-10] a musttail call that is not the whole return.
+    RepairPair {
+        name: "fn10-neg-not-return.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/fn10-neg-not-return.wf"
+        ),
+        rule: "FN-10",
+        sentences: &[],
+        repaired: &[br##"fn walk(n: u64) -> result: u64 pure {
+  return musttail walk(n: n);
+}
+"##],
+    },
+    // [HOLD-1] a held contract on a callable that waits.
+    RepairPair {
+        name: "hold-neg-waiting-contract.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/hold-neg-waiting-contract.wf"
+        ),
+        rule: "HOLD-1",
+        sentences: &[],
+        repaired: &[br##"fn sample(value: &u64) -> result: u64 reads(value) contract {
+  requires held(value);
+} {
+  return value^;
+}
+"##],
+    },
+    // [SNAP-1] a snapshot of a value that holds shared state.
+    RepairPair {
+        name: "snapshot-neg-shared.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/snapshot-neg-shared.wf"
+        ),
+        rule: "SNAP-1",
+        sentences: &[],
+        repaired: &[br##"alias Reserve = std::snapshot::Reserve;
+alias Job = std::snapshot::Job;
+alias CreateError = std::snapshot::CreateError;
+
+struct Inner {
+  state: u8;
+}
+
+struct Entry {
+  inner: Box<Inner>;
+}
+
+fn capture(reserve: Reserve, table: &Shared<ConcurrentHashMap<Entry>>, sequence: &Shared<u64>) -> result: Result<Job, CreateError> reads(table), reads(sequence) waits {
+  atomic held_map = &table^, held_cut = &sequence^ {
+    return std::snapshot::capture_export::<Entry>(reserve: move reserve, map: held_map, cut: held_cut);
+  }
+}
+"##],
+    },
+    // [CALL-4] a routed ensures that names no result ordinal.
+    RepairPair {
+        name: "call4-neg-enum-ambiguous-ordinal.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/call4-neg-enum-ambiguous-ordinal.wf"
+        ),
+        rule: "CALL-4",
+        sentences: &[],
+        repaired: &[br##"enum RoutedOrdinal {
+  Item(index: u64);
+}
+
+fn pair() -> (left: RoutedOrdinal, right: RoutedOrdinal) pure contract {
+  ensures when left is Item(index: payload): payload == 1_u64;
+} {
+  let left_value = RoutedOrdinal::Item(index: 1_u64);
+  let right_value = RoutedOrdinal::Item(index: 2_u64);
+  return left_value, right_value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"##],
+    },
 ];
