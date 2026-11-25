@@ -35,15 +35,14 @@ fn an_exit_ends_the_program_at_once_while_the_same_program_without_it_keeps_wait
         ProgramChild::spawn_signalling_first_output(&mut run(&["stay"]))
             .expect("start the program that stays");
 
+    // The exiting run is polled from its line on, before the staying run's line
+    // is awaited, so a late line from the other run cannot delay seeing the
+    // exit. The staying run's line is read later than it arrived, if anything,
+    // which only lengthens the time it is shown to keep running.
     leaving_line
         .recv_timeout(START)
         .expect("the exiting program writes its line before it exits");
     let leaving_wrote = Instant::now();
-    staying_line
-        .recv_timeout(START)
-        .expect("the staying program writes its line where the exit would be");
-    let staying_wrote = Instant::now();
-
     let status = loop {
         if let Some(status) = leaving.try_wait().expect("poll the exiting program") {
             break status;
@@ -61,6 +60,10 @@ fn an_exit_ends_the_program_at_once_while_the_same_program_without_it_keeps_wait
     let output = leaving.wait_with_output().expect("collect the exiting program's output");
     assert_eq!(output.stdout, b"ending\n", "{output:?}");
 
+    staying_line
+        .recv_timeout(START)
+        .expect("the staying program writes its line where the exit would be");
+    let staying_wrote = Instant::now();
     while staying_wrote.elapsed() < LIMIT {
         let state = staying.try_wait().expect("poll the staying program");
         assert!(
