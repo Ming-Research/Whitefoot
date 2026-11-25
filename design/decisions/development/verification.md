@@ -90,6 +90,12 @@ Paired performance compiles each revision's own formal version of the same workl
 - rejected: an agent proposed silently skipping a mismatched or unbuildable workload; the owner rejected it, because the absence of comparable evidence is not a passing regression result.
 - rejected: an agent proposed running the code-placement control on every measured comparison; the owner rejected it, because that adds a campaign to each run, while the emitter's own test already fails on a definition without the alignment (data: `research/investigations/code-placement/DESIGN.md`).
 
+### decision kernels-placed-by-their-data-are-not-judged
+A kernel whose arms map differently and whose 32 positions in order of time differ in two rounds is timed but not judged; the job passes with a warning and judges the rest.
+- rejected: an agent proposed timing every kernel's arms at the 32 positions in each run, with no mapping record; the owner rejected it, because that adds about two minutes on AMD hosts, two to three campaigns, to every run (data: `research/investigations/data-placement/README.md`).
+- rejected: an agent proposed setting a kernel aside when the candidate alone is 10 percent off at one position twice; the owner rejected it, because every image has one on Zen 3 and Zen 4 hosts, so `stencil` would never be judged there (data: `research/investigations/data-placement/README.md`).
+- rejected: an agent proposed failing the job as inconclusive when a kernel is set aside; the owner rejected it, because a change of startup would then turn red on every Zen 3 or Zen 4 host and pass only when a rerun drew another host.
+
 ### decision conformance-cases-are-only-runnable
 Conformance has only the `runnable` manifest status and pass or fail outcomes; an unexpected unsupported stop fails the case.
 - rejected: an agent proposed pending or xfail statuses, or a third outcome for a gap that does not fail; the owner rejected it, because a capability gap is a compiler defect, not grounds to suspend a normative case.
