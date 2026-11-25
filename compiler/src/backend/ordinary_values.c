@@ -2273,6 +2273,9 @@ void wf__body_local_address(wf_open_result *result, const wf_value *receive) {
  * `close_listener` consumes it. */
 void wf__body_listener_address(wf_open_result *result, const wf_value *listener) {
     wf__socket_endpoint(result, wf_descriptor(listener));
+    if (result->tag == 0) {
+        result->ok.value.words[2] += 1;
+    }
 }
 
 void wf__body_cancel_source(wf_cancel_handle *result) {
