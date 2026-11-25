@@ -277,12 +277,36 @@ not read or close the peer. The test does not discriminate the pre-fix
 path: on windows-latest loopback that path completed the first phase with
 the whole range accepted, as described above.
 
-The review also identified an unverified, pre-existing question about a
-Windows helper's blocking `connect`: unlike accept/receive/send, it has no
-bounded readiness loop. Its interruption behavior and a separate connection
-regression are deferred in [the maintained TODO](../../../docs/todo.md),
-under "Windows helper connects have no demonstrated cancellation bound".
-This fix makes no claim about that distinct path.
+## Windows helper connects
+
+The review of that change also left a question about a Windows helper's
+blocking `connect`, which, unlike accept, receive and send, had no bounded
+readiness loop: `CancelSynchronousIo`, the only thing that interrupts a
+helper, is not documented to end a blocking Winsock call. The helper now makes
+a connect that carries a deadline or a watch, and every other helper connect,
+in nonblocking mode and waits for it in slices of at most 50 ms with the rule
+the accept uses (`wf_file_windows_bound_slice`), looking once more before a
+bound ends it so a connect the host already finished keeps its outcome, and
+restores blocking mode before it hands the connection out.
+
+`windows_bounded_connect_test.c` runs in the Windows `io-hosts` job on the
+helper route and on the completion-port route as the control. Its target is a
+loopback listener with `SO_CONDITIONAL_ACCEPT` that never calls `WSAAccept`:
+the [`SO_CONDITIONAL_ACCEPT`](https://learn.microsoft.com/en-us/windows/win32/winsock/so-conditional-accept)
+page says the stack then waits for the application and the client may time
+out first, whereas the [`listen`](https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-listen)
+page says a full queue answers WSAECONNREFUSED, so a full-backlog listener
+would refuse instead of staying silent. A raw nonblocking connect to the
+listener must stay pending for three seconds before anything is measured. The
+cases are a cancellation while the helper is inside the connect, a deadline,
+a watch already fired and a deadline already passed at the call, two hundred
+connects that can succeed raced by a firing delayed from 0 to 2 ms, a connect
+with no bound, and a refused connect; each bounded call must end within one
+second of the firing or the deadline, and after a warm-up pass the process's
+handle count, the handle factory's credit, the driver's cancellation list and
+its timers must be what they were. Two arguments, `control-bound` and
+`control-leak`, make the one-second bound and the handle comparison fail on
+purpose, and the job requires each to fail through that check.
 
 ## Cancellation conformance observations
 
