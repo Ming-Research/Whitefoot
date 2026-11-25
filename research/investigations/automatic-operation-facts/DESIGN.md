@@ -76,7 +76,7 @@ while masking `hi` with `iand` first is accepted.
   entering-context entries in [todo](../../../docs/todo.md)). The
   [incremental closure](../../../design/compiler/incremental-closure.md) and
   its middle-term selection determine what added L0 facts cost.
-- The [constitution](../../../docs/constitution.md) prefers runtime
+- The [constitution](../../../design/constitution.md) prefers runtime
   performance over writing ease and accepts proof work, but requires checking
   cost to permit practical iteration. The
   [expected-failure decision](../../../design/language/checks-and-proofs/obligation-discharge.md)
