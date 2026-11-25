@@ -5,6 +5,12 @@ naming every node changed and `Summary:`; the owner's agent instructions own
 the form. Older entries also record refused amendments, a mechanism since
 retired, and carry an `Owner-approved:` line, a field since retired.
 
+## 2026-11-25 A Windows helper connect is waited for in bounded slices
+
+Nodes: compiler/waiting-contexts/bounded-waits
+
+Summary: The cancellation-route decision named the Windows helper's accepts and transfers as bounded readiness polls, while its connect was still one blocking Winsock call whose only interruption, `CancelSynchronousIo`, is not documented to end it. The decision now includes the connect: a Windows helper makes it in nonblocking mode and waits for it in the same bounded slices as an accept, with one last look before a bound ends it so an outcome the host already produced stays the call's outcome. Keeping the blocking connect because `CancelSynchronousIo` might end it is refused, since the interface documents no such effect and the rule for every other blocking Winsock call already rests on that.
+
 ## 2026-10-23 A returned computed integer expression proves a postcondition as a `let` of it would
 
 Nodes: language/checks-and-proofs/automatic-facts
