@@ -118,8 +118,9 @@ pins this: its `empty_product` and `other` build a variant beside an inactive
 window and expect one zero store of the whole value.
 
 **Where the copies come from.** `copy_storage` in the same file moves a value
-of more than 128 bytes with one `memmove` of its whole size, the unoccupied
-slots of a window included. `place_back` is a function instance of its own
+that has no bounded transfer (one of more than 128 bytes, or one that holds a
+window) with one `memmove` of its whole size, the unoccupied slots of a
+window included. `place_back` is a function instance of its own
 (`row_place` in `compiler/src/lowering/builder/prelude.rs`) that receives the
 value by address and copies it into the slot, and the block writer's
 `set output^[0] = Some<Chunk>(...)` is an `IrInstruction::Store` of a value
