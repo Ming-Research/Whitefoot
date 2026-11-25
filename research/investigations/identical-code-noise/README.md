@@ -15,8 +15,9 @@ Facts read from the artifacts (2026-11-25):
   (`/home/runner/work/_temp/baseline/compiler/src/backend/concurrent_map.c`
   against `/home/runner/work/Whitefoot/Whitefoot/compiler/src/backend/concurrent_map.c`);
   119 bytes of it differ, the strings of the merged read-only data after it move by
-  5 bytes, and `objdump -d` of the two `stencil` images differs only in 740 lines of
-  rip-relative displacements into `.rodata`; every instruction and address is equal.
+  5 bytes, and `objdump -d` of the two `stencil` images differs in 188 lines, 185 of them
+  rip-relative `leaq` displacements into `.rodata`, the other 3 printing the same
+  text; every instruction address is equal.
 - All 4 comparison failures (records 2, stencil 2) and both null-control failures
   (records 1, stencil 1) among the 187 runs fell in runs whose five module objects
   were identical. No comparison failed in the 8 runs whose module objects all
