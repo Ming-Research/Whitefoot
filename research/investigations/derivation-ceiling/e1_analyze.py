@@ -28,18 +28,22 @@ LINEAR_STEPS = (
 
 
 def route_class(route):
-    """The eight-item row an ordinary proof's steps point to, or None."""
+    """The eight-item row an ordinary proof's steps point to, or None. The
+    most specific step decides: a quotient product (items 3 and 4; the
+    ledger has no separate step for the power atom of item 3), then an
+    origin step (item 5), then a join step (item 7), then an S7 result range
+    (items 1 and 2). Item 6's float decoding has no ledger step of its own."""
     tags = set(route.split("+"))
     names = {tag.split(":")[0] for tag in tags}
+    if "UnsignedDivisionProduct" in names:
+        return "item 3 or 4 (quotient product)"
+    if names & {"OriginTransport", "OriginEquality", "OriginProjection", "LetOrigin"}:
+        return "item 5"
     if names & {"JoinBound", "JoinDistinct", "JoinGoal", "JoinContradiction",
                 "TransportedHeaderRelation"}:
         return "item 7 not recovered by the join"
     if "OperationFact" in names:
         return "item 1/2 (S7 fact) not recovered by the remedy"
-    if "UnsignedDivisionProduct" in names:
-        return "item 4"
-    if names & {"OriginTransport", "OriginEquality", "OriginProjection", "LetOrigin"}:
-        return "item 5"
     if route == "certificate":
         return "item 8 candidate (written certificate)"
     return None
