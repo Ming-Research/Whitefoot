@@ -440,14 +440,15 @@ def verdicts(by_config):
                 want = {"run": "accept", "accept": "accept", "reject": "reject"}.get(
                     expect.get(label, "?"), "other")
             today = "accept" if state["today"] else "reject"
+            family = label.split(":")[0] if ":" in label else "case"
             for verdict in ("today", "handoff", "alone"):
                 got = "accept" if state[verdict] else "reject"
                 table[(verdict, want, got)] += 1
+                table[(f"{verdict} {family}", want, got)] += 1
                 # Against today's verdict read from the same records: a
                 # case rejected by a rule outside entailment has no record
                 # that says so, and its declared verdict cannot change here.
                 if verdict != "today" and got != today:
-                    family = label.split(":")[0] if ":" in label else "case"
                     examples[f"{verdict} {family} today={today} reached={got}"].append(label)
             if state["unposed"] and today == "accept" and not state["alone"]:
                 table[("alone-with-unposed", want, "reject")] += 1
