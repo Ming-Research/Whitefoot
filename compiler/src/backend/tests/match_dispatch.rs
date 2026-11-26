@@ -1761,7 +1761,7 @@ fn main() -> status: ExitStatus pure {
   let regs = box_slots_new::<u64>(capacity: 2_u64);
   place_back(window: &regs.inner, value: 0_u64);
   place_back(window: &regs.inner, value: 1000_u64);
-  let machine = Machine(regs: regs);
+  let machine = Machine(regs: move regs);
   if code.inner.len > 0_u64 {
     let r = NAME(code: &code, machine: &machine, start: 0_u64, steps: 1000_u64);
     if r == 2002_u64 {
