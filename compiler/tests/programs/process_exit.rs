@@ -20,9 +20,19 @@ const START: Duration = Duration::from_secs(60);
 #[test]
 fn an_exit_ends_the_program_at_once_while_the_same_program_without_it_keeps_waiting() {
     let program = build_program(&compile_corpus_module_program("process_exit", "process_exit"));
+    // ThreadSanitizer's `_exit` interceptor sleeps for its `atexit_sleep_ms`
+    // flag, 1000 ms by default, before it ends a process that still has other
+    // threads, so that races with the end are seen. That sleep is the tool's,
+    // not the exit's, so these timed runs turn it off; the racing-exits test
+    // below keeps it. Builds without ThreadSanitizer do not read the variable.
+    let thread_sanitizer = match std::env::var("TSAN_OPTIONS") {
+        Ok(options) if !options.is_empty() => format!("{options}:atexit_sleep_ms=0"),
+        _ => "atexit_sleep_ms=0".to_owned(),
+    };
     let run = |arguments: &[&str]| {
         let mut command = Command::new(program.executable());
         command
+            .env("TSAN_OPTIONS", &thread_sanitizer)
             .args(arguments)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
