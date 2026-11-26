@@ -2021,4 +2021,8 @@ correctness check; they say nothing about speed, which only the 14900K run of
 `compiler-compare.yml` can.
 With the control required only of Clz and GlobalSet, the same check passed as a
 whole in [run 45802062823](https://github.com/Ming-Research/Whitefoot/actions/runs/45802062823)
-on commit 9dedc7b77 with the same counts and CRCs.
+on commit 9dedc7b77 with the same counts and CRCs. The workflow that ran these
+checks, `.github/workflows/tmp-handler-rbp.yml`, was a temporary file of the
+work branch; it is not part of the merge, and its last version is the one in
+commit 9dedc7b77. The compiler files the runs exercised (the dispatch emitter,
+`toolchain.rs`, `driver.rs`) are unchanged since that commit.
