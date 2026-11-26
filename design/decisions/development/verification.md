@@ -131,6 +131,12 @@ A timed program is judged against its own null control; a failing comparison wit
 - replaced: Ending the whole comparison as inconclusive when any host control failed, with no retry, was on main; the owner changed it, because the control reads at the threshold in 2.3% of cells (data: `research/investigations/identical-code-noise/README.md`).
 - rejected: the owner proposed judging an undecided program on the 14900K machine; the owner rejected it, because only the same-host retest can be checked against the 182 retained runs, and the other adds a self-hosted job and queueing.
 
+### decision kernels-placed-by-their-data-are-not-judged
+A kernel whose arms map differently and whose 32 positions in order of time differ in two rounds is neither timed nor judged; the job passes with a warning and judges the rest.
+- rejected: an agent proposed timing every kernel's arms at the 32 positions in each run, with no mapping record; the owner rejected it, because that adds about two minutes on AMD hosts, two to three campaigns, to every run (data: `research/investigations/data-placement/README.md`).
+- rejected: an agent proposed setting a kernel aside when the candidate alone is 10 percent off at one position twice; the owner rejected it, because every image has one on Zen 3 and Zen 4 hosts, so `stencil` would never be judged there (data: `research/investigations/data-placement/README.md`).
+- rejected: an agent proposed failing the job as inconclusive when a kernel is set aside; the owner rejected it, because a change of startup would then turn red on every Zen 3 or Zen 4 host and pass only when a rerun drew another host.
+
 ### decision performance-comparison-warms-the-toolchain-first
 The paired performance comparison fetches the locked crates and reads the Rust toolchain in one untimed step before its first compiler build, outside every labeled stage.
 - rejected: an agent proposed building the candidate compiler once untimed first, as the kernel images are; the owner rejected it, because it removes any first-use cost but adds a cold build of 89 to 147 s per run (data: `research/investigations/test-economy/candidate-build-samples-2026-11.tsv`).
