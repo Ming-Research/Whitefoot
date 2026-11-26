@@ -1,0 +1,27 @@
+struct Inner {
+  count: u8;
+}
+
+struct Outer {
+  inner: Inner;
+}
+
+fn bump(marks: &[u64], x: u8) -> result: u8 pure contract {
+  requires forall small(k in 0_u64..marks^.len): marks^[k] < 8_u64;
+} {
+  doc "t is a copy of s taken while its inner count was x, which may be 9; replacing s and writing through r change s only, so t.inner.count is still x.";
+  let first = Inner(count: x);
+  let s = Outer(inner: first);
+  let r = &s;
+  let t = s;
+  let second = Inner(count: 1_u8);
+  set s = Outer(inner: second);
+  set r^.inner.count = 1_u8;
+  let v = t.inner.count;
+  let w = 251_u8 + v;
+  return w;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

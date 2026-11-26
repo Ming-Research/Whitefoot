@@ -59,7 +59,7 @@ The premise that today's program can touch only objects beneath cwd needs
 correction. A **name** and a **RelativePath** have different contracts. PRE-2
 describes `open_read` as opening a file “below root”, but does not define
 confinement, dot-dot resolution or a filesystem symlink policy. The
-[dot-dot case](../../../tests/conformance/cases/run-syspath-dotdot-preserved.wf)
+[dot-dot case](https://github.com/mbbill/Whitefoot/blob/3c734533ba4472049c2a5570bd33f9256b522cee/tests/conformance/cases/run-syspath-dotdot-preserved.wf)
 and its [manifest](../../../tests/conformance/manifest.jsonl) explicitly describe
 paths as not confined. The case actually observes only successful conversion;
 it does not open an outside file or prove spelling preservation. Neither its
