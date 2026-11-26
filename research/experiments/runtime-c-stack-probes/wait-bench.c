@@ -3,7 +3,9 @@
  * change. Every entry names one readable pipe and the timeout is zero, so the
  * poll answers at once: the cheapest call the function makes, which puts the
  * prologue's share of a call at its largest. One process times one batch of
- * calls and prints the nanoseconds per call.
+ * calls and prints the nanoseconds per call. A call must answer at least one
+ * entry; Linux answers every one, while macOS's poll folds entries that name
+ * the same descriptor, which both variants of a comparison meet alike.
  *
  * usage: wait-bench COUNT CALLS
  * Built and run by wait-bench.sh; see README.md, "The cost of the probe
@@ -45,15 +47,17 @@ int main(int argc, char **argv) {
     }
     /* The first calls also touch the stack pages and the descriptor table. */
     for (unsigned long call = 0; call < calls / 10 + 1; call++) {
-        if (wf_file_wait_readiness(entries, count, 0) != (int)count) {
-            fprintf(stderr, "the wait did not answer every entry\n");
+        int answered = wf_file_wait_readiness(entries, count, 0);
+        if (answered < 1 || (size_t)answered > count) {
+            fprintf(stderr, "the wait answered %d of %zu entries\n", answered, count);
             return 1;
         }
     }
     double begin = now_ns();
     for (unsigned long call = 0; call < calls; call++) {
-        if (wf_file_wait_readiness(entries, count, 0) != (int)count) {
-            fprintf(stderr, "the wait did not answer every entry\n");
+        int answered = wf_file_wait_readiness(entries, count, 0);
+        if (answered < 1 || (size_t)answered > count) {
+            fprintf(stderr, "the wait answered %d of %zu entries\n", answered, count);
             return 1;
         }
     }
