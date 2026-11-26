@@ -47,7 +47,7 @@ A tracked integer field place, one binding root followed by field selections, ha
 - rejected: an agent proposed images only for fields reached through a `&T` reference parameter; the owner rejected it, because other roots' fields carry their facts through the same kills, so `std::float_text`'s subtraction from a call result's field was refused for no soundness reason.
 
 ### decision entry-requirements-give-affine-premises
-At body entry, an established requirement ordering with an admitted affine form but no L0 projection supplies that affine inequality, through the existing signed decomposition.
+At body entry, an established requirement ordering with an admitted affine form but no entry projection supplies that affine inequality, through the existing signed decomposition.
 - rejected: an agent proposed keeping composite requirements opaque; the owner rejected it, because a recursive merge must use its proved input-length sum to bound its output, and dropping the admitted contract forces a worse algorithm or a redundant runtime guard.
 - rejected: an agent proposed general nonlinear or path search, or duplicating L0 bounds to widen the premise combinations; the owner rejected it, because the requirement is already an admitted affine contract that the existing decomposition supplies.
 
