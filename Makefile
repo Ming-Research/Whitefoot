@@ -142,6 +142,7 @@ repository-invariants:
 	@sh .github/test-completion-scratch.sh
 	@sh .github/test-gate-both-platforms.sh
 	@sh .github/test-compiler-release-retention.sh
+	@bash .github/test-check-runtime-frames.sh
 	@$(PY) .github/junit.py --self-test
 	@perl .github/check-english.pl --self-test
 	@perl .github/check-english.pl
