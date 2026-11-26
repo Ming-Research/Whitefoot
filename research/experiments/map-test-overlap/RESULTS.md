@@ -73,7 +73,9 @@ own compile line (`-O2 -g -Wall -Wextra -Werror -Wpedantic -pthread`).
 
 The runs are GitHub Actions run 45731107042 on commit `0720ae758`, from the
 temporary workflow `tmp-map-overlap.yml` with `.github/tmp-map-overlap.sh`
-(both removed before the full check). The sources of the map and its test are
+(both removed before the full check; their last version is in commit
+`d8879bb2c` of the work's branch, which the pull request keeps). The sources of
+the map and its test are
 the same on the head: the main merges since touch other files. An earlier
 pass of the same workflow (run 45729541249, counts 3 and 2) gave the same
 calibration and C3 results and its inert control did not link: the binary was
