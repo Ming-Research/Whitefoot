@@ -23,6 +23,8 @@ mod programs {
     mod driver_count;
     #[cfg(unix)]
     mod contexts;
+    #[cfg(target_os = "linux")]
+    mod busy_driver;
     mod file_replacement;
     mod stop_signals;
     #[cfg(unix)]

@@ -1,0 +1,97 @@
+alias Clock = std::time::Clock;
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias Instant = std::time::Instant;
+alias exit_status = std::process::exit_status;
+alias instant_after = std::time::instant_after;
+alias instant_reached = std::time::instant_reached;
+alias nanoseconds_from = std::time::nanoseconds_from;
+alias now = std::time::now;
+alias read_next = std::io::read_next;
+alias write_once = std::io::write_once;
+
+fn compute(clock: Clock, stop: DecisionCell) -> result: unit pure waits {
+  doc "Computes without waiting until stop is decided or three seconds have passed, reading the cell and the clock between batches of arithmetic; it reaches no wait, so it hands its driver to no other context.";
+  let started = now(clock: &clock);
+  let limit = instant_after(instant: started, nanoseconds: 3000000000_u64);
+  let open = Open();
+  let state = 1_u64;
+  loop @run {
+    for @batch (turn in 0_u64..65536_u64) {
+      set state = state *wrap 6364136223846793005_u64 +wrap 1442695040888963407_u64;
+    }
+    let verdict = decision_cell_read(cell: &stop);
+    if verdict != open {
+      break @run;
+    }
+    let at = now(clock: &clock);
+    if instant_reached(deadline: limit, instant: at) {
+      break @run;
+    }
+  }
+  return unit;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "Starts a context that computes without waiting, reports on standard output that it is about to read, then reads one byte of standard input with no deadline. The byte arrives while the other context computes. The exit status is the read's duration in tens of milliseconds, 250 for 2.5 s or more, so the case can tell a read that returned when its byte arrived from one held until the computation ended [WAIT-2].";
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: cwd_directory, stdout: output, stderr: unused_stderr, handles: handles, stdin: input, clock: clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
+  std::fs::close_directory(factory: &handles, directory: move cwd);
+  let stop = decision_cell_new();
+  let worker_stop = decision_cell_share(cell: &stop);
+  let worker_clock = std::time::clock_share(clock: &clock);
+  spawn compute(clock: move worker_clock, stop: move worker_stop);
+  let bytes = slots_new::<u8, 1>();
+  place_back(window: &bytes, value: 0_u8);
+  let marker = array_filled::<u8, 1>(value: 46_u8);
+  let unbounded = None<Instant>();
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = write_once(factory: &handles, output: &output, source: &marker[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: unbounded, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  let code = 0_u8;
+  match wait_outcome_1 {
+    Ok(value: written) => {
+      if written != 1_u64 {
+        set code = 251_u8;
+      }
+    }
+    Err(error: problem) => {
+      set code = 251_u8;
+    }
+  }
+  let started = now(clock: &clock);
+  let no_deadline = None<Instant>();
+  let destination = &bytes[0_u64..1_u64];
+  let wait_cancel_2 = std::time::cancel_never();
+  let wait_outcome_2 = read_next(factory: &handles, input: &input, destination: destination, start: 0_u64, end: 1_u64, deadline: no_deadline, cancel: &wait_cancel_2);
+  std::time::close_cancel_watch(watch: move wait_cancel_2);
+  let after = now(clock: &clock);
+  let winner = claim_written(cell: &stop);
+  match wait_outcome_2 {
+    Ok(value: received) => {
+      if received != 1_u64 {
+        set code = 252_u8;
+      }
+    }
+    Err(error: problem) => {
+      set code = 252_u8;
+    }
+  }
+  if code != 0_u8 {
+    return exit_status(code: code);
+  }
+  let tens = nanoseconds_from(earlier: started, later: after) / 10000000_u64;
+  if tens >= 250_u64 {
+    return exit_status(code: 250_u8);
+  }
+  let narrowed = cvt.checked::<u64, u8>(tens);
+  match narrowed {
+    Ok(value: small) => {
+      return exit_status(code: small);
+    }
+    Err(error: overflowed) => {
+      return exit_status(code: 250_u8);
+    }
+  }
+}
