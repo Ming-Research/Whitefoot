@@ -8,8 +8,9 @@
 # C-convention boundary, and runs the candidate on CoreMark. It FAILS when:
 #   - the candidate has a push or pop of %rbp in any `wf_run.arm.*` or
 #     `wf_run.cold*` function;
-#   - the base has none in the handlers Clz, Sub, And or GlobalSet (the
-#     control: a check that cannot fail on the old compiler shows nothing);
+#   - the base has no %rbp save in any handler of one of the families Clz, Sub,
+#     And (32- and 64-bit arms) and GlobalSet (the control: a check that cannot
+#     fail on the old compiler shows nothing);
 #   - the candidate's `wf_run` does not hold exactly one `push %rbp` and at
 #     least one `pop %rbp`;
 #   - the candidate's CoreMark exits non-zero or one of the CRCs 0xe714, 0x1fd7,
@@ -88,7 +89,20 @@ jobs:
           REGISTER_COPY = re.compile(r"(%(?:r\w+|e\w+)),\s*(%r\w+)\s*$")
           EXPECTED_CRC = {"crclist": "0xe714", "crcmatrix": "0x1fd7",
                           "crcstate": "0x8e3a", "crcfinal": "0x4983"}
-          CONTROL = ["Clz", "Sub", "And", "GlobalSet"]
+          # The arms of the generated interpreter are named by value width:
+          # the control families are the ones the item names, each by its
+          # 32- and 64-bit arms, and a family is controlled when any of its
+          # base handlers saves %rbp.
+          CONTROL = {"Clz": ["I32Clz", "I64Clz"], "Sub": ["I32Sub", "I64Sub"],
+                     "And": ["I32And", "I64And"], "GlobalSet": ["GlobalSet"]}
+          CONTROL_ARMS = [arm for arms in CONTROL.values() for arm in arms]
+
+          def annotate(level, title, lines):
+              # Annotations are readable without credentials, unlike the log
+              # and the artifact, so the numbers reach the person who reads
+              # the run from the host's check-run page.
+              text = "\n".join(lines).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print(f"::{level} title={title}::{text}")
 
           def instructions(body):
               return [(m[1], m[2]) for m in INSTRUCTION.finditer(body)]
@@ -123,7 +137,7 @@ jobs:
               start = source.index("\nfn run(") + 1
               end = source.index("\nfn ", start)
               arms = re.findall(r"^      (\w+)\([^\n]*\) => \{", source[start:end], re.M)
-              if not arms or len(set(arms)) != len(arms) or any(n not in arms for n in CONTROL):
+              if not arms or len(set(arms)) != len(arms) or any(n not in arms for n in CONTROL_ARMS):
                   raise ValueError("generated run arm map is empty, ambiguous or lacks a control handler")
               return arms
 
@@ -171,10 +185,10 @@ jobs:
                   elif row["rbp_pushes"] or row["rbp_pops"]:
                       failures.append(f"candidate {name}: {row['rbp_pushes']} pushes, {row['rbp_pops']} pops of %rbp")
               by_arm = {arm: sym for sym, arm in base["arm_of"].items()}
-              for arm in CONTROL:
-                  row = base["handlers"].get(by_arm.get(arm, ""), None)
-                  if row is None or not (row["rbp_pushes"] or row["rbp_pops"]):
-                      failures.append(f"control: base handler {arm} has no %rbp save, so the check cannot fail on the old compiler")
+              for family, family_arms in CONTROL.items():
+                  rows = [base["handlers"].get(by_arm.get(arm, "")) for arm in family_arms]
+                  if not any(r and (r["rbp_pushes"] or r["rbp_pops"]) for r in rows):
+                      failures.append(f"control: no base handler of {family} ({', '.join(family_arms)}) saves %rbp, so the check cannot fail on the old compiler")
               return failures
 
           def crc_failure(status, stdout):
@@ -191,7 +205,7 @@ jobs:
           def synthetic(clean):
               handlers = {"wf_run": row(1, 1)}
               arm_of = {}
-              for index, arm in enumerate(CONTROL + ["Other"]):
+              for index, arm in enumerate(CONTROL_ARMS + ["Other"]):
                   symbol = f"wf_run.arm.{index}"
                   arm_of[symbol] = arm
                   handlers[symbol] = row() if clean or arm == "Other" else row(1, 1)
@@ -213,6 +227,23 @@ jobs:
               two_pushes["handlers"]["wf_run"] = row(2, 2)
               assert evaluate(two_pushes, synthetic(False)), "two boundary saves passed"
               assert evaluate(synthetic(True), synthetic(True)), "a base without saves passed"
+              one_family_clean = synthetic(False)
+              for symbol, arm in one_family_clean["arm_of"].items():
+                  if arm in CONTROL["Sub"]:
+                      one_family_clean["handlers"][symbol] = row()
+              assert evaluate(synthetic(True), one_family_clean), "a base family without saves passed"
+              one_arm_enough = synthetic(False)
+              one_arm_enough["handlers"]["wf_run.arm.3"] = row()
+              assert not evaluate(synthetic(True), one_arm_enough), "a family with one saving arm was refused"
+              annotation = []
+              real_print = print
+              try:
+                  import builtins
+                  builtins.print = lambda *args, **kwargs: annotation.append(" ".join(map(str, args)))
+                  annotate("notice", "t", ["a%b", "c"])
+              finally:
+                  builtins.print = real_print
+              assert annotation == ["::notice title=t::a%25b%0Ac"], annotation
               assert rbp_counts("  1: push %rbp\n  2: pop %rbp\n") == (1, 1)
               assert rbp_counts("  1: push %rbx\n") == (0, 0)
               assert tail_copies("  1: mov %r10,%rax\n  2: jmp *%rax\n") == 1
@@ -240,24 +271,28 @@ jobs:
                   candidate = report(out / "candidate")
                   base = report(out / "base")
                   (out / "report.json").write_text(json.dumps({"candidate": candidate, "base": base}, indent=1))
-                  names = {"candidate": candidate, "base": base}
+                  reports = {"candidate": candidate, "base": base}
                   lines = []
-                  for kind, rep in names.items():
+                  for kind, rep in reports.items():
                       total = sum(r["instructions"] for n, r in rep["handlers"].items() if n != "wf_run")
                       copies = sum(r["tail_copies"] for n, r in rep["handlers"].items() if n != "wf_run")
                       saves = sum(1 for n, r in rep["handlers"].items() if n != "wf_run" and (r["rbp_pushes"] or r["rbp_pops"]))
                       lines.append(f"{kind}: {len(rep['handlers']) - 1} handlers, {total} instructions, "
                                    f"{saves} handlers with %rbp saves, {copies} tail-jump register copies")
-                  for arm in CONTROL:
-                      for kind, rep in names.items():
+                  for arm in CONTROL_ARMS:
+                      for kind, rep in reports.items():
                           sym = {a: s for s, a in rep["arm_of"].items()}[arm]
                           r = rep["handlers"][sym]
                           lines.append(f"{kind} {arm} ({sym}): {r['instructions']} instructions, "
                                        f"{r['rbp_pushes']} push/{r['rbp_pops']} pop of %rbp, {r['tail_copies']} tail copies")
+                  boundary = candidate["handlers"]["wf_run"]
+                  lines.append(f"candidate boundary wf_run: {boundary['instructions']} instructions, "
+                               f"{boundary['rbp_pushes']} push/{boundary['rbp_pops']} pop of %rbp")
                   failures = evaluate(candidate, base)
-                  lines += failures or ["no forbidden instruction in the candidate; the control fails on the base as required"]
+                  lines += failures[:40] or ["no forbidden instruction in the candidate; the control fails on the base as required"]
                   (out / "machine-code-check.txt").write_text("\n".join(lines) + "\n")
                   print("\n".join(lines))
+                  annotate("error" if failures else "notice", "machine-code-check", lines)
                   if failures:
                       raise SystemExit(1)
               elif command == "crc":
@@ -268,6 +303,8 @@ jobs:
                   (out / "coremark.stdout.txt").write_text(result.stdout)
                   print(result.stdout, end="")
                   failure = crc_failure(result.returncode, result.stdout)
+                  crc_lines = [line for line in result.stdout.splitlines() if re.search(r"crc|Iterations|Total time", line)]
+                  annotate("error" if failure else "notice", "coremark-crc", [failure or "CRCs as recorded"] + crc_lines[:12])
                   if failure:
                       raise SystemExit(failure)
                   print("CoreMark 2000-iteration CRC oracle passed")

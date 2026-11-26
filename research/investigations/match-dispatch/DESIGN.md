@@ -1986,3 +1986,17 @@ runs the 2000-iteration CoreMark with its four CRCs. The timing uses
 same interpreter built by the candidate and the merge-base compilers and a
 byte copy of the base as the control, on the 14900K, the interval rule and
 noise floor of its README, and CPU time (user plus system) from its perf group.
+
+**Probe cost, measured on 2026-11-26.** The register probe is one more
+`clang -x ir -S -O2` of a small module in every process that reads the
+toolchain facts, on x86-64 hosts that accept `preserve_nonecc`. On the Linux
+x86-64 runner of the fast workflow (LLVM 22,
+[run 45799614045](https://github.com/Ming-Research/Whitefoot/actions/runs/45799614045),
+one run, five calls of each probe in a process that had already prepared the
+toolchain), the register probe took 14.8 to 22.0 ms (median 20.6 ms), against
+13.8 to 18.7 ms for the `preserve_nonecc` probe, 11.6 to 18.9 ms for the
+no-capture probe and 12.9 to 17.1 ms for the `llvm.coro.end` probe, and the
+first call of `prepare_toolchain`, which runs all four, took 73 ms. The register
+probe is therefore about a quarter of the facts' start-up cost and 15 to 22 ms
+for each compiler process; this is a single measurement and a bound on the
+order of magnitude, not a distribution.
