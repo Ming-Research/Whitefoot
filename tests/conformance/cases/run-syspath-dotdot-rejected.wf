@@ -1,0 +1,54 @@
+alias Args = std::text::Args;
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias arg_get = std::text::arg_get;
+alias close_directory = std::fs::close_directory;
+alias exit_status = std::process::exit_status;
+alias relative_path = std::fs::relative_path;
+
+fn rejects(args: &Args, position: u64) -> result: Bool reads(args) {
+  match arg_get(args: args, position: position) {
+    Ok(value: text) => {
+      match relative_path(value: move text) {
+        Ok(value: path) => {
+          return False();
+        }
+        Err(error: rejected) => {
+          return True();
+        }
+      }
+    }
+    Err(error: absent) => {
+      return False();
+    }
+  }
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "The ordinary path library returns PathInvalid for a path with a component .. wherever the component stands: after a component, alone, first and last, so no RelativePath leaves its directory by a parent step. The arranged paths are ./inner/../inner/fixture.txt, .., ../outside.txt and inner/..; the exit status names the first one accepted.";
+  let Inputs(args: args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
+  close_directory(factory: &entry_factory, directory: move unused_cwd);
+  let middle = rejects(args: &args, position: 1_u64);
+  if middle {
+  } else {
+    return exit_status(code: 10_u8);
+  }
+  let alone = rejects(args: &args, position: 2_u64);
+  if alone {
+  } else {
+    return exit_status(code: 11_u8);
+  }
+  let first = rejects(args: &args, position: 3_u64);
+  if first {
+  } else {
+    return exit_status(code: 12_u8);
+  }
+  let last = rejects(args: &args, position: 4_u64);
+  if last {
+  } else {
+    return exit_status(code: 13_u8);
+  }
+  return exit_status(code: 0_u8);
+}
