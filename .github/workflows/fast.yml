@@ -11,6 +11,10 @@
 # A test is named by the name libtest gives it in `cargo test`'s output, the
 # name its JUnit result gives it: its module path and function joined by
 # `::`, such as `programs::wfgrep::wfgrep_searches_a_real_tree_and_agrees_with_grep`.
+# One conformance case is named `conformance/<id>`, its id in
+# tests/conformance/manifest.jsonl: the corpus test then walks only the cases
+# named (WHITEFOOT_CONFORMANCE_CASES), after the other tests named, and each
+# is one test of the results.
 # The job `tests` builds the compiler's test binaries as the gate does (the
 # `gate` profile; the library's tests, the CLI's and the corpus harness) and
 # runs in each exactly the tests that have one of the names
@@ -27,18 +31,36 @@
 # with no testcase and an error; and a step of a job's own that failed beside
 # its tests as a testsuite of the job's name with an error naming the step.
 # libtest gives no test's time on stable Rust, so no testcase has one, and the
-# workflow takes no time limit for one test: a job stops at its own limit.
+# workflow takes no time limit for one test.
 #
-# Every job runs on the owner's own machine, the self-hosted runner `14900k`,
-# and not on GitHub's machines. An agent waits for this workflow each time it
-# asks for tests, so a run builds again only what changed. The machine runs
-# several runners at once. Each runner keeps its own checkout between runs,
-# and with it `compiler/target`, which the `gate` profile builds
-# incrementally (compiler/Cargo.toml), so no step sets CARGO_INCREMENTAL. The
-# runners share one home, so the crates cargo fetched stay there too. A
-# checkout leaves these in place (`clean: false`), and the step after it
-# clears everything else the last run left. A runner's first run builds
-# everything.
+# The engine gives the run a time for all the tests it names
+# (`budget_seconds`). The tests run in order, the named Rust tests first and
+# the named cases after, until that time is used up; then the test binary
+# running is stopped (TERM to its process group, KILL 10 seconds later) and
+# each named test it had not finished is said as stopped for time, and each
+# not yet started as not run for time (.github/junit.py). libtest cannot stop
+# one test of a binary, so every unfinished test of the binary running then
+# is said as stopped. The building of the tests is not in that time. The time
+# limits of the step that runs them and of the job are the inputs
+# `tests_step_minutes` and `tests_job_minutes`, whose defaults below are the
+# values a run of the engine takes.
+#
+# Every job that builds or tests runs on the owner's own machine, the
+# self-hosted runner `14900k`, and not on GitHub's machines. An agent waits for
+# this workflow each time it asks for tests, so a run builds again only what
+# changed. The machine runs several runners at once, all as one user with one
+# home, so the crates cargo fetched stay there. The job `tests` keeps its build
+# for each work of the engine (`work`), not for each runner: in
+# $HOME/fast-state/Whitefoot/<work>/, the commit's sources and the target
+# directory the `gate` profile builds incrementally (compiler/Cargo.toml), so
+# no step sets CARGO_INCREMENTAL. A work's first run starts from a copy of
+# main's build, which fast-state.yml keeps after each push to main, and a
+# directory no run has used for a day is removed (.github/fast-state.sh). A
+# build takes at most CARGO_BUILD_JOBS jobs where the runner's service sets
+# it. The jobs `static` and `runtime` keep the runner's own checkout and its
+# `compiler/target` between runs. A checkout leaves these in place
+# (`clean: false`), and the step after it clears everything else the last run
+# left.
 #
 # The machine has its own tools, and a job sets up nothing: it puts cargo's
 # directory on the path, since a runner service starts without the login
@@ -61,7 +83,8 @@
 # another holds it. Several runners of the machine run jobs at once, so each
 # job takes its own lock instead (WHITEFOOT_CHECK_LOCK_DIR), under the job's
 # temporary directory. A timing workflow on this machine is therefore not kept
-# apart from this one.
+# apart from this one. Two runs of one work take turns at its directory by
+# its own lock, which .github/fast-state.sh takes.
 #
 # It runs only by hand, which only someone who may write to the repository can
 # ask for. The repository is public, and a trigger by a pull request would run
@@ -97,6 +120,27 @@ on:
           ["runtime"] or both. Empty or [] for none
         required: false
         default: '[]'
+      budget_seconds:
+        description: >-
+          The seconds all the named tests may take together, a whole number; empty for no such limit
+        required: false
+        default: ''
+      work:
+        description: >-
+          The number of the engine's work the run is for, whose build it keeps; empty for a run asked
+          for by a person
+        required: false
+        default: ''
+      # The time limits, here and nowhere else. The engine does not send them,
+      # so a run of the engine takes these defaults.
+      tests_step_minutes:
+        description: The minutes the step that runs the named tests may take
+        required: false
+        default: '15'
+      tests_job_minutes:
+        description: The minutes the job `tests` may take, its build included
+        required: false
+        default: '20'
 
 permissions:
   contents: read
@@ -112,8 +156,7 @@ jobs:
   tests:
     if: ${{ inputs.tests != '' }}
     runs-on: [self-hosted, 14900k]
-    # A runner's first run builds the whole compiler and its tests.
-    timeout-minutes: 40
+    timeout-minutes: ${{ fromJSON(inputs.tests_job_minutes) }}
     steps:
       # The whole history, as the job `static` fetches it: the runners keep
       # their checkouts, and a shallow fetch here would make the next full
@@ -125,6 +168,7 @@ jobs:
           clean: false
           persist-credentials: false
 
+      # `compiler/target` is the job `static`'s, which shares the checkout.
       - name: Clear what the last run left
         run: git clean -ffdxq -e /compiler/target/
 
@@ -135,7 +179,7 @@ jobs:
           echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
           echo "WHITEFOOT_CHECK_LOCK_DIR=$RUNNER_TEMP/check-lock" >> "$GITHUB_ENV"
           missing=
-          for tool in /usr/bin/clang ld.lld cargo rustc perl python3; do
+          for tool in /usr/bin/clang ld.lld cargo rustc perl python3 flock; do
             command -v "$tool" >/dev/null || missing="$missing $tool"
           done
           if [ -n "$missing" ]; then
@@ -150,6 +194,7 @@ jobs:
             exit 1
           fi
           (cd compiler && rustc --version && cargo --version)
+          echo "CARGO_BUILD_JOBS: ${CARGO_BUILD_JOBS:-not set, so as many as cargo chooses}"
           pattern=$(cat /proc/sys/kernel/core_pattern)
           echo "core_pattern: $pattern"
           case $pattern in
@@ -157,33 +202,56 @@ jobs:
           esac
 
       # One name a line, or names apart by white space where the input holds no
-      # line break; each trimmed and listed in the log. A name that is not the
-      # form of a libtest name, words of letters, digits and `_` joined by
-      # `::`, is no test's name: it is said, and not given to cargo.
+      # line break; each trimmed and listed in the log. A name that is the form
+      # of a libtest name, words of letters, digits and `_` joined by `::`, is
+      # given to cargo; one that is `conformance/` and a case's id, of
+      # lowercase letters, digits and `-`, is given to the corpus test. Any
+      # other is no test's name: it is said, and given to neither.
       - name: Read the names
         id: names
         env:
           TESTS: ${{ inputs.tests }}
+          BUDGET: ${{ inputs.budget_seconds }}
         run: |
           set -f
           if [[ $TESTS == *$'\n'* ]]; then mapfile -t given <<< "$TESTS"; else read -ra given <<< "$TESTS"; fi
           : > "$RUNNER_TEMP/names"
+          : > "$RUNNER_TEMP/cases"
+          : > "$RUNNER_TEMP/named"
           for n in "${given[@]}"; do
             n=$(sed 's/^[[:space:]]*//; s/[[:space:]]*$//' <<< "$n")
             [ -n "$n" ] || continue
             if [[ $n =~ ^[A-Za-z_][A-Za-z0-9_]*(::[A-Za-z_][A-Za-z0-9_]*)*$ ]]; then
               echo "Named: $n"
               printf '%s\n' "$n" >> "$RUNNER_TEMP/names"
+            elif [[ $n =~ ^conformance/[a-z0-9][a-z0-9-]*$ ]]; then
+              echo "Named the case: $n"
+              printf '%s\n' "${n#conformance/}" >> "$RUNNER_TEMP/cases"
             else
-              echo "No test is named $n: a test's name is words of letters, digits and _ joined by ::"
+              echo "No test is named $n: a test's name is words of letters, digits and _ joined by ::, or conformance/ and a case's id"
+              continue
             fi
+            printf '%s\n' "$n" >> "$RUNNER_TEMP/named"
           done
-          if [ -s "$RUNNER_TEMP/names" ]; then echo "any=true" >> "$GITHUB_OUTPUT"; else echo "any=false" >> "$GITHUB_OUTPUT"; fi
+          if [ -s "$RUNNER_TEMP/named" ]; then echo "any=true" >> "$GITHUB_OUTPUT"; else echo "any=false" >> "$GITHUB_OUTPUT"; fi
+          if [ -n "$BUDGET" ] && ! [[ $BUDGET =~ ^[0-9]+$ ]]; then
+            echo "::error::budget_seconds is a whole number of seconds, not $BUDGET"
+            exit 1
+          fi
+          echo "The tests' time: ${BUDGET:-no limit}${BUDGET:+ s}"
 
       # Into the home the runners share, where a crate fetched before stays.
       - name: Fetch locked compiler dependencies
         if: ${{ steps.names.outputs.any == 'true' }}
         run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+
+      # The work's own directory, at the commit to test, held until the job
+      # ends; FAST_STATE and CARGO_TARGET_DIR name it for the steps after.
+      - name: Take the work's build
+        if: ${{ steps.names.outputs.any == 'true' }}
+        env:
+          WORK: ${{ inputs.work }}
+        run: bash .github/fast-state.sh take "$WORK" "$GITHUB_WORKSPACE"
 
       # Built apart from the run, so that a test binary that does not compile is
       # told from a test that fails; cargo lists each binary it built
@@ -191,23 +259,74 @@ jobs:
       - name: Build the tests
         id: build
         if: ${{ steps.names.outputs.any == 'true' }}
+        working-directory: ${{ env.FAST_STATE }}/src
         run: |
           set -o pipefail
-          perl .github/run-check.pl fast/test-build \
-            cargo test --manifest-path compiler/Cargo.toml --profile gate --lib --bins --test '*' \
-            --no-run --locked --offline 2>&1 | tee "$RUNNER_TEMP/tests.log"
+          perl .github/run-check.pl fast/test-build bash .github/fast-state.sh build \
+            2>&1 | tee "$RUNNER_TEMP/tests.log"
 
+      # libtest lists the binary that holds each name first, out of the tests'
+      # time, so that a stop for time can say which named tests it stopped. Then
+      # each run has what is left of the time (WHITEFOOT_CHECK_TIMEOUT), and a
+      # run stopped for it ends 124 and leaves its seconds in `budget-out`.
       - name: Run the named tests
         id: run
         if: ${{ steps.names.outputs.any == 'true' }}
+        timeout-minutes: ${{ fromJSON(inputs.tests_step_minutes) }}
+        working-directory: ${{ env.FAST_STATE }}/src
+        env:
+          BUDGET: ${{ inputs.budget_seconds }}
+          WHITEFOOT_CHECK_KILL_AFTER: 10
         run: |
           set -o pipefail
           mapfile -t names < "$RUNNER_TEMP/names"
+          mapfile -t cases < "$RUNNER_TEMP/cases"
           ulimit -c 0
-          perl .github/run-check.pl fast/tests \
-            cargo test --manifest-path compiler/Cargo.toml --profile gate --lib --bins --test '*' \
-            --no-fail-fast --locked --offline -- --exact --include-ignored "${names[@]}" \
-            2>&1 | tee -a "$RUNNER_TEMP/tests.log"
+          tests=(cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline)
+          if [ ${#names[@]} -gt 0 ]; then
+            perl .github/run-check.pl fast/list "${tests[@]}" --lib --bins --test '*' \
+              -- --list --exact --include-ignored "${names[@]}" > "$RUNNER_TEMP/list.log" 2>&1 \
+              || echo "::warning::The tests could not be listed, so a stop for time cannot say which it stopped"
+          fi
+          deadline=
+          if [ -n "$BUDGET" ]; then deadline=$(( $(date +%s) + BUDGET )); fi
+          failed=0
+          # Runs one command in what is left of the time, if any is.
+          timed() {
+            local log=$1; shift
+            if [ -n "$deadline" ]; then
+              local left=$(( deadline - $(date +%s) ))
+              if [ "$left" -le 0 ]; then
+                echo "The tests' $BUDGET s are used up: $*"
+                echo "$BUDGET" > "$RUNNER_TEMP/budget-out"
+                failed=1
+                return
+              fi
+              export WHITEFOOT_CHECK_TIMEOUT=$left
+            fi
+            local status=0
+            perl .github/run-check.pl "$@" 2>&1 | tee -a "$log" || status=$?
+            if [ "$status" -eq 124 ] && [ -n "$deadline" ]; then
+              echo "The tests' $BUDGET s ran out"
+              echo "$BUDGET" > "$RUNNER_TEMP/budget-out"
+            fi
+            [ "$status" -eq 0 ] || failed=1
+          }
+          if [ ${#names[@]} -gt 0 ]; then
+            timed "$RUNNER_TEMP/tests.log" fast/tests "${tests[@]}" --lib --bins --test '*' \
+              --no-fail-fast -- --exact --include-ignored "${names[@]}"
+          fi
+          if [ ${#cases[@]} -gt 0 ]; then
+            export WHITEFOOT_CONFORMANCE_CASES="${cases[*]}"
+            timed "$RUNNER_TEMP/cases.log" fast/cases \
+              "${tests[@]}" --test corpus -- --exact --nocapture \
+              conformance::adapter::the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path
+          fi
+          exit "$failed"
+
+      - name: Give back the work's build
+        if: ${{ always() }}
+        run: bash .github/fast-state.sh release
 
       # Where no name was the form of a test's, nothing ran and the file holds
       # an empty suite: the engine says of each name that no test has it.
@@ -222,9 +341,12 @@ jobs:
             python3 -B .github/junit.py job --job tests --out "$RUNNER_TEMP/junit/tests.xml"
             exit 0
           fi
+          more=(--named "$RUNNER_TEMP/named" --listed "$RUNNER_TEMP/list.log")
+          if [ -s "$RUNNER_TEMP/cases" ]; then more+=(--cases-log "$RUNNER_TEMP/cases.log"); fi
+          if [ -s "$RUNNER_TEMP/budget-out" ]; then more+=(--budget-out "$(cat "$RUNNER_TEMP/budget-out")"); fi
           python3 -B .github/junit.py job --job tests --out "$RUNNER_TEMP/junit/tests.xml" \
             --log "$RUNNER_TEMP/tests.log" --tests-step "Run the named tests" \
-            --step "$BUILD" "Build the tests" --step "$RUN" "Run the named tests"
+            --step "$BUILD" "Build the tests" --step "$RUN" "Run the named tests" "${more[@]}"
 
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
@@ -368,12 +490,13 @@ jobs:
 
   # The results of every job that ran, in the one artifact the engine reads.
   # Where no job kept results there is nothing to put together, and the
-  # engine says the run uploaded none. It needs no checkout and no root, and
-  # runs on the same machine as the jobs before it.
+  # engine says the run uploaded none. It needs no checkout and no root, so
+  # it runs on GitHub's machine, where it waits seconds for a runner and not
+  # minutes behind the 14900K's queue.
   results:
     needs: [tests, static, runtime]
     if: ${{ !cancelled() }}
-    runs-on: [self-hosted, 14900k]
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/upload-artifact/merge@v4

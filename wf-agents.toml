@@ -30,7 +30,7 @@ research = "research/"
 # tool follow with the name of this setting. Only the compiler's Rust tests
 # have names. Whitefoot has no workflow that times measurements the way the
 # engine asks, so it declares no `measure_names` and no [ci.measure].
-test_names = "a Rust test of the compiler by its full name as `cargo test` prints it, its module path and function joined by `::`, such as `programs::wfgrep::wfgrep_searches_a_real_tree_and_agrees_with_grep`, with no test binary; a module, a binary or a part of a name names none; the conformance cases all run inside the one test `conformance::adapter::the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path`, so a case has no name of its own; the C runtime's tests and the static checks have no names and run as the checks `runtime` and `static`"
+test_names = "a Rust test of the compiler by its full name as `cargo test` prints it, its module path and function joined by `::`, such as `programs::wfgrep::wfgrep_searches_a_real_tree_and_agrees_with_grep`, with no test binary; a module, a binary or a part of a name names none; one conformance case as `conformance/` and its id in `tests/conformance/manifest.jsonl`, such as `conformance/type11-pos-formal-written-length-publication`, while `conformance::adapter::the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path` runs every case, which takes some minutes; the C runtime's tests and the static checks have no names and run as the checks `runtime` and `static`"
 
 # Where the tests are, as git pathspecs: the files a line that changes only
 # the tests may change. They are the compiler's Rust test modules (each
@@ -74,21 +74,28 @@ expected = ["tests/conformance/manifest.jsonl"]
 # as checks.
 workflow = "fast.yml"
 # On the owner's own machine, the self-hosted runner `14900k`. An agent waits
-# for this workflow each time it asks for tests, so it must be quick: each
-# runner there keeps its checkout, the compiler's build and the fetched crates
-# between runs, and builds again only what changed, where a GitHub machine
-# builds everything from a fresh checkout each time. The workflow runs only
-# by hand, since the repository is public.
+# for this workflow each time it asks for tests, so it must be quick: the
+# machine keeps each work's build of the tests and the fetched crates between
+# runs, and builds again only what changed, where a GitHub machine builds
+# everything from a fresh checkout each time. The workflow runs only by hand,
+# since the repository is public.
 runner = "14900k"
 checks = ["static", "runtime"]
 # The tests run under libtest, as the gate runs them, which on stable Rust
 # gives no test's time and cannot stop one test; so the workflow takes no
-# limit for one test, and a job stops at its own time limit.
+# limit for one test.
 test_stop_input = ""
-# A run not complete by then is cancelled, and said as what it found. A
-# runner's first run builds the test binaries from nothing, which takes some
-# minutes.
-too_long = "1h"
+# The input that takes the seconds all the named tests of a run may take: the
+# workflow stops the tests when they are used up and says which it stopped and
+# which it did not start.
+budget_input = "budget_seconds"
+# The input that takes the number of the work the run is for, whose own build
+# the workflow keeps on the machine.
+work_input = "work"
+# A run not complete by then is cancelled, and said as what it found. The
+# workflow's job that builds and runs the tests stops at 20 minutes
+# (`tests_job_minutes` in fast.yml).
+too_long = "25m"
 
 [ci.full]
 # Every check a merge needs (AGENTS.md, "Branch and main boundary" and
