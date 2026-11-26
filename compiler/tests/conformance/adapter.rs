@@ -635,7 +635,12 @@ fn a_shared_proof_receipt_cache_reaches_every_declared_source_verdict() {
 /// is shown to change no verdict. `step` takes every step-th case, for a
 /// sample. The summary is written to the process's standard error directly,
 /// past the test harness's capture, so the job log holds it.
+static E1_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn e1_collect(step: usize, programs: bool) {
+    // The counter file and the label are process-wide: E1 tests run one at
+    // a time.
+    let _serial = E1_SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let scratch = std::env::var_os("WHITEFOOT_SCRATCH_ROOT")
         .map_or_else(std::env::temp_dir, PathBuf::from)
         .join(format!("e1-{}", std::process::id()));
@@ -693,6 +698,12 @@ fn e1_collect(step: usize, programs: bool) {
         // files (compiler/tests/programs/raw_deflate*.rs).
         let programs_root = root.join("tests/programs");
         let library = ["raw_deflate.wf", "raw_deflate_dynamic.wf", "raw_deflate_dynamic_decode.wf"];
+        // Container programs their tests compile with a companion file
+        // (compiler/tests/programs/containers.rs).
+        let companions = [
+            ("containers/slab-program.wf", "containers/slab-membership-program.wf"),
+            ("containers/indexed-membership-program.wf", "containers/indexed-store.wf"),
+        ];
         let mut files: Vec<String> = Vec::new();
         for directory in ["", "compute", "containers", "parallel", "windows"] {
             let mut found: Vec<String> = std::fs::read_dir(programs_root.join(directory))
@@ -704,6 +715,7 @@ fn e1_collect(step: usize, programs: bool) {
                     if directory.is_empty() { name } else { format!("{directory}/{name}") }
                 })
                 .filter(|name| !library.contains(&name.as_str()))
+                .filter(|name| !companions.iter().any(|(_, companion)| companion == name))
                 .collect();
             found.sort();
             files.extend(found);
@@ -713,6 +725,11 @@ fn e1_collect(step: usize, programs: bool) {
             let mut group: Vec<String> = Vec::new();
             if name.starts_with("raw_deflate_") && !name.contains('/') {
                 group.extend(library.iter().map(|&file| file.to_owned()));
+            }
+            for (driver, companion) in companions {
+                if name == driver {
+                    group.push(companion.to_owned());
+                }
             }
             group.push(name.clone());
             let sources: Vec<(String, Vec<u8>)> = group
@@ -872,6 +889,7 @@ fn e1_full() {
 #[test]
 #[ignore = "E1 experiment: run by name"]
 fn e1_adapter() {
+    let _serial = E1_SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let scratch = std::env::var_os("WHITEFOOT_SCRATCH_ROOT")
         .map_or_else(std::env::temp_dir, PathBuf::from)
         .join(format!("e1-adapter-{}", std::process::id()));

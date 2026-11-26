@@ -167,6 +167,7 @@ VARIANTS = {
 
 
 def record(stage, round_, variant, row):
+    row["loadavg"] = Path("/proc/loadavg").read_text().split()[:3]
     with open(OUT / "times.jsonl", "a") as handle:
         handle.write(json.dumps({"stage": stage, "round": round_, "variant": variant, **row}) + "\n")
     log(stage, round_, variant, json.dumps(row))
@@ -320,6 +321,19 @@ def summary():
             handle.write("```\n" + text + "\n```\n")
 
 
+def everything():
+    """Every stage under one hold of the host's check lock."""
+    prepare()
+    redis()
+    count()
+    rounds()
+    if os.environ.get("E1_MULTICORE") == "1":
+        multicore()
+    profile()
+    summary()
+
+
 if __name__ == "__main__":
     {"prepare": prepare, "redis": redis, "count": count, "rounds": rounds,
-     "multicore": multicore, "profile": profile, "summary": summary}[sys.argv[1]]()
+     "multicore": multicore, "profile": profile, "summary": summary,
+     "all": everything}[sys.argv[1]]()

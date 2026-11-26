@@ -50,28 +50,19 @@ jobs:
           cat /proc/sys/kernel/perf_event_paranoid || true
           uptime
 
-      - name: Build compilers
+      - name: Every stage under the host's check lock
         run: |
           unset WHITEFOOT_TIME_BUDGET_RECORD
-          perl .github/run-check.pl e1-time/prepare python3 -B research/investigations/derivation-ceiling/e1_time.py prepare
-
-      - name: Fetch Redis
-        run: python3 -B research/investigations/derivation-ceiling/e1_time.py redis
-
-      - name: Count lines
-        run: |
-          unset WHITEFOOT_TIME_BUDGET_RECORD
-          perl .github/run-check.pl e1-time/count python3 -B research/investigations/derivation-ceiling/e1_time.py count
-
-      - name: One-core rounds
-        run: |
-          unset WHITEFOOT_TIME_BUDGET_RECORD
-          perl .github/run-check.pl e1-time/rounds python3 -B research/investigations/derivation-ceiling/e1_time.py rounds
-
-      - name: Profile
-        run: |
-          unset WHITEFOOT_TIME_BUDGET_RECORD
-          perl .github/run-check.pl e1-time/profile python3 -B research/investigations/derivation-ceiling/e1_time.py profile
+          # Other runners on this host hold the lock for their own heavy
+          # commands; wait for it rather than share the processors.
+          for attempt in $(seq 1 240); do
+            status=0
+            perl .github/run-check.pl e1-time/all python3 -B research/investigations/derivation-ceiling/e1_time.py all || status=$?
+            if [ "$status" -ne 75 ]; then exit "$status"; fi
+            echo "lock held elsewhere (attempt $attempt); waiting"
+            sleep 60
+          done
+          exit 75
 
       - name: Summary
         if: always()
