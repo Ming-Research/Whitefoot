@@ -792,6 +792,47 @@ pub(crate) struct IndexCaptureSubstitution {
     pub(crate) right_identity: DerivationId,
 }
 
+impl DerivationLedger {
+    /// E1 (`research/investigations/derivation-ceiling`): the kinds of step
+    /// a derivation rests on, each source step with its event's kind, sorted
+    /// and deduplicated. Instrument code of an unmerged experiment branch.
+    pub(crate) fn e1_ancestry(&self, root: DerivationId) -> Vec<String> {
+        let mut tags = std::collections::BTreeSet::new();
+        let mut seen = std::collections::BTreeSet::new();
+        let mut pending = vec![root];
+        while let Some(id) = pending.pop() {
+            if !seen.insert(id.0) {
+                continue;
+            }
+            let Some(node) = self.nodes.get(id.0 as usize) else {
+                continue;
+            };
+            let event = match node {
+                DerivationNode::SourceBound { event, .. }
+                | DerivationNode::SourceDistinct { event, .. }
+                | DerivationNode::SourceGoal { event, .. }
+                | DerivationNode::OperationFact { event, .. } => Some(*event),
+                _ => None,
+            };
+            let name = format!("{node:?}");
+            let name = name
+                .split([' ', '{', '('])
+                .next()
+                .unwrap_or_default()
+                .to_owned();
+            let tag = match event.and_then(|event| self.events.get(event.0 as usize)) {
+                Some(event) => format!("{name}:{:?}", event.kind),
+                None => name,
+            };
+            if tag != "ImplicitBound" {
+                tags.insert(tag);
+            }
+            node.for_each_parent(|parent| pending.push(parent));
+        }
+        tags.into_iter().collect()
+    }
+}
+
 impl DerivationNode {
     pub(super) fn for_each_parent(&self, mut visit: impl FnMut(DerivationId)) {
         match self {

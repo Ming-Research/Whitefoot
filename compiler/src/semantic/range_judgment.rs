@@ -489,6 +489,7 @@ fn e1_shadow<'p>(
                 }
                 (walk::DeferredAnswer::Pending, Some(_)) => "pending".to_owned(),
             };
+            let route = e1_route(function, index);
             rows.push(e1::Row {
                 config,
                 scope: scope_name,
@@ -499,12 +500,29 @@ fn e1_shadow<'p>(
                 kind: e1_kind(&record.subject),
                 site: format!("{:?}", record.site),
                 ordinary,
-                route: "-".to_owned(),
+                route,
                 shadow,
                 acc,
                 walk_nanos: nanos,
             });
         }
+        // The batch's own count of records, which the analysis checks its
+        // record rows against.
+        rows.push(e1::Row {
+            config,
+            scope: scope_name,
+            prelude: is_prelude,
+            function: &function.name,
+            record: "total".to_owned(),
+            rule: "-".to_owned(),
+            kind: "records-total".to_owned(),
+            site: function.obligations.len().to_string(),
+            ordinary: "-",
+            route: "-".to_owned(),
+            shadow: "-".to_owned(),
+            acc: None,
+            walk_nanos: nanos,
+        });
         e1::write(&rows);
     }
 }
@@ -542,5 +560,42 @@ fn e1_kind(subject: &super::obligations::ObligationSubject) -> String {
         ObligationSubject::LoopInvariant { .. } => "loop-invariant".to_owned(),
         ObligationSubject::SourceProof => "source-proof".to_owned(),
         ObligationSubject::Postcondition { .. } => "postcondition".to_owned(),
+    }
+}
+
+/// E1: the kinds of step the ordinary proof of one record rests on.
+fn e1_route(function: &CheckedFunction, index: usize) -> String {
+    use super::obligations::RecordAnswer;
+    let entailment = &function.entailment;
+    let derivation = match entailment.answers.get(index).copied().flatten() {
+        Some(RecordAnswer::Obligation(outcome)) => entailment
+            .obligations
+            .get(outcome)
+            .and_then(|outcome| outcome.derivation),
+        Some(RecordAnswer::CallGoal(outcome)) => entailment
+            .call_goals
+            .get(outcome)
+            .and_then(|outcome| outcome.derivation),
+        Some(RecordAnswer::SourceProof(outcome)) => {
+            return match entailment.source_proofs.get(outcome) {
+                Some(proof) if proof.certificate_written => "certificate".to_owned(),
+                Some(_) => "auto-invariant".to_owned(),
+                None => "-".to_owned(),
+            };
+        }
+        Some(RecordAnswer::LoopInvariant(_)) => return "loop-induction".to_owned(),
+        Some(RecordAnswer::Uninhabited) => return "uninhabited".to_owned(),
+        _ => None,
+    };
+    match derivation {
+        Some(derivation) => {
+            let tags = entailment.derivations.e1_ancestry(derivation);
+            if tags.is_empty() {
+                "implicit".to_owned()
+            } else {
+                tags.join("+")
+            }
+        }
+        None => "-".to_owned(),
     }
 }

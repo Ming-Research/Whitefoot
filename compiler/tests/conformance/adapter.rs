@@ -665,8 +665,29 @@ fn e1_collect(step: usize, programs: bool) {
     }
     let corpus_seconds = started.elapsed().as_secs_f64();
     let mut program_report = String::new();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut probes: Vec<PathBuf> =
+        std::fs::read_dir(root.join("research/investigations/derivation-ceiling/probes"))
+            .expect("probes")
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.extension().is_some_and(|extension| extension == "wf"))
+            .collect();
+    probes.sort();
+    for file in probes {
+        let name = file.file_name().unwrap().to_string_lossy().into_owned();
+        whitefoot::e1::label(&format!("probe:{name}"));
+        let bytes = std::fs::read(&file).expect("probe source");
+        let verdict = check(&[SourceInput::new(&name, &bytes)], CompilerLimits::default());
+        let shown = match &verdict {
+            Ok(()) => "accepted".to_owned(),
+            Err(failure) => {
+                let text = format!("rejected {failure}").replace('\n', " ");
+                text.chars().take(600).collect()
+            }
+        };
+        program_report.push_str(&format!("probe {name} {shown}\n"));
+    }
     if programs {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let mut files: Vec<PathBuf> = std::fs::read_dir(root.join("tests/programs"))
             .expect("tests/programs")
             .filter_map(|entry| entry.ok().map(|entry| entry.path()))
@@ -714,6 +735,31 @@ fn e1_collect(step: usize, programs: bool) {
     let total_seconds = started.elapsed().as_secs_f64();
     let script = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../research/investigations/derivation-ceiling/e1_analyze.py");
+    // The analysis must refuse a file missing one record row.
+    let text = std::fs::read_to_string(&rows).expect("E1 rows");
+    let mut dropped_one = false;
+    let kept: String = text
+        .lines()
+        .filter(|line| {
+            let record = line.split('\t').nth(5).unwrap_or_default();
+            if !dropped_one && record.parse::<usize>().is_ok() {
+                dropped_one = true;
+                return false;
+            }
+            true
+        })
+        .map(|line| format!("{line}\n"))
+        .collect();
+    let dropped = scratch.join("rows-dropped.tsv");
+    std::fs::write(&dropped, kept).expect("E1 dropped copy");
+    let refusal = Command::new("python3")
+        .arg("-B")
+        .arg(&script)
+        .arg(&dropped)
+        .output()
+        .expect("run the E1 analysis on the dropped copy");
+    let refused = refusal.status.code() == Some(2)
+        && String::from_utf8_lossy(&refusal.stdout).contains("record count mismatch");
     let analysis = Command::new("python3")
         .arg("-B")
         .arg(&script)
@@ -721,7 +767,8 @@ fn e1_collect(step: usize, programs: bool) {
         .output()
         .expect("run the E1 analysis");
     let mut report = format!(
-        "E1 BEGIN\ncases {checked} failures {} corpus_seconds {corpus_seconds:.1} total_seconds {total_seconds:.1}\n{}{program_report}{}{}E1 END\n",
+        "E1 BEGIN\ndropped-row check refused: {refused} (exit {:?})\ncases {checked} failures {} corpus_seconds {corpus_seconds:.1} total_seconds {total_seconds:.1}\n{}{program_report}{}{}E1 END\n",
+        refusal.status.code(),
         failures.len(),
         failures.iter().map(|line| format!("FAIL {line}\n")).collect::<String>(),
         String::from_utf8_lossy(&analysis.stdout),
@@ -730,6 +777,7 @@ fn e1_collect(step: usize, programs: bool) {
     report.push('\n');
     let _ = std::io::stderr().write_all(report.as_bytes());
     assert!(failures.is_empty(), "E1 changed verdicts: {failures:?}");
+    assert!(refused, "the E1 analysis accepted a file missing a record row");
     assert!(analysis.status.success(), "E1 analysis failed");
 }
 

@@ -13,15 +13,38 @@ CONFIGS = ("baseline", "remedy", "remedy+join")
 CAP = 1 << 20
 SLOW_NS = 1_000_000_000
 
-ROUTE_ITEMS = {
-    "s7-result-bound": "item 1/2 not recovered",
-    "interval-product": "item 1/2 not recovered",
-    "power-atom": "item 3",
-    "step7-quotient": "item 4",
-    "origin-view": "item 5",
-    "float-decode": "item 6",
-    "certificate-fold": "item 8",
-}
+LINEAR_STEPS = (
+    "SourceBound", "SourceDistinct", "SourceGoal", "TransitiveBound",
+    "StrengthenedBound", "SubsumedBound", "Equality", "DisequalityFromStrictBound",
+    "GoalProjection", "L0Contradiction", "GoalContradiction", "IntegerDomain",
+    "ConversionDomain", "AffineConsequence", "GoalNormalization",
+    "GoalAffineConsequence", "BooleanIntroduction", "BooleanLiteral",
+    "MaterializedBound", "MaterializedDistinct", "MaterializedGoal",
+    "RequirementAffineImage", "IntegerExclusion", "implicit", "auto-invariant",
+    "loop-induction",
+)
+
+
+def route_class(route):
+    """The eight-item row an ordinary proof's steps point to, or None."""
+    tags = set(route.split("+"))
+    names = {tag.split(":")[0] for tag in tags}
+    if names & {"JoinBound", "JoinDistinct", "JoinGoal", "JoinContradiction",
+                "TransportedHeaderRelation"}:
+        return "item 7 not recovered by the join"
+    if "OperationFact" in names:
+        return "item 1/2 (S7 fact) not recovered by the remedy"
+    if "UnsignedDivisionProduct" in names:
+        return "item 4"
+    if names & {"OriginTransport", "OriginEquality", "OriginProjection", "LetOrigin"}:
+        return "item 5"
+    if route == "certificate":
+        return "item 8 candidate (written certificate)"
+    return None
+
+
+def linear_only(route):
+    return all(tag.split(":")[0] in LINEAR_STEPS for tag in route.split("+"))
 
 
 def read(path):
@@ -35,6 +58,8 @@ def read(path):
             "full_nodes", "full_capped", "form_ns", "judge_ns", "full_ns",
             "walk_ns",
         ):
+            if row[column] in ("", None):
+                row[column] = "0"
             row[column] = int(row[column])
         row["product"] = int(row["product"])
     return rows
@@ -72,9 +97,30 @@ def histogram(values, limit=40):
     return " ".join(f"{value}:{counts[value]}" for value in sorted(counts)[:limit])
 
 
+def consistent(rows):
+    """Every batch (one function's shadow walk in one configuration) holds
+    one row per obligation record, as many as its total row states."""
+    totals = {}
+    counted = collections.Counter()
+    for row in rows:
+        if row["kind"] == "records-total":
+            totals[row["batch"]] = int(row["site"])
+        elif row["kind"] != "range-clause":
+            counted[row["batch"]] += 1
+    bad = [batch for batch, total in totals.items() if counted[batch] != total]
+    bad += [batch for batch in counted if batch not in totals]
+    return bad
+
+
 def main(path):
     rows = read(path)
     print(f"rows {len(rows)}")
+    bad = consistent(rows)
+    if bad:
+        print(f"record count mismatch in {len(bad)} batches: {sorted(bad)[:10]}")
+        sys.exit(2)
+    print(f"record counts consistent over {len({row['batch'] for row in rows})} batches")
+    rows = [row for row in rows if row["kind"] != "records-total"]
     by_config = {config: {} for config in CONFIGS}
     duplicates = collections.Counter()
     for row in rows:
@@ -107,6 +153,7 @@ def main(path):
 
     print("\n== criterion (1): ordinary-proved, baseline-unproved")
     classes = collections.Counter()
+    sources = collections.Counter()
     ninth = []
     for k, row in base.items():
         if row["kind"] in ("range-clause", "condition") or row["ordinary"] != "proved":
@@ -120,12 +167,16 @@ def main(path):
             label = "item 1/2 recovered by remedy"
         elif j is not None and proved(j):
             label = "item 7 recovered by join"
-        elif row["route"] in ROUTE_ITEMS:
-            label = ROUTE_ITEMS[row["route"]]
+        elif route_class(row["route"]):
+            label = route_class(row["route"])
         elif shadow.startswith("not-posed"):
             label = "not posed: " + row["kind"].split("#")[0]
         elif shadow.startswith("inconclusive") or shadow in ("unreached", "pending"):
             label = "walk gap: " + shadow
+        elif linear_only(row["route"]):
+            label = "walk gap: linear derivation, facts the walk lacks"
+            sources[tuple(sorted(tag for tag in row["route"].split("+")
+                                 if tag.startswith("Source")))] += 1
         else:
             label = "ninth kind"
             ninth.append(row)
@@ -133,6 +184,9 @@ def main(path):
     for label, count in sorted(classes.items()):
         print(f"  {label:50} {count}")
     print(f"  total {sum(classes.values())}")
+    print("  sources of the linear walk gaps (top 25):")
+    for tags, count in sources.most_common(25):
+        print(f"    {count:6} {'+'.join(tags) or '(none)'}")
     lost = [k for k, row in base.items() if proved(row) and k in remedy and not proved(remedy[k])]
     print(f"  lost under the remedy: {len(lost)}")
     for k in lost[:20]:
@@ -140,7 +194,7 @@ def main(path):
     print(f"  ninth kind rows (first 120 of {len(ninth)}):")
     for row in ninth[:120]:
         print("    NINTH", row["label"], row["function"], row["kind"], row["rule"],
-              row["site"][:120], row["route"], f"n1={row['n1']} atoms={row['atoms']}")
+              row["route"][:200], f"n1={row['n1']} atoms={row['atoms']}")
 
     print("\n== OP-5 conditions (shadow decides more than ordinary?)")
     for config in CONFIGS:
@@ -181,6 +235,19 @@ def main(path):
                 above = sum(1 for row in posed if row[candidate] > value)
                 print(f"      above {value}: {above}", end="")
             print()
+
+    print("\n== criterion (5): probes")
+    probe_keys = sorted({k for config in CONFIGS for k in by_config[config]
+                         if k[0].startswith("probe:") and k[4] != "range-clause"})
+    for k in probe_keys:
+        cells = []
+        for config in CONFIGS:
+            row = by_config[config].get(k)
+            cells.append(f"{config}={row['shadow'] if row else '-'}"
+                         + (f"(n1={row['n1']},n3={row['n3']},cases={row['max_cases']})" if row else ""))
+        first = next(by_config[c][k] for c in CONFIGS if k in by_config[c])
+        print(f"  {k[0][6:]:34} {k[2]:10} {k[4]:24} {first['rule']:10}"
+              f" ordinary={first['ordinary']:10} route={first['route'][:80]} " + " ".join(cells))
 
     print("\n== criterion (3): joins")
     for config in ("remedy", "remedy+join"):

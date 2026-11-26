@@ -358,13 +358,15 @@ pub(crate) struct Row<'a> {
 }
 
 /// The header of the counter file's rows.
-pub const HEADER: &str = "label\tconfig\tscope\tprelude\tfunction\trecord\trule\tkind\tsite\tordinary\troute\tshadow\tqueries\trefuted\troot_refuted\tatoms\tinstances\tn1\tn2\tn3\tmax_cases\tproduct\tbackjump_nodes\tmax_depth\tfull_nodes\tfull_capped\tform_ns\tjudge_ns\tfull_ns\tnotes\twalk_ns";
+pub const HEADER: &str = "label\tconfig\tscope\tprelude\tfunction\trecord\trule\tkind\tsite\tordinary\troute\tshadow\tqueries\trefuted\troot_refuted\tatoms\tinstances\tn1\tn2\tn3\tmax_cases\tproduct\tbackjump_nodes\tmax_depth\tfull_nodes\tfull_capped\tform_ns\tjudge_ns\tfull_ns\tnotes\twalk_ns\tbatch";
 
 pub(crate) fn write(rows: &[Row<'_>]) {
     if rows.is_empty() || !data() {
         return;
     }
     let label = LABEL.lock().expect("E1 label lock").clone();
+    static BATCH: AtomicU64 = AtomicU64::new(0);
+    let batch = BATCH.fetch_add(1, Ordering::Relaxed);
     let mut text = String::new();
     for row in rows {
         let clean = |value: &str| value.replace(['\t', '\n'], " ");
@@ -372,7 +374,7 @@ pub(crate) fn write(rows: &[Row<'_>]) {
         let acc = row.acc.unwrap_or(&default);
         let notes = acc.notes.iter().copied().collect::<Vec<_>>().join(",");
         text.push_str(&format!(
-            "{label}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            "{label}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{batch}\n",
             row.config.name(),
             row.scope,
             u8::from(row.prelude),
