@@ -19,7 +19,16 @@
 # run of this workflow, and a manual run. Any other push, a draft pull
 # request's included, ends after the first job with both checks skipped; the
 # author starts this workflow by hand once, after the review has passed
-# (AGENTS.md, "Checks").
+# (AGENTS.md, "Checks"). They also run every night on main's head.
+#
+# A revision on main is checked whole: a push to main, the nightly run and a
+# manual run on main. Of any other revision the checks run only where its
+# change from its merge base with main touches a path these jobs read, as
+# .github/change-scope.sh decides (AGENTS.md, "Branch and main boundary",
+# item 4). The first job reads both deciding scripts from this workflow's own
+# revision, so that in a run the engine asked for main's copy judges the
+# commit's change. The job named for the decision says it, whether the checks
+# run or not, so that a run that checks nothing passes with its reason.
 #
 # The wf-agents engine runs this workflow as one of its full workflows
 # (`ci.full` of wf-agents.toml), by hand on main's file, giving the commit to
@@ -38,6 +47,9 @@ on:
   push:
   pull_request:
     types: [opened, reopened, ready_for_review]
+  # Every night, on main's head, whole.
+  schedule:
+    - cron: '23 10 * * *'
   workflow_dispatch:
     inputs:
       commit:
@@ -56,8 +68,8 @@ permissions:
 
 # Pushes to one branch share a group, so a later push cancels the run of an
 # earlier head. The opening or reopening of a pull request, the event of
-# marking one ready and a manual run each have a group of their own, marked
-# before the ref so that no branch name can reach it: an opening in the push
+# marking one ready, a manual run and the nightly run each have a group of
+# their own, marked before the ref so that no branch name can reach it: an opening in the push
 # group, created a few seconds after the pull request, could cancel the push
 # run of a newer head and leave it unchecked, and a push that skips must not
 # cancel a manual run.
@@ -67,7 +79,7 @@ permissions:
 # A run the engine asked for has a group of its own, named by its `call`, and
 # is never cancelled: the engine waits for it.
 concurrency:
-  group: io-hosts-${{ inputs.call && format('call-{0}-', inputs.call) || '' }}${{ github.event.action == 'ready_for_review' && 'ready-' || github.event_name == 'pull_request' && 'opened-' || github.event_name == 'workflow_dispatch' && 'manual-' || '' }}${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
+  group: io-hosts-${{ inputs.call && format('call-{0}-', inputs.call) || '' }}${{ github.event.action == 'ready_for_review' && 'ready-' || github.event_name == 'pull_request' && 'opened-' || github.event_name == 'workflow_dispatch' && 'manual-' || github.event_name == 'schedule' && 'nightly-' || '' }}${{ github.head_ref && format('refs/heads/{0}', github.head_ref) || github.ref }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: ${{ !inputs.call }}
 
 env:
@@ -79,33 +91,62 @@ jobs:
   scope:
     name: Choose whether to check
     runs-on: ubuntu-24.04
-    timeout-minutes: 2
+    timeout-minutes: 5
     outputs:
       run: ${{ steps.scope.outputs.run }}
+      needed: ${{ steps.scope.outputs.needed }}
+      why: ${{ steps.scope.outputs.why }}
     steps:
+      # The deciding scripts, from this workflow's own revision.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github
+          persist-credentials: false
+      # The revision checked, with the history of every branch, for its change
+      # from main.
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.commit || github.event.pull_request.head.sha || github.sha }}
+          path: checked
+          fetch-depth: 0
           sparse-checkout: .github
-      # A failed query fails the run rather than quietly skipping the checks.
+          persist-credentials: false
+      # A failed query or a failed decision fails the run rather than quietly
+      # skipping the checks.
       - name: Choose whether to check
         id: scope
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ ! -f .github/gate-scope.sh ]; then
-            echo "::error::.github/gate-scope.sh is missing from the checked-out head: the branch was cut from main before main gained it. Merge main into the branch and push again."
-            exit 1
-          fi
           scope=$(sh .github/gate-scope.sh)
           echo "$scope"
           echo "$scope" >> "$GITHUB_OUTPUT"
           echo "$scope" | sed -n 's/^reason=/io-hosts: /p' >> "$GITHUB_STEP_SUMMARY"
+          if [ "$(echo "$scope" | sed -n 's/^run=//p')" = true ]; then
+            needed=$(cd checked && sh ../.github/change-scope.sh io-hosts)
+            echo "$needed"
+            echo "$needed" >> "$GITHUB_OUTPUT"
+            echo "$needed" | sed -n 's/^why=/io-hosts: /p' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # The decision of .github/change-scope.sh as this job's name, which the
+  # engine reads beside each job's result.
+  reason:
+    name: ${{ needs.scope.outputs.why }}
+    needs: scope
+    if: needs.scope.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Say what the change asks of this workflow
+        env:
+          WHY: ${{ needs.scope.outputs.why }}
+        run: echo "$WHY"
 
   completion-linux:
     name: completion-linux (ubuntu-24.04)
     needs: scope
-    if: needs.scope.outputs.run == 'true'
+    if: needs.scope.outputs.run == 'true' && needs.scope.outputs.needed == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -199,7 +240,7 @@ jobs:
   completion-windows:
     name: completion-windows (windows-latest)
     needs: scope
-    if: needs.scope.outputs.run == 'true'
+    if: needs.scope.outputs.run == 'true' && needs.scope.outputs.needed == 'true'
     runs-on: windows-latest
     timeout-minutes: 30
     env:
@@ -522,7 +563,7 @@ jobs:
   # in the artifact `test-results`, which the engine reads (.github/junit.py).
   results:
     name: Test results
-    needs: [scope, completion-linux, completion-windows]
+    needs: [scope, reason, completion-linux, completion-windows]
     if: ${{ !cancelled() && inputs.call }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5

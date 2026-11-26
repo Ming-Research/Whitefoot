@@ -1,0 +1,41 @@
+# Temporary: runs the tests of the two deciding scripts and decides for main's
+# recent merges, while this branch is written. Removed before the full check.
+name: tmp-change-scope
+
+on:
+  push:
+    branches: [ci-checks-by-what-they-guard]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The test of change-scope.sh
+        run: perl .github/run-check.pl test-change-scope sh .github/test-change-scope.sh
+      - name: The test of gate-scope.sh
+        if: always()
+        run: perl .github/run-check.pl repository-invariants sh .github/test-gate-scope.sh
+      - name: Decide for each merge of main since 2026-11-24
+        if: always()
+        run: |
+          git log --first-parent --merges --since=2026-11-24T00:00 --format='%H' origin/main |
+            while read -r merge; do
+              line=$(git log -1 --format='%h %s' "$merge" | cut -c1-90)
+              for workflow in sanitizers io-hosts; do
+                git diff --name-only --no-renames "$merge^1" "$merge" |
+                  sh .github/change-scope.sh --decide "$workflow" "$(git rev-parse "$merge^1")" 2> /dev/null |
+                  sed -n "s/^needed=/$workflow=/p"
+              done | tr '\n' ' '
+              echo "$line"
+            done | tee "$RUNNER_TEMP/merges.txt"
+          echo "merges: $(grep -c '' "$RUNNER_TEMP/merges.txt")"
+          echo "sanitizers skipped: $(grep -c 'sanitizers=false' "$RUNNER_TEMP/merges.txt")"
+          echo "io-hosts skipped: $(grep -c 'io-hosts=false' "$RUNNER_TEMP/merges.txt")"

@@ -139,10 +139,12 @@ opened_from_fork=$(pr_event opened false fork/repo)
 ready=$(pr_event ready_for_review false)
 synchronize='{"action":"synchronize","pull_request":{"number":5,"draft":true}}'
 
-# Main, tags, manual runs, a draft's opening or reopening and a fork's
-# opening decide without a query.
+# Main, tags, manual runs, the nightly run, a draft's opening or reopening
+# and a fork's opening decide without a query.
 decides 'push to main' push refs/heads/main '{}' '[]' refuse
 expect 'push to main' true 'push to main'
+decides 'nightly run' schedule refs/heads/main '{}' '[]' refuse
+expect 'nightly run' true 'nightly run on main'
 decides 'push of a tag' push refs/tags/v1 '{}' '[]' refuse
 expect 'push of a tag' false 'not a branch'
 decides 'manual run' workflow_dispatch refs/heads/feature/x "$dispatch" '[]' refuse
@@ -200,8 +202,8 @@ tip=$head_a
 refuses 'failed head query' pull_request refs/pull/5/merge "$opened_ready" '[]' refuse
 refuses 'unhandled pull request action' pull_request refs/pull/5/merge "$synchronize" '[]' refuse
 grep -q 'unsupported pull request action: synchronize' "$work/err" || fail 'unhandled pull request action: wrong refusal'
-refuses 'unhandled event' schedule refs/heads/main '{}' '[]' refuse
-grep -q 'unsupported event: schedule' "$work/err" || fail 'unhandled event: wrong refusal'
+refuses 'unhandled event' release refs/tags/v1 '{}' '[]' refuse
+grep -q 'unsupported event: release' "$work/err" || fail 'unhandled event: wrong refusal'
 
 # A push to any other branch asks GitHub for the branch's open pull requests.
 decides 'no pull request' push refs/heads/feature/topic '{}' '[]'
