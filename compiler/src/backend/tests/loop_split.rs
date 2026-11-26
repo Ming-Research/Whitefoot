@@ -833,6 +833,16 @@ fn a_permitted_loop_is_outlined_split_and_joined() {
         chunk.contains("icmp ult i64") && chunk.matches("phi ").count() > 0,
         "the chunk must be the counted loop itself:\n{chunk}"
     );
+    assert_eq!(
+        chunk.matches("= add nuw i64").count(),
+        1,
+        "the chunk's hidden counted update is exact:\n{chunk}"
+    );
+    assert_eq!(
+        chunk.matches("= add i64").count(),
+        1,
+        "the source +wrap accumulation stays wrapping in the chunk:\n{chunk}"
+    );
     let (_, chunk_body) = chunk.split_once('\n').expect("a definition has a body");
     assert!(
         !chunk_body.contains("@wf__par_"),

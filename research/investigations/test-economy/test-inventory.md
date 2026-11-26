@@ -562,7 +562,7 @@ table start at `compiler/src/backend/`. Recipes use `cc -std=c11 -O2`, strict
 warnings, pthreads and the probe-specific macro definitions from that Makefile.
 They link scheduler/completion C units as appropriate and produce native
 executables under `$(COMPLETION_TMP)`, normally
-`$(WHITEFOOT_SCRATCH_ROOT)/whitefoot-completion-test`.
+`compiler/.scratch/completion-test` of the checkout.
 
 **Resources.** A host C compiler/linker, `nm`, native threads, executable
 scratch directories, real files and loopback networking for IO probes. The

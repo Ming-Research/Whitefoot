@@ -139,6 +139,7 @@ repository-invariants:
 	@sh .github/merge-base.sh --self-test
 	@sh .github/test-merge-base.sh
 	@sh .github/test-gate-scope.sh
+	@sh .github/test-completion-scratch.sh
 	@sh .github/test-gate-both-platforms.sh
 	@sh .github/test-compiler-release-retention.sh
 	@bash .github/test-check-runtime-frames.sh
