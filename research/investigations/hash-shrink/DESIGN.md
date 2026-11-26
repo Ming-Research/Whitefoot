@@ -453,6 +453,16 @@ in microseconds to three significant figures (capacities count pairs):
 | 12, 6 | 1 | 0.127, 0.139 | 0.136, 0.155 |
 | 6, 0 | 0 | 0.0880, 0.107 | 0.203, 0.296 |
 
+Merging main at 4db5e6c1f changed the timed images, so run 40059553947 does
+not stand for the merged head. In run 45729822951 on a GitHub-hosted runner,
+the bench and tail images of both libraries built from 49ad236e0 with the
+library of 89a0815fc each differ in SHA-256 from those built from the merged
+head 6a425c9c5 with the library of 4db5e6c1f. Their disassembly without
+addresses differs in the concurrent map runtime linked into every image:
+main's refusal of a write selection under a read-only whole hold
+(Whitefoot#566) adds the function `wf_cmap_refuse` and the checks that call
+it, and the code after it moves.
+
 ## Owner decisions
 
 - Automatic shrinking after a successful removal, below one eighth, into
