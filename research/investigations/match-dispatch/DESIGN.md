@@ -1912,6 +1912,18 @@ definition and call explicitly. The always-inlined dispatcher's cloned
 `musttail` becomes an ordinary call in the enclosing function when inlined, and
 keeps the attribute.
 
+What the entry saves: a call that carries the attribute preserves no register,
+so the C-convention function around the chain saves every register its own
+convention keeps, not only RBP. The assembly that a failing probe test printed
+for the attributed module on the Linux runner with LLVM 22 (fast workflow run
+[45760340146](https://github.com/Ming-Research/Whitefoot/actions/runs/45760340146),
+commit 4cff5d48c5c3480a00049f77eefb9f7630864739) has `probe_entry` push RBP, R15,
+R14, R13, R12 and RBX once each, plus one alignment push, around its one
+call and pop them after it, while the handler and the direct tail transfer
+contain no push or pop. That cost is paid once for each entry into a chain, not
+for each transfer between parts; the timing below is what shows whether the
+saving outweighs it on the interpreters.
+
 An unknown string attribute is accepted by every LLVM, so acceptance does not
 qualify it. The host probe assembles a module with handlers that clobber RBP
 through inline assembly, direct and indirect guaranteed tail calls, an
