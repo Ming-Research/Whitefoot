@@ -4516,6 +4516,134 @@ static void reserves_refused_inside_a_swap(void) {
         wf_cmap_destroy(maps[m]);
 }
 
+/* What a swap's hook saw of the two maps it was given: how often it ran,
+ * which maps, whether each map's lock was taken, and whether each still had
+ * the table it had before the swap. */
+static struct {
+    unsigned calls;
+    struct wf_cmap *a, *b;
+    int locked_a, locked_b, whole_a, whole_b;
+} swap_seen;
+static table *tables_before[2];
+
+static void note_swap(struct wf_cmap *a, struct wf_cmap *b) {
+    swap_seen.calls++;
+    swap_seen.a = a;
+    swap_seen.b = b;
+    swap_seen.locked_a = atomic_load(&a->lock) != 0;
+    swap_seen.locked_b = atomic_load(&b->lock) != 0;
+    swap_seen.whole_a = atomic_load(&a->current) == tables_before[0];
+    swap_seen.whole_b = atomic_load(&b->current) == tables_before[1];
+}
+
+/* The swap's hook is where the swap's own text puts it: once per swap, with
+ * the maps the swap was given, after the swap holds both maps' locks (the
+ * one lock of a map swapped with itself) and before it exchanges anything,
+ * and the locks are let go again at the end. The text is the comment above
+ * wf_cmap_swap and the hook's own comment. */
+static void swap_hook_runs_once_under_the_locks(void) {
+    wf_cmap *maps[2] = {wf_cmap_create(1), wf_cmap_create(1)};
+    wf_cmap_user *user = wf_cmap_enter(maps[0]);
+    wf_cmap_insert(user, key_of(1), 1);
+    wf_cmap_leave(user);
+    for (int pair = 0; pair < 2; pair++) {
+        wf_cmap *a = maps[0], *b = pair == 0 ? maps[1] : maps[0];
+        memset(&swap_seen, 0, sizeof swap_seen);
+        tables_before[0] = atomic_load(&a->current);
+        tables_before[1] = atomic_load(&b->current);
+        at_swap = note_swap;
+        wf_cmap_swap(a, b, VALUE_TAG);
+        at_swap = NULL;
+        if (swap_seen.calls != 1)
+            fail("a swap did not run its hook once (pair, calls)", (uint64_t)pair, swap_seen.calls);
+        if (swap_seen.a != a || swap_seen.b != b)
+            fail("a swap's hook was not given the swap's maps (pair, calls)", (uint64_t)pair, swap_seen.calls);
+        if (!swap_seen.locked_a || !swap_seen.locked_b)
+            fail("a swap's hook ran without a map's lock (pair, first map locked)", (uint64_t)pair, (uint64_t)swap_seen.locked_a);
+        if (!swap_seen.whole_a || !swap_seen.whole_b)
+            fail("a swap's hook ran after the exchange began (pair, first map unchanged)", (uint64_t)pair, (uint64_t)swap_seen.whole_a);
+        if (atomic_load(&a->lock) != 0 || atomic_load(&b->lock) != 0)
+            fail("a swap did not let its locks go (pair, lock)", (uint64_t)pair, atomic_load(&a->lock));
+        if (pair == 0 && (atomic_load(&maps[0]->current) != tables_before[1] || atomic_load(&maps[1]->current) != tables_before[0]))
+            fail("a swap with a hook did not exchange the tables (pair, 0)", (uint64_t)pair, 0);
+    }
+    for (int m = 0; m < 2; m++)
+        wf_cmap_destroy(maps[m]);
+}
+
+/* A map swapped with itself is locked once, so a release inside that swap
+ * is refused too, and the reserve is still there after it. */
+static void reserves_refused_inside_a_self_swap(void) {
+    wf_cmap *map = wf_cmap_create(1);
+    uint64_t capacity = atomic_load(&map->current)->capacity;
+    map->spare = new_cells(capacity);
+    map->spare_capacity = capacity;
+    freed_inside_swap = 0;
+    at_swap = release_inside_swap;
+    wf_cmap_swap(map, map, VALUE_TAG);
+    at_swap = NULL;
+    if (freed_inside_swap != 0)
+        fail("a release inside a swap of a map with itself freed a reserve (bytes)", freed_inside_swap, 0);
+    if (wf_cmap_release_reserve(map) == 0)
+        fail("a swap of a map with itself did not leave its reserve (bytes)", 0, 0);
+    wf_cmap_destroy(map);
+}
+
+/* What the child of owed_is_bounded does: its first wait began `ago` seconds
+ * before, on the monotonic clock, and the other thread never acts. It
+ * returns 7 if every one of 4096 calls answered that it still owes. */
+static int owed_child(unsigned ago) {
+    dup2(2, 1);
+    _Atomic uint64_t seen = 0;
+    owed_since since = {1, {0, 0}};
+    clock_gettime(CLOCK_MONOTONIC, &since.start);
+    since.start.tv_sec -= (time_t)ago;
+    for (unsigned i = 0; i < 4096; i++)
+        if (!owed(&seen, 1, &since, "owed test: the other thread never acted"))
+            return 3;
+    return 7;
+}
+
+/* The wait that a thread owes another thread's act (owed): it is over the
+ * moment the act is counted, whatever the clock says; it asks again while the
+ * act is missing and the wait is younger than 10 s; and once the wait is 10 s
+ * old it ends the test with the thread's own message, which a test of the
+ * loops cannot show without waiting 10 s. The wait's start is set back in the
+ * child instead; the bound is the one the comment above owed gives. */
+static void owed_is_bounded(void) {
+    _Atomic uint64_t seen = 1;
+    owed_since fresh = {0};
+    if (owed(&seen, 1, &fresh, "unused") != 0 || fresh.calls != 0)
+        fail("a wait for an act already made asked again or started its clock (answer, calls)", fresh.calls, 0);
+    seen = 0;
+    owed_since waiting = {0};
+    for (unsigned i = 0; i < 3000; i++)
+        if (owed(&seen, 1, &waiting, "unused") != 1)
+            fail("a wait for an act not yet made ended (call)", i, 0);
+    if (waiting.start.tv_sec == 0 && waiting.start.tv_nsec == 0)
+        fail("a wait for an act did not start its clock (calls)", waiting.calls, 0);
+    waiting.start.tv_sec -= 3600;
+    waiting.calls = 1023;
+    seen = 1;
+    if (owed(&seen, 1, &waiting, "unused") != 0)
+        fail("a wait for an act made late asked again (answer)", 1, 0);
+    char report[512];
+    int status = child_status(owed_child, 11, report, sizeof report);
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 1)
+        fail("a wait 11 s old for an act did not end the test with exit status 1 (signal or status + 1000)",
+             WIFSIGNALED(status) ? (unsigned)WTERMSIG(status) : 1000u + (unsigned)WEXITSTATUS(status), 0);
+    if (strstr(report, "owed test: the other thread never acted (0, 1)") == NULL)
+        fail("a wait that ended did not give its message with the counts (report length)", strlen(report), 0);
+    status = child_status(owed_child, 10, report, sizeof report);
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 1)
+        fail("a wait 10 s old for an act did not end the test with exit status 1 (signal or status + 1000)",
+             WIFSIGNALED(status) ? (unsigned)WTERMSIG(status) : 1000u + (unsigned)WEXITSTATUS(status), 0);
+    status = child_status(owed_child, 5, report, sizeof report);
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 7)
+        fail("a wait 5 s old for an act ended or was killed (signal or status + 1000)",
+             WIFSIGNALED(status) ? (unsigned)WTERMSIG(status) : 1000u + (unsigned)WEXITSTATUS(status), 0);
+}
+
 /* A clear under a whole hold empties the map at once, its own entries
  * included, keeps what the statement writes after it, and hands the old
  * entries to their release only once the hold is given up, leaking no
@@ -4974,6 +5102,9 @@ int main(int argc, char **argv) {
     reserves_release_on_request();
     reserves_release_beside_swaps();
     reserves_refused_inside_a_swap();
+    reserves_refused_inside_a_self_swap();
+    swap_hook_runs_once_under_the_locks();
+    owed_is_bounded();
     spares_match_the_current_size();
     if (atomic_load(&mapped_bytes_out) != 0)
         fail("map checks leaked counted map storage", atomic_load(&mapped_bytes_out), 0);
