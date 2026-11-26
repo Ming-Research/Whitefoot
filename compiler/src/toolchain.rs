@@ -240,12 +240,15 @@ pub struct ToolchainFactsReport {
 #[doc(hidden)]
 #[must_use]
 pub fn toolchain_facts_report() -> Option<ToolchainFactsReport> {
-    let resolved = resolved_facts().ok()?;
+    resolved_facts().ok().map(report_of)
+}
+
+fn report_of(resolved: &ResolvedFacts) -> ToolchainFactsReport {
     let (source, reason) = match &resolved.source {
         FactsSource::Manifest => ("manifest", None),
         FactsSource::Probed { reason } => ("probed", reason.clone()),
     };
-    Some(ToolchainFactsReport {
+    ToolchainFactsReport {
         source,
         reason,
         probes_run: resolved.probes_run,
@@ -255,7 +258,7 @@ pub fn toolchain_facts_report() -> Option<ToolchainFactsReport> {
         coro_end_result: resolved.facts.coro_end_result,
         darwin_stack_probe_helper: cfg!(target_os = "macos")
             .then_some(resolved.facts.darwin_stack_probe_helper),
-    })
+    }
 }
 
 /// The sentence the driver prints when a package's recorded answers were not

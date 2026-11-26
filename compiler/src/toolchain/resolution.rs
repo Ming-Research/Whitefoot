@@ -812,6 +812,66 @@ mod tests {
         assert_probed_for(None, &["toolchain-manifest.json"]);
     }
 
+    /// The release records what `--report` states, so the report must state
+    /// what the probes decided, and the record made of it must be what the
+    /// manifest reader takes back.
+    #[cfg(unix)]
+    #[test]
+    fn the_report_states_the_probed_answers_and_reads_back_as_a_record() {
+        use super::super::{FactsSource, ToolchainFacts, recorded_facts, report_of, resolve};
+        let (_root, _log, toolchain) = recording_package(None);
+        let resolved = resolve(&toolchain).expect("resolve the package's facts");
+        let report = report_of(&resolved);
+        let asked = ToolchainFacts::probe(&toolchain).expect("probe the package's clang");
+        assert_eq!(report.source, "probed");
+        assert!(
+            report
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.contains("toolchain-manifest.json")),
+            "{report:?}"
+        );
+        assert_eq!(report.probes_run, PROBES_ASKED);
+        assert_eq!(report.clang_version.as_deref(), Some("clang version 22.1.8"));
+        assert_eq!(report.preserve_none, asked.preserve_none);
+        assert_eq!(report.no_capture_attribute, asked.no_capture_attribute);
+        assert_eq!(report.coro_end_result, asked.coro_end_result);
+        assert_eq!(
+            report.darwin_stack_probe_helper,
+            cfg!(target_os = "macos").then_some(asked.darwin_stack_probe_helper)
+        );
+
+        // The release writes these keys, with these values, into the manifest.
+        let mut record = format!(
+            "\"clang_version\":\"{}\",\"preserve_none\":{},\"no_capture_attribute\":\"{}\",\"coro_end_result\":\"{}\"",
+            report.clang_version.as_deref().expect("a package reports its clang"),
+            report.preserve_none,
+            report.no_capture_attribute,
+            report.coro_end_result,
+        );
+        if let Some(helper) = report.darwin_stack_probe_helper {
+            use std::fmt::Write as _;
+            write!(record, ",\"darwin_stack_probe_helper\":{helper}").expect("write to a string");
+        }
+        let manifest = format!("{{\"llvm_version\":\"22.1.8\",\"files\":[],\"clang_facts\":{{{record}}}}}");
+        let taken = recorded_facts::recorded(&manifest, "clang version 22.1.8")
+            .expect("the record made of the report is read back");
+        assert_eq!(taken.preserve_none, asked.preserve_none);
+        assert_eq!(taken.no_capture_attribute, asked.no_capture_attribute);
+        assert_eq!(taken.coro_end_result, asked.coro_end_result);
+        assert_eq!(taken.darwin_stack_probe_helper, asked.darwin_stack_probe_helper);
+
+        // The same package, now holding that record, reports it as taken.
+        let (_other, log, package) = recording_package(Some(&manifest));
+        let resolved = resolve(&package).expect("resolve the recorded package");
+        let report = report_of(&resolved);
+        assert_eq!(resolved.source, FactsSource::Manifest);
+        assert_eq!(report.source, "manifest");
+        assert_eq!(report.reason, None);
+        assert_eq!(report.probes_run, 0);
+        assert_eq!(calls(&log), ["--version"]);
+    }
+
     #[test]
     fn cache_identity_tracks_every_toolchain_component() {
         let clang = Path::new("/bundle/clang");
