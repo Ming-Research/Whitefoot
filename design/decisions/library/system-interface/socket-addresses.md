@@ -23,3 +23,8 @@ The nonwaiting `std::net::local_address` takes a connection's receiving half and
 - rejected: an agent proposed a query on TcpConnection; the owner rejected it, because its two halves may come from different connections, so it names no single connection.
 - rejected: an agent proposed a query on each half; the owner rejected it, because both halves of one connection report the same endpoint, so a second function would be a second spelling of one fact.
 - rejected: an agent proposed an infallible `local_address`; the owner rejected it, because the host may refuse the query, for example for lack of resources, and an invented address would hide that refusal.
+
+### decision unreported-address-family-stops-the-program
+A host report of a socket address of neither IPv4 nor IPv6, or too short for its family, stops the program with a report and gives it no address.
+- replaced: The all-zero address, read as 0.0.0.0:0, returned for such a record, was on main; the owner changed it, because the specification calls the peer and the local address the host's report and 0.0.0.0:0 is not a report the host made.
+- rejected: an agent proposed `Err(Unsupported)` from `tcp_accept` and `local_address`; the owner rejected it, because no program can make the host report a third family, so no source program could test it, and each of three accept engines would also close the connection and return its credit.
