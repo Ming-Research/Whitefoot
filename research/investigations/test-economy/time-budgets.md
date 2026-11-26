@@ -1479,6 +1479,83 @@ every build is into an empty target directory.
   repository, readable with git when the API's rate limit holds back the logs;
   the first batch and the order check are read from their logs.
 
+The temporary workflows are removed from the branch before it merges; their
+text is in commits `99850e82c` (the first-build experiment) and `e9afbfb98`
+(the sampling and the order check).
+
+**Result of the order check (2026-11-25).** Run 45682988713 (commit
+`0acced3b9`) ran the two jobs after the preparation, each building both
+compilers cold:
+
+| first build | host | first s | second s | first over second |
+|---|---|---:|---:|---:|
+| merge-base compiler | EPYC 9V45 | 104.54 | 102.94 | +1.6% |
+| candidate | Xeon 6975P-C | 105.92 | 104.11 | +1.7% |
+
+Both jobs are within 5%, so the preparation removes the order effect that the
+two October runs showed (9% and 15% over the second build, table above). Each
+job's two builds show 9 `Compiling` lines. One job ran on each host, so the
+check shows the effect gone on two models, not a comparison between models.
+
+**Result of the sampling (2026-11-25 and 2026-11-26).** Eight batches of 40
+jobs ran, 320 jobs in all, started from commits `0acced3b9` (run 45682988613),
+`55f3b140e` (45684558422), `e45d9cfce` (45684558937), `cae1e3331`
+(45687427581), `fce58e882` (45687428489), `d0a6832d0` (45731415552),
+`95e71b441` (45731415194) and `738e4eaec` (45731415522). The Xeon 6975P-C had
+no column until the fourth batch, so its jobs built nothing in the first three
+and in the fifth and later batches (the fifth names it after `skip:`, the sixth
+to eighth also the two EPYC classes that had 20). The 6975P-C's 23 runs are
+all from the fourth batch. The sixth to eighth batches were started together
+once the first five left the 9V45 at 14 runs, so the stop condition (20 counted
+runs in each of the three EPYC classes and the 6975P-C) held by the seventh and
+the eighth batch's jobs were counted as well. Eight batches are under the cap
+of ten. Every one of the 111 builds exited 0 and shows 9 `Compiling` lines; the
+first batch's were read from its job logs, the others from the published
+branch subjects. No log shows a cache action (the workflow restores and saves
+none). Seven jobs ran on a Xeon Platinum 8370C and one on a Xeon 6973P-C; they are
+not columns of the table and built nothing. The 111 counted builds are listed in
+[candidate-build-samples-2026-11.tsv](candidate-build-samples-2026-11.tsv), from
+which each count, median and maximum below can be recomputed. The counts and the
+rule's values (`.github/recompute-time-budgets.py table`, window of 50, all
+runs counted):
+
+| class | counted runs | min s | median s | max s | rule | before | after |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| epyc-7763 | 24 | 127.15 | 131.5 | 137.00 | 155 | 160 | 155 |
+| epyc-9v74 | 29 | 104.83 | 109.2 | 139.59 | 155 | 160 | 155 |
+| epyc-9v45 | 23 | 89.00 | 94.9 | 110.26 | 125 | 160 | 125 |
+| xeon-6975p | 23 | 103.31 | 107.6 | 109.43 | 125 | 160 | 125 |
+| xeon-8573c | 12 | 115.73 | 138.3 | 146.80 | 165 | 160 | 165 |
+
+The 8573C cell has 12 runs, so it follows the owner-column rule: the larger of
+the row's largest recomputed class value (155) and its own largest run by the
+rule (146.80 s gives 165). It therefore rises by 5 s, and so does the value an
+unmapped model takes, since that is the largest Linux cell of the row.
+
+What the numbers show:
+
+- The two classes that took the longest stay near the old value. The 7763's
+  cold build took 127.15 to 137.00 s with the preparation (116.2 to 146.2 s in
+  its nine runs of October without it), so the 93 s of the October pair is not
+  what it takes now, and its cell falls only from 160 to 155 s. Four of the
+  9V74's 29 builds (132.37, 137.28, 138.99 and 139.59 s) took 132 to 140 s
+  against 104.83 to 115.75 s for the other 25; without them its cell would be
+  130 s, with them it is 155 s. They were taken as they are, and no run was
+  repeated.
+- The classes that gain are the 9V45 and the 6975P-C: each cell falls from 160
+  to 125 s, which is 13% and 14% over its slowest build (110.26 and 109.43 s).
+  The 6975P-C took 180 of the 320 jobs (56%), so most of a pull request run's
+  candidate builds are judged by this cell.
+- The 8573C ran 115.73 to 146.80 s in 12 runs and is the slowest class; its
+  cell is set by one run in the tail.
+
+What this leaves out: the builds ran into an empty target directory, so a run
+whose cache step hits builds less and is judged by the same cell; whether the
+cache's writeback slows that smaller build was not measured; the pool's mix of
+CPU models is not controlled (of the 320 jobs, the 6975P-C took 180, the 7763
+50, the 9V74 47, the 9V45 23, the 8573C 12, the 8370C 7 and the 6973P-C 1), so
+these shares are of one day and may change.
+
 ## Daily loop
 
 One edit, measured in the local container with the new defaults: an unused

@@ -42,6 +42,10 @@ A Linux column the owner adds for a model with fewer than 20 runs of a stage tak
 - rejected: an agent proposed that the recompute script leave such columns untouched for hand edits; the owner rejected it, because those cells would fall behind as other models rise, bringing back false overruns unless someone remembered to edit them.
 - rejected: an agent proposed dropping the owner-added column and using the unmapped-model fallback; the owner rejected it, because it undoes the column the owner chose, and the fallback ignores the model's own runs where they need more.
 
+### decision the-xeon-6975p-has-a-budget-column
+The budget table has a column for the Xeon 6975P-C, which took 56% of the sampled hosted jobs; it is an owner column whose cells started at each row's largest Linux value.
+- rejected: an agent proposed no column for it, leaving it on each row's largest class value; the owner rejected it, because the candidate-build cell would then not tighten for most runs (data: `research/investigations/test-economy/time-budgets.md`).
+
 ### decision overruns-fail-only-the-final-verdict
 Hosted CI records a budget overrun without changing the stage's status and fails its final verdict for Linux and Windows overruns or a missing budget row; macOS overruns are only reported.
 - replaced: Failing the verdict on a macOS overrun was on main; the owner changed it, because one macOS runner model varied 1.8 times between runs, so any fixed budget fails often or misses real slowdowns, which Linux catches (data: `research/investigations/test-economy/time-budgets.md`).

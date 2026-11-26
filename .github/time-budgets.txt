@@ -42,10 +42,12 @@ cpu epyc-9v45  AMD EPYC 9V45 96-Core Processor
 # row's largest recomputed class value and, where a run on this CPU was found,
 # that run's time by the rule above (one compute-regression run for the compute
 # rows, 13 and 8 runs for the two sanitizer programs rows, none for the others).
-# Only performance-baseline-compiler rises above the largest class. Evidence:
+# Only performance-baseline-compiler and performance-candidate-compiler rise
+# above the largest class. Evidence:
 # research/investigations/test-economy/time-budgets.md.
-# performance-candidate-compiler is 145 s for every Linux class, set by the
-# owner on 2026-10-13 (it was 130 s).
+# performance-candidate-compiler was recomputed over the cold builds sampled for
+# item 289 (12 runs on this CPU, its largest 146.80 s): the research record's
+# section "The first compiler build's extra time" gives every class's count.
 cpu xeon-8573c INTEL(R) XEON(R) PLATINUM 8573C
 # xeon-6975p was added on 2026-11-25 (item 289): the hosted pool had moved to
 # this model, 16 of the 36 jobs of one experiment and 50 of the 80 of two
@@ -55,6 +57,8 @@ cpu xeon-8573c INTEL(R) XEON(R) PLATINUM 8573C
 # a run on this CPU was found, that run's time by the rule above. Every row
 # other than performance-candidate-compiler started at the largest of its Linux
 # cells before the column existed, which is the value an unmapped model had.
+# performance-candidate-compiler has 23 runs on this CPU and follows the rule
+# like a class.
 cpu xeon-6975p Intel(R) Xeon(R) 6975P-C
 
 label                           epyc-7763  epyc-9v74  epyc-9v45  xeon-8573c  xeon-6975p  macos  windows
@@ -130,7 +134,7 @@ map-tsan                        50         50         50         50          50 
 # build, at two Cargo jobs; their images, then the host control, the instrument's slowdown and placement
 # controls with the shifted images the latter builds, and the paired
 # comparison
-performance-candidate-compiler  160        160        160        160         160         -      -
+performance-candidate-compiler  155        155        125        165         125         -      -
 performance-baseline-compiler   130        130        130        150         150         -      -
 performance-candidate-images    10         10         10         10          10          -      -
 performance-baseline-images     10         10         10         10          10          -      -
