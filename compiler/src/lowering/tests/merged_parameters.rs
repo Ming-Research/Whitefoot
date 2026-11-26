@@ -215,7 +215,7 @@ fn describe_parameter(function: &IrFunction, parameter: IrValueId) -> String {
         "{}: {parameter:?}: {:?} in block {home} (match edge: {entered_by_match}) fed by {edges:?}; {}",
         function.name(),
         function.values[parameter.index()],
-        feeders(function, parameter, 4)
+        feeders(function, parameter, 2)
     )
 }
 
@@ -301,4 +301,47 @@ fn overlapped_programs_lower_to_ir_the_parameter_merge_leaves_well_formed() {
     // Loop splitting synthesizes chunk functions and splitters whose captured
     // values are operands the merge rewrites; the sequential world has none.
     assert_lowered_functions_are_well_formed(OverlapLowering::On);
+}
+
+#[test]
+fn a_value_an_inner_loop_only_passes_on_merges_although_the_outer_loop_swaps_its_entry_value() {
+    // The shape `merge_values` of `compute/merge_sort.wf` lowers to, with
+    // scalars: `x` and `y` swap on every trip of the outer loop, so the value
+    // the inner loop is entered with is itself a varying block parameter, and
+    // the inner loop only passes `x` and `y` on through an `if` join. Each
+    // inner header parameter and each join parameter then carries exactly
+    // the outer parameter, and none may stay.
+    let source = br#"fn swapped() -> result: u64 pure {
+  let x = 1_u64;
+  let y = 2_u64;
+  let total = 0_u64;
+  for @outer (k in 0_u64..3_u64) {
+    for @inner (i in 0_u64..4_u64) {
+      if i == 2_u64 {
+        set total = total +wrap x;
+      } else {
+        set total = total +wrap y;
+      }
+    }
+    let t = x;
+    set x = y;
+    set y = t;
+  }
+  return total;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    with_ir(source, |program| {
+        let swapped = function(program, "swapped");
+        assert_parameter_interfaces(swapped);
+        assert_uses_follow_definitions(swapped);
+        let kept: Vec<String> = redundant_block_parameters(swapped)
+            .into_iter()
+            .map(|parameter| describe_parameter(swapped, parameter))
+            .collect();
+        assert!(kept.is_empty(), "redundant parameters stay: {kept:#?}");
+    });
 }
