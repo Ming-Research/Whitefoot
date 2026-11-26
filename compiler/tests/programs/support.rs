@@ -17,8 +17,8 @@ use whitefoot::{
 };
 
 use crate::support::{
-    CLANG, COMPILE_ARGUMENTS, LINK_LIBRARIES, append_runtime_objects,
-    append_runtime_objects_with_guard_counters, require_sanitized, sanitized,
+    COMPILE_ARGUMENTS, LINK_LIBRARIES, append_runtime_objects,
+    append_runtime_objects_with_guard_counters, clang_link, require_sanitized, sanitized,
 };
 // Only `build_app`, which exists on Linux alone, selects a sanitizer.
 #[cfg(target_os = "linux")]
@@ -51,7 +51,7 @@ pub(super) fn build_cli_program(name: &str, parallel: bool) -> CompiledProgram {
         directory,
         executable,
     };
-    let mut command = Command::new(env!("CARGO_BIN_EXE_whitefootc"));
+    let mut command = Command::new(crate::compiler_under_test());
     command
         .arg(corpus_directory().join(name))
         .arg("-o")
@@ -147,7 +147,7 @@ fn link_module_with_driver_and_counters(
     if !driver.exists() {
         whitefoot::require_executable_runner(llvm)?;
     }
-    let mut command = Command::new(CLANG);
+    let mut command = clang_link();
     for unit in units {
         require_sanitized(&std::fs::read_to_string(unit).expect("read an emitted unit"));
         command.arg("-x").arg("ir").arg(unit);
@@ -321,7 +321,7 @@ pub fn build_app(name: &str, entry: &str) -> CompiledProgram {
         std::env::temp_dir().join(format!("whitefoot-app-{}-{sequence}", std::process::id()));
     std::fs::create_dir(&directory).expect("create unique program directory");
     let executable = directory.join(format!("{entry}{}", std::env::consts::EXE_SUFFIX));
-    let mut command = Command::new(env!("CARGO_BIN_EXE_whitefootc"));
+    let mut command = Command::new(crate::compiler_under_test());
     // `--par --par-call-grain off` selects the overlap lowering the program
     // cases build with (`OverlapLowering::On`), which the plain command line
     // leaves off.

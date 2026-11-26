@@ -1590,6 +1590,46 @@ chose on 2026-10-09 (above): it is path-filtered and rare, and a path-filtered
 workflow that listed `ready_for_review` would be waited for after a ready mark
 even when no path matched.
 
+### The final job read a job listing that lagged, and two runs ended red without a failing group
+
+Read with `gh api` on 2026-11-25 from the runs' records; the listing's lag
+itself was not seen again, only its effect in the final job's log.
+
+Run 39607651901 (a manual run on a work branch, head `291b948e`), second
+attempt, which re-ran only `corpus (ubuntu-24.04)`. The group job ended at
+13:40:45 with `success` and `Gate on both platforms` started at 13:40:48. Its
+log shows four listings, at 13:41:00, 13:41:33, 13:42:05 and 13:42:38, each
+with `MISSING corpus (ubuntu-24.04): no gate job` and every other group `ok`,
+and the step failed. The script keeps only jobs that have a `completed_at`
+(`.github/gate-both-platforms.sh`, `list`), and the revision's job listing
+had no completed entry for the re-run job for at least those 98 s; the owner
+saw it show the job complete at 13:46:42. Attempt 3, started 13:47, passed.
+The listing was the only source the final job read for this run's own groups.
+`needs.gate.result` of the same run, which the engine's mode of the same step
+already reads, is `success` as soon as every group job has ended.
+
+Run 40115097375 (main, head `a4f69f2e`), first attempt. The three jobs
+`corpus`, `static` and `unit` (Linux) ended `cancelled` at 17:33:21, 17:33:21
+and 17:30:34 with the annotation "The job has exceeded the maximum execution
+time of 15m0s", while their own durations were not that long: `corpus` and
+`static` list no step at all (the runner never reported one), and `unit` lists
+every step as succeeded, the last ending at 17:19:42. The final job ran (it
+runs on `!cancelled()`, so the run itself was not cancelled) and its log shows
+`list jobs of run 40115097375` failing five times with HTTP 502 from 17:33:45
+to 17:35:42. The fourth group job of that attempt shows the same delay without
+losing its result: `runtime (ubuntu-24.04)` has every step ended by 17:14:20,
+a minute after it began, and was recorded complete, with `success`, only at
+17:24:40. So GitHub recorded job completions about ten minutes late in that
+run (the `unit` job's last step ended 17:19:42 and the job was cancelled at
+17:30:34, `corpus` and `static` at 17:33:21, twenty minutes after they began
+and so past the 15 minutes their `timeout-minutes` allows), and a job whose
+completion had not been recorded by the time limit was stopped by it. The
+jobs did not run too long. The cause is on GitHub's side (the runner's step
+results and the job's completion reached the service late or never), and the
+jobs ended with no conclusion that says the group passed, so nothing in the
+run can show them green; attempt 2 of the same run, started 2026-10-29, passed
+every group. Only a re-run settles such a run.
+
 ### Candidate-compiler build budget per processor (2026-11-25)
 
 The `performance-candidate-compiler` stage was 145 s for every Linux class (set

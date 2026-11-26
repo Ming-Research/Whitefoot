@@ -123,54 +123,9 @@ else
   # The guide's `xcode-select --install` is not run here (guide-steps.py); the
   # SDK and the system linker it provides are what the guide's reader relies on.
   printf 'System SDK: %s\nSystem linker: %s\n' "$sdk" "$linker" | tee -a "$logs/host.txt"
-  # Deny every visible host clang path and its canonical target. SDK/ld remain
-  # available. Never equate PATH hiding or a failed sandbox launch with denial.
-  selected_host_clang=$(/usr/bin/xcrun --sdk macosx --find clang)
-  python3 - "$logs" "$selected_host_clang" <<'PY'
-import glob, json, os, pathlib, sys
-logs = pathlib.Path(sys.argv[1])
-patterns = [sys.argv[2], '/usr/bin/clang*', '/Library/Developer/CommandLineTools/usr/bin/clang*',
-            '/Applications/Xcode*.app/Contents/Developer/Toolchains/*/usr/bin/clang*']
-patterns += [str(pathlib.Path(part) / 'clang*') for part in os.environ['PATH'].split(':') if part]
-paths = set()
-for pattern in patterns:
-    for name in glob.glob(pattern):
-        path = pathlib.Path(name)
-        if path.is_file() and os.access(path, os.X_OK):
-            paths.update((str(path.absolute()), str(path.resolve(strict=True))))
-assert '/usr/bin/clang' in paths, 'No host clang to prove denial against'
-(logs / 'host-clangs.txt').write_text(''.join(path + '\n' for path in sorted(paths)))
-profile = '(version 1)\n(allow default)\n(deny process-exec\n'
-profile += ''.join('  (literal ' + json.dumps(path) + ')\n' for path in sorted(paths))
-(logs / 'deny-host-clang.sb').write_text(profile + ')\n')
-PY
+  bash "$helpers/deny-host-clang-macos.sh" "$logs"
+  isolation=$(sed -n 's/^isolation=//p' "$logs/isolation.txt")
   profile="$logs/deny-host-clang.sb"
-  if [ ! -x /usr/bin/sandbox-exec ] || ! /usr/bin/sandbox-exec -f "$profile" /usr/bin/true; then
-    isolation=unverified
-    echo 'UNVERIFIED: hosted runner cannot execute the isolation profile'
-  else
-    while IFS= read -r host; do
-      # The baseline proves the path executes, not that it is a compiler:
-      # tools such as clang-cache exit nonzero on --version but still run.
-      # Only the shell's cannot-execute statuses mean it never ran.
-      status=0
-      "$host" --version > "$logs/denial-baseline.txt" 2>&1 || status=$?
-      if [ "$status" -eq 126 ] || [ "$status" -eq 127 ]; then
-        isolation=unverified
-        printf 'UNVERIFIED: host baseline cannot execute: %s\n' "$host"
-        break
-      fi
-      printf 'Prove host denial: %s\n' "$host"
-      /usr/bin/sandbox-exec -f "$profile" "$host" --version > "$logs/denial-attempt.txt" 2>&1 || true
-      if ! grep -Fq "execvp() of '$host' failed: Operation not permitted" "$logs/denial-attempt.txt"; then
-        isolation=unverified
-        printf 'UNVERIFIED: sandbox did not refuse executing host clang: %s\n' "$host"
-        break
-      fi
-      cat "$logs/denial-attempt.txt"
-      printf '%s: baseline succeeded; sandbox invocation failed\n' "$host" >> "$logs/denial-results.txt"
-    done < "$logs/host-clangs.txt"
-  fi
   if [ "$isolation" = verified ]; then
     wrapper=(/usr/bin/sandbox-exec -f "$profile")
   else
@@ -263,6 +218,11 @@ print('Source LLVM:', manifest['source_asset'], manifest['source_sha256'])
 print('Host prerequisites:', json.dumps(manifest['host_dependencies'], indent=2))
 print('Minimum GLIBC symbol version:', manifest['minimum_glibc_version'])
 PY
+# The manifest records the clang's answers to the compiler's probes, and the
+# version line they were recorded for is the clang's own.
+CLANG_FACTS_PLATFORM=$([ "$mode" = macos ] && echo macos || echo linux) \
+  python3 -I "$helpers/clang-facts-checks.py" recorded "$package/toolchain-manifest.json" \
+  "$("$package/bin/clang" --version | head -n 1)"
 
 if [ "$mode" != macos ]; then
   host_inventory after-install
@@ -312,6 +272,27 @@ if [ "$mode" = macos ]; then
 fi
 run ordinary-build "$compiler" -o "$work/ordinary" "$witness"
 run ordinary-run "$work/ordinary"
+# The package's manifest records the answers of its clang to the compiler's
+# capability probes. With them the compiler asks the clang no probe, and the
+# program runs; with a record that is stale (another clang version) or
+# incomplete (an answer deleted) it probes the clang again, says why, and the
+# program still runs. Reading the compiler's own --report says which happened;
+# on Linux the execution traces below also show whether a probe command ran.
+facts_line=$("$package/bin/clang" --version | head -n 1)
+run facts-recorded "$compiler" --report -o "$work/facts-recorded" "$witness"
+python3 -I "$helpers/clang-facts-checks.py" report "$logs/facts-recorded.txt" manifest
+run facts-recorded-run "$work/facts-recorded"
+for edit in version answer; do
+  cp -a "$package" "$work/edited-$edit"
+  python3 -I "$helpers/clang-facts-checks.py" edit "$work/edited-$edit/toolchain-manifest.json" "$edit"
+done
+run edited-version "$work/edited-version/bin/whitefootc" --report -o "$work/edited-version-program" "$witness"
+python3 -I "$helpers/clang-facts-checks.py" report "$logs/edited-version.txt" probed \
+  'clang version 0.0.0' "$facts_line"
+run edited-version-run "$work/edited-version-program"
+run edited-answer "$work/edited-answer/bin/whitefootc" --report -o "$work/edited-answer-program" "$witness"
+python3 -I "$helpers/clang-facts-checks.py" report "$logs/edited-answer.txt" probed preserve_none
+run edited-answer-run "$work/edited-answer-program"
 # Stack exhaustion ends in the floor's abort and its one record only if every
 # large frame is probed into the guard, so this observes the probing method the
 # packaged clang selected (inline page walk on macOS, where the package's clang
@@ -373,7 +354,7 @@ import ast, pathlib, re, sys
 root, traces = pathlib.Path(sys.argv[1]).resolve(), pathlib.Path(sys.argv[2])
 clang, lld = [], []
 for path in traces.glob('*.txt'):
-    if path.stem.startswith('missing-'):
+    if path.stem.startswith(('missing-', 'edited-')):
         continue
     for line in path.read_text().splitlines():
         match = re.search(r'execve\(("(?:\\.|[^"\\])*")\s*,.*\)\s*=\s*0\s*$', line)
@@ -387,6 +368,11 @@ for path in traces.glob('*.txt'):
         if name in ('ld', 'ld.lld', 'lld') or re.fullmatch(r'ld\.lld-[0-9]+', name):
             assert executable == root / 'bin/ld.lld', executable
             lld.append(str(executable))
+# With the manifest's recorded answers no probe command runs; with a stale or
+# incomplete record, they all do. (Each probe compiles a file named *_probe.ll.)
+assert '_probe.ll' not in (traces / 'facts-recorded.txt').read_text(), 'probes ran though the manifest records the answers'
+for label in ('edited-version', 'edited-answer'):
+    assert (traces / (label + '.txt')).read_text().count('_probe.ll') >= 3, label
 assert len(clang) > 4, ('Missing compiler/probe execution evidence', clang)
 assert lld, 'No bundled ld.lld execution found'
 print('Actual bundled clang executions:', len(clang), sorted(set(clang)))

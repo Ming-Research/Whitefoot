@@ -19,6 +19,11 @@ Files can be appended, set to a length and synced, and entries renamed, removed 
 - rejected: an agent proposed a separate directory creation operation; the owner rejected it, because it costs a second host call on Windows, where one call creates or opens.
 - rejected: an agent proposed leaving the directory hierarchy flat in the program; the owner rejected it, because a writable hierarchy, such as the directory Redis 7.0.15 keeps its append-only files in, would be inexpressible.
 
+### decision create-new-file-is-exclusive-and-writes-root
+`create_new_file` creates an empty file in one host operation only when no entry, a link included, has its name, and otherwise returns `AlreadyExists`; it writes its root.
+- rejected: an agent proposed a create-rule parameter on `open_append` instead of a function of its own; the owner rejected it, because every existing call would have to spell the common rule and the parameter adds a type, while the library already gives each create rule its own function.
+- rejected: an agent proposed that `create_new_file` read its root, as `open_append` does; the owner rejected it, because its result is the order of the operations on the directory, and two such calls through distinct factories in one context would have no order, so the host would pick which fails.
+
 ### decision move-file-between-directories
 `move_file` moves a file from below one directory's write half to below another's, with `rename_file`'s atomic replacement and open-handle rule.
 - rejected: an agent proposed giving `rename_file` two roots; the owner rejected it, because a rename within one directory could not call it, since one handle passed as both written roots of a call overlaps itself.

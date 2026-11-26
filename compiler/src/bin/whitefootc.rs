@@ -21,8 +21,9 @@ use whitefoot::{
     build_module_entry_for_emission, canonical_format, check, check_module_program,
     check_with_cache, compile_for_emission, content_digest, discover_module_sources, entry_verdict,
     form_module_program_graph, format_module_program, module_verdict, prepare_toolchain,
-    render_driver_failure, render_module_interface, resolved_toolchain, running_compiler_identity,
-    split_module, stack_ledger,
+    render_driver_failure, render_driver_note, render_module_interface, resolved_toolchain,
+    running_compiler_identity, split_module, stack_ledger, toolchain_facts_report,
+    toolchain_probe_note,
 };
 
 // `HOST_LINK_LIBRARIES` is here rather than above because its one reader is
@@ -254,8 +255,9 @@ fn main() {
         }
     };
     match driver.join() {
-        Ok(Ok(())) => {}
+        Ok(Ok(())) => note_toolchain_probe(format),
         Ok(Err(stop)) => {
+            note_toolchain_probe(format);
             eprintln!("{}", stop.render(format));
             std::process::exit(1);
         }
@@ -263,6 +265,15 @@ fn main() {
         // Preserve Rust's ordinary panic exit status without printing a
         // second, less useful panic from this joining thread.
         Err(_) => std::process::exit(101),
+    }
+}
+
+/// Says once that a package's recorded clang answers were not taken and its
+/// clang was probed, when that happened in this invocation. The note comes
+/// beside the result and changes neither the verdict nor the exit status.
+fn note_toolchain_probe(format: DiagnosticFormat) {
+    if let Some(note) = toolchain_probe_note() {
+        eprintln!("{}", render_driver_note("Toolchain", &note, format));
     }
 }
 
@@ -1511,7 +1522,7 @@ impl BuildReport {
     fn json(&self) -> String {
         let milliseconds = |duration: std::time::Duration| duration.as_secs_f64() * 1000.0;
         format!(
-            "{{\"build\":{{\"module_reused\":{},\"front_end_ms\":{:.1},\"analyses_reused\":{},\"analyses_recorded\":{},\"fragments\":{},\"split_ms\":{:.1},\"objects_compiled\":{},\"objects_reused\":{},\"compile_ms\":{:.1},\"link_ms\":{:.1}}}}}",
+            "{{\"build\":{{\"module_reused\":{},\"front_end_ms\":{:.1},\"analyses_reused\":{},\"analyses_recorded\":{},\"fragments\":{},\"split_ms\":{:.1},\"objects_compiled\":{},\"objects_reused\":{},\"compile_ms\":{:.1},\"link_ms\":{:.1}}},\"toolchain_facts\":{}}}",
             self.module_reused
                 .map_or_else(|| "null".to_owned(), |reused| reused.to_string()),
             milliseconds(self.front_end),
@@ -1525,8 +1536,36 @@ impl BuildReport {
             self.objects_reused,
             milliseconds(self.compile),
             milliseconds(self.link),
+            toolchain_facts_json(),
         )
     }
+}
+
+/// Where this build's LLVM forms came from, for `--report`: whether a package's
+/// recorded answers were taken or the clang was probed, why not when it was,
+/// how many probe commands ran, and the answers themselves, which the release
+/// recipe records into a package's manifest.
+fn toolchain_facts_json() -> String {
+    let Some(report) = toolchain_facts_report() else {
+        return "null".to_owned();
+    };
+    let optional = |text: Option<&str>| text.map_or_else(|| "null".to_owned(), json_string);
+    let mut json = format!(
+        "{{\"source\":{},\"reason\":{},\"probes_run\":{},\"clang_version\":{},\"preserve_none\":{},\"no_capture_attribute\":{},\"coro_end_result\":{}",
+        json_string(report.source),
+        optional(report.reason.as_deref()),
+        report.probes_run,
+        optional(report.clang_version.as_deref()),
+        report.preserve_none,
+        json_string(report.no_capture_attribute),
+        json_string(report.coro_end_result),
+    );
+    if let Some(helper) = report.darwin_stack_probe_helper {
+        use std::fmt::Write as _;
+        let _ = write!(json, ",\"darwin_stack_probe_helper\":{helper}");
+    }
+    json.push('}');
+    json
 }
 
 /// Writes the object a cache records for `material` to `object`, or compiles
