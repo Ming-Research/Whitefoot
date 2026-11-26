@@ -15,8 +15,8 @@ fn worker(handle: Shared<Box<u8>>) -> result: u8 pure waits {
 fn distance_from_nine(found: Option<Box<u8>>) -> result: u8 pure {
   doc "Zero for no state and for the state the statement left, the only state a close can return.";
   match found {
-    Some(value: held) => {
-      return held.inner -wrap 9_u8;
+    Some(value: kept) => {
+      return kept.inner -wrap 9_u8;
     }
     None() => {
       return 0_u8;
@@ -32,5 +32,6 @@ fn main() -> status: ExitStatus pure waits {
   let seen = spawn worker(handle: move other);
   let closed = shared_close::<Box<u8>>(shared: move cell);
   let distance = distance_from_nine(found: move closed);
-  return exit_status(code: seen +wrap distance);
+  let total = seen +wrap distance;
+  return exit_status(code: total);
 }
