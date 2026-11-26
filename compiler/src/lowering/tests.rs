@@ -1491,31 +1491,30 @@ fn main() -> status: std::process::ExitStatus pure {
         if let Err(error) = crate::emit_llvm(program) {
             panic!("nested counted IR must emit: {error:?}\n{counted:#?}");
         }
+        // Every function is checked before one assertion reports, so a failure
+        // names all the functions that keep a redundant parameter, not the
+        // first one the iteration reaches.
+        let redundant: Vec<(String, Vec<IrValueId>)> = program
+            .functions()
+            .iter()
+            .map(|function| {
+                (
+                    function.name().to_owned(),
+                    redundant_block_parameters(function),
+                )
+            })
+            .filter(|(_, parameters)| !parameters.is_empty())
+            .collect();
+        assert!(
+            redundant.is_empty(),
+            "no join or loop header may carry one value as a parameter: {redundant:?}"
+        );
         for function in program.functions() {
-            assert_eq!(
-                redundant_block_parameters(function),
-                Vec::<IrValueId>::new(),
-                "{}: no join or loop header may carry one value as a parameter",
-                function.name()
-            );
             assert_uses_follow_definitions(function);
         }
-        // The inner loop's bound is the outer loop's carried `bound`, which is
-        // the constant itself once the carried parameter is merged away.
-        let nest = function(program, "nest");
-        let parameters: Vec<_> = nest
-            .blocks()
-            .iter()
-            .flat_map(IrBlock::parameters)
-            .map(|(value, _)| *value)
-            .collect();
-        assert_eq!(nest.counted_ranges.len(), 2);
-        for range in &nest.counted_ranges {
-            assert!(
-                !parameters.contains(&range.lower) && !parameters.contains(&range.upper),
-                "a counted range's bounds are constants here, not carried parameters"
-            );
-        }
+        // The inner loop's bound is the outer loop's carried `bound`: the
+        // table check above is vacuous unless `nest` really has two ranges.
+        assert_eq!(function(program, "nest").counted_ranges.len(), 2);
     });
 }
 
