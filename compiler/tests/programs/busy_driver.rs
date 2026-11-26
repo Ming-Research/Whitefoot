@@ -90,13 +90,22 @@ fn computation_stayed(stderr: &[u8]) -> bool {
         && second_driver_count(stderr, "borrowed_sleeps") == 0
 }
 
+/// Which runs a case compares with its limit: only the runs that qualify, or
+/// every run, when a run that does not qualify promises the same.
+#[derive(Clone, Copy, PartialEq)]
+enum Judged {
+    Qualifying,
+    Every,
+}
+
 /// Makes runs until `wanted` of them qualify, at most twice that many, and
-/// answers a failure when a qualifying run's status is not within `0..=limit`
-/// or too few runs qualified.
+/// answers a failure when a judged run's status is not within `0..=limit` or
+/// too few runs qualified.
 fn require(
     case: &str,
     wanted: usize,
     limit: i32,
+    judged: Judged,
     mut run: impl FnMut() -> Output,
     qualifies: impl Fn(&Output) -> bool,
 ) -> Option<String> {
@@ -112,14 +121,15 @@ fn require(
             .collect::<Vec<_>>()
             .join(" | ");
         seen.push(format!("{code:?}{} [{drivers}]", if counts { "" } else { " (not placed)" }));
+        let within = matches!(code, Some(value) if (0..=limit).contains(&value));
+        if (counts || judged == Judged::Every) && !within {
+            return Some(format!(
+                "{case}: a run ended with {code:?}, limit {limit}:\n  {}\n{}",
+                seen.join("\n  "),
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
         if counts {
-            if !matches!(code, Some(value) if (0..=limit).contains(&value)) {
-                return Some(format!(
-                    "{case}: a run ended with {code:?}, limit {limit}:\n  {}\n{}",
-                    seen.join("\n  "),
-                    String::from_utf8_lossy(&output.stderr)
-                ));
-            }
             qualified += 1;
             if qualified == wanted {
                 eprintln!("{case}: {wanted} runs within {limit}:\n  {}", seen.join("\n  "));
@@ -152,6 +162,7 @@ fn require_beside_reader(
                 &format!("{name}, {}", configuration.describe()),
                 wanted,
                 limit,
+                Judged::Qualifying,
                 || {
                     program.run_with_input_after_first_output(
                         b"z",
@@ -194,9 +205,11 @@ fn a_fired_watch_ends_a_read_beside_a_computation() {
 }
 
 /// As many contexts compute as there are drivers once a guard is let go, and
-/// the context waiting on it must start. On two drivers a run qualifies when
-/// the report shows a role handed to a spare, since the contexts are
-/// otherwise placed wherever the idle driver steals them.
+/// the context waiting on it must start on any placement: every run is held
+/// to the limit. On two drivers a run counts toward the 64 only when the
+/// report shows a role handed to a spare, so that the handoff at the edge of
+/// the bound is seen 64 times; an idle driver that steals a context first
+/// leaves a run that still must meet the limit but does not count.
 #[test]
 fn a_ready_context_starts_beside_computations_on_every_driver() {
     let program = build_program(&compile_program("ready_beside_computations.wf"));
@@ -207,6 +220,7 @@ fn a_ready_context_starts_beside_computations_on_every_driver() {
                 &format!("ready, {drivers} driver(s)"),
                 64,
                 HANDOFF_LIMIT_MS,
+                Judged::Every,
                 || {
                     program.run_with_settings(
                         None,

@@ -704,7 +704,7 @@ ending at its deadline or firing.
 | read whose byte arrives after 100 ms | 250 | 250 (driver 1 borrowed 5,654 times, 0 borrowed terminals) | 250 |
 | read with a 50 ms deadline | 51 (1 reassignment) | 254 (3,656 borrows, 0 borrowed sleeps, 0 reassignments) | 51 to 53 (1 reassignment) |
 | read ended by a watch another context fires | 254 | 254 | 254 |
-| ready context woken by a write, computations on every driver | 250 | 0 of 128 runs placed: the idle driver stole the context | — |
+| ready context woken by a write, computations on every driver | 250 | 250 in each of 128 attempts: driver 1 had stolen a computing context and no role was reassigned, so the waiting context was held until the computations ended | — |
 
 The TCP receive beside a computation inside an atomic statement's block
 (`programs::busy_ring_receive`, from the ring-assist branch) did not release
@@ -733,11 +733,16 @@ busy CPUs), and a cell that cannot be decided is reported as undecided, not
 widened. The scripts are `research/experiments/handoff-yield-check/` and
 `research/experiments/io-completion-bench/redis-bench.sh compare`.
 
-1. Ready context at one and two drivers, 64 runs each, internal timestamps:
-   one handoff cycle is fixed at 2 ms (the 1 ms threshold plus one monitor
-   period), so every run's ready context must start within 4 ms of becoming
-   ready. Any run over 4 ms rejects the claim that a ready context starts
-   within two handoff cycles.
+1. Ready context at one and two drivers, internal timestamps: one handoff
+   cycle is fixed at 2 ms (the 1 ms threshold plus one monitor period), so
+   every attempt's ready context must start within 4 ms of becoming ready, on
+   any placement. At two drivers, attempts go on until 64 show a
+   reassignment (at most 128), so that the handoff at the bound's edge is
+   seen 64 times; every attempt counts against the bound. Any attempt over
+   4 ms rejects the claim that a ready context starts within two handoff
+   cycles. (Amended on review before any result was read: it first counted
+   only the attempts that showed a reassignment, which leaves out exactly
+   the attempts in which no handoff happened.)
 2. The polling shape of `tests/programs/lone_timer_writer.wf` (a context
    looping on atomic statements beside 1 ms sleeps and a read whose byte
    arrives), 64 runs each in io_uring at one and two drivers and no ring at

@@ -362,8 +362,8 @@ void *wf__context_operation(void);
 int wf__context_wait(void *operation, void *frame);
 
 /* [WAIT-2] a host operation its start answered: answers 1 when the running
- * context has yielded to another ready context and its frame suspends, and 0
- * when it continues. */
+ * context yields, because the runtime asked its run to or moved its driver
+ * to another thread, and its frame suspends, and 0 when it continues. */
 int wf__context_pass(void *frame);
 
 /* [WAIT-3] a context start: `wf__context_prepare` makes the context and

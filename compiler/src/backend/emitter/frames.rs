@@ -370,8 +370,9 @@ impl FunctionEmitter<'_, '_> {
         // operation has already completed, 2 when a host record is pending,
         // and 3 when context_wait must retry a resumable shared acquisition.
         // An answer the start gave passes through `wf__context_pass`, which
-        // reads no record and may make the context yield after a run of such
-        // answers [WAIT-2]; only a pending operation reaches the wait.
+        // reads no record and makes the context yield when the runtime has
+        // asked its run to [WAIT-2]; only a pending operation reaches the
+        // wait.
         writeln!(
             self.output,
             "  %{prefix}.operation = call ptr @wf__context_operation()\n  \

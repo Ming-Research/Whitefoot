@@ -14,10 +14,10 @@ OUT/bin holds, for each side (base, candidate), the images ready_SIDE
 
 `ready`: the exit status is the time in milliseconds from letting the guard go
 to the waiting context's first step, rounded down, so a status of 3 or less is
-a start within 4 ms. At two drivers a run qualifies when the scheduler report
-shows a reassignment, so that the waiting context was served beside
-computations on both drivers; each side needs 64 qualifying runs and makes at
-most 128 attempts. `poll`: the exit status is the largest lateness in
+a start within 4 ms. The status means the same on any placement, so every
+attempt counts against that bound. At two drivers a run qualifies when the
+scheduler report shows a reassignment, which only decides how many attempts
+are made: each side makes attempts until 64 qualify, at most 128. `poll`: the exit status is the largest lateness in
 milliseconds of sixteen 1 ms sleeps and of a read whose byte is written 20 ms
 after the program's first output byte, beside a context polling an object;
 64 runs per side and configuration. `turn`: the wall time of a whole run of a
@@ -110,10 +110,11 @@ repeated("turn", "turn", "io_uring", 1)
 table.close()
 
 rows = [line.rstrip("\n").split("\t") for line in open(OUT / "latency.tsv", encoding="utf-8")][1:]
-print("summary: shape side route drivers qualified over-3ms max-status")
+print("summary: shape side route drivers attempts qualified over-3ms max-status")
 groups = {}
 for shape, side, route, drivers, _, status, qualified, *_ in rows:
-    if qualified == "1":
-        groups.setdefault((shape, side, route, drivers), []).append(int(status))
-for key, statuses in sorted(groups.items()):
-    print("summary:", *key, len(statuses), sum(status > 3 for status in statuses), max(statuses))
+    groups.setdefault((shape, side, route, drivers), []).append((int(status), qualified == "1"))
+for key, runs in sorted(groups.items()):
+    statuses = [status for status, _ in runs]
+    print("summary:", *key, len(runs), sum(placed for _, placed in runs),
+          sum(status > 3 for status in statuses), max(statuses))
