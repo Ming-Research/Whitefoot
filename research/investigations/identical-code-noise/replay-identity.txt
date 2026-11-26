@@ -1,0 +1,183 @@
+38389055091 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39528442631 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39528448184 | Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39528603886 | AMD EPYC 9V45 | identical: none | mandelbrot pass,records pass,fir pass,quadrature pass,stencil pass,
+39528674779 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39528728800 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39528921741 | AMD EPYC 9V45 | identical: none | mandelbrot pass,records pass,fir pass,quadrature pass,stencil pass,
+39528999144 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39529931905 | INTEL(R) XEON(R) PLATINUM 8573C | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39531047299 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39533055883 | AMD EPYC 9V74 | identical: none | mandelbrot pass,records pass,fir pass,quadrature pass,stencil pass,
+39533131585 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39533137136 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39533403908 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39533771823 | Intel(R) Xeon(R) 6973P-C | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39533847929 | INTEL(R) XEON(R) PLATINUM 8573C | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39534071460 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39534302391 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39534649376 | AMD EPYC 7763 | identical: none | mandelbrot pass,records pass,fir pass,quadrature pass,stencil pass,
+39536863619 | INTEL(R) XEON(R) PLATINUM 8573C | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39537091117 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39537219319 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39537350756 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39538754510 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39539194567 | INTEL(R) XEON(R) PLATINUM 8573C | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39540239517 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39540593152 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39540938131 | AMD EPYC 9V74 | identical: none | mandelbrot pass,records pass,fir pass,quadrature pass,stencil pass,
+39541013753 | INTEL(R) XEON(R) PLATINUM 8573C | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39541069238 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39541467965 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39541618462 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39541837612 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39541981726 | AMD EPYC 7763 | identical: none | mandelbrot pass,records pass,fir pass,quadrature pass,stencil pass,
+39542088754 | Intel(R) Xeon(R) 6973P-C | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39542261904 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39542967476 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39543170925 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39543187027 | AMD EPYC 7763 | identical: none | mandelbrot pass,records pass,fir pass,quadrature pass,stencil pass,
+39543571639 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39544059696 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39544462006 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39544951631 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39545143243 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39545442863 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39545570738 | INTEL(R) XEON(R) PLATINUM 8573C | identical: none | mandelbrot pass,records pass,fir pass,quadrature pass,stencil pass,
+39545755949 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39546284860 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39547146131 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39547300925 | AMD EPYC 9V45 | identical: none | mandelbrot pass,records pass,fir pass,quadrature pass,stencil pass,
+39548609888 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39548631222 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39550307588 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39551569072 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39552479684 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39554397719 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39570774636 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39572082632 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39573372405 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39573877533 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39575107002 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39576294985 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39576402337 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39577107557 | INTEL(R) XEON(R) PLATINUM 8573C | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39578482476 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39579088191 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39579333989 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39580005447 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39580114477 | AMD EPYC 7763 | identical: none | mandelbrot pass,records pass,fir pass,quadrature pass,stencil pass,
+39580709550 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39582000843 | Intel(R) Xeon(R) 6973P-C | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39582240614 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39582632182 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39582957584 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39583782103 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39603042027 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39603044501 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39603550734 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39603581997 | Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39604581346 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39605064381 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39605340766 | Intel(R) Xeon(R) 6973P-C | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39605824294 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39606669257 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39607479054 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39607981611 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39609259768 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39609323057 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39609633010 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39610171340 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39610184438 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39611614134 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39611656667 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39611703462 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39611898038 | INTEL(R) XEON(R) PLATINUM 8573C | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39614197848 | INTEL(R) XEON(R) PLATINUM 8573C | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39614408693 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39614992010 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39619134467 | INTEL(R) XEON(R) PLATINUM 8573C | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39619519650 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39648455882 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39650555928 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39652618632 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39654658936 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39672305827 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39680012290 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39684790607 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39684828875 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39685984204 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39686874002 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39687764725 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39689923350 | AMD EPYC 7763 | identical: none | mandelbrot pass,records pass,fir pass,quadrature pass,stencil pass,
+39689962040 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39690854375 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39691856253 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39693001198 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39696543917 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39715670524 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39720139274 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39721120350 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39722198835 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39722541930 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39723994282 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39724416586 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39725060328 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39728066967 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39730026822 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39733015398 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39733288803 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39734174464 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39734387288 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39736066162 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39898832476 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39900289850 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39900615261 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39902007636 | INTEL(R) XEON(R) PLATINUM 8573C | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39904187355 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39904280516 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39904515887 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39904588131 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39904624788 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39904762273 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39905648601 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39905716716 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39907176919 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39907344979 | INTEL(R) XEON(R) PLATINUM 8573C | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39907434670 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39909107896 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39909533749 | AMD EPYC 7763 | identical: none | mandelbrot pass,records pass,fir pass,quadrature pass,stencil pass,
+39909847307 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39909948073 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39910200328 | AMD EPYC 7763 | identical: none | mandelbrot pass,records pass,fir pass,quadrature pass,stencil pass,
+39922302783 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39922530381 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39922916090 | AMD EPYC 9V74 | identical: none | mandelbrot pass,records pass,fir pass,quadrature pass,stencil pass,
+39923502485 | AMD EPYC 9V74 | identical: none | mandelbrot pass,records pass,fir pass,quadrature pass,stencil pass,
+39923537172 | AMD EPYC 9V45 | identical: none | mandelbrot pass,records pass,fir pass,quadrature pass,stencil pass,
+39924076769 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39924527918 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39925043523 | AMD EPYC 7763 | identical: none | mandelbrot pass,records pass,fir pass,quadrature pass,stencil pass,
+39925310753 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39925697629 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39926993203 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+39927215777 | AMD EPYC 7763 | identical: none | mandelbrot pass,records pass,fir pass,quadrature pass,stencil pass,
+39928840312 | AMD EPYC 7763 | identical: none | mandelbrot pass,records pass,fir pass,quadrature pass,stencil pass,
+39932002859 | AMD EPYC 9V45 | identical: none | mandelbrot pass,records pass,fir pass,quadrature pass,stencil pass,
+39936055923 | AMD EPYC 9V45 | identical: none | mandelbrot pass,records pass,fir pass,quadrature pass,stencil pass,
+39938763056 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+40027407701 | AMD EPYC 7763 | identical: none | mandelbrot pass,records pass,fir pass,quadrature pass,stencil pass,
+40051636456 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+40051650516 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+40052781934 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+40057565283 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+40071946596 | AMD EPYC 9V45 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+40093354184 | INTEL(R) XEON(R) PLATINUM 8573C | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+40096381875 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+40114721628 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+40834835193 | AMD EPYC 9V74 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+45384856530 | Intel(R) Xeon(R) 6975P-C | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+45386515709 | AMD EPYC 7763 | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+45484575548 | Intel(R) Xeon(R) 6975P-C | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+45604514931 | Intel(R) Xeon(R) 6975P-C | identical: mandelbrot records fir quadrature stencil | all identical, nothing timed
+runs=182 pass=182 fail=0 indeterminate=0 all-identical-runs=160 timed-kernel-judgments=110

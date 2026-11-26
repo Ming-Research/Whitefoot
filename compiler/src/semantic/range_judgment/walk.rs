@@ -24,12 +24,14 @@ mod operations;
 mod ordinary;
 mod provenance;
 mod reads;
+mod targets;
 #[cfg(test)]
 mod tests;
 mod type_invariants;
 mod windows;
 
 use ordinary::GoalFailure;
+use targets::Target;
 
 use super::super::UnsupportedSemanticFeature;
 use super::super::model::{
@@ -784,12 +786,15 @@ impl<'program> Walker<'program> {
                 node_path,
                 target,
                 value,
+                displaces_live_value,
+                atomic_read_out,
                 ..
             } => {
                 self.cite = node_path.clone();
                 let evaluated = self.stored_value(&mut state, value);
                 let reads = self.last_reads.clone();
-                self.set(&mut state, target, evaluated, node_path);
+                let rewrites_storage = *displaces_live_value || *atomic_read_out;
+                self.set(&mut state, target, evaluated, rewrites_storage, node_path);
                 if let CheckedSetTarget::Place(place) = target
                     && place.fields.is_empty()
                 {
@@ -860,6 +865,7 @@ impl<'program> Walker<'program> {
                 node_path,
                 binding,
                 result_type,
+                result_mode,
                 scrutinee,
                 match_type,
                 arms,
@@ -881,6 +887,13 @@ impl<'program> Walker<'program> {
                         let all: Vec<&Value> = values.iter().collect();
                         join_values(&mut self.world, join_id, &all, &states, &mut joined)
                     }
+                };
+                // [REF-1, GIVE-1] `result_type` is the referent's type; a
+                // reference binder holds a reference, never storage of its own.
+                let value = match value {
+                    Value::Ref(_) => value,
+                    _ if result_mode.is_reference() => Value::Ref(View::Unknown),
+                    other => other,
                 };
                 self.bind(&mut joined, *binding, *result_type, value);
                 Some(joined)
@@ -1433,7 +1446,17 @@ impl<'program> Walker<'program> {
 
     // ----- writes -----
 
-    fn set(&mut self, state: &mut State, target: &CheckedSetTarget, value: Value, node: &NodePath) {
+    /// `rewrites_storage` is the checked commit's own judgment that the
+    /// target's storage outlives the commit: it holds a live value [SET-1],
+    /// or an atomic update read it out and writes it back [OP-12].
+    fn set(
+        &mut self,
+        state: &mut State,
+        target: &CheckedSetTarget,
+        value: Value,
+        rewrites_storage: bool,
+        node: &NodePath,
+    ) {
         match target {
             CheckedSetTarget::Place(place) => {
                 if place.fields.is_empty() {
@@ -1448,6 +1471,15 @@ impl<'program> Walker<'program> {
                     }
                     if let Some(Value::Owned(location)) = state.values.get(&place.binding).cloned()
                     {
+                        // [RANGE-2, REF-2] A live binding is the location a
+                        // reference to it names, so replacing its value is a
+                        // write of that storage, not a new storage for the
+                        // name. A revived or declared binding's old storage,
+                        // if any, was handed over, so it takes new storage.
+                        if rewrites_storage {
+                            self.store(state, &location, place.ty, value, node);
+                            return;
+                        }
                         state.havoc_location(&mut self.world, &location);
                         self.unplaced_location(state, &location, node);
                     }
@@ -1486,6 +1518,7 @@ impl<'program> Walker<'program> {
                         state.havoc_container(&mut self.world, container, false);
                         self.unplaced(Some(container), true, false);
                     }
+                    target @ Target::Either(_) => self.forget_target(state, target, node),
                     Target::Unknown => self.forget_all(state, node),
                 }
             }
@@ -1563,213 +1596,6 @@ impl<'program> Walker<'program> {
     }
 
     // ----- places -----
-
-    /// Where one storage path leads.
-    fn path_target(
-        &mut self,
-        state: &mut State,
-        root: PlaceRoot,
-        path: &[CheckedPlaceStep],
-    ) -> Target {
-        let value = match root {
-            PlaceRoot::Binding(binding) => state.values.get(&binding).cloned(),
-            PlaceRoot::Constant(_) => None,
-        };
-        let mut target = match value {
-            Some(Value::Owned(location)) => Target::Location(location),
-            Some(Value::Ref(View::Place(location))) => Target::Location(location),
-            Some(Value::Ref(View::Run {
-                container,
-                prefix,
-                offset,
-                length,
-                projection,
-                ..
-            })) => Target::Run {
-                container,
-                prefix,
-                offset,
-                length,
-                projection,
-            },
-            Some(Value::Ref(View::Element {
-                container,
-                indices,
-                projection,
-                ..
-            })) => Target::Element {
-                container,
-                indices,
-                projection,
-            },
-            _ => Target::Unknown,
-        };
-        // Even an unmodelled root has evaluated offsets and typed bounds.
-        // A constant array's fixed length, for example, needs no storage view.
-        for step in path {
-            let evaluated = if let CheckedPlaceStep::Subscript(subscript) = step {
-                let index = self.int(state, &subscript.offset);
-                let length = self.target_length(state, &target, subscript.base_type);
-                self.ordinary_bound(state, &subscript.obligation, &index, length);
-                Some(index)
-            } else {
-                None
-            };
-            target = match (target, step) {
-                (Target::Location(location), CheckedPlaceStep::Field(field)) => {
-                    Target::Location(location.child(Step::Field(*field)))
-                }
-                (
-                    Target::Location(location),
-                    CheckedPlaceStep::Payload {
-                        nominal,
-                        variant,
-                        field,
-                    },
-                ) => match &self.nominals[nominal.0 as usize].kind {
-                    CheckedNominalKind::Enum { variants } => {
-                        Target::Location(location.child(Step::Payload {
-                            variant: *variant,
-                            field: *field,
-                            variants: variants.len() as u32,
-                        }))
-                    }
-                    _ => unreachable!(),
-                },
-                (Target::Location(location), CheckedPlaceStep::BoxReferent(_)) => {
-                    Target::Location(location.child(Step::BoxContent))
-                }
-                (Target::Location(location), CheckedPlaceStep::Subscript(subscript)) => {
-                    let index = evaluated.clone().unwrap_or_else(|| unreachable!());
-                    let location = state.resolve(&location);
-                    if matches!(subscript.base_type, CheckedType::Segments { .. }) {
-                        match state.container(&mut self.world, location, 2) {
-                            Some(container) => Target::Row {
-                                container,
-                                row: index,
-                            },
-                            None => Target::Unknown,
-                        }
-                    } else {
-                        match state.container(&mut self.world, location, 1) {
-                            Some(container) => Target::Element {
-                                container,
-                                indices: vec![index],
-                                projection: Some(Vec::new()),
-                            },
-                            None => Target::Unknown,
-                        }
-                    }
-                }
-                (Target::Row { container, row }, CheckedPlaceStep::Subscript(_)) => {
-                    let index = evaluated.clone().unwrap_or_else(|| unreachable!());
-                    Target::Element {
-                        container,
-                        indices: vec![row, index],
-                        projection: Some(Vec::new()),
-                    }
-                }
-                (
-                    Target::Run {
-                        container,
-                        prefix,
-                        offset,
-                        projection,
-                        ..
-                    },
-                    CheckedPlaceStep::Subscript(_),
-                ) => {
-                    let index = evaluated.clone().unwrap_or_else(|| unreachable!());
-                    let mut indices = prefix;
-                    match offset.plus(&index) {
-                        Some(absolute) => {
-                            indices.push(absolute);
-                            Target::Element {
-                                container,
-                                indices,
-                                projection: Some(projection),
-                            }
-                        }
-                        None => Target::Unknown,
-                    }
-                }
-                (
-                    Target::Element {
-                        container,
-                        mut indices,
-                        mut projection,
-                    },
-                    step,
-                ) => {
-                    if matches!(step, CheckedPlaceStep::Subscript(_)) {
-                        if let Some(path) = &mut projection {
-                            path.push(CheckedRangeProjection::Index(indices.len() as u32));
-                        }
-                        indices.push(evaluated.clone().unwrap_or_else(|| unreachable!()));
-                    } else {
-                        self.project_element(state, &mut projection, step);
-                    }
-                    Target::Element {
-                        container,
-                        indices,
-                        projection,
-                    }
-                }
-                (_, CheckedPlaceStep::Subscript(subscript)) => {
-                    let _ = subscript;
-                    Target::Unknown
-                }
-                _ => Target::Unknown,
-            };
-        }
-        target
-    }
-
-    /// Unsupported descendants still access their outer element, but cannot
-    /// supply a projected scalar or a narrower write footprint.
-    fn project_element(
-        &mut self,
-        state: &mut State,
-        projection: &mut Option<Vec<CheckedRangeProjection>>,
-        step: &CheckedPlaceStep,
-    ) {
-        match step {
-            CheckedPlaceStep::Field(field) => {
-                if let Some(path) = projection {
-                    path.push(CheckedRangeProjection::Field(*field));
-                }
-            }
-            CheckedPlaceStep::Payload {
-                nominal,
-                variant,
-                field,
-            } => {
-                let CheckedNominalKind::Enum { variants } = &self.nominals[nominal.0 as usize].kind
-                else {
-                    unreachable!();
-                };
-                if let Some(path) = projection {
-                    path.push(CheckedRangeProjection::Payload {
-                        variant: *variant,
-                        field: *field,
-                        variants: variants.len() as u32,
-                    });
-                }
-            }
-            CheckedPlaceStep::BoxReferent(_) => {
-                if let Some(path) = projection {
-                    path.push(CheckedRangeProjection::BoxContent);
-                }
-            }
-            CheckedPlaceStep::Measure(_) => {
-                *projection = None;
-            }
-            CheckedPlaceStep::Subscript(subscript) => {
-                let _ = self.int(state, &subscript.offset);
-                *projection = None;
-            }
-        }
-    }
 
     /// The element one range element place selects: its container, its
     /// index tuple, owned projection (None for unsupported suffixes), and
@@ -1875,48 +1701,8 @@ impl<'program> Walker<'program> {
 
     fn view_of(&mut self, state: &mut State, root: PlaceRoot, path: &[CheckedPlaceStep]) -> View {
         let barrier = Self::root_barrier(state, root);
-        match self.path_target(state, root, path) {
-            Target::Location(location) => View::Place(state.resolve(&location)),
-            Target::Element {
-                container,
-                indices,
-                projection,
-            } => View::Element {
-                container,
-                indices,
-                projection,
-                barrier,
-            },
-            Target::Row { container, row } => {
-                let generation = state.generation(container);
-                let length = self
-                    .world
-                    .segment_length(container, generation, row.clone());
-                View::Run {
-                    container,
-                    prefix: vec![row],
-                    offset: Linear::constant(0),
-                    length,
-                    barrier,
-                    projection: Vec::new(),
-                }
-            }
-            Target::Run {
-                container,
-                prefix,
-                offset,
-                length,
-                projection,
-            } => View::Run {
-                container,
-                prefix,
-                offset,
-                length,
-                projection,
-                barrier,
-            },
-            _ => View::Unknown,
-        }
+        let target = self.path_target(state, root, path);
+        self.target_view(state, target, barrier)
     }
 
     /// A nested container's run keeps the projection preceding its indices.
@@ -2070,6 +1856,11 @@ impl<'program> Walker<'program> {
                 }
             }
             View::Unindexed { container, .. } => self.unplaced(Some(*container), write, false),
+            View::Either(members) => {
+                for member in members {
+                    self.unplaced_view(member, write, node, state);
+                }
+            }
             View::Scalar(_) | View::Unknown => self.unplaced(None, write, write),
         }
     }
@@ -3074,6 +2865,8 @@ impl<'program> Walker<'program> {
                         *binding,
                         self.world.new_origin(),
                     ))),
+                    // [REF-1] A rebound reference still names some place.
+                    Value::Ref(_) => Value::Ref(View::Unknown),
                     _ => Value::Unknown,
                 };
                 header.values.insert(*binding, fresh);
@@ -3865,31 +3658,6 @@ impl<'program> Walker<'program> {
         let right = term(self, state, right, function, values)?;
         Ok(literal(left, relation, right))
     }
-}
-
-/// Where one storage path leads.
-enum Target {
-    Location(Location),
-    /// A run reached through a range reference, before its subscript.
-    Run {
-        container: ContainerId,
-        prefix: Vec<Linear>,
-        offset: Linear,
-        length: Linear,
-        projection: Vec<CheckedRangeProjection>,
-    },
-    /// The outermost element and the owned selection below it.
-    Element {
-        container: ContainerId,
-        indices: Vec<Linear>,
-        projection: Option<Vec<CheckedRangeProjection>>,
-    },
-    /// One segment of a `Segments`, before its element subscript.
-    Row {
-        container: ContainerId,
-        row: Linear,
-    },
-    Unknown,
 }
 
 fn binding_value(state: &State, root: CheckedRangeRoot) -> Option<Value> {

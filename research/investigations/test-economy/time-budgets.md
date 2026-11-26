@@ -1589,6 +1589,41 @@ chose on 2026-10-09 (above): it is path-filtered and rare, and a path-filtered
 workflow that listed `ready_for_review` would be waited for after a ready mark
 even when no path matched.
 
+### Candidate-compiler build budget per processor (2026-11-25)
+
+The `performance-candidate-compiler` stage was 145 s for every Linux class (set
+by the owner on 2026-10-13, then 160 s). On 2026-11-25 the owner set it per
+class: 165 s on the EPYC 7763, 150 s on the 9V74 and 135 s on the 9V45, and the
+Xeon 8573C column takes the larger of the row's largest class and its own runs
+by the rule above (decision `owner-added-columns-take-the-larger-value`).
+
+Replay. `recompute-time-budgets.py collect --workflow compute-regression.yml
+--since 2026-10-13 --limit 150` kept the stage rows of the 150 newest runs
+(runs 39684790607 to 45675708663), 83 rows of this stage. This workflow's job
+logs carry no processor model, so each row takes the `Model name` of the
+`identity.txt` in the retained artifact of its run (188 runs have one). Six runs
+(39734174464, 39736066162, 39904624788, 39922530381, 39925043523, 40051650516)
+were attempted twice and each attempt left its own artifact, created as that
+attempt ended; the twelve rows of those runs take the processor of the artifact
+of their own attempt, not of the run's retained one.
+
+| processor | rows | min s | median s | max s | over 145 s | new budget | over the new budget |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| EPYC 7763 | 40 | 126.8 | 136.2 | 152.0 | 5 | 165 | 0 |
+| EPYC 9V74 | 16 | 101.2 | 124.1 | 144.8 | 0 | 150 | 0 |
+| EPYC 9V45 | 21 | 94.1 | 102.6 | 125.4 | 0 | 135 | 0 |
+| Xeon 8573C | 3 | 112.3 | 138.2 | 139.9 | 0 | 165 | 0 |
+| Xeon 6975P-C (no column) | 3 | 113.8 | 115.7 | 122.2 | 0 | 165 | 0 |
+
+No row is over its class's new budget. All five builds over 145 s were on the 7763.
+The budget rule of the table (1.1 times the maximum plus the maximum's distance above
+the median, rounded up to 5 s; "The margin of the budget rule" above), applied with
+`budget_for` of `recompute-time-budgets.py` to these rows, gives the 7763 185 s from its
+20 newest rows, the 9V74 185 s from its 16 rows and the 9V45 165 s from its 20 newest
+rows; the owner's numbers are the stated ones, which are 20, 35 and 30 s below those.
+The Xeon 8573C's three builds are 139.9 s at most with a median of 138.2 s, 160 s by the
+rule, so its column is the row's largest class, 165 s.
+
 ## Daily loop
 
 One edit, measured in the local container with the new defaults: an unused
