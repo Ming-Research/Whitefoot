@@ -13,8 +13,10 @@
 # open pull request or to a tag. The event of marking a pull request ready
 # skips when its head already has a successful manual run of the same
 # workflow, which checked the same revision a moment ago, and runs otherwise.
-# A manual run never skips, so a successful one always checked everything; the
-# runs of other events do not count, because a run that skipped also succeeds.
+# A manual run never skips here, so a successful one checked what the change
+# needs (.github/change-scope.sh); the runs of other events do not count,
+# because a run that skipped also succeeds. The nightly run of io-hosts.yml
+# and sanitizers.yml, a scheduled run on main's head, checks.
 #
 # A pull request opened after a push starts its own run on its head, so the
 # push run counts only pull requests created no later than itself: a branch
@@ -73,6 +75,9 @@ engine_branch() {
 case "$GITHUB_EVENT_NAME" in
     workflow_dispatch)
         decide true 'manual run'
+        ;;
+    schedule)
+        decide true 'nightly run on main'
         ;;
     pull_request)
         action=$(event .action)
