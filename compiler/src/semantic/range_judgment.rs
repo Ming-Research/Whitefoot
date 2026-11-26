@@ -216,6 +216,35 @@ pub(crate) fn judge_program(
             file.prelude().map(|_| function.declaration)
         })
         .collect::<std::collections::BTreeSet<_>>();
+    // E1: source positions of record sites, for the counter file only.
+    let e1_view = if e1::data() {
+        crate::syntax::views::SyntaxView::new(resolved.syntax()).ok()
+    } else {
+        None
+    };
+    let e1_position = |site: &NodePath| -> String {
+        let Some(view) = &e1_view else {
+            return String::new();
+        };
+        let Some(node) = view.node_with_path(site) else {
+            return String::new();
+        };
+        let Ok(coordinate) = view.coordinate(node) else {
+            return String::new();
+        };
+        let Some(file) = resolved
+            .syntax()
+            .classified_bundle()
+            .source_bundle()
+            .file(coordinate.source())
+        else {
+            return String::new();
+        };
+        let start = usize::try_from(coordinate.start().value()).unwrap_or(0);
+        let bytes = file.bytes();
+        let line = bytes[..start.min(bytes.len())].iter().filter(|b| **b == b'\n').count() + 1;
+        format!("{}:{line}", file.display_path())
+    };
     functions
         .iter()
         .enumerate()
@@ -230,7 +259,7 @@ pub(crate) fn judge_program(
             {
                 e1_shadow(
                     functions, nominals, elements, function, selected.get(index).copied(),
-                    constants, scope, &prelude,
+                    constants, scope, &prelude, &e1_position,
                 );
                 return RangeJudgment::default();
             }
@@ -265,7 +294,7 @@ pub(crate) fn judge_program(
             e1::walk_time(e1_walk.elapsed().as_nanos());
             e1_shadow(
                 functions, nominals, elements, function, selected.get(index).copied(),
-                constants, scope, &prelude,
+                constants, scope, &prelude, &e1_position,
             );
             RangeJudgment {
                 issues,
@@ -365,6 +394,7 @@ fn e1_shadow<'p>(
     constants: &'p [super::model::CheckedConstant],
     scope: JudgmentScope,
     prelude: &'p std::collections::BTreeSet<crate::DeclarationId>,
+    position: &dyn Fn(&NodePath) -> String,
 ) {
     use super::obligations::ObligationSubject;
     let configs = e1::configs();
@@ -498,7 +528,7 @@ fn e1_shadow<'p>(
                 record: index.to_string(),
                 rule: format!("{:?}", record.rule),
                 kind: e1_kind(&record.subject),
-                site: format!("{:?}", record.site),
+                site: format!("{:?} @{}", record.site, position(&record.site)),
                 ordinary,
                 route,
                 shadow,

@@ -155,6 +155,8 @@ def main(path):
     classes = collections.Counter()
     sources = collections.Counter()
     ninth = []
+    gaps = []
+    unrepresentable = []
     for k, row in base.items():
         if row["kind"] in ("range-clause", "condition") or row["ordinary"] != "proved":
             continue
@@ -173,8 +175,10 @@ def main(path):
             label = "not posed: " + row["kind"].split("#")[0]
         elif shadow.startswith("inconclusive") or shadow in ("unreached", "pending"):
             label = "walk gap: " + shadow
+            unrepresentable.append(row)
         elif linear_only(row["route"]):
             label = "walk gap: linear derivation, facts the walk lacks"
+            gaps.append(row)
             sources[tuple(sorted(tag for tag in row["route"].split("+")
                                  if tag.startswith("Source")))] += 1
         else:
@@ -189,12 +193,51 @@ def main(path):
         print(f"    {count:6} {'+'.join(tags) or '(none)'}")
     lost = [k for k, row in base.items() if proved(row) and k in remedy and not proved(remedy[k])]
     print(f"  lost under the remedy: {len(lost)}")
-    for k in lost[:20]:
-        print("    LOST", "\t".join(k), remedy[k]["shadow"])
-    print(f"  ninth kind rows (first 120 of {len(ninth)}):")
-    for row in ninth[:120]:
-        print("    NINTH", row["label"], row["function"], row["kind"], row["rule"],
-              row["route"][:200], f"n1={row['n1']} atoms={row['atoms']}")
+    for k in lost:
+        print("    LOST", "\t".join(k), remedy[k]["shadow"], remedy[k]["notes"][:120])
+
+    def conformance_first(row):
+        return (row["label"].startswith(("program:", "app:", "probe:")), len(row["label"]))
+
+    def grouped(title, rows, signature):
+        groups = collections.defaultdict(list)
+        for row in rows:
+            groups[signature(row)].append(row)
+        print(f"  {title}: {len(rows)} rows in {len(groups)} groups")
+        for sig, members in sorted(groups.items(), key=lambda item: -len(item[1])):
+            labels = len({row["label"] for row in members})
+            print(f"    GROUP {len(members)} rows, {labels} labels: {sig}")
+            for row in sorted(members, key=conformance_first)[:3]:
+                print("      e.g.", row["label"], row["scope"], row["function"], row["kind"],
+                      row["site"].split(" @")[-1], f"n1={row['n1']} atoms={row['atoms']}",
+                      row["shadow"])
+
+    def route_signature(row):
+        return "+".join(sorted({tag for tag in row["route"].split("+")
+                                if not tag.startswith(("Source", "Transitive", "Subsumed",
+                                                       "Materialized", "GoalProjection",
+                                                       "GoalNormalization"))})) or "(sources only)"
+
+    grouped("ninth kind", ninth, lambda row: (row["kind"].split("#")[0], route_signature(row)))
+    grouped("linear walk gaps", gaps,
+            lambda row: (row["kind"].split("#")[0], "+".join(sorted(
+                tag for tag in row["route"].split("+") if tag.startswith("Source"))) or "(none)"))
+    grouped("unrepresentable", unrepresentable,
+            lambda row: (row["kind"].split("#")[0], row["notes"][:80]))
+
+    print("\n== soundness review: ordinary unproved, baseline shadow proved")
+    flagged = [row for row in base.values()
+               if row["kind"] not in ("range-clause", "condition")
+               and row["ordinary"] == "unproved" and proved(row)]
+    print(f"  {len(flagged)} rows")
+    for row in sorted(flagged, key=lambda row: (row["label"], row["function"])):
+        print("    FLAG", row["label"], row["scope"], row["function"], row["kind"], row["rule"],
+              row["site"].split(" @")[-1], f"n1={row['n1']} atoms={row['atoms']}")
+    decided = [row for row in base.values() if row["kind"] == "condition"
+               and row["ordinary"] == "decided" and row["shadow"] == "undecided"]
+    print(f"  conditions ordinary decides and the shadow does not: {len(decided)}")
+    for row in decided:
+        print("    COND", row["label"], row["function"], row["site"].split(" @")[-1])
 
     print("\n== OP-5 conditions (shadow decides more than ordinary?)")
     for config in CONFIGS:
@@ -214,7 +257,7 @@ def main(path):
                           "max_depth", "full_nodes", "backjump_nodes"):
             values = [row[candidate] for row in posed]
             print(f"    {candidate:15} {quantiles(values)}")
-        for candidate in ("n1", "n3"):
+        for candidate in ("n1", "n2", "n3"):
             print(f"    {candidate} histogram {histogram([row[candidate] for row in posed])}")
             cover = max((row[candidate] for row in posed if proved(row)), default=0)
             within = [row for row in posed if row[candidate] <= cover]

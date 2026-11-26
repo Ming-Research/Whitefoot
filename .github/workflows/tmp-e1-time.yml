@@ -5,6 +5,7 @@ name: tmp-e1-time
 
 on:
   push:
+    branches: ['wf-try/**/commit/**']
 
 permissions:
   contents: read
@@ -27,6 +28,8 @@ env:
 
 jobs:
   timing:
+    # Only a commit that asks for it: the timing holds the host for hours.
+    if: contains(github.event.head_commit.message, '[e1-time]')
     runs-on: [self-hosted, 14900k]
     timeout-minutes: 360
     steps:
