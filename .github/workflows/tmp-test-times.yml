@@ -1,0 +1,66 @@
+# Temporary: the time each test item 159 adds or extends takes on the gate's
+# Linux host, run alone, and the corpus group as the gate runs it with them.
+# Removed before the full check.
+name: tmp-test-times
+
+on:
+  push:
+    branches: ['wf-try/work-159-26e0fade/commit/**']
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  times:
+    name: ${{ matrix.part }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [alone, corpus]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          sudo sysctl -w kernel.core_pattern=core
+          nproc
+          grep -m 1 'model name' /proc/cpuinfo
+
+      - name: Each test alone
+        if: matrix.part == 'alone'
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: 900
+        run: |
+          perl .github/run-check.pl compiler/test-build-corpus \
+            cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --test corpus --no-run
+          status=0
+          for name in \
+            programs::busy_driver::a_read_whose_byte_arrives_returns_beside_a_computation \
+            programs::busy_driver::a_read_whose_deadline_passes_ends_beside_a_computation \
+            programs::busy_driver::a_fired_watch_ends_a_read_beside_a_computation \
+            programs::busy_driver::a_ready_context_starts_beside_computations_on_every_driver \
+            programs::contexts::a_periodic_sleeping_reader_progresses_beside_one_busy_writer \
+            programs::contexts::a_context_polling_an_object_lets_the_producer_run_on_one_driver \
+            programs::busy_ring_receive::a_tcp_receive_releases_an_atomic_computation_with_an_idle_driver
+          do
+            perl .github/run-check.pl "time/${name##*::}" \
+              cargo test --manifest-path compiler/Cargo.toml --profile gate --locked --offline --test corpus \
+              -- --exact "$name" || status=1
+          done
+          exit "$status"
+
+      - name: The corpus group
+        if: matrix.part == 'corpus'
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: 900
+        run: make check-group GROUP=corpus
