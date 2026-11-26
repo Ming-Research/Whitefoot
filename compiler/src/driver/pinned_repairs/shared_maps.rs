@@ -7,7 +7,7 @@ pub(super) const SHARED_MAPS: &[RepairPair] = &[
         rule: "TYPE-9",
         sentences: &[
             "]: InvalidRestrictedTypePlacement\n",
-            "a `ConcurrentHashMap<V>` is only ever the state of a shared object: write `Shared<ConcurrentHashMap<V>>`",
+            "\n  mechanical_fix: a `ConcurrentHashMap<V>` is only ever the state of a shared object: write `Shared<ConcurrentHashMap<V>>`, made by `shared_map_new::<V>(capacity: n)`, and reach the map through an atomic target; a callee takes `&ConcurrentHashMap<V>`\n",
         ],
         repaired: &[include_bytes!(
             "../../../../tests/conformance/cases/share-pos-map-entry-beside-an-object.wf"
@@ -21,7 +21,7 @@ pub(super) const SHARED_MAPS: &[RepairPair] = &[
         rule: "TYPE-9",
         sentences: &[
             "]: InvalidRestrictedTypePlacement\n",
-            "this type argument would place `ConcurrentHashMap<u8>` as an inline value; make a shared map with `shared_map_new::<V>(capacity: n)`",
+            "\n  mechanical_fix: this type argument would place `ConcurrentHashMap<u8>` as an inline value; make a shared map with `shared_map_new::<V>(capacity: n)`, and pass its handle `Shared<ConcurrentHashMap<V>>` or a reference `&ConcurrentHashMap<V>` instead\n",
         ],
         repaired: &[include_bytes!(
             "../../../../tests/conformance/cases/type9-pos-map-type-argument-behind-a-handle.wf"
@@ -31,7 +31,9 @@ pub(super) const SHARED_MAPS: &[RepairPair] = &[
         name: "map-key-set-moved.wf",
         rejected: include_bytes!("../../../../tests/conformance/cases/share-neg-map-key-moved.wf"),
         rule: "SHARE-2",
-        sentences: &["name the key set without `move`: the statement reads it when it begins"],
+        sentences: &[
+            "\n  mechanical_fix: name the key set without `move`: the statement reads it when it begins and the binding over it stays valid while the set is not written\n",
+        ],
         repaired: &[include_bytes!(
             "../../../../tests/conformance/cases/share-pos-map-key-set-entries.wf"
         )],
@@ -44,7 +46,7 @@ pub(super) const SHARED_MAPS: &[RepairPair] = &[
         rule: "SHARE-2",
         sentences: &[
             "]: AtomicTargetNotShared\n",
-            "hold a handle whole once, or name its entries with entry and key-set targets",
+            "\n  mechanical_fix: hold a handle whole once, or name its entries with entry and key-set targets\n",
         ],
         repaired: &[
             br#"const names: Array<u8, 2> =[97_u8, 98_u8];
@@ -74,7 +76,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
         rule: "SHARE-2",
         sentences: &[
             "]: UndischargedCallSeparation\n",
-            "prove before the statement that the positions of the two handle places are distinct, such as by a `requires` clause or an `if` around the statement, or hold the second handle in an atomic statement of its own",
+            "\n  mechanical_fix: prove before the statement that the positions of the two handle places are distinct, such as by a `requires` clause or an `if` around the statement, or hold the second handle in an atomic statement of its own\n",
         ],
         repaired: &[
             include_bytes!(
@@ -124,7 +126,7 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "SHARE-2",
         sentences: &[
             "]: UndischargedCallSeparation\n",
-            "prove before the statement that the positions of the two handle places are distinct, such as by a `requires` clause or an `if` around the statement, or hold the second handle in an atomic statement of its own",
+            "\n  mechanical_fix: prove before the statement that the positions of the two handle places are distinct, such as by a `requires` clause or an `if` around the statement, or hold the second handle in an atomic statement of its own\n",
         ],
         repaired: &[
             include_bytes!(
@@ -158,7 +160,7 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "SHARE-2",
         sentences: &[
             "]: AtomicTargetNotShared\n",
-            "hold a handle whole once, or name its entries with entry and key-set targets",
+            "\n  mechanical_fix: hold a handle whole once, or name its entries with entry and key-set targets\n",
         ],
         repaired: &[br#"fn pour(shards: &Array<Shared<u64>, 4>, slot: u64) -> result: unit reads(shards) waits contract {
   requires slot < 4_u64;
@@ -180,7 +182,7 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "SHARE-2",
         sentences: &[
             "]: AtomicBindingUnused\n",
-            "remove the target, or the whole statement when no target is used",
+            "\n  mechanical_fix: remove the target, or the whole statement when no target is used; a statement holds what its targets name, so a target nothing uses holds a state or entries for nothing\n",
         ],
         repaired: &[
             br#"const names: Array<u8, 2> =[97_u8, 98_u8];
