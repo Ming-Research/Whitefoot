@@ -2995,6 +2995,9 @@ pub(crate) enum CheckedStatement {
         /// release graph supplies this scheduling boundary; permission keeps
         /// borrowed storage alive across an overlapped call's entry.
         releases_displaced_storage: bool,
+        /// [OP-12] the right-hand side's direct call read the target out, so
+        /// the commit writes back the storage it read [PAR-2].
+        atomic_read_out: bool,
     },
     /// [GRAM-4] an expression statement whose discarded result needs no
     /// release: a copy value or a borrow-mode reference.

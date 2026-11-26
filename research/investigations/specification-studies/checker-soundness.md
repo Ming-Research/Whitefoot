@@ -6,8 +6,8 @@ the raw material used are in `process.md` in the same folder.
 
 ## The conclusions first
 
-1. **This study found two candidate holes. Both are in the range judgment, and both are unverified.** The full programs and the way to confirm them are in the next section. In both programs,
-   the checker proves that `251_u8 + v` does not overflow, while at run time `v` can be 9.
+1. **This study found two candidate holes. Both are in the range judgment.** The full programs are in the next section. In both programs,
+   the checker proves that `251_u8 + v` does not overflow, while at run time `v` can be 9. Both were confirmed on the compiler on 2026-11-25 and fixed by item #211; [the range-walk references record](../range-walk-references/DESIGN.md) holds the verdicts.
 2. **The inferred risk recorded in the item (a body-less built-in function publishes the generated postcondition as proved) is already closed on main.** #398
    fixed it itself in its second round; the item's text is out of date. I checked this; see section 3.
 3. **I replayed the three approaches against 27 soundness defects that have already been fixed** (the table in section 5). What I saw:
@@ -22,7 +22,7 @@ the raw material used are in `process.md` in the same folder.
    to mechanical enumeration, with only `whitefootc --check` as the referee, and no programs run. Connect the differential comparison between the Lean model and the Rust checker once the fragment grows. Put the build that keeps
    runtime checks later. Do not build the small verifier.
 
-## 2. Two candidate holes (unverified)
+## 2. Two candidate holes (confirmed since)
 
 Background, from the start: the compiler has two provers. Ordinary entailment (`compiler/src/semantic/entailment/`) runs first. As soon as a function carries a range clause
 (for example `requires forall small(k in 0_u64..n): xs^[k] < 4_u64;`), it "participates" in the range judgment (spec `RANGE-2`). The range judgment
@@ -31,7 +31,7 @@ Background, from the start: the compiler has two provers. Ordinary entailment (`
 (the kill events of ENT-5) are two separate implementations. The already-fixed #281 and #414 both came from here: in #281 it did not forget a value changed through a reference, and proved an
 obligation with the old value; in #414 it treated a reachable path as unreachable.
 
-The two below are the same kind of error as #281. I reread both against the code myself, and the paths hold. Without a compiler, they are unverified.
+The two below are the same kind of error as #281. I reread both against the code myself, and the paths hold. Without a compiler, they were unverified when this study was written; [the range-walk references record](../range-walk-references/DESIGN.md) holds how the compiler judged them.
 
 ### Candidate one: after a struct binding is replaced as a whole, a reference taken earlier and the binding come apart in the walk
 
@@ -403,8 +403,7 @@ are added as conformance cases is decided along with it.
 
 ## 9. What is unverified, and what may be wrong
 
-- Whether the two candidates are really accepted by main. The way to confirm is in section 2. What I checked is the path in the range walk; on the ordinary-check side I checked only the invalidation
-  logic of `REF-2` and the target form of writes through references; whether some other rule stops them first, I did not exhaust.
+- Settled since: both candidates are accepted by main before the fix ([the range-walk references record](../range-walk-references/DESIGN.md)), so no other rule stops them first.
 - The 11 "runtime comparison catches it" in the section 5 table were judged against a referee that does not yet exist and a generator that is not yet written.
 - "The existing sanitizers do not report #390 and #414" is inferred; the way to confirm #390 is in section 4.
 - The origins, witness programs and fix locations of the 27 defects were extracted by sonnet subagents from the PR bodies and diffs; I spot-checked #390 (the specification text before and after the fix) and

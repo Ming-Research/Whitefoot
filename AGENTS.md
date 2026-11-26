@@ -35,7 +35,7 @@ example, defines the language and toolchain judgments, and the conformance
 results state what the compiler implements. Compiler behavior, tests, the
 Lean model under `proof/`, archived code and design prose do not define the
 language.
-`docs/constitution.md` owns purpose, objectives, tradeoffs and conditional
+`design/constitution.md` owns purpose, objectives, tradeoffs and conditional
 design principles.
 
 The research record is `research/investigations/<name>/` and
@@ -51,7 +51,7 @@ describe evidence, not a workflow step.
 
 - Before a material choice, also read the relevant constitutional aims; the
   constitution's
-  [compatibility clause](docs/constitution.md#article-6-evolve-everything-here-may-change-as-the-grounds-change)
+  [compatibility clause](design/constitution.md#article-6-evolve-everything-here-may-change-as-the-grounds-change)
   decides when compatibility starts to count.
 - `research/README.md` holds the method for attributing a performance loss or
   proof cost and for agent writer trials.
@@ -59,8 +59,9 @@ describe evidence, not a workflow step.
   with its before and after behavior and the card that selected it or why it
   needed none.
 - Programs in this repository were written to exercise the compiler
-  (`design/language.md`): a program that fails still witnesses a gap, and
-  measuring a change's effect on them is still evidence.
+  (decision `language-choices-are-made-on-merits` in
+  `design/decisions/language.md`): a program that fails still witnesses a
+  gap, and measuring a change's effect on them is still evidence.
 - **Fix or record what you notice**, and list each item in the PR's *Found
   along the way* section. `make static` requires every Rust source file under
   `compiler/src/` over 4,000 lines to be listed in
@@ -85,7 +86,8 @@ Whitefoot's extra merge preconditions:
    `map-sanitizers.yml` passes on the exact revision being merged.
 4. `sanitizers.yml` passes on the exact revision being merged: no sanitizer
    reports on an accepted program
-   ([sanitized builds](design/compiler/sanitized-builds.md)).
+   ([sanitized builds](design/decisions/compiler/command-line/sanitized-builds.md), decision
+   `sanitizers-run-in-their-own-workflow`).
 5. If the merge changes `spec/kernel-spec.md` or conformance evidence, the
    pull request states what changed and its selection ground, answered
    against the exact revision being merged. The specification's bytes are its
@@ -168,7 +170,7 @@ read.
 - `AGENTS.md`: Whitefoot's goal, authority, process additions, approval and
   merge rules, integrity rules, checks and review.
 - `docs/review-checklist.md`: the items a reviewer answers from the diff.
-- `docs/constitution.md`: complete statements of purpose, objectives,
+- `design/constitution.md`: complete statements of purpose, objectives,
   obligations, prohibitions, tradeoffs and their conditions; not
   conversations, progress, maintenance instructions, abbreviated labels,
   per-clause usage checklists or a selected mechanism presented as an
@@ -196,18 +198,20 @@ read.
 - Technical claims point to the specification, source and cases, a relevant
   design, or reproducible evidence.
 - The constitution, specification and essays stand without
-  the design trees: they do not link to `design/` or use it as authority.
+  the design tree's decisions: they do not link to `design/decisions/` or use
+  it as authority.
 - Maintainer navigation (README, this file, the research index) may point to
-  the design trees. Research records and PRs may cite decisions as historical
+  the design tree. Research records and PRs may cite decisions as historical
   rationale, not as language definitions or proof of an empirical claim.
 - Historical references may name their historical versions; current guidance
   uses the active specification's stable path.
 
 ## Compiler rules
 
-The compiler's implementation rules are its design decisions in
-`design/compiler`. Exploratory timing runs only when requested; measure
-build time apart from test and program execution.
+The compiler's implementation rules are its design decisions under
+`design/decisions/compiler/` and `design/decisions/runtime/`. Exploratory
+timing runs only when requested; measure build time apart from test and
+program execution.
 
 ## Checks
 
@@ -217,8 +221,9 @@ build time apart from test and program execution.
   archives, the README and its translation changed together, prose
   integrity, guidance references, Rust sources under `compiler/src/` over
   4,000 lines listed in `.github/oversized-sources.txt`, the safety claims
-  page against the specification and the conformance manifest, and the design
-  tree's form, read through the `design/skill` submodule.
+  page against the specification and the conformance manifest, and the
+  `design/skill` submodule's own tests. The wf-agents engine checks the design
+  tree's form before it merges a work.
 - `make check`, on the revision to merge: the static group plus the compiler
   build, tests, the conformance adapter and the runtime. Its corpus group
   compiles the example programs in `docs/guide/` and both READMEs under the
@@ -287,7 +292,8 @@ build time apart from test and program execution.
   `compiler-release-cleanup.yml` removes releases older than 30 days each
   week, keeping the newest lightweight release of main and every bundled
   release of main; each file's header gives the commands and contents
-  ([downstream releases](design/compiler/downstream-releases.md)).
+  ([downstream releases](design/decisions/development/releases.md), decisions
+  `releases-are-made-by-hand-and-expire` and `bundled-main-releases-never-expire`).
 Every build, check, test and measurement runs in CI, never on a
 contributor's workstation. A focused result the existing workflows do not
 give, such as one test filter or a compiler probe over a set of cases, comes
@@ -304,8 +310,9 @@ leaves Cargo and the test harness at every available processor unless
 system time every 30 seconds, and stops a command after 30 minutes unless
 `WHITEFOOT_CHECK_TIMEOUT` gives another limit in seconds. It compares each
 labeled stage with its budget in `.github/time-budgets.txt` without changing
-the command's status. Linux budgets are per CPU model: the maximum of at least
-its 20 most recent recorded runs plus 10%, rounded up to 5 s, with a 10 s floor.
+the command's status. Linux budgets are per CPU model: 1.1 times the maximum of
+at least its 20 most recent recorded runs, plus that maximum's distance above
+their median, rounded up to 5 s, with a 10 s floor.
 Models with fewer runs have no column unless the owner adds one; unknown models
 use the stage's largest Linux budget, with a note. macOS overruns are
 report-only, and so are the stages named in `WHITEFOOT_BUDGET_REPORT_ONLY`

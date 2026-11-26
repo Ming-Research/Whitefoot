@@ -2,7 +2,7 @@
 
 ## Scope and required properties
 
-The [constitution](../../../docs/constitution.md) requires machine-checked
+The [constitution](../../../design/constitution.md) requires machine-checked
 safety and practical compilation. It does not uniquely select a proof language.
 This assessment covers the proof-authority and cost arguments attached to
 ENT-1, ENT-6, INV-1 and PRF-1 in the [active specification](../../../spec/kernel-spec.md).

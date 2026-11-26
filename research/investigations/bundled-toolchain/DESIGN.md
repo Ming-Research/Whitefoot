@@ -33,7 +33,7 @@ The two completion conditions are:
    tests pass, and native code retains probes. This is a prerequisite for the
    macOS package, not an optional package optimization.
 
-The [constitution's safety constraint](../../../docs/constitution.md#article-1-safe-safety-is-proved-before-a-program-is-accepted)
+The [constitution's safety constraint](../../../design/constitution.md#article-1-safe-safety-is-proved-before-a-program-is-accepted)
 rules out removing probes: a frame can cross a guard page and write into
 another mapping. Resource exhaustion being outside source outcomes in
 [the specification](../../../spec/kernel-spec.md) does not permit corruption.
@@ -671,18 +671,17 @@ the owner's rulings are on the board, and Windows packaging is its own work.
   download of them and the release creation are exercised only by a real
   dispatch. The bundled path's dry runs reach the same publish job only to skip
   it. The first approved lightweight release is the observation.
-- **Runtime C frames:** the floor's probing covers the functions the compiler
-  generates. The runtime's own C translation units are compiled by the same
-  clang but get a probe only if that compiler adds one by default: Apple's clang
-  does (the compiler's former comment says so), upstream clang adds none
-  unless asked, so a large C frame (`compiler/src/backend/completion/file_posix.c`
-  holds a 32 KiB array in one function) is unprobed under the Linux gate's
-  clang and under the packaged upstream clang on macOS. The two claims about
-  clang are read from the former comment and clang's documented defaults, not
-  measured here; confirm by compiling that file to assembly with each clang.
-  Probing the runtime's frames is a separate piece of work for every platform,
-  with an audit of their sizes; it is not done here and is tracked as the item
-  runtime-c-stack-probe.
+- **Runtime C frames:** the floor's probing first covered only the functions
+  the compiler generates, and the runtime's own C units took whatever probe
+  their clang adds. Measured, upstream clang adds none and Apple's adds the
+  helper: the runtime's one frame over a page (a 32 KiB array in
+  `compiler/src/backend/completion/file_posix.c`) was unprobed under the Linux
+  gate's clang and under the packaged upstream clang on macOS
+  ([measurements](../../experiments/runtime-c-stack-probes/README.md)). The
+  runtime's C units now compile with the target's probing method, and the
+  acceptance runs the compiler's frame test beside each installed package's
+  clang, as the design decisions `runtime-c-units-carry-the-generated-probe-method` and
+  `acceptance-runs-the-candidates-runtime-frame-test` state.
 - **Safety qualification outstanding:** post-LTO probing, aligned and variable
   frames, unwinding and stack-ledger correspondence; Apple inline support; exact
   Apple helper ABI and deployment availability. The completed arm64 non-LTO
