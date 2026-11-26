@@ -2000,3 +2000,22 @@ first call of `prepare_toolchain`, which runs all four, took 73 ms. The register
 probe is therefore about a quarter of the facts' start-up cost and 15 to 22 ms
 for each compiler process; this is a single measurement and a bound on the
 order of magnitude, not a distribution.
+
+**Machine-code result, 2026-11-26.** The temporary check of this change
+([run 45800602184](https://github.com/Ming-Research/Whitefoot/actions/runs/45800602184),
+candidate commit 762131d5bb, LLVM 22 on the Linux runner, v2h built by the
+candidate and by the merge-base compiler) disassembled every `wf_run.arm.*`
+and cold symbol, 362 handlers each. The candidate has no push or pop of RBP in
+any handler (0 of 362); the merge-base build has them in 92. Its `wf_run`
+boundary has one push and one pop of RBP (42 instructions). The handlers hold
+10253 instructions in the candidate and 10522 in the base. `I32Clz` and
+`I64Clz` go from 25 instructions with one push and two pops to 22 with none,
+and `GlobalSet` from 25 with one push and one pop to 23; `I32Sub`, `I64Sub`,
+`I32And` and `I64And` save no RBP in the base either (22 instructions in both
+builds), so the check requires its control only of Clz and GlobalSet and
+reports the others. The tail-jump register copy remains: 329 handlers end in a
+copy into the jump register in both builds, as the target-class constraint above
+predicts. The candidate's 2000-iteration CoreMark prints the four recorded CRCs
+(0xe714, 0x1fd7, 0x8e3a, 0x4983). These are instruction counts and a
+correctness check; they say nothing about speed, which only the 14900K run of
+`compiler-compare.yml` can.
