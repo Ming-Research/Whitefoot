@@ -126,7 +126,9 @@ completion criterion were refused.
   the retention tag `par-demand-prototype`; it is extracted at run time and
   never committed. Run on request by `par-default-accept.yml`, whose smoke
   mode runs on a hosted runner and whose pilot and main modes run only on the
-  i9-14900K; never a gate, and no gate group runs the tools' self-tests. No
+  i9-14900K; never a gate, and no gate group runs the tools' self-tests. Until
+  the compiler of Whitefoot#468 is on main, a smoke dispatched from main stops
+  at the identity step, since main's `--par` has no demand splitting. No
   result is recorded yet.
 
 ## Completed current-compiler bounded research
