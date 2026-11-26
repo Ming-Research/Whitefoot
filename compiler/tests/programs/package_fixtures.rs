@@ -189,19 +189,30 @@ impl StandInPackage {
         Self { root, log }
     }
 
-    /// Builds the waiting witness with `extra` options before the sources.
+    /// Builds the waiting witness with `extra` options before the sources. The
+    /// compiler was copied by a thread that may still hold the file open for
+    /// writing in a forked child, so a start refused as busy is tried again.
     fn build(&self, extra: &[&str]) -> std::process::Output {
+        use std::io::ErrorKind;
         use std::process::Command;
-        use std::time::Duration;
-        output_within(
-            Command::new(self.root.join("bin").join("whitefootc"))
-                .args(extra)
-                .arg("-o")
-                .arg(self.root.join("program"))
-                .arg(self.root.join("waiting.wf")),
-            Duration::from_secs(120),
-        )
-        .expect("run the build")
+        use std::time::{Duration, Instant};
+        let deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            match output_within(
+                Command::new(self.root.join("bin").join("whitefootc"))
+                    .args(extra)
+                    .arg("-o")
+                    .arg(self.root.join("program"))
+                    .arg(self.root.join("waiting.wf")),
+                Duration::from_secs(120),
+            ) {
+                Err(error) if error.kind() == ErrorKind::ExecutableFileBusy => {
+                    assert!(Instant::now() < deadline, "the compiler stayed busy");
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                other => return other.expect("run the build"),
+            }
+        }
     }
 
     fn calls(&self) -> Vec<String> {
@@ -352,6 +363,7 @@ fn a_record_that_cannot_be_taken_probes_and_the_note_names_why() {
 #[test]
 fn a_manifest_with_a_malformed_number_is_not_trusted() {
     let good = record_for("clang version 22.1.8");
+    let mut taken = Vec::new();
     for (tag, bad) in [
         ("minus", "1-2"),
         ("zero", "01"),
@@ -368,11 +380,14 @@ fn a_manifest_with_a_malformed_number_is_not_trusted() {
         );
         let built = package.build(&[]);
         let stderr = String::from_utf8_lossy(&built.stderr);
-        assert!(
-            stderr.contains("not valid JSON") && package.probes() >= 3,
-            "{bad}: the record was taken from a manifest that is not JSON: {stderr}"
-        );
+        if !(stderr.contains("not valid JSON") && package.probes() >= 3) {
+            taken.push(bad);
+        }
     }
+    assert!(
+        taken.is_empty(),
+        "records were taken from manifests holding these non-numbers: {taken:?}"
+    );
 }
 
 /// With the reference being the item's own result for the other two
