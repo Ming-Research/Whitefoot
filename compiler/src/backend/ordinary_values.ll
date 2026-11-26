@@ -609,6 +609,14 @@ entry:
   ret void
 }
 
+declare void @wf__body_listener_address(ptr, ptr)
+
+define void @wf_std.net.listener_address(ptr %result, ptr %listener) align 64 {
+entry:
+  tail call void @wf__body_listener_address(ptr %result, ptr %listener)
+  ret void
+}
+
 declare i32 @wf__body_tcp_listen_start(ptr, ptr, ptr, ptr)
 
 define i32 @wf_std.net.tcp_listen.start(ptr %result, ptr %factory, ptr %address, ptr %operation) align 64 {
@@ -726,6 +734,30 @@ entry:
   %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
   store i64 %name.len, ptr %view.len, align 8
   call void @wf__body_open_append_finish(ptr %result, ptr %factory, ptr %root, ptr %view, i64 %start, i64 %end, ptr %operation)
+  ret void
+}
+
+declare i32 @wf__body_create_new_file_start(ptr, ptr, ptr, ptr, i64, i64, ptr)
+
+define i32 @wf_std.fs.create_new_file.start(ptr %result, ptr %factory, ptr %root, ptr %name.data, i64 %name.len, i64 %start, i64 %end, ptr %operation) align 64 {
+entry:
+  %view = alloca { ptr, i64 }, align 8
+  store ptr %name.data, ptr %view, align 8
+  %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
+  store i64 %name.len, ptr %view.len, align 8
+  %state = call i32 @wf__body_create_new_file_start(ptr %result, ptr %factory, ptr %root, ptr %view, i64 %start, i64 %end, ptr %operation)
+  ret i32 %state
+}
+
+declare void @wf__body_create_new_file_finish(ptr, ptr, ptr, ptr, i64, i64, ptr)
+
+define void @wf_std.fs.create_new_file.finish(ptr %result, ptr %factory, ptr %root, ptr %name.data, i64 %name.len, i64 %start, i64 %end, ptr %operation) align 64 {
+entry:
+  %view = alloca { ptr, i64 }, align 8
+  store ptr %name.data, ptr %view, align 8
+  %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1
+  store i64 %name.len, ptr %view.len, align 8
+  call void @wf__body_create_new_file_finish(ptr %result, ptr %factory, ptr %root, ptr %view, i64 %start, i64 %end, ptr %operation)
   ret void
 }
 

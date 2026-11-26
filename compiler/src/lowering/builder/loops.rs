@@ -319,10 +319,14 @@ impl IrBuilder<'_> {
         }
 
         if let Some((update, update_parameters)) = update {
-            // Cleanup has completed on the edge into this block. The hidden
-            // update is exact because the true guard established binder <
-            // upper; AddWrap is the target-independent, total modular
-            // operation. A body with no fallthrough or continue creates no update block.
+            // Only body fallthrough and continues resolved to this loop enter
+            // here, after cleanup and the true guard binder < upper <= u64::MAX.
+            // [SET-1, OWN-11] forbid source writes to the binder, including
+            // through a reference when it has address-backed storage, so the
+            // reloaded value still satisfies that guard. Its unit increment
+            // is exact [FN-1]; AddExact retains the unsigned no-wrap fact.
+            // Breaks and other exits bypass this block; a body with no
+            // fallthrough or local continue creates no update block.
             let update_base = update_parameters
                 .get(..base_count)
                 .ok_or(LoweringFailure::InvalidCheckedProgram)?;
@@ -349,7 +353,7 @@ impl IrBuilder<'_> {
             let next = self.define(
                 U64,
                 IrOperation::Integer {
-                    operation: IrIntegerOperation::AddWrap,
+                    operation: IrIntegerOperation::AddExact,
                     operand_type: U64,
                     arguments: vec![old, one],
                 },

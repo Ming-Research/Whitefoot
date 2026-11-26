@@ -39,6 +39,7 @@ a.out
 *.profraw
 *.profdata
 target/
+/compiler/.scratch/
 **/big.txt
 experiments/**/xwc*
 experiments/**/xchunkwc*

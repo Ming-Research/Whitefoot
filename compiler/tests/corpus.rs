@@ -7,6 +7,16 @@ mod doc_examples;
 mod native_windows;
 mod support;
 
+/// The compiler under test: the test-only `WHITEFOOT_TEST_COMPILER` names a
+/// compiler other than the one Cargo built, as the one inside an installed
+/// package, and none selects the built one.
+pub(crate) fn compiler_under_test() -> std::path::PathBuf {
+    std::env::var_os("WHITEFOOT_TEST_COMPILER").map_or_else(
+        || std::path::PathBuf::from(env!("CARGO_BIN_EXE_whitefootc")),
+        std::path::PathBuf::from,
+    )
+}
+
 #[cfg_attr(windows, allow(dead_code))]
 mod conformance {
     #[cfg(unix)]

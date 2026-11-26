@@ -493,7 +493,7 @@ fn the_c_runtime_compiles_with_64_byte_function_alignment() {
         "runtime.mk must compile the runtime with the driver's host arguments"
     );
     #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
-    let mut child = Command::new(crate::clang_executable())
+    let mut child = super::clang()
         .args(["-x", "c", "-", "-S", "-o", "-"])
         .args(crate::HOST_OPTIMIZATION_ARGUMENTS)
         .stdin(std::process::Stdio::piped())
