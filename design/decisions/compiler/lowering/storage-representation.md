@@ -22,8 +22,14 @@ A reference to a compile-time measure lowers to the address of a private `unname
 - rejected: an agent proposed refusing the borrow; the owner rejected it, because the specification admits it.
 
 ### decision constant-capacity-windows-are-built-header-only
-Building a value with constant-capacity window storage sets its headers and value-bearing fields and leaves unoccupied Slots and Ring elements uninitialized.
+Building a value with constant-capacity window storage sets its headers and value-bearing fields and leaves unoccupied Slots and Ring elements uninitialized outside an enum's inactive variants.
 - replaced: Zero-filling the whole value was on main; the owner changed it, because WIN-1 makes the unoccupied tail unobservable, and a memset of it was 21 percent of instructions in a profile of a Snowghost style computation.
+
+### decision an-enum-construction-zero-fills-its-inactive-variants
+Building an enum value zero-fills every field but the active variant's fields that hold constant-capacity window storage, so an inactive variant's fields are cleared, window fields included.
+- rejected: an agent proposed leaving an inactive variant's window fields unwritten in enum values over 128 bytes; the owner rejected it, because it resolved no gain in the stable scatter's eight-worker call (data: `research/investigations/scatter-chunk-building/DESIGN.md`).
+- rejected: an agent proposed leaving an inactive variant's window fields unwritten at every size; the owner rejected it, because firn's byte strings and the ordered map's links would be built differently, and nothing had measured them built that way.
+- rejected: an agent proposed leaving every inactive payload unwritten; the owner rejected it, because the hash map's wide replacement and the slab's retained scalar lookup ran slower with it (data: `research/experiments/container-representation/map-library/RESULTS.md`).
 
 ### decision slots-and-ring-are-a-shape-with-optional-capacity
 Slots and Ring are represented by a shape, an element type and an optional capacity, with separate Array forms, and the old region-bearing view, store, arena and extent types are gone.
