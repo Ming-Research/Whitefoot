@@ -1,0 +1,28 @@
+struct Cell {
+  count: u64;
+}
+
+fn need(cells: &Slots<Cell, 4>) -> result: unit pure contract {
+  requires forall small(k in 0_u64..cells^.len): cells^[k].count < 8_u64;
+} {
+  return unit;
+}
+
+fn bump(cells: &Slots<Cell, 4>, x: u64) -> result: unit writes(cells) contract {
+  requires cells^.len == 2_u64;
+  requires forall small(k in 0_u64..cells^.len): cells^[k].count < 8_u64;
+} {
+  doc "r names cells^[0] or cells^[1], so the write through r may make one of their counts 9, and small no longer holds at need.";
+  let r = if x < 10_u64 {
+    give &cells^[0_u64];
+  } else {
+    give &cells^[1_u64];
+  }
+  set r^.count = 9_u64;
+  need(cells: cells);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

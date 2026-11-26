@@ -1,0 +1,17 @@
+fn bump(marks: &[u64], x: u8) -> result: u8 pure contract {
+  requires forall small(k in 0_u64..marks^.len): marks^[k] < 8_u64;
+} {
+  doc "Replacing a whole is a write of the storage r names, so r stays valid and the write through r makes a[0] x, which may be 9.";
+  let a = array_filled::<u8, 4>(value: 0_u8);
+  let r = &a;
+  set a = array_filled::<u8, 4>(value: 1_u8);
+  set a[0_u64] = 1_u8;
+  set r^[0_u64] = x;
+  let v = a[0_u64];
+  let w = 251_u8 + v;
+  return w;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
