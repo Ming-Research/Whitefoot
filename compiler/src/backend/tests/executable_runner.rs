@@ -109,14 +109,8 @@ fn a_main_with_an_unprovable_requirement_is_a_library_the_host_toolchain_accepts
 #[test]
 fn a_library_of_a_real_program_is_accepted_by_the_host_toolchain() {
     for (name, source) in [
-        (
-            "growable_vec.wf",
-            &include_str!("../../../../tests/programs/growable_vec.wf")[..],
-        ),
-        (
-            "prefix.wf",
-            &include_str!("../../../../tests/programs/compute/prefix.wf")[..],
-        ),
+        ("growable_vec.wf", include_str!("../../../../tests/programs/growable_vec.wf")),
+        ("prefix.wf", include_str!("../../../../tests/programs/compute/prefix.wf")),
     ] {
         assert_eq!(source.matches("fn main(").count(), 1, "{name}");
         let library = emit_with_overlap(source.replace("fn main(", "fn entry_point(").as_bytes());
