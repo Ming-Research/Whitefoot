@@ -3,8 +3,9 @@
 # "Plan for the 14900K measurements", items 1 to 3: the ready context's and
 # the polling shape's latencies (latency.py), and the fixed cost of an
 # uncontended atomic statement, shared-take-overhead's `own` program against
-# the C reference (c_reference.c). Firn's throughput, item 4, is io-bench.yml's
-# firn comparison.
+# the C reference (c_reference.c). Firn's throughput, item 4, is
+# redis-bench.sh compare. Each unit first waits for a quiet host (quiet.py), as
+# the plan's rule for a loaded host says.
 #
 #   BASE_WFC, CAND_WFC   compilers built from the base and candidate revisions
 #   BASE_REV, CAND_REV   the two revisions, recorded only
@@ -28,17 +29,21 @@ done
 ${CC:-cc} -std=c11 -O2 -o "$OUT/bin/c_reference" "$HERE/c_reference.c"
 
 # The fixed cost: one context on one CPU and one per driver on two P-cores,
-# six blocks of the six arms, then the C reference six times each way on
-# CPU 0, three seconds a run as the arms run.
-bash "$ROOT/research/experiments/shared-take-overhead/run.sh" --out "$OUT/fixed" --idle-check ||
-    echo "the host was not idle before the runs; see the load above"
+# six blocks of the six arms, each cell recording the busy share of every CPU
+# (host_busy), then the C reference six times each way on CPU 0, three seconds
+# a run as the arms run, each run recording the busy share of the other CPUs.
 bash "$ROOT/research/experiments/shared-take-overhead/run.sh" --out "$OUT/fixed" --build-only
+echo "fixed cost: $(python3 "$HERE/quiet.py" wait 0.05 600)"
 CPU_LISTS="0 0,2" BLOCKS=6 MILLIS=3000 \
     bash "$ROOT/research/experiments/shared-take-overhead/run.sh" --out "$OUT/fixed" --run
 : >"$OUT/c_reference.txt"
 for block in 1 2 3 4 5 6; do
     for way in plain locked; do
-        taskset -c 0 "$OUT/bin/c_reference" "$way" 3000 | sed "s/^/block=$block /" | tee -a "$OUT/c_reference.txt"
+        settled=$(python3 "$HERE/quiet.py" wait 0.05 600)
+        before=$(python3 "$HERE/quiet.py" read 0)
+        result=$(taskset -c 0 "$OUT/bin/c_reference" "$way" 3000)
+        echo "block=$block $result $settled background=$(python3 "$HERE/quiet.py" since 0 "$before")" |
+            tee -a "$OUT/c_reference.txt"
     done
 done
 

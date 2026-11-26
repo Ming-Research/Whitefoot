@@ -16,6 +16,11 @@ base and the candidate revision, and runs items 1 to 3 on one Linux host:
 
 Item 4, Firn's throughput, is `redis-bench.sh compare` of
 `research/experiments/io-completion-bench/`, which records the scheduler's
-counters of each measured pass in `compare-sched.txt`. The record copies
+counters of each measured pass in `compare-sched.txt` when `COMPARE_CLIENTS`
+lets each image stop by itself, and each pass's background load in
+`compare-load.csv`. `quiet.py` reads the host's load for `run.sh` and
+`latency.py`: it waits for a quiet host before a unit and gives the busy
+share of the CPUs a unit does not use, which the plan's rule for a loaded
+host reads. The record copies
 every number it relies on with its run id, since job logs and artifacts
 expire.

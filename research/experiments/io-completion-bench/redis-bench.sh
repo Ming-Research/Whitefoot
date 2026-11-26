@@ -37,7 +37,17 @@
 #                                 COMPARE_PASSES passes (default 6); with PERF
 #                                 naming a perf executable it then records a
 #                                 flat profile of each image under
-#                                 COMPARE_PROFILE (default mset at depth 16)
+#                                 COMPARE_PROFILE (default mset at depth 16).
+#                                 COMPARE_QUIET, a share such as 0.05, makes
+#                                 each image's pass first wait until all CPUs
+#                                 together were at most that busy over two
+#                                 seconds, up to COMPARE_QUIET_WAIT seconds
+#                                 (default 600). COMPARE_CLIENTS, a count, starts
+#                                 each image with that client limit and stops
+#                                 it by connecting until it stops accepting,
+#                                 so that it exits by itself and prints its
+#                                 scheduler report; it must exceed the clients
+#                                 one start serves
 #
 # firn is built with the options FIRN_LINK names, --full-lto when it is unset;
 # the records before the quick mode built it with none.
@@ -169,8 +179,9 @@ start() {
             ;;
         image-*)
             WF_SCHED_REPORT=2 WF_DRIVERS=$(cpu_count "$SERVER_CPUS") taskset -c "$SERVER_CPUS" \
-                "$(image_path "${1#image-}")" "$PORT" 0 - "${IDLE:-0}" \
+                "$(image_path "${1#image-}")" "$PORT" "${COMPARE_CLIENTS:-0}" - "${IDLE:-0}" \
                 >"$OUT/server.log" 2>&1 &
+            limited=${COMPARE_CLIENTS:-}
             ;;
         baseline-*)
             WF_DRIVERS=${1#baseline-} taskset -c "$SERVER_CPUS" \
@@ -189,9 +200,83 @@ start() {
     done
 }
 
+# Whether the started server has not exited; one that exited and is not yet
+# waited for still answers kill -0.
+running() {
+    state=$(sed 's/^.*) //' "/proc/$server/stat" 2>/dev/null | cut -d' ' -f1)
+    [ -n "$state" ] && [ "$state" != Z ]
+}
+
+# A server started with a client limit (`limited`) is stopped by connecting
+# until it refuses, at most that many times; it then serves its last clients
+# and exits by itself, printing what it prints at exit. One still running 30
+# seconds later is killed. stopped says which, and server_status gives its
+# status.
 stop() {
-    kill "$server"
-    wait "$server" 2>/dev/null || true
+    if [ -n "${limited:-}" ]; then
+        python3 -I - "$PORT" "$limited" <<'FILL'
+import socket
+import sys
+
+port, limit = int(sys.argv[1]), int(sys.argv[2])
+for _ in range(limit):
+    try:
+        socket.create_connection(("127.0.0.1", port), timeout=2).close()
+    except ConnectionRefusedError:
+        break
+    except OSError:
+        continue
+FILL
+        tries=0
+        while running && [ "$tries" -lt 600 ]; do
+            sleep 0.05
+            tries=$((tries + 1))
+        done
+    fi
+    stopped=exited
+    if running; then
+        stopped=killed
+        kill "$server"
+    fi
+    server_status=0
+    wait "$server" 2>/dev/null || server_status=$?
+    limited=
+}
+
+# The busy and total jiffies, summed, of the CPUs a comma list does not name
+# (every CPU for an empty list), from /proc/stat.
+others_times() {
+    awk -v mine="$1" '
+        BEGIN { n = split(mine, c, ","); for (i = 1; i <= n; i++) own["cpu" c[i]] = 1 }
+        /^cpu[0-9]/ && !($1 in own) { idle += $5 + $6; for (i = 2; i <= 9; i++) total += $i }
+        END { print total - idle, total }' /proc/stat
+}
+
+# The busy share of the CPUs a comma list does not name since an others_times
+# reading of the same list.
+background_since() {
+    set -- $1 $(others_times "$2")
+    awk -v bb="$1" -v tb="$2" -v ba="$3" -v ta="$4" \
+        'BEGIN { printf "%.4f", ta > tb ? (ba - bb) / (ta - tb) : 0 }'
+}
+
+# Waits until every CPU together was at most COMPARE_QUIET busy over two
+# seconds, or COMPARE_QUIET_WAIT seconds (default 600) have passed; waited and
+# quiet hold the seconds waited and the last share.
+quiet_wait() {
+    waited=0
+    while :; do
+        sample=$(others_times "")
+        sleep 2
+        quiet=$(background_since "$sample" "")
+        waited=$((waited + 2))
+        if awk -v s="$quiet" -v q="$COMPARE_QUIET" 'BEGIN { exit !(s <= q) }'; then
+            break
+        fi
+        if [ "$waited" -ge "${COMPARE_QUIET_WAIT:-600}" ]; then
+            break
+        fi
+    done
 }
 
 fail() {
@@ -550,8 +635,13 @@ compare_client() {
 # request count is sized from the
 # fastest image's pilot so that every image runs the same count. Each image
 # runs with WF_SCHED_REPORT=2, which only prints the scheduler's counters as
-# the server exits, and compare-sched.txt keeps each measured pass's driver
-# lines as name,pass,cpus,line.
+# the server exits, so only with COMPARE_CLIENTS set; compare-sched.txt keeps
+# for each measured pass how the server stopped and its status, then its
+# driver lines, as name,pass,cpus,line. A report prints no driver line for a
+# one-driver server whose counters are all zero. compare-load.csv keeps each
+# pass's start and end in seconds since the epoch, the seconds it waited for
+# a quiet host, the last share that wait read, and the busy share of the CPUs
+# neither the server nor the client was placed on over the pass.
 if [ "$MODE" = compare ]; then
     total=$(nproc)
     tests=${COMPARE_TESTS:-mset set get}
@@ -563,6 +653,7 @@ if [ "$MODE" = compare ]; then
     done
     reversed=$(echo $names | tr ' ' '\n' | awk '{ a[NR] = $0 } END { for (i = NR; i > 0; i--) printf "%s ", a[i] }')
     echo 'line,pass,cpus,test,depth,requests,rps,server_cpu_us_per_request,p50_ms,p99_ms' >"$OUT/compare.csv"
+    echo 'line,pass,cpus,began_s,ended_s,waited_s,quiet_share,background_share' >"$OUT/compare-load.csv"
     for n in ${COMPARE_CPUS:-1 2}; do
         if [ "$n" -ge "$total" ]; then
             echo "skip,$n server CPUs,only $total on this host"
@@ -600,12 +691,23 @@ if [ "$MODE" = compare ]; then
                 order=$reversed
             fi
             for name in $order; do
+                waited=0
+                quiet=
+                if [ -n "${COMPARE_QUIET:-}" ]; then
+                    quiet_wait
+                fi
+                used="$SERVER_CPUS,$CLIENT_CPUS"
+                before=$(others_times "$used")
+                began=$(date +%s)
                 start "image-$name"
                 while read -r test depth requests; do
                     echo "$name,$pass,$n,$test,$depth,$requests,$(compare_client "$test" "$depth" "$requests")" |
                         tee -a "$OUT/compare.csv"
                 done <"$sizes"
                 stop
+                echo "$name,$pass,$n,$began,$(date +%s),$waited,$quiet,$(background_since "$before" "$used")" |
+                    tee -a "$OUT/compare-load.csv"
+                echo "$name,$pass,$n,stop=$stopped status=$server_status" >>"$OUT/compare-sched.txt"
                 grep '^driver: ' "$OUT/server.log" | sed "s/^/$name,$pass,$n,/" >>"$OUT/compare-sched.txt" || true
             done
             pass=$((pass + 1))

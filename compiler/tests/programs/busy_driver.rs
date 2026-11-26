@@ -43,6 +43,20 @@ const CONFIGURATIONS: [Configuration; 3] = [
     Configuration { native_ring: false, drivers: "1" },
 ];
 
+/// How many placed runs a case needs in a one-driver configuration and in
+/// the two-driver one.
+#[derive(Clone, Copy)]
+struct Wanted {
+    one_driver: usize,
+    two_drivers: usize,
+}
+
+impl Wanted {
+    fn of(self, configuration: Configuration) -> usize {
+        if configuration.drivers == "1" { self.one_driver } else { self.two_drivers }
+    }
+}
+
 impl Configuration {
     fn describe(self) -> String {
         format!(
@@ -144,14 +158,14 @@ fn require(
     ))
 }
 
-/// Requires `wanted` runs of a standard-input witness in every configuration,
-/// the byte written `late_byte` after the program reports it is about to
-/// read; a two-driver run qualifies when the computation stayed beside the
-/// reader.
+/// Requires the wanted runs of a standard-input witness in every
+/// configuration, the byte written `late_byte` after the program reports it
+/// is about to read; a two-driver run qualifies when the computation stayed
+/// beside the reader.
 fn require_beside_reader(
     program: &CompiledProgram,
     name: &str,
-    wanted: usize,
+    wanted: Wanted,
     limit: i32,
     late_byte: Duration,
 ) {
@@ -160,7 +174,7 @@ fn require_beside_reader(
         .filter_map(|configuration| {
             require(
                 &format!("{name}, {}", configuration.describe()),
-                wanted,
+                wanted.of(*configuration),
                 limit,
                 Judged::Qualifying,
                 || {
@@ -181,29 +195,41 @@ fn require_beside_reader(
 /// The byte comes 40 ms after the program reports it is about to read, when
 /// the other context has computed for about 20 ms, past the 1 ms after which
 /// the runtime acts; the read's own duration, its exit status, is 40 ms plus
-/// its lateness.
+/// its lateness. At one driver only the monitor races the computation, and
+/// the race of its request with the run's own end is the ready case's, which
+/// makes it 64 times; what this case adds there is the pass that finds the
+/// byte after the yield, which every run takes alike, so eight runs find it.
+/// At two drivers the idle driver may borrow the computing driver's word
+/// while the monitor asks the run to yield, which no other case makes, so
+/// that configuration needs 64 placed runs.
 #[test]
 fn a_read_whose_byte_arrives_returns_beside_a_computation() {
     let program = build_program(&compile_program("read_beside_computation.wf"));
-    require_beside_reader(&program, "read", 64, 40 + HANDOFF_LIMIT_MS, Duration::from_millis(40));
+    let wanted = Wanted { one_driver: 8, two_drivers: 64 };
+    require_beside_reader(&program, "read", wanted, 40 + HANDOFF_LIMIT_MS, Duration::from_millis(40));
 }
 
 /// The read's deadline is 50 ms away while the other context would compute for
 /// 2 s, and the byte comes 300 ms later; the read ends within 100 ms after the
-/// deadline.
+/// deadline. A byte that came before a read ending on time had ended would be
+/// returned instead, so the byte keeps 150 ms past the limit for a hosted
+/// runner's delays, and each run lasts about 300 ms.
 #[test]
 fn a_read_whose_deadline_passes_ends_beside_a_computation() {
     let program = build_program(&compile_program("deadline_beside_computation.wf"));
-    require_beside_reader(&program, "deadline", 10, 150, Duration::from_millis(300));
+    let wanted = Wanted { one_driver: 10, two_drivers: 10 };
+    require_beside_reader(&program, "deadline", wanted, 150, Duration::from_millis(300));
 }
 
 /// The computing context fires the read's watch once the read has begun and
 /// then computes; the read ends `Cancelled` within 100 ms of the firing, and
-/// the byte comes 300 ms after the program reports it is about to read.
+/// the byte comes 300 ms after the program reports it is about to read, about
+/// 180 ms past the limit, for the reason the deadline case gives.
 #[test]
 fn a_fired_watch_ends_a_read_beside_a_computation() {
     let program = build_program(&compile_program("cancel_beside_computation.wf"));
-    require_beside_reader(&program, "cancel", 10, 100, Duration::from_millis(300));
+    let wanted = Wanted { one_driver: 10, two_drivers: 10 };
+    require_beside_reader(&program, "cancel", wanted, 100, Duration::from_millis(300));
 }
 
 /// As many contexts compute as there are drivers once a guard is let go, and

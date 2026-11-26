@@ -720,7 +720,12 @@ on da2464c8f passed the four busy-driver witnesses in every configuration
 and the cancellation, each within its limit: two handoff cycles of 2 ms and
 40 ms for a shared runner after the byte's arrival or the context becoming
 ready, 100 ms after the deadline or the firing) and the busy-ring receive
-in its 16 runs.
+in its 16 runs. The read's byte has since come 40 ms after the read begins,
+and the read makes eight runs in each one-driver configuration and keeps 64
+placed runs at two drivers, where an idle driver's borrow meets the yield
+request; `a_read_whose_byte_arrives_returns_beside_a_computation` gives the
+reasons. The lone timer writer of `contexts.rs` runs eight times a
+configuration.
 
 ### Plan for the 14900K measurements (written before measuring)
 
@@ -865,6 +870,49 @@ Read by those criteria:
 Acceptance 10 and 12 of item 159 are therefore not shown, and 11 lacks the
 Firn counts. All three need a run on an idle host and a way to read the
 counts from a Firn that is stopped.
+
+### Second 14900K run: the rule for a loaded host (written before measuring)
+
+The 14900K also runs the fast workflow of every work, so no run can be sure of
+an idle host from start to end. The second run keeps the four criteria of the
+plan above unchanged and reads them only on units that ran while the rest of
+the host was quiet, by this rule, written before any of its results:
+
+- Base is main 1d961ddab, the main revision last merged into the change, and
+  candidate is the change's head.
+- Before each unit the scripts wait until every CPU together was at most 5
+  percent busy over two seconds, for at most ten minutes, and record the
+  wait. The units are: each image's Firn pass, the fixed-cost run as a whole,
+  each C reference run, and each latency shape, which also waits after every
+  attempt that is voided.
+- Each unit records its background, the busy share of the CPUs it does not
+  use over its own duration: for Firn the CPUs neither the server nor the
+  client is placed on; for the latency programs, which now run pinned to CPUs
+  0, 2, 4 and 6 with the harness on CPU 16, every other CPU; for the C
+  reference every CPU but 0. A fixed-cost cell records the busy share of all
+  CPUs (`host_busy`), and its background is that share less its own CPUs'
+  share of the host (one or two of 32).
+- A unit whose background is at most 5 percent is clean. The criteria read
+  clean units only. Units that are not clean stay in the data and are
+  reported by count, and for the latencies also by how many were over 3 ms,
+  but they decide nothing.
+- Latencies (items 1 and 2): attempts go on until each side has its wanted
+  count of clean ones, 64, and at two drivers for the ready context until 64
+  clean ones show a reassignment, at most 128 clean ones, and in every case
+  at most eight times the wanted count of attempts. Item 1 holds every clean
+  attempt to the 4 ms bound.
+- Fixed cost (item 3): a CPU list and arm with fewer than three clean blocks
+  is undecided.
+- Firn (item 4): six passes. A pass is clean at a server CPU count when every
+  image's run of that pass was clean, and each cell reads its clean passes
+  only; a cell with fewer than three is undecided, as is one whose interval
+  is wider than 10 percent.
+- Each image starts with a client limit of 2,000 (`COMPARE_CLIENTS`) and is
+  stopped by connecting until it stops accepting, so that it exits by itself
+  and prints its scheduler report into `compare-sched.txt`. The yield-request
+  and reassignment counts are read there for every pass, clean or not. A
+  one-driver server whose counters are all zero prints no driver line, so a
+  pass whose server exited with status 0 and printed none counted zero.
 
 ### The runtime test fails on each removed condition
 
