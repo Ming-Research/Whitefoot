@@ -115,7 +115,10 @@ sees no effect under 10 percent (adjacent grids cost the 7763 6 to 10
 percent), and only blocks the mapping calls show: not an offset of static data
 within the image or of a small block within a heap. Which launches of either
 arm land in a slow placement under address randomization is still noise of
-the ordinary comparison, which the identical-image control bounds.
+the ordinary comparison, which the identical-image control bounds. One slow
+launch of an arm in each round, at any positions, also sets a kernel aside:
+the rule cannot tell it from placement, and the control's confirmation met it
+once in 20 jobs.
 
 ## Entries and artifacts
 

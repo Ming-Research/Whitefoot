@@ -6,8 +6,9 @@ processors that alone changes the kernel's time. This investigation asks
 which move of data alone, applied to one image, shows that a host times a
 kernel by where its data lies, so that `compute-regression` can run such a
 move as a control before it gives a verdict. The [results](#results) name the
-cause on Zen 3 and Zen 4 and the control that follows from it; no decision
-has been taken on them.
+cause on Zen 3 and Zen 4 and the control that follows from it, which
+`compute-regression` runs (`tests/performance/README.md`, "Data placement");
+its [confirmation](#confirmation) ran the control as implemented.
 
 ## The observation
 
@@ -407,7 +408,9 @@ blocks are mapped can therefore be read without timing anything.
   when its two grids lie 128 MiB less 4 KiB apart, because the way predictor
   of the first-level data cache then cannot tell them apart; on the 7763
   adjacent grids also cost 6 to 10 percent against far ones. The Xeon 6975P-C
-  has no such dependence. Zen 5 and the other Xeon models were not sampled.
+  has no such dependence. Zen 5 and the other Xeon models were not sampled;
+  on the confirmation's two EPYC 9V45 (Zen 5) jobs S's `stencil` runs at two
+  levels 6 to 17 percent apart.
 - Which distance a launch gets is decided by what the program maps before its
   entry and by where address randomization puts the C library. A thread with
   its own heap before the entry moves the slow distance from 6 launches in
@@ -455,14 +458,97 @@ a kernel set aside on a Xeon 6975P-C job, or a kernel set aside between one
 image's two series rejects the control as designed. Which kernels other than
 `stencil` are set aside on the AMD jobs is recorded without a criterion.
 
+## Confirmation
+
+The control as `tests/performance/data-placement.sh` implements it ran on
+2026-11-25 in two runs of a temporary workflow, ten hosted jobs each:
+Whitefoot runs 45686397302 (head `84d25869c`) and 45686691164 (head
+`a3b54bcfa`); the workflow is kept in this branch's history at `74ef113b1`. Each
+job built the compilers of B, S and the branch, their images with the branch's
+`tests/performance`, and ran the lines `compute-regression.yml` runs with only
+the directories changed: the control and then the comparison of B against S,
+the control of each of the three images against a copy of itself under a
+longer directory name, and the qualification of B and of S. The jobs drew 3
+EPYC 7763, 3 EPYC 9V74, 2 EPYC 9V45 and 12 Xeon 6975P-C hosts, on Linux 7.0.
+
+The instrument at the two heads differs from the one that merges only in a
+parenthesized `printf` argument of `positions.awk` (`84d25869c`) and in
+`layout.awk` dropping a space before a resumed call's closing parenthesis.
+None of the 1,600 traces has a resumed call: read again with the merging
+`layout.awk` every trace gives its job's record byte for byte, and the
+merging `positions.awk` gives every one of the 160 control directories its
+`verdict.txt` and `aside.txt` byte for byte.
+
+Each criterion holds:
+
+1. On 3 of 3 EPYC 7763 jobs B and S record all five kernels differently and
+   `stencil` is set aside: 15, 15 and 15 ranks unlike upward in the first
+   round, 14, 14 and 15 in the second.
+2. Each of the 60 controls of one image against its copy (B, S and the branch
+   on 20 jobs) records all five kernels alike, and so does each of the 40
+   qualifications' records of an image against itself.
+3. On 12 of 12 Xeon 6975P-C jobs no kernel is set aside: no rank of any
+   kernel is unlike, and the quotients lie between 0.977 and 1.030.
+4. None of the 40 qualifications of B and of S sets a kernel aside. Of their
+   200 kernel comparisons 7 launched a second round, 1 on a 7763 and 6 on a
+   9V45, and none was set aside after it. Every qualification also recorded
+   the image at position 1 against itself as mapping differently for all five
+   kernels.
+
+Without a criterion:
+
+- On 3 of 3 EPYC 9V74 jobs `stencil` is set aside, at 14 and 14, 14 and 14,
+  and 18 and 27 unlike ranks; the last has ranks unlike downward too.
+- On the EPYC 9V45 (Zen 5) S's `stencil` also has two levels: in each of its
+  four rounds 15 of 32 positions lie 6 to 17 percent above the arm's median,
+  against at most two of B's. That straddles the line, so one 9V45 job judged
+  it (6 ranks unlike, then none) and the other set it aside (12, then 1).
+- On the second 9V45 job `fir` was set aside on one slow launch of S in each
+  round, at position 10 (1.76 times the arm's median) and at position 30 (1.18
+  times). A placement repeats at its position, so this is noise that the rule
+  reads as placement. `records` was launched again on three B/S comparisons
+  and set aside on none.
+- The comparison of B and S judged without the list, as it did before the
+  control, fails on 2 of the 20 jobs, both 9V74 (`stencil` adverse at one and
+  two workers, and at one and four), and reads `stencil` a suspect at two
+  workers on one 7763. With the list each comparison exits 0, prints as not
+  judged the rows of exactly the kernels set aside (`stencil` on all 6 Zen 3
+  and Zen 4 jobs and on one 9V45, `fir` on that 9V45), and no judged kernel
+  fails. Each job that set a kernel aside shows a warning
+  `comparison: not judged: KERNEL (data placement)` and its summary holds,
+  under `data`, both arms' 32 sorted quotients for each round.
+- `strace` 6.8 is on the runner image: on no job did the workflow install it.
+
+What each unit of work took, in seconds, the longest run of its label on each
+model with the number of runs, and the budget the table's rule gives it:
+
+| label | EPYC 7763 | EPYC 9V74 | EPYC 9V45 | Xeon 6975P-C |
+|---|---|---|---|---|
+| `performance-data-layout` | 3.00 (24), 10 | 3.10 (24), 10 | 2.20 (16), 10 | 2.20 (96) |
+| `performance-data-round-mandelbrot` | 13.62 (10), 15 | 12.92 (9), 15 | 10.11 (6), 15 | 9.41 (36) |
+| `performance-data-round-records` | 12.41 (10), 15 | 12.22 (10), 15 | 8.61 (9), 10 | 9.41 (36) |
+| `performance-data-round-fir` | 12.61 (9), 15 | 11.21 (9), 15 | 6.71 (8), 10 | 7.71 (36) |
+| `performance-data-round-quadrature` | 10.41 (9), 15 | 8.61 (9), 10 | 5.71 (8), 10 | 5.71 (36) |
+| `performance-data-round-stencil` | 50.96 (12), 60 | 60.08 (12), 70 | 37.15 (9), 45 | 35.75 (36) |
+
+The table has no Xeon 6975P-C column, so that model takes each row's largest
+value, which covers its runs; the Xeon 8573C column, which no job reached,
+takes it too. The control's step for B against S took 63 to 67 s on the Xeon
+jobs and 100 to 173 s on the AMD jobs. A run of a pull request whose arms map
+alike executes only the record.
+
 ## Limitations
 
 - One run of eight jobs on one day, three processor models. The pool also
   holds EPYC 9V45 and other Xeon models, which this run did not reach, and
   the earlier probe's levels on the 9V45 and the Xeon 8370C are not explained
-  here.
-- Only `stencil` was traced and launched by position; the other four kernels
-  were timed in the campaigns alone.
+  here. The confirmation reached two 9V45 jobs and no other Xeon model.
+- Only `stencil` was traced and launched by position in that run; the other
+  four kernels were timed in the campaigns alone. The confirmation launched
+  all five by position.
+- The control's rule reads one slow launch in each round, at any positions,
+  as placement: it set `fir` aside so on one 9V45 job of the confirmation.
+  A kernel set aside that way is not judged on that run.
 - The position rule, the comparisons of two arms' positions, one against one
   and in order of time, and the comparison of mapping calls are post hoc. S
   has one series a job, and the only two series of one profile are B's and

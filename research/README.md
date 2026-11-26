@@ -185,7 +185,7 @@ the work-branch and merge boundary.
   why `stencil` runs 26 to 43 percent slower on Zen 3 and Zen 4 hosts when
   its two grids lie 128 MiB less 4 KiB apart, how a program's startup order
   decides how often that happens, which moves of data alone show it, and the
-  control proposed for `compute-regression`.
+  control `compute-regression` runs, with its confirmation on 20 hosted jobs.
 
 Open research questions and evidence links are in [ideas](../docs/ideas.md);
 known compiler defects and implementation costs are on the
