@@ -761,3 +761,31 @@ samples, by the rule above. By the table, a width whose hot function is the
 sequential or the chunk function compares `O16`, with no crossing loop,
 against `O48`, with two; a width whose hot function is the split function
 compares `FR` against `O48`.
+
+The rerun at `4fbed9570`, which holds `7828cbaa7` and main's later runtime
+change, on a hosted runner (run 45731244532) landed on a Xeon 6975P-C and
+passed the layout check with all 277 images. Its build, check and
+verification took 80 seconds and each round about 130, so the decisive runs
+take 20 rounds, the 6th and 15th ratios bounding the interval, inside the
+stage's limit of 6,000 seconds on a host half again as slow. Its loop table
+of `records` is the table above, line for line. It counted cycles,
+instructions, branches, branch misses, `idq.dsb_uops`, `idq.mite_uops` and
+`baclears.any`. It gave no software-clock sample: the harness asked `perf
+script` for the symbol and DSO fields without `ip`, discarded its messages,
+and kept no line that named the image. The harness now asks for
+`ip,sym,symoff,dso`, keeps `perf script`'s messages, and stops the job when a
+profile holds no sample of its image; the hot functions are read from a
+rerun with that fix. The run's job on the 14900K (45731248572)
+stopped before building, as another work's measurement held the host's check
+lock. Exploratory, from three rounds and without an interval: on this Xeon
+`O16`, which starts the sequential and chunk functions 16 bytes past a line,
+where the table leaves them no crossing loop, was slower than `U` in every
+round at every width, by 4 to 13 percent, and `P`, which starts those two
+functions at 16 as well, by about 5 percent at width 1 only.
+
+The replay of PR #251's runtime change can no longer run: `c2e5a1808`'s
+runtime does not define `wf__heap_give`, `wf__heap_take` or
+`wf__empty_window`, which this compiler's modules call, so its images do not
+link. An empty `placement_event` given to a dispatch is replaced by the
+input's default, so every placement job ends failed at that step, after
+every reading and before the artifact's upload, which runs regardless.

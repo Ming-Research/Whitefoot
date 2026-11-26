@@ -40,7 +40,7 @@ whose crossing loops are not the number its offset predicted.
 
 `datadelta` prints by how many bytes the data of IMAGE_TO lies above that of
 IMAGE_FROM, the size of the filler `dFR` links. `lines` reduces `perf script
--F sym,symoff` text to samples per function and 64-byte line. `counters`
+-F ip,sym,symoff,dso` text to samples per function and 64-byte line. `counters`
 tabulates the `perf stat -x,` files placement.sh writes as WIDTH-ARM-PLACEMENT.csv,
 with the branch-miss rate and the share of micro-ops the decoded micro-op
 cache delivered.
@@ -753,10 +753,12 @@ def self_test():
         failures.append(f"check missed a P function whose loops cross: {problems}")
 
     expect("data delta", data_delta(good["U/p0"], good["FR/p0"]), 0x1000)
-    counts, total = line_samples(good["FR/p0"], "  wf__hot+0x3\n  wf__hot+0x45\n  wf__hot+0x7\n [unknown]\n")
+    def script(*samples):
+        return "".join(f"  {0x5555_0000 + n:x} {sample} (/w/images/records/001)\n" for n, sample in enumerate(samples))
+    counts, total = line_samples(good["FR/p0"], script("wf__hot+0x3", "wf__hot+0x45", "wf__hot+0x7", "[unknown]"))
     expect("line samples", (dict(counts), total),
            ({("wf__hot", 0x1040, 0x1040): 2, ("wf__hot", 0x1080, 0x1040): 1}, 4))
-    counts, _ = line_samples(good["FR/p0"], "  wf__cold+0x1\n  wf__hot+0x3\n  wf__hot+0x45\n  wf_rt_run+0x2\n")
+    counts, _ = line_samples(good["FR/p0"], script("wf__cold+0x1", "wf__hot+0x3", "wf__hot+0x45", "wf_rt_run+0x2"))
     expect("samples per function", function_totals(counts), [("wf__hot", 2), ("wf__cold", 1), ("wf_rt_run", 1)])
 
     hybrid = ("# started on Wed Nov 25\n\n"

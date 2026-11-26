@@ -106,10 +106,16 @@ if [[ ${1:-} == sample || ${1:-} == counters ]]; then
                 for _ in $(seq 20); do
                     env -u WF_SPLIT_WORK WF_WORKERS="$1" taskset -c "$2" "$3" measure candidate "$1" 0 > /dev/null
                 done' sample "$width" "$cpus" "$image"
-            "$perf" script -i "$data" -F dso,sym,symoff 2> /dev/null | grep -F "($image)" \
-                > "$work/lines/script-$width-$arm-$placement.txt" || true
-            layout lines "$image" "$work/lines/script-$width-$arm-$placement.txt" \
-                > "$work/lines/records-W$width-$arm-$placement.txt"
+            # perf script prints a symbol and its DSO only beside the ip field.
+            script=$work/lines/script-$width-$arm-$placement.txt
+            "$perf" script -i "$data" -F ip,sym,symoff,dso 2> "$work/lines/script-$width-$arm-$placement.log" |
+                { grep -F "($image)" || true; } > "$script"
+            [[ -s $script ]] || {
+                echo "no sample of $image at width $width; perf script said:" >&2
+                cat "$work/lines/script-$width-$arm-$placement.log" >&2
+                exit 1
+            }
+            layout lines "$image" "$script" > "$work/lines/records-W$width-$arm-$placement.txt"
             rm -f "$data"
         done
     done
