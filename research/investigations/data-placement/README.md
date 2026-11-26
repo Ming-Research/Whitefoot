@@ -522,7 +522,8 @@ Without a criterion:
   under `data`, both arms' 32 sorted quotients for each round. The
   comparison that read the list then was `compare.sh`; the instrument has
   since judged each kernel in `judge.sh`, which reads the list instead and
-  does not time a kernel set aside. That reading did not run here.
+  does not time a kernel set aside. That reading did not run here; it is
+  confirmed below.
 - `strace` 6.8 is on the runner image: on no job did the workflow install it.
 
 What each unit of work took, in seconds, the longest run of its label on each
@@ -544,6 +545,31 @@ value, which covers its runs; the Xeon 8573C column, which no job reached,
 takes it too. The control's step for B against S took 63 to 67 s on the Xeon
 jobs and 100 to 173 s on the AMD jobs. A run of a pull request whose arms map
 alike executes only the record.
+
+### The judgment's reading of the list
+
+Since the confirmation the instrument judges each kernel in `judge.sh`, which
+reads the control's list and does not time a kernel set aside. A second
+temporary workflow runs, on twelve hosted jobs, the lines
+`compute-regression.yml` runs with only the directories changed: the control
+of B against S, the judgment of B against S with the control's results, and
+the publication. B's and S's images differ for every kernel, since S's runtime
+starts the receiver thread. Its criteria, written before the run:
+
+1. On every job the judgment times exactly the kernels the control did not
+   set aside, and its verdict has one line `not judged: KERNEL (data
+   placement)` for each kernel set aside and none for another.
+2. On every EPYC 7763 or 9V74 job, of which the run has one at least,
+   `stencil` is set aside, the job shows the warning
+   `judgment: not judged: stencil (data placement)`, and its summary holds,
+   under `data`, both arms' 32 sorted quotients for each round.
+3. On every Xeon 6975P-C job no kernel is set aside and all five are timed.
+4. The judgment's exit status is 0 or 3 unless its verdict fails a timed
+   kernel; what it decides of the timed kernels is recorded without a
+   criterion.
+
+A kernel set aside and timed, a `not judged` line for a kernel not set aside,
+or a kernel not set aside and not timed rejects the reading as implemented.
 
 ## Limitations
 
