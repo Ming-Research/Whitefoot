@@ -13,7 +13,7 @@
 #       The control on the candidate against itself must find every kernel
 #       mapping alike; with the candidate arm at position 1 every kernel's
 #       record must hold the runner's idle mapping and, without it, still
-#       differ, as the later mappings lie lower. Only then are all five
+#       differ, as the later mappings lie lower. Only then are all kernels
 #       launched at the 32 positions, which must set none aside. Writes
 #       RESULTS/verdict.txt; exit 1 when an expectation fails, 2 on a refusal.
 #
@@ -23,7 +23,6 @@
 #   round BASELINE CANDIDATE RESULTS KERNEL ROUND  performance-data-round-KERNEL
 set -euo pipefail
 here=$(cd -- "$(dirname -- "$0")" && pwd)
-kernels=(mandelbrot records fir quadrature stencil)
 usage() {
     echo 'usage: data-placement.sh control BASELINE CANDIDATE RESULTS | qualify CANDIDATE RESULTS' >&2
     exit 2
@@ -34,6 +33,10 @@ refuse() {
 }
 [[ $# -ge 1 ]] || usage
 [[ $(uname -s) == Linux ]] || refuse 'the data-placement control requires the Linux host'
+# The kernels are the Makefile's, as compare.sh and judge.sh read them; KERNELS
+# in the environment names fewer.
+read -r -a kernels <<< "${KERNELS:-$(sed -n 's/^KERNELS := //p' "$here/Makefile")}"
+((${#kernels[@]} > 0)) || refuse 'no kernels named'
 machine=$(uname -m)
 
 unit() {
