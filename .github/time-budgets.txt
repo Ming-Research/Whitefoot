@@ -77,6 +77,14 @@ label                           epyc-7763  epyc-9v74  epyc-9v45  xeon-8573c  xeo
 # gate.yml, static group
 check/static                    120        120        105        115         120         125    -
 repository-invariants           30         30         25         30          30          30     -
+# test-fast-state, the test of .github/fast-state.sh, ran inside
+# repository-invariants until 2026-11-26 and is a stage of its own since. Its
+# row follows the rule above over its measured runs, though they are fewer than
+# 20 on each class: in six gate runs of main on 2026-11-26 (on epyc-9v74,
+# xeon-6975p, xeon-8573c and a Xeon 8370C, which has no column) it took 4.7 to
+# 4.9 s, in a form that spent 3.3 s of that sleeping, and the rule gives the
+# 10 s floor on every class.
+test-fast-state                 10         10         10         10          10          10     -
 spec-archives                   10         10         10         10          10          10     -
 readme-translation              10         10         10         10          10          10     -
 spec-prose-integrity            10         10         10         10          10          10     -
