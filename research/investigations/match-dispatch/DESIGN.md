@@ -1873,6 +1873,35 @@ and only this record is merged. There is no fixed percentage threshold.
 performance. Results, run ids and the verdict are added below after the
 measurements; this section's criteria are not changed after them.
 
+**Result: acceptance and machine code (hosted).** Run 45759837374 of the
+temporary hosted workflow `tmp-v2h-seq-bounds` (removed with this work), on
+commit e1f0431cc, GitHub's ubuntu-24.04, AMD EPYC 7763, clang 22.1.8; base =
+1caef2cd5 (main), candidate compiler = e1f0431cc's. This host decides no ratio.
+
+- The compiler accepted the candidate source: the build step succeeded, so
+  the range walk proved `pc + 1 < n` in every sequential arm of the 362-arm
+  `run` from the `ends` fact, and the `ends` postcondition of the load check
+  at its `Return` arm. The conformance case `range3-pos-variant-final-stop`
+  had covered only the two-variant shape; this is the first compile of the
+  payload-carrying enum with the conditional-branch not-taken edge.
+- Generated source (from the same generator on both commits): `if next < n`
+  351 times in the base, 0 in the candidate; 25867 and 26182 lines.
+- Handlers, counted from `objdump -d` of the two images (instructions, `cmp` or
+  `test`, conditional jumps; base then candidate): `Copy` 20/1/1 then 9/0/0;
+  `Copy2` 24/1/1 then 13/0/0; `I32Add` 22/1/1 then 11/0/0; `I32AddA` 21/1/1
+  then 10/0/0; `I32AddD` 19/1/1 then 9/0/0; `I32AddAD` 17/1/1 then 7/0/0;
+  `BrIf` 26/3/3 then 25/2/2; `BrUnless` 26/3/3 then 25/2/2; `BrIfC` 24/3/3
+  then 24/2/2; `BrUnlessC` 24/3/3 then 24/2/2; `Jump` unchanged 17/1/1. In
+  `Copy` the base's `lea 0x1(%r15)`, `cmp %r14,%rax`, `jae` and the trap block
+  are gone: the candidate increments `%r15` and jumps to the next handler. In
+  `BrIf` the not-taken path no longer compares; the taken path keeps its
+  target comparison.
+- CoreMark ran on both images as a two-round trial at 2000 and at 20000
+  iterations with every CRC checked (the job's launches would have failed on a
+  wrong list, matrix, state or final CRC); both steps passed. The ratios of
+  that trial (candidate/base 0.9490 at 2000, 0.9694 at 20000, twin 1.0017 and
+  1.0341) are two rounds on a shared host and judge nothing.
+
 ### Constructor and runtime-boundary audit
 
 The handler-word repair distinguishes values built by emitted constructors
