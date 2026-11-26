@@ -4,7 +4,8 @@ alias Client = pkg::protocol::Client;
 alias Entry = pkg::store::Entry;
 alias HashMapPair = std::collections::hash_map::HashMapPair;
 alias KeyEnv = pkg::bytes::KeyEnv;
-alias OrderedNode = std::collections::ordered_map::OrderedNode;
+alias OrderedCursor = std::collections::ordered_map::OrderedCursor;
+alias OrderedSeek = std::collections::ordered_map::OrderedSeek;
 alias Rank = pkg::store::Rank;
 alias RankOrder = pkg::store::RankOrder;
 alias Sorted = pkg::store::Sorted;
@@ -28,10 +29,15 @@ alias kept_score = pkg::scores::kept_score;
 alias log_command = pkg::store::log_command;
 alias log_removal = pkg::store::log_removal;
 alias name_is = pkg::bytes::name_is;
+alias ordered_map_first = std::collections::ordered_map::ordered_map_first;
+alias ordered_map_last = std::collections::ordered_map::ordered_map_last;
 alias ordered_map_len = std::collections::ordered_map::ordered_map_len;
 alias ordered_map_new = std::collections::ordered_map::ordered_map_new;
 alias ordered_map_put = std::collections::ordered_map::ordered_map_put;
+alias ordered_map_rank = std::collections::ordered_map::ordered_map_rank;
+alias ordered_map_read = std::collections::ordered_map::ordered_map_read;
 alias ordered_map_remove = std::collections::ordered_map::ordered_map_remove;
+alias ordered_map_seek = std::collections::ordered_map::ordered_map_seek;
 alias push_item = pkg::protocol::push_item;
 alias push_score = pkg::protocol::push_score;
 alias rank_compare = pkg::store::rank_compare;
@@ -561,70 +567,39 @@ fn run_zrem(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   return unit;
 }
 
-fn leftmost(node: &OrderedNode<Rank, unit>) -> found: Option<Rank> reads(node) {
-  doc "A copy of the first rank in a node's subtree, the lowest score and among equal scores the lowest member; none for an empty subtree.";
-  if node^.leading.len > 0_u64 {
-    let below = leftmost(node: &node^.leading[0_u64].inner);
-    match move below {
-      Some(value: rank) => {
-        return Some<Rank>(value: move rank);
-      }
-      None() => {
-      }
-    }
-  }
-  if node^.entries.len > 0_u64 {
-    let first = &node^.entries[0_u64].pair.key;
-    let member = copy_key(key: &first^.member);
-    let rank = Rank(score: first^.score, member: move member);
-    return Some<Rank>(value: move rank);
-  }
-  return None<Rank>();
+fn rank_out(env: &KeyEnv, key: &Rank, value: &unit) -> result: Rank reads(key) {
+  doc "A copy of the rank a cursor is on.";
+  let member = copy_key(key: &key^.member);
+  let rank = Rank(score: key^.score, member: move member);
+  return move rank;
 }
 
-fn rightmost(node: &OrderedNode<Rank, unit>) -> found: Option<Rank> reads(node) {
-  doc "A copy of the last rank in a node's subtree, the highest score and among equal scores the highest member; none for an empty subtree.";
-  let count = node^.entries.len;
-  if count == 0_u64 {
-    if node^.leading.len > 0_u64 {
-      let only = rightmost(node: &node^.leading[0_u64].inner);
-      return move only;
+fn rank_at(sorted: &Sorted, cursor: &OrderedCursor) -> found: Option<Rank> reads(sorted), reads(cursor) {
+  doc "A copy of the rank a cursor is on, none when it is on no rank.";
+  let keys = KeyEnv();
+  let read = ordered_map_read::<Rank, unit, KeyEnv, Rank, fn rank_out, ceiling>(map: &sorted^.order, cursor: cursor, env: &keys);
+  match move read {
+    Ok(value: rank) => {
+      return Some<Rank>(value: move rank);
     }
-    return None<Rank>();
-  }
-  let last = count -wrap 1_u64;
-  if node^.entries[last].after.len > 0_u64 {
-    let below = rightmost(node: &node^.entries[last].after[0_u64].inner);
-    match move below {
-      Some(value: rank) => {
-        return Some<Rank>(value: move rank);
-      }
-      None() => {
-      }
+    Err(error: absent) => {
+      return None<Rank>();
     }
   }
-  let final = &node^.entries[last].pair.key;
-  let member = copy_key(key: &final^.member);
-  let rank = Rank(score: final^.score, member: move member);
-  return Some<Rank>(value: move rank);
 }
 
 fn lowest(sorted: &Sorted) -> found: Option<Rank> reads(sorted) {
   doc "A copy of a sorted set's first rank, none for an empty set.";
-  if sorted^.order.root.len > 0_u64 {
-    let first = leftmost(node: &sorted^.order.root[0_u64].inner);
-    return move first;
-  }
-  return None<Rank>();
+  let cursor = ordered_map_first::<Rank, unit, ceiling>(map: &sorted^.order);
+  let first = rank_at(sorted: sorted, cursor: &cursor);
+  return move first;
 }
 
 fn highest(sorted: &Sorted) -> found: Option<Rank> reads(sorted) {
   doc "A copy of a sorted set's last rank, none for an empty set.";
-  if sorted^.order.root.len > 0_u64 {
-    let last = rightmost(node: &sorted^.order.root[0_u64].inner);
-    return move last;
-  }
-  return None<Rank>();
+  let cursor = ordered_map_last::<Rank, unit, ceiling>(map: &sorted^.order);
+  let last = rank_at(sorted: sorted, cursor: &cursor);
+  return move last;
 }
 
 fn pop_ranked(env: &Client, value: &Entry) -> kind: u64 writes(env), writes(value) {
@@ -979,51 +954,20 @@ fn run_zmscore(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: 
   return unit;
 }
 
-fn subtree_size(link: &Slots<Box<OrderedNode<Rank, unit>>, 1>) -> size: u64 reads(link) {
-  doc "How many ranks the subtree a link holds keeps.";
-  if link^.len == 0_u64 {
-    return 0_u64;
-  }
-  let node = &link^[0_u64].inner;
-  let size = subtree_size(link: &node^.leading);
-  let count = node^.entries.len;
-  set size = size +wrap count;
-  for @entries (index in 0_u64..count) {
-    let below = subtree_size(link: &node^.entries[index].after);
-    set size = size +wrap below;
-  }
-  return size;
-}
-
-fn rank_before(link: &Slots<Box<OrderedNode<Rank, unit>>, 1>, key: &Rank, env: &KeyEnv) -> below: u64 reads(link), reads(key), reads(env) {
-  doc "How many ranks of the subtree a link holds come before the key: in each node the entries before the first at or after the key, with the subtrees before them counted whole, and the one subtree that straddles the key counted the same way.";
-  if link^.len == 0_u64 {
-    return 0_u64;
-  }
-  let node = &link^[0_u64].inner;
-  let count = node^.entries.len;
-  let position = count;
-  for @search (index in 0_u64..count) {
-    let order = rank_compare(env: env, left: key, right: &node^.entries[index].pair.key);
-    if order <= 0_i32 {
-      set position = index;
-      break @search;
+fn rank_before(sorted: &Sorted, key: &Rank, env: &KeyEnv) -> below: u64 reads(sorted), reads(key), reads(env) {
+  doc "How many ranks of a sorted set come before the key: one more than the count before the last rank below it, or none when no rank is below it.";
+  let seek = OrderedSeek::OrderedBelow();
+  let cursor = ordered_map_seek::<Rank, unit, KeyEnv, Rank, fn rank_compare, ceiling>(map: &sorted^.order, seek: seek, probe: key, env: env);
+  let counted = ordered_map_rank::<Rank, unit, ceiling>(map: &sorted^.order, cursor: &cursor);
+  match counted {
+    Ok(value: before) => {
+      let below = before +wrap 1_u64;
+      return below;
+    }
+    Err(error: absent) => {
+      return 0_u64;
     }
   }
-  if position == 0_u64 {
-    let partial = rank_before(link: &node^.leading, key: key, env: env);
-    return partial;
-  }
-  let below = subtree_size(link: &node^.leading);
-  set below = below +wrap position;
-  let last = position -wrap 1_u64;
-  for @whole (index in 0_u64..last) {
-    let size = subtree_size(link: &node^.entries[index].after);
-    set below = below +wrap size;
-  }
-  let partial = rank_before(link: &node^.entries[last].after, key: key, env: env);
-  set below = below +wrap partial;
-  return below;
 }
 
 fn member_rank(env: &Client, value: &Entry) -> kind: u64 reads(value), writes(env) {
@@ -1043,7 +987,7 @@ fn member_rank(env: &Client, value: &Entry) -> kind: u64 reads(value), writes(en
         let seen = hash_map_lookup::<KeyHash, f64, ScoreProbe, u64, fn score_probe, ceiling>(map: &sorted^.scores, key: &member, key_env: &keys, visit_env: &probe);
         if probe.found {
           let rank = Rank(score: probe.score, member: move member);
-          let below = rank_before(link: &sorted^.order.root, key: &rank, env: &keys);
+          let below = rank_before(sorted: sorted, key: &rank, env: &keys);
           set env^.number = below;
           if env^.low == 1_i64 {
             let size = ordered_map_len::<Rank, unit, ceiling>(map: &sorted^.order);
