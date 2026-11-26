@@ -519,11 +519,16 @@ Without a criterion:
   and Zen 4 jobs and on one 9V45, `fir` on that 9V45), and no judged kernel
   fails. Each job that set a kernel aside shows a warning
   `comparison: not judged: KERNEL (data placement)` and its summary holds,
-  under `data`, both arms' 32 sorted quotients for each round.
+  under `data`, both arms' 32 sorted quotients for each round. The
+  comparison that read the list then was `compare.sh`; the instrument has
+  since judged each kernel in `judge.sh`, which reads the list instead and
+  does not time a kernel set aside. That reading did not run here.
 - `strace` 6.8 is on the runner image: on no job did the workflow install it.
 
 What each unit of work took, in seconds, the longest run of its label on each
-model with the number of runs, and the budget the table's rule gives it:
+model with the number of runs, and the budget the table's rule (1.1 times the
+maximum plus its distance above the median of the runs, read from the same job
+logs) gives it:
 
 | label | EPYC 7763 | EPYC 9V74 | EPYC 9V45 | Xeon 6975P-C |
 |---|---|---|---|---|
@@ -532,7 +537,7 @@ model with the number of runs, and the budget the table's rule gives it:
 | `performance-data-round-records` | 12.41 (10), 15 | 12.22 (10), 15 | 8.61 (9), 10 | 9.41 (36) |
 | `performance-data-round-fir` | 12.61 (9), 15 | 11.21 (9), 15 | 6.71 (8), 10 | 7.71 (36) |
 | `performance-data-round-quadrature` | 10.41 (9), 15 | 8.61 (9), 10 | 5.71 (8), 10 | 5.71 (36) |
-| `performance-data-round-stencil` | 50.96 (12), 60 | 60.08 (12), 70 | 37.15 (9), 45 | 35.75 (36) |
+| `performance-data-round-stencil` | 50.96 (12), 60 | 60.08 (12), 80 | 37.15 (9), 45 | 35.75 (36) |
 
 The table has no Xeon 6975P-C column, so that model takes each row's largest
 value, which covers its runs; the Xeon 8573C column, which no job reached,

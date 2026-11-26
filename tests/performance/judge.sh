@@ -4,7 +4,10 @@
 #
 # 1. A kernel whose two executables are byte-identical is the same program: it
 #    is not verified or timed and counts as passing (the images are built with
-#    the same embedded paths, tests/performance/Makefile).
+#    the same embedded paths, tests/performance/Makefile). A kernel that the
+#    data-placement control set aside (WF_PERFORMANCE_PLACEMENT names the
+#    control's results, whose aside.txt lists them) is decided on this host by
+#    where its data lies: it is not timed and has no verdict, `not judged`.
 # 2. The other kernels are timed. Round 1 is the null control (the candidate's
 #    image against itself) and the comparison, each its own run-check stage.
 #    decide.awk gives each kernel `pass`, `FAIL`, or `indeterminate`: the
@@ -15,7 +18,8 @@
 #    decided the same way. A kernel that failed in either round fails the job
 #    whatever the others did; indeterminate after the retest is INCONCLUSIVE.
 # Exit status: 0 pass, 1 a kernel failed, 3 inconclusive, 2 refused or a
-# measurement failed to run. RESULTS/verdict.txt is the one record of the decision.
+# measurement failed to run; a kernel not judged changes none of them.
+# RESULTS/verdict.txt is the one record of the decision.
 #
 # Seams for the tests of this script: WF_PERF_MEASURE (the measuring command,
 # compare.sh by default), WF_PERF_RUN_CHECK (the command prefix that labels a
@@ -30,12 +34,26 @@ run_check=${WF_PERF_RUN_CHECK:-"perl $here/../../.github/run-check.pl"}
 cpus=${WF_PERF_CPUS:-$(nproc)}
 read -r -a kernels <<< "${KERNELS:-$(sed -n 's/^KERNELS := //p' "$here/Makefile")}"
 ((${#kernels[@]} > 0)) || { echo 'no kernels named' >&2; exit 2; }
+placed=()
+if [[ -n ${WF_PERFORMANCE_PLACEMENT:-} ]]; then
+    [[ -f $WF_PERFORMANCE_PLACEMENT/aside.txt ]] ||
+        { echo "REFUSED: no aside.txt in the data-placement results $WF_PERFORMANCE_PLACEMENT" >&2; exit 2; }
+    read -r -a placed < "$WF_PERFORMANCE_PLACEMENT/aside.txt" || true
+    for ((i = 0; i < ${#placed[@]}; i++)); do
+        [[ " ${kernels[*]} " == *" ${placed[i]} "* ]] ||
+            { echo "REFUSED: unknown kernel set aside: ${placed[i]}" >&2; exit 2; }
+        [[ " ${placed[*]:0:i} " != *" ${placed[i]} "* ]] ||
+            { echo "REFUSED: kernel set aside twice: ${placed[i]}" >&2; exit 2; }
+    done
+fi
 mkdir -p "$results"
 cpu_model=$(sh "$here/cpu-model.sh")
 
-identical=(); timed=()
+identical=(); unjudged=(); timed=()
 for kernel in "${kernels[@]}"; do
-    if cmp -s "$baseline/$kernel" "$candidate/$kernel"; then identical+=("$kernel"); else timed+=("$kernel"); fi
+    if cmp -s "$baseline/$kernel" "$candidate/$kernel"; then identical+=("$kernel")
+    elif [[ " ${placed[*]} " == *" $kernel "* ]]; then unjudged+=("$kernel")
+    else timed+=("$kernel"); fi
 done
 : > "$results/identical.txt"
 for kernel in "${identical[@]}"; do echo "$kernel" >> "$results/identical.txt"; done
@@ -86,12 +104,16 @@ else verdict=PASS; status=0; fi
 {
     echo 'rule: a kernel fails when its wall ratio is below 0.97 with >=4/5 lower pairs at two widths and its own'
     echo 'null control shows no such width; with one, the kernel is indeterminate and measured once more.'
+    if [[ -n ${WF_PERFORMANCE_PLACEMENT:-} ]]; then
+        echo "data placement: a kernel the control set aside is not timed or judged; it set aside: ${placed[*]:-none}"
+    fi
     echo "cpu model: $cpu_model"
     for kernel in "${identical[@]}"; do echo "$kernel: identical image, not timed, pass"; done
+    for kernel in "${unjudged[@]}"; do echo "not judged: $kernel (data placement)"; done
     ((${#timed[@]} == 0)) || echo "timed: ${timed[*]}"
     ((${#lines[@]} == 0)) || printf '%s\n' "${lines[@]}"
     case $verdict in
-        PASS) echo "VERDICT: PASS -- ${#identical[@]} image(s) identical, ${#timed[@]} timed" ;;
+        PASS) echo "VERDICT: PASS -- ${#identical[@]} image(s) identical, ${#timed[@]} timed${unjudged[0]:+, ${#unjudged[@]} not judged (data placement)}" ;;
         FAIL) echo "VERDICT: FAIL -- ${failed[*]}" ;;
         *) echo "VERDICT: INCONCLUSIVE -- ${open[*]} still indeterminate after the retest" ;;
     esac

@@ -123,8 +123,8 @@ placement decides on this host:
    position, so such a pair has its times in equal shares and is judged.
 4. A kernel with an unlike rank is launched at the 32 positions again, and is
    set aside when the second round has a rank unlike in a direction the first
-   had. Its comparison rows then read `not judged (data placement)`, a
-   `not judged:` line follows them, and it counts as no failure or suspect;
+   had. `judge.sh` then neither times nor judges it: its verdict has the line
+   `not judged: KERNEL (data placement)`, which changes no exit status, and
    the other kernels are judged as usual. The control's `verdict.txt` shows
    both arms' sorted quotients for each round of a kernel set aside, and the
    workflow shows a warning for it.
@@ -147,7 +147,7 @@ sees no effect under 10 percent (adjacent grids cost the 7763 6 to 10
 percent), and only blocks the mapping calls show: not an offset of static data
 within the image or of a small block within a heap. Which launches of either
 arm land in a slow placement under address randomization is still noise of
-the ordinary comparison, which the identical-image control bounds. One slow
+the ordinary comparison, which each kernel's null control bounds. One slow
 launch of an arm in each round, at any positions, also sets a kernel aside:
 the rule cannot tell it from placement, and the control's confirmation met it
 once in 20 jobs.
@@ -155,17 +155,19 @@ once in 20 jobs.
 ## Entries and artifacts
 
 `compare.sh BASELINE_IMAGES CANDIDATE_IMAGES FRESH_RESULTS` from the candidate
-revision is the explicit measurement entry for both image sets. With
-`WF_PERFORMANCE_PLACEMENT` naming the data-placement control's results, it
-leaves the kernels of their `aside.txt` unjudged; it refuses a directory
-without that file. `data-placement.sh control BASELINE_IMAGES CANDIDATE_IMAGES
-FRESH_RESULTS` is the control's entry. Each child has a 60-second deadline, and
-the workflow bounds the campaign as a whole. `manifest.txt`, `raw.tsv`,
-`paired.tsv`, `verdict.txt` and per-process logs are uploaded on success or
-failure, with the control's traces, mapping records, `rows.tsv` and
-`verdict.txt`. The artifact also retains each arm's generated
-LLVM modules, native objects and executable images, so a regression can be
-inspected using the exact hosted code and its final linked addresses rather
+revision is the explicit measurement entry for both image sets.
+`data-placement.sh control BASELINE_IMAGES CANDIDATE_IMAGES FRESH_RESULTS` is
+the control's entry; it records the kernels `KERNELS :=` names, or `KERNELS` in
+the environment. With `WF_PERFORMANCE_PLACEMENT` naming its results,
+`judge.sh` leaves the kernels of their `aside.txt` untimed and unjudged; it
+refuses a directory without that file, and a list that names a kernel it does
+not judge or one kernel twice, before it measures anything. Each child has a
+60-second deadline, and the workflow bounds the campaign as a whole.
+`manifest.txt`, `raw.tsv`, `paired.tsv`, `verdict.txt` and per-process logs
+are uploaded on success or failure, with the control's traces, mapping
+records, `rows.tsv` and `verdict.txt`. The artifact also retains each arm's
+generated LLVM modules, native objects and executable images, so a regression
+can be inspected using the exact hosted code and its final linked addresses rather
 than a local toolchain approximation. The input identity record includes the
 host CPU report so architecture-dependent code-placement hypotheses can be
 checked against the machine that produced the samples.

@@ -48,8 +48,9 @@ jobs:
     runs-on: ubuntu-24.04
     # The sum of the budget rows of every stage one run can execute on the
     # model where that sum is largest (a cold merge-base build, the
-    # qualification's controls and every data-placement round they and the
-    # control can run), plus 3 minutes for checkout, caches and the warm-up.
+    # qualification's controls, the judgment with its retest round and every
+    # data-placement round the qualification and the control can run), plus 3
+    # minutes for checkout, caches and the warm-up.
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
@@ -328,9 +329,11 @@ jobs:
           bash tests/performance/data-placement.sh qualify "$RUNNER_TEMP/performance-candidate" \
             "$RUNNER_TEMP/performance-results/data-control"
       # A kernel whose two arms map their data differently, and whose 32
-      # positions in order of time differ in two rounds, is timed below but
-      # not judged: on this host its comparison is decided by where its data
-      # lies (tests/performance/README.md, "Data placement").
+      # positions in order of time differ in two rounds, is neither timed nor
+      # judged below: on this host its comparison is decided by where its data
+      # lies (tests/performance/README.md, "Data placement"). The judgment
+      # reads the kernels set aside from the results WF_PERFORMANCE_PLACEMENT
+      # names.
       - name: Check data placement
         if: steps.scope.outputs.measure == 'true'
         run: |
