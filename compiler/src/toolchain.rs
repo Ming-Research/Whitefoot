@@ -454,10 +454,38 @@ fn probe_status(toolchain: &Toolchain, status: std::process::ExitStatus) -> io::
     Ok(status.success())
 }
 
+/// Runs `module` through the LLVM verifier of the resolved toolchain's clang
+/// without optimizing it (`-fverify-intermediate-code`). Whether compiling a
+/// module runs the verifier depends on how that clang was built, so this asks
+/// for it. The module is written into `directory` as `<name>.ll`.
+#[cfg(test)]
+#[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
+pub(crate) fn verify_llvm(
+    directory: &Path,
+    name: &str,
+    module: &str,
+) -> io::Result<std::process::Output> {
+    let input = directory.join(format!("{name}.ll"));
+    fs::write(&input, module).expect("write verification module");
+    resolved_toolchain()
+        .expect("resolved toolchain")
+        .command()
+        .args([
+            "-x",
+            "ir",
+            "-S",
+            "-emit-llvm",
+            "-fverify-intermediate-code",
+            "-o",
+        ])
+        .arg(directory.join(format!("{name}.verified.ll")))
+        .arg(input)
+        .output()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Output;
 
     // Calls, not just declarations: some clang versions accept a declaration
     // with the wrong intrinsic type. Never generate code for this module,
@@ -469,26 +497,6 @@ mod tests {
              call {result} @llvm.coro.end(ptr null, i1 false, token none)\n  \
              ret void\n}}\n"
         )
-    }
-
-    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
-    fn verify(directory: &Path, name: &str, module: &str) -> io::Result<Output> {
-        let input = directory.join(format!("{name}.ll"));
-        fs::write(&input, module).expect("write verification module");
-        resolved_toolchain()
-            .expect("resolved toolchain")
-            .command()
-            .args([
-                "-x",
-                "ir",
-                "-S",
-                "-emit-llvm",
-                "-fverify-intermediate-code",
-                "-o",
-            ])
-            .arg(directory.join(format!("{name}.verified.ll")))
-            .arg(input)
-            .output()
     }
 
     #[test]
@@ -533,7 +541,7 @@ mod tests {
         let chosen = coroutine_module(facts.coro_end_result, facts.no_capture_attribute);
         // The probes' own fallback stands where clang cannot run; this test
         // needs clang as its oracle, as every native test does.
-        let accepted = verify(&directory.0, "chosen", &chosen).unwrap_or_else(|error| {
+        let accepted = verify_llvm(&directory.0, "chosen", &chosen).unwrap_or_else(|error| {
             panic!(
                 "cannot run {} to check the probed forms: {error}",
                 toolchain.clang().display()
@@ -550,7 +558,7 @@ mod tests {
             "void" => "i1",
             other => panic!("unexpected coro.end result: {other}"),
         };
-        let rejected = verify(
+        let rejected = verify_llvm(
             &directory.0,
             "other",
             &coroutine_module(other_result, facts.no_capture_attribute),
