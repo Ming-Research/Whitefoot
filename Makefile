@@ -94,9 +94,26 @@ _check-runtime:
 # second copy of the list is a copy that goes stale, and did — retiring two
 # stages left the workflow naming targets that no longer exist.
 static:
-	@for stage in repository-invariants spec-archives readme-translation spec-prose-integrity guidance source-size design-lint safety-claims; do \
-		$(CHECK_RUN) "$$stage" $(MAKE) --no-print-directory "$$stage" || exit 1; \
+	@$(REVIEW_BASE_SH); \
+	for stage in repository-invariants spec-archives readme-translation spec-prose-integrity guidance source-size design-lint safety-claims; do \
+		$(CHECK_RUN) "$$stage" $(MAKE) --no-print-directory "$$stage" REVIEW_BASE="$$base" || exit 1; \
 	done
+
+# The checks that compare the branch with main read one base: the merge base of
+# origin/main and HEAD, chosen by .github/merge-base.sh the same way locally and
+# in CI and named in each stage's output. `static` chooses it once and passes it
+# to its stages as REVIEW_BASE; a stage run alone chooses it itself. The
+# specification's readiness check prefers DESIGN_REVIEW_BASE, which CI sets from
+# the event (a push to main is compared with its previous tip) and which is
+# empty locally. No check reads the local branch main.
+REVIEW_BASE ?=
+DESIGN_REVIEW_BASE ?=
+REVIEW_BASE_SH = base='$(REVIEW_BASE)'; \
+	if [ -n "$$base" ]; then echo "review base: $$base (given to this stage)" >&2; \
+	else base=$$(sh .github/merge-base.sh) || exit 1; fi
+DESIGN_BASE_SH = base='$(DESIGN_REVIEW_BASE)'; \
+	if [ -n "$$base" ]; then echo "design review base: $$base (set by CI for the event)" >&2; \
+	else $(REVIEW_BASE_SH); fi
 
 # The design tree is in the wf-agents engine's form (`design/decisions/`), and
 # the engine checks that form before it merges a work. `design/skill/lint.py`
@@ -105,20 +122,22 @@ static:
 # fail on their missing root nodes, and with --require-approval it would ask
 # the frozen `design/log.md` for an entry naming every removed node. So
 # design-lint runs only the skill's own tests, and design-ready only the
-# specification log's readiness; both pass with no older node file left.
-# CI pins the event's review base instead of comparing main with its own tip.
-DESIGN_REVIEW_BASE ?= origin/main
+# specification log's readiness, against DESIGN_BASE_SH's base; both pass with
+# no older node file left.
 design-lint:
 	@$(PY) -m unittest discover -s design/skill -p 'test_lint.py'
 
 design-ready:
-	@sh .github/check-spec-archives.sh --require-approval "$(DESIGN_REVIEW_BASE)"
+	@$(DESIGN_BASE_SH); \
+	sh .github/check-spec-archives.sh --require-approval "$$base"
 
 repository-invariants:
 	@$(PY) .github/check-research-inputs.py --self-test
 	@$(PY) .github/check-research-inputs.py
 	@sh .github/test-run-check.sh
 	@$(PY) .github/recompute-time-budgets.py --self-test
+	@sh .github/merge-base.sh --self-test
+	@sh .github/test-merge-base.sh
 	@sh .github/test-gate-scope.sh
 	@sh .github/test-gate-both-platforms.sh
 	@sh .github/test-compiler-release-retention.sh
@@ -157,22 +176,22 @@ repository-invariants:
 
 # The specification names no version: its version is derived from the change
 # log, an amendment adds an entry there and no archive, and released archives
-# are never edited. The scripts compare with the merge base of main, which is
+# are never edited. The script compares with the review base above, which is
 # what a merge would change in main; a branch behind main is not charged with
 # main's newer archives or entries.
 spec-archives:
-	@git rev-parse --verify --quiet refs/heads/main >/dev/null || { echo "spec archives: local main ref is required" >&2; exit 1; }
 	@sh .github/spec-version.sh --self-test
 	@sh .github/check-spec-archives.sh --self-test
-	@sh .github/check-spec-archives.sh main
+	@$(REVIEW_BASE_SH); \
+	sh .github/check-spec-archives.sh "$$base"
 
 # README.zh-CN.md translates README.md, so a merge that changes one of them
 # changes both (AGENTS.md). Like spec-archives, the script compares with the
-# merge base of main.
+# review base.
 readme-translation:
-	@git rev-parse --verify --quiet refs/heads/main >/dev/null || { echo "readme translation: local main ref is required" >&2; exit 1; }
 	@sh .github/check-readme-translation.sh --self-test
-	@sh .github/check-readme-translation.sh main
+	@$(REVIEW_BASE_SH); \
+	sh .github/check-readme-translation.sh "$$base"
 
 # Cited review items and entry-document paths resolve; this reads references
 # only, never the guidance's meaning.
