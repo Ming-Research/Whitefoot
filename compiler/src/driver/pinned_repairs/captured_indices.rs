@@ -59,10 +59,10 @@ fn main() -> status: std::process::ExitStatus pure {
 "#],
     },
     RepairPair {
-        // The index is the place `selector^.next` read through a reference holder, so the captured term is a superseded place rather than a superseded binding, and the description names the place.
+        // The index is the field place `p.k`, so a write to `p.k` leaves a superseded place rather than a superseded binding, and the description names the place.
         name: "requirement-after-index-place-write.wf",
         rejected: br#"struct Cursor {
-  next: u64;
+  k: u64;
 }
 
 fn need(row: &Slots<u64, 8>) -> result: unit reads(row) contract {
@@ -72,13 +72,12 @@ fn need(row: &Slots<u64, 8>) -> result: unit reads(row) contract {
   return unit;
 }
 
-fn inspect(pages: &Array<Slots<u64, 8>, 2>, rows: &[Cursor], selector: &Cursor) -> result: unit reads(pages), reads(selector.next) contract {
-  requires selector^.next < 2_u64;
-  requires 0_u64 < rows^.len;
+fn inspect(rows: &Array<Slots<u64, 8>, 2>, p: Cursor) -> result: unit reads(rows) contract {
+  requires p.k < 2_u64;
 } {
-  let wr = &pages^[selector^.next];
+  let wr = &rows^[p.k];
   if 0_u64 < wr^.len {
-    set selector = &rows^[0_u64];
+    set p.k = 1_u64;
     need(row: wr);
   }
   return unit;
@@ -90,10 +89,10 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "FN-8",
         sentences: &[
-            "\n  instantiated_goal: 0_u64 < pages^[\u{2039}the value of selector^.next before it was rewritten\u{203a}].len\n",
+            "\n  instantiated_goal: 0_u64 < rows^[\u{2039}the value of p.k before it was rewritten\u{203a}].len\n",
         ],
         repaired: &[br#"struct Cursor {
-  next: u64;
+  k: u64;
 }
 
 fn need(row: &Slots<u64, 8>) -> result: unit reads(row) contract {
@@ -103,14 +102,13 @@ fn need(row: &Slots<u64, 8>) -> result: unit reads(row) contract {
   return unit;
 }
 
-fn inspect(pages: &Array<Slots<u64, 8>, 2>, rows: &[Cursor], selector: &Cursor) -> result: unit reads(pages), reads(selector.next) contract {
-  requires selector^.next < 2_u64;
-  requires 0_u64 < rows^.len;
+fn inspect(rows: &Array<Slots<u64, 8>, 2>, p: Cursor) -> result: unit reads(rows) contract {
+  requires p.k < 2_u64;
 } {
-  let k0 = selector^.next;
-  let wr = &pages^[k0];
+  let k0 = p.k;
+  let wr = &rows^[k0];
   if 0_u64 < wr^.len {
-    set selector = &rows^[0_u64];
+    set p.k = 1_u64;
     need(row: wr);
   }
   return unit;
