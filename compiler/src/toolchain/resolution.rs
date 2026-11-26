@@ -675,8 +675,7 @@ mod tests {
         toolchain.cache_identity().expect("initial version command");
         fs::remove_file(clang).expect("remove clang before probe");
         let error = super::super::ToolchainFacts::probe(&toolchain)
-            .err()
-            .expect("missing bundled executable must fail the probes");
+            .expect_err("missing bundled executable must fail the probes");
         assert!(
             error.contains("capability probe") && error.contains("clang"),
             "{error}"
