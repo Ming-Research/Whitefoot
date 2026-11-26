@@ -446,6 +446,22 @@ void wf__body_host_copy_utf8(wf_copy_result *result, const wf_value *value,
     result->ok.value = start + measured.value;
 }
 
+#if !defined(_WIN32)
+/* [PRE-2] Whether a POSIX path has a component `..`, the bytes between two
+ * `/`s or an end, which would select the directory above the one the path is
+ * looked up from. */
+static int wf_path_has_parent_component(const unsigned char *text, uint64_t length) {
+    uint64_t start = 0, at;
+    for (at = 0; at <= length; at++) {
+        if (at == length || text[at] == '/') {
+            if (at - start == 2 && text[start] == '.' && text[start + 1] == '.') return 1;
+            start = at + 1;
+        }
+    }
+    return 0;
+}
+#endif
+
 void wf__body_relative_path(wf_value_result *result, const wf_value *value) {
     const wf_value saved = *value;
     const unsigned char *text = wf_value_pointer(&saved);
@@ -454,7 +470,8 @@ void wf__body_relative_path(wf_value_result *result, const wf_value *value) {
 #if defined(_WIN32)
     if (!wf__windows_relative_path_valid((const uint16_t *)text, length)) {
 #else
-    if (length != 0 && (text[0] == '/' || memchr(text, 0, (size_t)length) != NULL)) {
+    if (length != 0 && (text[0] == '/' || memchr(text, 0, (size_t)length) != NULL
+                        || wf_path_has_parent_component(text, length))) {
 #endif
         result->tag = 1;
         return;
@@ -1021,10 +1038,16 @@ static void wf_open_finish(wf_open_result *result, wf_value *factory,
     wf_descriptor_value(&result->ok.value, (int)descriptor);
 }
 
+/* [PRE-2] A path given to `open_read` is looked up as names are: every
+ * component of it, the last included, is an entry of the directory before it
+ * that is not a link, which the no-follow flags of a name's open ask the
+ * adapters for and which they apply to each component of a path that has
+ * several. */
 int wf__body_open_read_start(wf_open_result *result, wf_value *factory,
                              const wf_value *root, const wf_value *path,
                              wf_host_operation *operation) {
-    return wf_open_start(result, factory, root, wf_value_pointer(path), 0,
+    return wf_open_start(result, factory, root, wf_value_pointer(path),
+                         WF_OPEN_COMPONENT_FILE_FLAGS,
                          WF_FILE_EXPECT_REGULAR, 1, operation);
 }
 
@@ -2243,14 +2266,13 @@ void wf__body_tcp_accept(wf_accept_result *result, wf_value *factory, wf_value *
         wf__body_tcp_accept_finish(result, factory, listener, deadline, cancel, &operation);
 }
 
-/* [PRE-2] the host's report of the connection's own endpoint. Both halves of
- * one connection carry its one descriptor, which stays open until the second
- * half-close, so a live receiving half always names an open socket. The query
- * spends no handle credit and changes neither half. */
-void wf__body_local_address(wf_open_result *result, const wf_value *receive) {
+/* [PRE-2] the host's report of the endpoint one open socket is bound to,
+ * shared by the two queries below. The query spends no handle credit and
+ * changes nothing about the socket. */
+static void wf__socket_endpoint(wf_open_result *result, int descriptor) {
     uint64_t low, high;
     uint32_t tag;
-    int error = wf__completion_socket_local_address(wf_descriptor(receive), &low, &high, &tag);
+    int error = wf__completion_socket_local_address(descriptor, &low, &high, &tag);
     memset(result, 0, sizeof(*result));
     if (error != 0) {
         result->tag = 1;
@@ -2260,6 +2282,20 @@ void wf__body_local_address(wf_open_result *result, const wf_value *receive) {
     result->ok.value.words[0] = low;
     result->ok.value.words[1] = high;
     result->ok.value.words[2] = tag;
+}
+
+/* The connection's own endpoint. Both halves of one connection carry its one
+ * descriptor, which stays open until the second half-close, so a live
+ * receiving half always names an open socket. */
+void wf__body_local_address(wf_open_result *result, const wf_value *receive) {
+    wf__socket_endpoint(result, wf_descriptor(receive));
+}
+
+/* The endpoint a listener is bound to: the port the host chose when the bound
+ * address named port 0. A live listener's descriptor stays open until
+ * `close_listener` consumes it. */
+void wf__body_listener_address(wf_open_result *result, const wf_value *listener) {
+    wf__socket_endpoint(result, wf_descriptor(listener));
 }
 
 void wf__body_cancel_source(wf_cancel_handle *result) {
