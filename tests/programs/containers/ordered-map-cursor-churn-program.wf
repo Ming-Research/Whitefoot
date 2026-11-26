@@ -323,7 +323,8 @@ fn churn_run(log: &ChurnLog) -> result: unit writes(log) {
       set state = state +wrap 1442695040888963407_u64;
       let high = state / 8589934592_u64;
       let key = high % 512_u64;
-      let rare = step % 3_u64 == 0_u64;
+      let third = step % 3_u64;
+      let rare = third == 0_u64;
       let insert = rare;
       let remove = True();
       if growing {
