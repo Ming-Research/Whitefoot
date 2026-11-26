@@ -1,0 +1,37 @@
+enum Slot {
+  Full(count: u8);
+  Empty();
+}
+
+fn bump(marks: &[u64], x: u64, y: u8) -> result: u8 pure contract {
+  requires forall small(k in 0_u64..marks^.len): marks^[k] < 8_u64;
+} {
+  doc "r names e or f, so the payload binder c of the match through r names e's or f's count, and the write through c may make e's count y, which may be 9.";
+  let e = Slot::Full(count: 1_u8);
+  let f = Slot::Full(count: 1_u8);
+  let r = if x < 10_u64 {
+    give &e;
+  } else {
+    give &f;
+  }
+  match r^ {
+    Full(count: c) => {
+      set c^ = y;
+    }
+    Empty() => {
+    }
+  }
+  match e {
+    Full(count: held) => {
+      let w = 251_u8 + held;
+      return w;
+    }
+    Empty() => {
+      return 0_u8;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

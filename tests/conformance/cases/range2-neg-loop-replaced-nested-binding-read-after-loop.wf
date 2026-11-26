@@ -1,0 +1,24 @@
+struct Inner {
+  count: u8;
+}
+
+struct Outer {
+  inner: Inner;
+}
+
+fn bump(marks: &[u64], n: u64, x: u8) -> result: u8 pure contract {
+  requires forall small(k in 0_u64..marks^.len): marks^[k] < 8_u64;
+} {
+  doc "The loop may replace s with one whose inner count is x, which may be 9, so after the loop s.inner.count is not known to be 1.";
+  let s = Outer(inner: Inner(count: 1_u8));
+  for (i in 0_u64..n) {
+    set s = Outer(inner: Inner(count: x));
+  }
+  let v = s.inner.count;
+  let w = 251_u8 + v;
+  return w;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
