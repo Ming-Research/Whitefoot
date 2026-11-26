@@ -493,7 +493,10 @@ Each criterion holds:
    200 kernel comparisons 7 launched a second round, 1 on a 7763 and 6 on a
    9V45, and none was set aside after it. Every qualification also recorded
    the image at position 1 against itself as mapping differently for all five
-   kernels.
+   kernels. That record differs by the runner's own idle mapping in any case;
+   without that one line each of the 200 records still differs, every later
+   mapping lying 2 MiB lower, and the qualification has required this since
+   the confirmation.
 
 Without a criterion:
 
