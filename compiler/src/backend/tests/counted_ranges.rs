@@ -169,22 +169,28 @@ fn at_the_maximum(lower: u64, upper: u64) -> result: u64 pure {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  if nested_continue(n: 3_u64, m: 4_u64, skip: 2_u64) != 6_u64 {
+  let nested = nested_continue(n: 3_u64, m: 4_u64, skip: 2_u64);
+  if nested != 6_u64 {
     return std::process::exit_status(code: 1_u8);
   }
-  if inner_never_updates(n: 4_u64, m: 3_u64) != 4_u64 {
+  let never = inner_never_updates(n: 4_u64, m: 3_u64);
+  if never != 4_u64 {
     return std::process::exit_status(code: 2_u8);
   }
-  if break_only(lower: 3_u64, upper: 9_u64) != 3_u64 {
+  let broke = break_only(lower: 3_u64, upper: 9_u64);
+  if broke != 3_u64 {
     return std::process::exit_status(code: 3_u8);
   }
-  if break_only(lower: 9_u64, upper: 9_u64) != 0_u64 {
+  let empty = break_only(lower: 9_u64, upper: 9_u64);
+  if empty != 0_u64 {
     return std::process::exit_status(code: 4_u8);
   }
-  if at_the_maximum(lower: 18446744073709551613_u64, upper: 18446744073709551615_u64) != 2_u64 {
+  let top = at_the_maximum(lower: 18446744073709551613_u64, upper: 18446744073709551615_u64);
+  if top != 2_u64 {
     return std::process::exit_status(code: 5_u8);
   }
-  if at_the_maximum(lower: 18446744073709551615_u64, upper: 18446744073709551615_u64) != 0_u64 {
+  let none = at_the_maximum(lower: 18446744073709551615_u64, upper: 18446744073709551615_u64);
+  if none != 0_u64 {
     return std::process::exit_status(code: 6_u8);
   }
   return std::process::exit_status(code: 0_u8);
