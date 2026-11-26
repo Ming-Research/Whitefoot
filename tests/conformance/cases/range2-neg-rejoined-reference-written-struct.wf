@@ -1,0 +1,30 @@
+struct Counter {
+  count: u8;
+}
+
+fn bump(marks: &[u64], x: u64, y: u8) -> result: u8 pure contract {
+  requires forall small(k in 0_u64..marks^.len): marks^[k] < 8_u64;
+} {
+  doc "r names s or t, and q names whatever r names or u, so the write through q may make t.count y, which may be 9.";
+  let s = Counter(count: 1_u8);
+  let t = Counter(count: 1_u8);
+  let u = Counter(count: 1_u8);
+  let r = if x < 10_u64 {
+    give &s;
+  } else {
+    give &t;
+  }
+  let q = if x < 20_u64 {
+    give r;
+  } else {
+    give &u;
+  }
+  set q^.count = y;
+  let v = t.count;
+  let w = 251_u8 + v;
+  return w;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

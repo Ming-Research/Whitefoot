@@ -161,11 +161,11 @@ pub(crate) struct LoopPermission {
     /// The operations the body's accumulators combine under, in source order
     /// and without repeats. A loop with no carried value has none.
     pub(crate) combines: Vec<&'static str>,
-    /// Whether a recursive split of this loop's index range, hand-written by
-    /// the writer, would be eligible where the loop itself is refused. This
-    /// is the advice the ledger prints for a refused loop; it is never true
-    /// for a permitted one, which needs no rewrite.
-    pub(crate) advises_split: bool,
+    /// What the ledger says about a recursive split of this loop's index
+    /// range, hand-written by the writer, where the loop itself is refused.
+    /// It is never anything but [`SplitAdvice::None`] for a permitted loop,
+    /// which needs no rewrite.
+    pub(crate) split_advice: SplitAdvice,
     /// What actualizing this permission needs from the judgment, present for
     /// a permitted independent map or one-accumulator reduction.
     ///
@@ -177,6 +177,32 @@ pub(crate) struct LoopPermission {
     pub(crate) written_places: Vec<ResolvedPlace>,
     /// Indexed roots live through the structured join; lengths are read at entry.
     pub(crate) indexed: Vec<IndexedReduction>,
+}
+
+/// The ledger's statement about a hand-written split of a refused loop.
+///
+/// A split returns an aggregate of the halves' accumulators and combines them
+/// under each accumulator's operation. That combination equals the sequential
+/// result only while each accumulator's value is seen by its own update and
+/// nowhere else; an accumulator read elsewhere in the body makes what one half
+/// computes depend on the other half's partial value.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum SplitAdvice {
+    /// The refusal is one the split would be refused for too, or the loop is
+    /// permitted: the ledger says nothing about a split.
+    None,
+    /// The loop is declined only because it carries several accumulators,
+    /// each read only by its own update, so combining the halves per
+    /// accumulator is the sequential result.
+    Eligible,
+    /// The loop is declined because it carries several accumulators and one
+    /// of them is read outside its own updates, so the halves cannot be
+    /// combined. `statement` is that accumulator's first update and
+    /// `outside_reads` the reads of it beyond its updates' own.
+    DependentAccumulator {
+        statement: NodePath,
+        outside_reads: usize,
+    },
 }
 
 impl LoopPermission {
@@ -299,7 +325,8 @@ pub(crate) enum LoopDenial {
     NotAReduction { statement: NodePath },
     /// Condition 1: the body carries more than one accumulator. The split
     /// advice survives this one: a hand-written recursion may return an
-    /// aggregate, which this version does not synthesize.
+    /// aggregate, which this version does not synthesize, unless an
+    /// accumulator is read outside its own updates [`SplitAdvice`].
     ManyAccumulators { accumulators: usize },
     /// Condition 1: the accumulator is read outside its own combine, so what
     /// a later iteration sees is the running total.
@@ -484,7 +511,7 @@ pub(crate) fn judge_loops<'check>(
             .iter()
             .any(|pair| encloses(&loop_permission.statement, pair))
         {
-            loop_permission.advises_split = false;
+            loop_permission.split_advice = SplitAdvice::None;
         }
     }
     judged
@@ -525,7 +552,7 @@ fn collect<'check>(
             if let Some(call) = waiting.iter().find(|call| encloses(node_path, call)) {
                 loop_permission.verdict =
                     LoopVerdict::Denied(LoopDenial::WaitingCall { call: call.clone() });
-                loop_permission.advises_split = false;
+                loop_permission.split_advice = SplitAdvice::None;
                 loop_permission.actualization = None;
             }
             judged.push(loop_permission);
@@ -2726,10 +2753,22 @@ impl<'check, 'run> Survey<'check, 'run> {
         let denial = self.denial();
         // The advice outlives exactly one refusal: a loop this version
         // declines only because it carries several accumulators is still one
-        // a hand-written recursion returning an aggregate can split. Every
-        // other refusal is a reason the split would be refused too.
-        let advises_split =
-            matches!(denial, Some(LoopDenial::ManyAccumulators { .. })) && !carried.is_empty();
+        // a hand-written recursion returning an aggregate can split, unless
+        // an accumulator is read outside its own updates, which no
+        // combination of the halves reproduces. Every other refusal is a
+        // reason the split would be refused too.
+        let split_advice =
+            if matches!(denial, Some(LoopDenial::ManyAccumulators { .. })) && !carried.is_empty() {
+                match self.read_outside_updates() {
+                    Some((statement, outside_reads)) => SplitAdvice::DependentAccumulator {
+                        statement,
+                        outside_reads,
+                    },
+                    None => SplitAdvice::Eligible,
+                }
+            } else {
+                SplitAdvice::None
+            };
         // A stateless loop is not a map merely because it is permitted. An
         // admitted element family is the positive witness which selects
         // IndependentMap; an accumulator selects Reduction, including a
@@ -2759,7 +2798,7 @@ impl<'check, 'run> Survey<'check, 'run> {
             statement,
             verdict,
             combines,
-            advises_split,
+            split_advice,
             actualization,
             indexed: if permitted {
                 self.indexed_payload()
@@ -2798,6 +2837,31 @@ impl<'check, 'run> Survey<'check, 'run> {
                 reason: "an indexed helper writes its parameter only through matching cell updates or summarized calls",
             });
         }
+    }
+
+    /// The first accumulator, in source order, that the body reads outside
+    /// its own updates: its first update's statement and the reads beyond
+    /// the one each update makes of its own binding.
+    ///
+    /// An accumulate statement reads its own binding exactly once and its
+    /// increment never reaches it [`combine_of`], so a binding's reads beyond
+    /// its update count are the reads that observe the running total: by
+    /// another accumulator's increment, through a local, or in a condition.
+    fn read_outside_updates(&self) -> Option<(NodePath, usize)> {
+        self.accumulates.iter().find_map(|first| {
+            let updates = self
+                .accumulates
+                .iter()
+                .filter(|update| update.binding == first.binding)
+                .count();
+            let outside = self
+                .reads
+                .iter()
+                .filter(|read| read.binding == first.binding)
+                .count()
+                .saturating_sub(updates);
+            (outside > 0).then(|| (first.statement.clone(), outside))
+        })
     }
 
     fn denial(&self) -> Option<LoopDenial> {

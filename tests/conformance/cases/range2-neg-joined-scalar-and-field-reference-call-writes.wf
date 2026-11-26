@@ -1,0 +1,28 @@
+struct Counter {
+  count: u8;
+}
+
+fn put(c: &u8, y: u8) -> result: unit writes(c) {
+  set c^ = y;
+  return unit;
+}
+
+fn bump(marks: &[u64], x: u64, y: u8) -> result: u8 pure contract {
+  requires forall small(k in 0_u64..marks^.len): marks^[k] < 8_u64;
+} {
+  doc "r names the scalar binding n or s.count, so put may write y, which may be 9, into n.";
+  let n = 1_u8;
+  let s = Counter(count: 1_u8);
+  let r = if x < 10_u64 {
+    give &n;
+  } else {
+    give &s.count;
+  }
+  put(c: r, y: y);
+  let w = 251_u8 + n;
+  return w;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

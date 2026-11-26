@@ -1,0 +1,29 @@
+struct Counter {
+  count: u8;
+}
+
+fn need(marks: &[u64]) -> result: unit pure contract {
+  requires forall small(k in 0_u64..marks^.len): marks^[k] < 8_u64;
+} {
+  return unit;
+}
+
+fn bump(marks: &[u64], x: u64, y: u8) -> result: unit pure contract {
+  requires forall small(k in 0_u64..marks^.len): marks^[k] < 8_u64;
+} {
+  doc "r names s or t, neither of which is the storage marks names, so the write through r leaves small holding at need.";
+  let s = Counter(count: 1_u8);
+  let t = Counter(count: 1_u8);
+  let r = if x < 10_u64 {
+    give &s;
+  } else {
+    give &t;
+  }
+  set r^.count = y;
+  need(marks: marks);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
