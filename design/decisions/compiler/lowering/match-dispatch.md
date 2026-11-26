@@ -19,6 +19,10 @@ The parts use `preserve_none` where a run-time probe finds the host clang takes 
 - rejected: an agent proposed spilling values that change on every dispatch to the frame; the owner rejected it, because only a value that never changes costs just a load where it is read.
 - rejected: an agent proposed forming the handler table's address in each arm; the owner rejected it, because it cost two instructions per dispatch, and the address is a parameter wherever a register is left for it.
 
+### decision dispatch-parts-save-no-rbp-where-the-host-honors-it
+On x86-64, every part's definition and every call into or between the parts carries `no_callee_saved_registers` where a run-time probe shows the host honors it, so handlers do not save RBP.
+- rejected: an agent proposed the GHC convention for the x86-64 parts, which saves nothing and needs no probe; the owner rejected it, because it passes 10 integer registers against 11, so a loop needing 11 moves a value to the frame, a cost not yet measured.
+
 ### decision a-dispatch-slot-that-never-crosses-a-transfer-belongs-to-its-part
 The enclosing function owns the frame and passes it to every part; a frame slot whose contents never cross a transfer between parts is each using part's own allocation.
 - replaced: Keeping a slot in a part only when exactly one part used it was on main; the owner changed it, because a join copied into every arm counts each arm as a user, and Halo's `Call` and `Return` arms ran 14 dead stores per Lua call (data: `research/investigations/halo-call-path/DESIGN.md`).

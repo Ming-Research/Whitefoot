@@ -154,11 +154,118 @@ fn host_convention() -> (&'static str, usize) {
     }
 }
 
+/// The attribute the parts' ABI carries on this host: the host's probed
+/// facts on x86-64, nothing elsewhere.
+fn host_attribute() -> &'static str {
+    let facts = crate::toolchain::facts();
+    if cfg!(target_arch = "x86_64") && facts.preserve_none && facts.no_callee_saved_registers {
+        " \"no_callee_saved_registers\""
+    } else {
+        ""
+    }
+}
+
+/// Decision `dispatch-parts-save-no-rbp-where-the-host-honors-it`: the
+/// attribute is chosen with the calling convention, only for the x86-64
+/// targets whose host probe passed, and an absent attribute leaves every
+/// text unchanged.
+#[test]
+fn the_parts_attribute_needs_x86_64_preserve_none_and_the_probed_fact() {
+    use crate::backend::emitter::dispatch::convention_for;
+    let host = *crate::toolchain::facts();
+    for preserve_none in [false, true] {
+        for no_callee_saved_registers in [false, true] {
+            let facts = crate::toolchain::ToolchainFacts {
+                preserve_none,
+                no_callee_saved_registers,
+                ..host
+            };
+            for triple in [
+                "x86_64-unknown-linux-gnu",
+                "x86_64-apple-darwin",
+                crate::target::WINDOWS_X86_64_TRIPLE,
+                "aarch64-apple-darwin",
+            ] {
+                let abi = convention_for(&facts, triple);
+                let expected = if triple.starts_with("x86_64")
+                    && preserve_none
+                    && no_callee_saved_registers
+                {
+                    " \"no_callee_saved_registers\""
+                } else {
+                    ""
+                };
+                assert_eq!(
+                    abi.attribute, expected,
+                    "{triple}, preserve_none={preserve_none}, \
+                     no_callee_saved_registers={no_callee_saved_registers}"
+                );
+                assert_eq!(
+                    abi.convention,
+                    if preserve_none { "preserve_nonecc " } else { "" },
+                    "the attribute never changes the convention: {triple}"
+                );
+            }
+        }
+    }
+}
+
+/// The attribute is on every part's definition and on every call into or
+/// between the parts, direct or through the table or handler word, and
+/// never on the enclosing definition, which keeps the C convention and so
+/// preserves RBP once for the whole chain.
+fn assert_part_attribute(module: &str, base: &str, arms: usize) {
+    let attribute = host_attribute();
+    let enclosing = module
+        .lines()
+        .find(|line| line.starts_with("define ") && line.contains(&format!(" @{base}(")))
+        .unwrap_or_else(|| panic!("missing definition of {base}: {module}"));
+    assert!(
+        !enclosing.contains("no_callee_saved_registers"),
+        "the enclosing function keeps its ordinary ABI: {enclosing}"
+    );
+    let entry = format!("@{base}.dispatch(");
+    let entries = module
+        .lines()
+        .filter(|line| line.contains(&entry) && line.contains("call ") && !line.contains("musttail"))
+        .collect::<Vec<_>>();
+    assert!(!entries.is_empty(), "the enclosing function enters the chain: {module}");
+    for line in entries {
+        assert_eq!(
+            line.contains("no_callee_saved_registers"),
+            !attribute.is_empty(),
+            "{line}"
+        );
+        assert!(attribute.is_empty() || line.trim_end().ends_with(attribute), "{line}");
+    }
+    for symbol in std::iter::once(format!("{base}.dispatch"))
+        .chain((0..arms).map(|arm| format!("{base}.arm.{arm}")))
+    {
+        let part = definition(module, &symbol);
+        let header = part.lines().next().expect("a definition header");
+        assert_eq!(
+            header.contains("no_callee_saved_registers"),
+            !attribute.is_empty(),
+            "{header}"
+        );
+        assert!(attribute.is_empty() || header.contains(attribute), "{header}");
+        for call in part.lines().filter(|line| line.contains("musttail call ")) {
+            assert_eq!(
+                call.contains("no_callee_saved_registers"),
+                !attribute.is_empty(),
+                "each transfer matches its callee's ABI: {call}"
+            );
+            assert!(attribute.is_empty() || call.trim_end().ends_with(attribute), "{call}");
+        }
+    }
+}
+
 fn assert_split(module: &str, base: &str, arms: usize) {
     assert_split_with_table_slots(module, base, arms, arms);
 }
 
 fn assert_split_with_table_slots(module: &str, base: &str, arms: usize, table_slots: usize) {
+    assert_part_attribute(module, base, arms);
     let (convention, _) = host_convention();
     let dispatch = definition(module, &format!("{base}.dispatch"));
     assert!(
@@ -3554,6 +3661,177 @@ fn main() -> status: ExitStatus pure {
         !module.contains("@wf_run.dispatch("),
         "integer loop is emitted whole: {module}"
     );
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+/// The assembly the host's optimizer and assembler produce for one emitted
+/// module at the shipped optimization level.
+fn host_assembly(module: &str) -> String {
+    let directory = super::test_directory();
+    let input = directory.join("program.ll");
+    std::fs::write(&input, module).expect("write the module");
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
+    let output = std::process::Command::new(crate::clang_executable())
+        .arg("-x")
+        .arg("ir")
+        .arg(&input)
+        .args(crate::HOST_OPTIMIZATION_ARGUMENTS)
+        .arg("-S")
+        .arg("-o")
+        .arg("-")
+        .output()
+        .expect("invoke host clang");
+    assert!(
+        output.status.success(),
+        "clang rejected the module:\n{}\n{module}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::fs::remove_dir_all(&directory).expect("remove the assembly directory");
+    String::from_utf8(output.stdout).expect("assembly is UTF-8")
+}
+
+/// Each function of the assembly whose label names a dispatch part
+/// (`<base>.arm.<n>`, with its cold split) and how many pushes and pops of
+/// `%rbp` it holds.
+fn part_rbp_saves(assembly: &str) -> Vec<(String, usize)> {
+    let mut parts = Vec::new();
+    let mut current: Option<(String, usize)> = None;
+    for line in assembly.lines() {
+        let code = line.split('#').next().unwrap_or("").trim();
+        if let Some(label) = code.strip_suffix(':').filter(|label| label.contains(".arm.")) {
+            parts.extend(current.take());
+            current = Some((label.to_owned(), 0));
+        } else if code.starts_with(".Lfunc_end") {
+            parts.extend(current.take());
+        } else if let Some((_, saves)) = current.as_mut() {
+            let mut words = code.split_whitespace();
+            if matches!(words.next(), Some("pushq" | "push" | "popq" | "pop"))
+                && words.next() == Some("%rbp")
+            {
+                *saves += 1;
+            }
+        }
+    }
+    parts.extend(current);
+    parts
+}
+
+/// x86-64 System V (psABI 3.2.1): RBP is callee-saved and a part that uses it
+/// as a scratch register under the ordinary `preserve_none` convention saves
+/// and restores it on every transfer; with the attribute written on every
+/// definition and call no part of any of the four loop shapes does. The
+/// unattributed module of the first shape that has parts is the control: it
+/// shows the check can fail, one program being enough for that. Judged on the
+/// host's own assembly, not on the emitted text.
+#[test]
+fn the_attribute_removes_every_rbp_save_from_the_parts_it_is_written_on() {
+    let attribute = host_attribute();
+    if attribute.is_empty() {
+        if cfg!(all(target_arch = "x86_64", target_os = "linux")) {
+            panic!("the pinned LLVM on Linux x86-64 honors the attribute");
+        }
+        return;
+    }
+    let mut controlled = 0;
+    for (name, source) in [
+        ("scalar interpreter", scalar_interpreter()),
+        ("enum interpreter", enum_interpreter()),
+        ("replacing interpreter", REPLACING.to_owned()),
+        ("frame values", thirty_values(false)),
+    ] {
+        let module = emit(source.as_bytes());
+        if !module.contains(".arm.0(") {
+            continue;
+        }
+        assert!(module.contains(attribute), "{name}: {module}");
+        let attributed = part_rbp_saves(&host_assembly(&module));
+        assert!(!attributed.is_empty(), "{name} has parts in its assembly");
+        for (label, saves) in &attributed {
+            assert_eq!(*saves, 0, "{name}: {label} saves RBP under the attribute");
+        }
+        if controlled == 0 {
+            let legacy = part_rbp_saves(&host_assembly(&module.replace(attribute, "")));
+            assert_eq!(legacy.len(), attributed.len(), "{name}: the same parts");
+            controlled += legacy.iter().filter(|(_, saves)| *saves > 0).count();
+        }
+    }
+    assert!(
+        controlled > 0,
+        "no part of any program uses RBP without the attribute, so the check proves nothing"
+    );
+}
+
+/// The header of a split loop is `alwaysinline`, so after the optimizer the
+/// only call into the chain is the header's indirect transfer, turned from a
+/// `musttail` into an ordinary call in the enclosing function. Under
+/// `preserve_none` RBP is the one register the callee keeps; with the
+/// attribute on that call its caller treats RBP like every other register as
+/// clobbered, and without it `main` keeps the `code` box it reuses for the
+/// second run in RBP, which the parts of the replacing interpreter use as a
+/// scratch register and, under the attribute, do not restore: the run
+/// crashes. The text of the module cannot show this, because it holds the
+/// attribute on the call before the header is inlined and says nothing of
+/// what survives the inlining. The expected total is computed here: an
+/// iteration adds 3 + 144 (the even extras) on `Add`, 156 (the odd extras)
+/// on `Dec` and 1 + 100 to the replaced box, 404 in all, and the first run's
+/// result is added to the second's after the second returns.
+#[test]
+fn a_caller_s_callee_saved_values_survive_a_split_loop() {
+    let first = 1000_u64 * 404;
+    let second = 10_u64 * 404;
+    let expected = first + second;
+    let extras = (0..24)
+        .map(|index| format!("e{index}: {}_u64", index + 1))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let prefix = REPLACING
+        .split("fn main()")
+        .next()
+        .expect("the interpreter precedes main");
+    let source = format!(
+        r#"{prefix}fn main() -> status: ExitStatus pure {{
+  let code = box_slots_new::<Op>(capacity: 4_u64);
+  let c0 = Op::Add(k: 3_u64);
+  let p0 = push(code: &code, op: c0);
+  let c1 = Op::Dec();
+  let p1 = push(code: &code, op: c1);
+  let c2 = Op::Jnz(t: 0_u64);
+  let p2 = push(code: &code, op: c2);
+  let c3 = Op::Halt();
+  let p3 = push(code: &code, op: c3);
+  let regs = box_slots_new::<u64>(capacity: 1_u64);
+  place_back(window: &regs.inner, value: 0_u64);
+  if code.inner.len > 0_u64 {{
+    let r = run(code: &code, regs: &regs, start: 0_u64, seed: 0_u64, steps: 1000_u64, {extras});
+    match r {{
+      Done(value: v) => {{
+        let again = box_slots_new::<u64>(capacity: 1_u64);
+        place_back(window: &again.inner, value: 0_u64);
+        let s = run(code: &code, regs: &again, start: 0_u64, seed: 0_u64, steps: 10_u64, {extras});
+        match s {{
+          Done(value: w) => {{
+            let total = v +wrap w;
+            if total == {expected}_u64 {{
+              return exit_status(code: 0_u8);
+            }}
+            return exit_status(code: 1_u8);
+          }}
+          Failed() => {{
+            return exit_status(code: 3_u8);
+          }}
+        }}
+      }}
+      Failed() => {{
+        return exit_status(code: 3_u8);
+      }}
+    }}
+  }}
+  return exit_status(code: 2_u8);
+}}
+"#
+    );
+    let module = emit(source.as_bytes());
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
 }
