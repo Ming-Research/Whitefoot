@@ -335,6 +335,20 @@ def main(path):
         for value in (2, 4, 8, 16, 32):
             print(f"    n1>{value}: {sum(1 for row in today if row['n1'] > value)}"
                   f"  n3>{value}: {sum(1 for row in today if row['n3'] > value)}")
+    # The criterion compares sets: a today-proved record above a value under
+    # the selector join whose weakest-bound count is not above it.
+    selector, weakest = by_config["remedy"], by_config["remedy+join"]
+    for value in (2, 4, 8, 13, 16, 32):
+        for count in ("n1", "n3"):
+            only = [k for k, row in selector.items()
+                    if row["queries"] > 0 and today_proved(row) and row[count] > value
+                    and k in weakest and weakest[k][count] <= value]
+            other = [k for k, row in weakest.items()
+                     if row["queries"] > 0 and today_proved(row) and row[count] > value
+                     and k in selector and selector[k][count] <= value]
+            print(f"    {count}>{value}: selector only {len(only)}, weakest-bound only {len(other)}")
+            for k in only[:5]:
+                print("      SELECTOR-ONLY", "\t".join(k[:4]), selector[k][count], weakest[k][count])
 
     verdicts(by_config)
     worst_records(by_config)
