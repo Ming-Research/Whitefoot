@@ -12,10 +12,12 @@
 # Caller supplies an archive (whose directory holds the release's SHA256SUMS),
 # the directory of maintained witnesses (tests/package-fixtures), a disposable
 # work directory, one host mode: linux-absent, linux-wrong-major, or macos,
-# and the guide.
+# the guide, and the whitefootc test executable built from the candidate's
+# source, which the last check runs beside the installed package's clang
+# (check-runtime-frames.sh says why).
 set -euo pipefail
-if [ "$#" -ne 5 ]; then
-  echo 'usage: check-package.sh ARCHIVE FIXTURES WORK-DIRECTORY MODE GUIDE' >&2
+if [ "$#" -ne 6 ]; then
+  echo 'usage: check-package.sh ARCHIVE FIXTURES WORK-DIRECTORY MODE GUIDE FRAME-TEST' >&2
   exit 2
 fi
 archive="$1"
@@ -23,6 +25,7 @@ fixtures="$2"
 work="$3"
 mode="$4"
 guide="$5"
+frame_test="$6"
 # The helper scripts next to this one; resolved before the checks change
 # directory, since BASH_SOURCE may be relative.
 helpers=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
@@ -393,6 +396,15 @@ PY
   expect_failure invalid-sdk SDKROOT env SDKROOT="$work/not an SDK" \
     "$compiler" --diagnostic-format json -o "$work/invalid-sdk-output" "$witness"
   grep -E '"category"[[:space:]]*:[[:space:]]*"Toolchain"' "$logs/invalid-sdk.txt"
+fi
+# Last, so that the package every check above inspected is the package left
+# bare: the runtime's C frames over a page must carry the stack probe when this
+# package's clang compiles them, which the gate's own clang does not show for
+# the macOS package (the gate's clang there is Apple's). The script puts the
+# candidate's frame test beside the installed clang and removes it again.
+run runtime-frames bash "$helpers/check-runtime-frames.sh" "$package" "$frame_test"
+if [ "$mode" != macos ]; then
+  test ! -s "$host_log"
 fi
 printf 'isolation=%s\n' "$isolation" > "$logs/result.txt"
 cp "$work/waiting.ll" "$logs/waiting.ll"

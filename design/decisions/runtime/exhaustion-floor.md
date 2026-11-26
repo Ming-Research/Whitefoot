@@ -11,11 +11,11 @@ Heap and stack exhaustion write one fixed record that names only the exhausted r
 The entry runs on a stack the runtime sizes, every generated function carries the backend's stack-probing attribute, and a fault below a stack keeps the host's own handling.
 - rejected: an agent proposed comparing the stack pointer with a per-thread limit in every generated prologue; the owner rejected it, because the check spends the headroom it guards, while native probing stops frames that cross the guard without a check in each function.
 
-### decision runtime-c-frames-keep-their-default-probing
-Stack probing covers the functions the compiler generates; the runtime's C files keep their compiler's default, so upstream clang leaves a large runtime frame unprobed.
+### decision runtime-c-units-carry-the-generated-probe-method
+The runtime's C units compile with the argument that gives each definition the probing method generated code carries, and a corpus test requires a probe in every runtime frame over a page.
+- replaced: The runtime's C files keeping their compiler's default probing was on main; the owner changed it, because upstream clang adds no probe to C, so a 32 KiB runtime frame was unprobed (data: `research/experiments/runtime-c-stack-probes/README.md`).
 - rejected: an agent proposed claiming that the runtime's C frames are contained, from the qualification of generated code; the owner rejected it, because that qualification compiled and ran only generated functions.
-- rejected: an agent proposed probing the runtime's C on macOS now, with a compiler flag; the owner rejected it, because it covers one platform only, and covering every platform together is a separate piece of work.
-- rejected: an agent proposed probing the runtime's C on every platform, with a gate check, before the merge; the owner rejected it, because it needs the flags tested on both platforms, an audit of frame sizes and a new check, and is its own work.
+- rejected: an agent proposed probing the runtime's C on macOS only, with a compiler flag; the owner rejected it, because it covers one platform only.
 
 ### decision darwin-probe-method-follows-the-clang
 On Darwin a probe compiles a large frame with `__chkstk_darwin`; if clang accepts it, that helper is used, else inline probing every 4096 bytes; a package records the answer.

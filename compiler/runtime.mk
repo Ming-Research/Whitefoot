@@ -19,7 +19,12 @@ NATIVE_COMPILE_FLAGS := -pthread
 NATIVE_LINK_FLAGS := -pthread -lm
 endif
 # The driver's HOST_OPTIMIZATION_ARGUMENTS (src/driver.rs), which every
-# runtime unit compiles with; keep the two equal.
+# runtime unit compiles with; keep the two equal. The driver also gives each C
+# unit the stack-probe arguments of its host (whitefoot::runtime_stack_probe_arguments,
+# chosen at run time from the target and the clang's capability probe); this
+# instrument leaves them out, because both sides of a timing comparison link
+# the same objects and the probes change only the prologue of a frame over a
+# page, which one I/O function has.
 NATIVE_OPTIMIZATION_FLAGS := -O2 -falign-functions=64
 # The copied child may execute neither compiler-inserted libc calls nor TLS
 # stack/sanitizer hooks. Match whitefootc's restricted child unit flags.

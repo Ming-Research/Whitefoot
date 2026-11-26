@@ -47,7 +47,7 @@ The Windows package is a zip holding a statically linked `whitefootc.exe` and a 
 - rejected: an agent proposed a tar.gz Windows archive like the other platforms; the owner rejected it, because Windows Explorer cannot open it, so users would need an extra command-line step.
 
 ### decision bundled-releases-publish-after-acceptance
-A bundled release is published only after the acceptance workflow passes every required check on the exact candidate archive bytes; the workflow's own revision supplies the checks.
+A bundled release is published only after the acceptance workflow passes every check on the exact candidate archive bytes; the workflow's revision supplies the checks but the candidate's own compiler tests.
 - rejected: an agent proposed taking the acceptance files from the candidate commit; the owner rejected it, because a candidate commit may predate those files.
 - rejected: an agent proposed publishing before acceptance, or counting a trimming smoke test as qualification; the owner rejected it, because only a check of the delivered archive shows that it finds its own toolchain and keeps native behavior.
 
@@ -55,6 +55,12 @@ A bundled release is published only after the acceptance workflow passes every r
 Acceptance runs the candidate's gate compiler tests and conformance cases with each archive's own clang, test executables placed in the extracted package and every host clang denied.
 - rejected: an agent proposed an environment variable naming the clang for the compiler and its tests; the owner rejected it, because it gives every user a toolchain switch and does not test the installed layout.
 - replaced: A release whose acceptance never ran the compiler tests with the packaged clang was on main; the owner changed it, because users received a compiler and clang pair no test had run.
+
+### decision acceptance-runs-the-candidates-runtime-frame-test
+The acceptance builds the runtime frame test from the candidate's source and runs it beside each Linux and macOS package's clang, and passes only if that test ran, once, with that clang.
+- rejected: an agent proposed running the frame test against the pinned upstream clang in the macOS gate; the owner rejected it, because it puts another toolchain's qualification into a gate that keeps it apart, and checks a clang of the same version, not the archive users get.
+- rejected: an agent proposed no permanent check, keeping only one observation of the bundled macOS clang (data: `research/experiments/runtime-c-stack-probes/README.md`); the owner rejected it, because a later LLVM raise or a change of probe arguments would reach users unobserved.
+- rejected: an agent proposed a Python reader of the runtime objects in the acceptance's cache; the owner rejected it, because it repeats the Rust test's rule in a second language and reads the compiler cache's private layout.
 
 ### decision windows-package-is-qualified-in-a-clean-container
 The Windows archive is installed by the commands of the getting started guide inside a stock Windows Server Core container, and its compiler builds and runs the checks there.

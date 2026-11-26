@@ -36,8 +36,8 @@ mod toolchain;
 
 #[doc(hidden)]
 pub use toolchain::{
-    Toolchain, ToolchainFactsReport, prepare_toolchain, resolved_toolchain, toolchain_facts_report,
-    toolchain_probe_note,
+    Toolchain, ToolchainFactsReport, prepare_toolchain, resolved_toolchain,
+    runtime_stack_probe_arguments, toolchain_facts_report, toolchain_probe_note,
 };
 
 /// The stack each worker of [`in_parallel`] runs on, as large as the
