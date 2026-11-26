@@ -1323,7 +1323,7 @@ fn a_description_that_names_a_described_place_has_one_pair_of_marks() {
     )
     .text_defects();
     assert!(defects.is_empty(), "{defects:?}");
-    let by_hand = format!("0_u64 < rows^[\u{2039}a \u{2039}b\u{203a}\u{203a}].len");
+    let by_hand = "0_u64 < rows^[\u{2039}a \u{2039}b\u{203a}\u{203a}].len".to_string();
     let defects = with_field("instantiated_goal", Value::Source(by_hand)).text_defects();
     assert_eq!(defects.len(), 1, "{defects:?}");
 }
