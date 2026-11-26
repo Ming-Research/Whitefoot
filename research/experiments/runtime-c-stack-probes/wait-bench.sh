@@ -13,7 +13,8 @@
 #   LABEL      a name for this set
 #   NAME=ARGS  one variant: its name and the probe arguments it compiles with,
 #              split on spaces; the first variant is the baseline
-# ROUNDS (default 15) rounds per count. Run from the repository root.
+# ROUNDS (default 15) rounds per count. Run from the repository root; the C
+# source is read from the directory of this script.
 #
 # The unit is compiled as the driver compiles a runtime unit (-std=c11
 # -pthread -I… -O2 -falign-functions=64), on Linux also with
@@ -24,7 +25,7 @@ set +e
 clang="$1"; sysroot_path="$2"; label="$3"; shift 3
 rounds="${ROUNDS:-15}"
 src=compiler/src/backend
-here=research/experiments/runtime-c-stack-probes
+here=$(cd "$(dirname "$0")" && pwd)
 out="${TMPDIR:-/tmp}/wait-bench-$label"
 rm -rf "$out"; mkdir -p "$out"
 sysroot=()
