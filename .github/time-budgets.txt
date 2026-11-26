@@ -50,8 +50,15 @@ cpu epyc-9v45  AMD EPYC 9V45 96-Core Processor
 # sanitizer programs rows, none for the others). Only
 # performance-baseline-compiler rises above the largest class. Evidence:
 # research/investigations/test-economy/time-budgets.md.
-# performance-candidate-compiler was set to 145 s for every Linux class by the
-# owner on 2026-10-13 (it was 130 s); the raise of 2026-11-25 made it 160 s.
+# performance-candidate-compiler is set per class by the owner (165 s on
+# epyc-7763, 150 s on epyc-9v74, 135 s on epyc-9v45), in place of one budget for
+# every class (145 s, set on 2026-10-13, 160 s since the owner's raise of
+# 2026-11-25); the 145 s had been exceeded four times in the recent runs (152.0 s
+# at most), and the classes differ in speed. Its xeon-8573c column follows the
+# rule for a model with too few runs: the larger of the largest class and the
+# model's own runs by the rule, which is the 165 s, its three builds having taken
+# 139.9 s at most (research/investigations/test-economy/time-budgets.md, the
+# candidate-compiler section).
 cpu xeon-8573c INTEL(R) XEON(R) PLATINUM 8573C
 
 label                           epyc-7763  epyc-9v74  epyc-9v45  xeon-8573c  macos  windows
@@ -135,10 +142,14 @@ map-tsan                        50         50         50         50          45 
 
 # compute-regression.yml: the candidate's cold compiler build and, unless the
 # merge-base compiler is restored from the cache of its main commit, that
-# build, at two Cargo jobs; their images, then the host control, the instrument's slowdown and placement
-# controls with the shifted images the latter builds, and the paired
-# comparison
-performance-candidate-compiler  160        160        160        160         -      -
+# build, at two Cargo jobs; their images, the instrument's slowdown and placement
+# controls with the shifted images the latter builds, and the judgment of each
+# kernel whose two images differ: its null control and the paired comparison,
+# and, for a kernel the comparison failed while its own null control read at
+# the threshold, a retest round of the two. A stage that has no kernel to time
+# does not run and records nothing; the retest rows have the budget of the
+# round they repeat, five kernels at the most.
+performance-candidate-compiler  165        150        135        165         -      -
 performance-baseline-compiler   130        130        130        150         -      -
 performance-candidate-images    10         10         10         10          -      -
 performance-baseline-images     10         10         10         10          -      -
@@ -147,3 +158,5 @@ performance-slow-control        65         65         65         65          -  
 performance-shifted-images      10         10         10         10          -      -
 performance-placement-control   50         50         50         50          -      -
 performance-comparison          50         50         50         50          -      -
+performance-retest-null         50         50         50         50          -      -
+performance-retest-comparison   50         50         50         50          -      -
