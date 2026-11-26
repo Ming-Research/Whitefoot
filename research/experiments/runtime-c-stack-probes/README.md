@@ -249,8 +249,10 @@ prologue's share is largest, and a real wait that blocks costs more. The
 function's translation unit, `completion/file_posix.c`, is compiled as the
 driver compiles it, once per variant, and [`wait-bench.sh`](wait-bench.sh)
 runs the variants in rotating order within each of 15 rounds, for `COUNT` of
-1, 64 and 4096, and reports each variant's median ns per call and the median
-of its per-round ratios to the first variant.
+1, 64 and 4096, and reports each variant's median over the rounds and the
+median of its per-round ratios to the first variant. A process times 20
+batches of calls and reports the least batch's mean (the first reading, below,
+used one batch of the whole count).
 
 - Linux, LLVM 22: no argument, then `-fstack-clash-protection` (before and
   after the change).
@@ -268,6 +270,31 @@ unprobed one on Linux or on upstream macOS exceeds 1.05, a cost over a twentieth
 of a call that the kernel answers at once. The instrument is too coarse to
 decide if on Apple the median paired ratio of `-fstack-check` to the default
 leaves 0.98 to 1.02, since those two are the same code.
+
+First reading, the single-batch instrument (run
+[45748401009](https://github.com/Ming-Research/Whitefoot/actions/runs/45748401009)
+at `0d0c71393`, jobs 139669958185 Linux, 139669958124 Apple, 139669957752
+upstream; Linux alone also in run 45746156037 at `86b9f7e9e`): median ns per
+call and median paired ratio at `COUNT` 1.
+
+| Set | Baseline | Variant | ns per call | Ratio, median (min..max) |
+| --- | --- | --- | --- | --- |
+| Linux LLVM 22 | none: 181.7 | `-fstack-clash-protection` | 187.8 | 1.034 (1.025..1.042); first run 1.032 |
+| Apple clang 17 | default: 790.2 | `-fstack-check`, same assembly | 777.2 | 0.978 (0.840..1.227) |
+| upstream 22.1.8 | none: 959.9 | `-Xclang -fstack-clash-protection` | 972.6 | 1.008 (0.881..1.685) |
+
+At `COUNT` 64 and 4096 the Linux ratios were 1.015 and 1.006, and the upstream
+ones 1.052 and 1.047 with ranges of 0.76 to 1.30 and 0.83 to 1.14. By the
+criteria above, Linux is not rejected: the prologue adds about 6 ns to a call
+that costs 182 ns when the `poll` answers at once. On macOS the instrument
+failed its own control: the two Apple variants compile to one assembly text
+and their ratio read 0.978, outside 0.98 to 1.02, with rounds from 0.84 to
+1.23, and the upstream ratios at 4096 entries, where a prologue of eight
+stores is four millionths of a 148 microsecond call, read 1.047. A hosted
+macOS runner's noise is larger than the effect, so that reading decides
+nothing for macOS. The instrument was then changed, after this reading and for
+that reason only, to report the least of 20 batch means per process, which
+leaves out the batches a busy machine slowed; the criteria are unchanged.
 
 ## Limitations
 

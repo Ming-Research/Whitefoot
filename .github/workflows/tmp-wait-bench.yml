@@ -74,8 +74,9 @@ jobs:
            * runtime's one C frame over a page, whose prologue the stack-probe arguments
            * change. Every entry names one readable pipe and the timeout is zero, so the
            * poll answers at once: the cheapest call the function makes, which puts the
-           * prologue's share of a call at its largest. One process times one batch of
-           * calls and prints the nanoseconds per call. A call must answer at least one
+           * prologue's share of a call at its largest. One process times 20 batches of
+           * calls and prints the least batch's nanoseconds per call, which leaves out the
+           * batches a busy hosted machine slowed. A call must answer at least one
            * entry; Linux answers every one, while macOS's poll folds entries that name
            * the same descriptor, which both variants of a comparison meet alike.
            *
@@ -125,15 +126,24 @@ jobs:
                       return 1;
                   }
               }
-              double begin = now_ns();
-              for (unsigned long call = 0; call < calls; call++) {
-                  int answered = wf_file_wait_readiness(entries, count, 0);
-                  if (answered < 1 || (size_t)answered > count) {
-                      fprintf(stderr, "the wait answered %d of %zu entries\n", answered, count);
-                      return 1;
+              enum { BATCHES = 20 };
+              unsigned long per_batch = calls / BATCHES > 0 ? calls / BATCHES : 1;
+              double least = 0.0;
+              for (int batch = 0; batch < BATCHES; batch++) {
+                  double begin = now_ns();
+                  for (unsigned long call = 0; call < per_batch; call++) {
+                      int answered = wf_file_wait_readiness(entries, count, 0);
+                      if (answered < 1 || (size_t)answered > count) {
+                          fprintf(stderr, "the wait answered %d of %zu entries\n", answered, count);
+                          return 1;
+                      }
+                  }
+                  double each = (now_ns() - begin) / (double)per_batch;
+                  if (batch == 0 || each < least) {
+                      least = each;
                   }
               }
-              printf("%.2f\n", (now_ns() - begin) / (double)calls);
+              printf("%.2f\n", least);
               return 0;
           }
           WAIT_BENCH_C
