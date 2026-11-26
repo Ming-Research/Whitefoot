@@ -754,13 +754,14 @@ bytes past one, which is where `FR`, `O16`, `O32` and `O48` start it.
 | `wf__floor_record_latch` | 0x60, 4, at 32; 0x80, 31, at 0; 0x8a, 36, at 10 | 0, 0, 1, 2 |
 
 This differs from the October table: the multi-byte loop is 64 bytes long,
-not 54, the chunk's body is its own function rather than inline in the
-split function, and `FR` leaves one of the two hot loops across a line, not
-both. The hot function at each width is read from the rerun's software-clock
-samples, by the rule above. By the table, a width whose hot function is the
-sequential or the chunk function compares `O16`, with no crossing loop,
-against `O48`, with two; a width whose hot function is the split function
-compares `FR` against `O48`.
+not 54, the chunk's body is also a function of its own, the split
+function's copy of that loop is 69 bytes long and so outside the table, and
+`FR` leaves one of the two loops across a line, not both. The hot function
+at each width is read from the rerun's software-clock samples, by the rule
+above. By the table, a width whose hot function is the sequential or the
+chunk function compares `O16`, with no crossing loop, against `O48`, with
+two; a width whose hot function is the split function compares `FR` against
+`O48`.
 
 The rerun at `4fbed9570`, which holds `7828cbaa7` and main's later runtime
 change, on a hosted runner (run 45731244532) landed on a Xeon 6975P-C and
@@ -783,9 +784,36 @@ where the table leaves them no crossing loop, was slower than `U` in every
 round at every width, by 4 to 13 percent, and `P`, which starts those two
 functions at 16 as well, by about 5 percent at width 1 only.
 
+The rerun with the fix, at `83aed4d2f` on a hosted Xeon 6975P-C (run
+45734506357), sampled 11,000 to 23,000 times per image. The module function
+with the most samples of `FR` at `p0` is `wf__par_seq_summarize_records` at
+width 1 (72 percent of all samples) and `wf__par_split_summarize_records.0`
+at widths 2 and 4 (72 and 75 percent); `wf__par_chunk_summarize_records.1`
+drew none, and the split function holds the same loops as the sequential
+function, at other offsets. The rerun's job on the 14900K (run
+45734510057) gives the same hot functions, 70 to 73 percent of its samples,
+and the same loop table; its rounds took 140 to 170 seconds. By the table
+and the rule above the loop reading therefore compares `O16` with `O48` at
+width 1 and `FR` with `O48` at widths 2 and 4, where `FR` is the arm of
+fewest crossing loops and so cannot account for a cost. The decisive runs are dispatched with
+`placement_loop_arms` set to `1=O16:O48 2=FR:O48 4=FR:O48`.
+
+The samples also bound what the loop reading can say. In both hot
+functions, in `FR` at `p0` and in the placement of `U` the run found
+fastest, 95 to 98 percent of the function's samples fall in the lines
+spanned by one loop of about 220 bytes (offsets 0x120 to 0x1fe of the
+sequential function, 0x2e0 to 0x3ba of the split function), which the
+table, counting innermost loops of at most 64 bytes, leaves out; the
+21-byte loop lies inside it. The lines of the function's other short loop,
+64 bytes at 0xb0 of the sequential function and, too long for the table, 69
+bytes at 0x270 of the split function, drew at most 2.1 percent. The
+reading is made as fixed above; a rejection would not show that the
+position of this larger loop is without effect.
+
 The replay of PR #251's runtime change can no longer run: `c2e5a1808`'s
 runtime does not define `wf__heap_give`, `wf__heap_take` or
 `wf__empty_window`, which this compiler's modules call, so its images do not
-link. An empty `placement_event` given to a dispatch is replaced by the
-input's default, so every placement job ends failed at that step, after
-every reading and before the artifact's upload, which runs regardless.
+link. An empty `placement_event` given to a dispatch was replaced by the
+input's default in run 45731244532, so every placement job ends failed at
+that step, after every reading and before the artifact's upload, which runs
+regardless.
