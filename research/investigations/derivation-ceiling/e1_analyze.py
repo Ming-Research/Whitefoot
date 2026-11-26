@@ -406,14 +406,20 @@ def verdicts(by_config):
                 # case rejected by a rule outside entailment has no record
                 # that says so, and its declared verdict cannot change here.
                 if verdict != "today" and got != today:
-                    examples[f"{verdict} today={today} reached={got}"].append(label)
+                    family = label.split(":")[0] if ":" in label else "case"
+                    examples[f"{verdict} {family} today={today} reached={got}"].append(label)
             if state["unposed"] and today == "accept" and not state["alone"]:
                 table[("alone-with-unposed", want, "reject")] += 1
         print(f"  -- {config}")
         for (verdict, want, got), count in sorted(table.items()):
             print(f"    {verdict:20} declared={want:7} reached={got:7} {count}")
         for name, labels in sorted(examples.items()):
-            print(f"    {name}: {len(labels)}: {' '.join(sorted(labels)[:40])}")
+            shown = sorted(labels) if " case " not in name else sorted(labels)[:40]
+            print(f"    {name}: {len(labels)}: {' '.join(shown)}")
+        families = collections.Counter(
+            label.split(":")[0] if ":" in label else "case"
+            for label in per_label if not label.startswith("probe:"))
+        print(f"    labels by family: {dict(sorted(families.items()))}")
 
 
 def worst_records(by_config):

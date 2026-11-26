@@ -25,7 +25,6 @@ import subprocess
 import sys
 import tarfile
 import time
-import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -79,7 +78,10 @@ def redis():
     OUT.mkdir(parents=True, exist_ok=True)
     archive = OUT / f"redis-{REDIS_VERSION}.tar.gz"
     if not archive.exists():
-        urllib.request.urlretrieve(REDIS_URL, archive)
+        # download.redis.io refuses urllib's client (HTTP 403); curl, as
+        # research/experiments/redis-compat/run.sh fetches it, is served.
+        run(["curl", "-fsSL", "-o", f"{archive}.part", REDIS_URL])
+        Path(f"{archive}.part").rename(archive)
     digest = subprocess.run(["sha256sum", archive], check=True, capture_output=True,
                             text=True).stdout.split()[0]
     if digest != REDIS_SHA256:
