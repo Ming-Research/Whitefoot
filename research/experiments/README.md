@@ -118,6 +118,27 @@ completion criterion were refused.
   once the twin resolves each cell, plus deterministic memory cells and the
   candidate's scan hold times. Run on request by `hash-map-bench.yml`, on a
   hosted runner or the i9-14900K; never a gate. No result is recorded yet.
+- `par-default/` — the stage-3 acceptance tools for demand splitting in default
+  `--par`: `accept.py` (the arm matrix, the oracles, the reducers and the
+  registered rules, over a prototype runner it extracts) and `identity.py`
+  (the machine-code identity check) with their unit tests. The prototype
+  runner is the one frozen at the commit `accept.py` names, reached through
+  the retention tag `par-demand-prototype`; it is extracted at run time and
+  never committed. Run on request by `par-default-accept.yml`, whose smoke
+  mode runs on a hosted runner and whose pilot and main modes run only on the
+  i9-14900K; never a gate, and no gate group runs the tools' self-tests. Until
+  the compiler of Whitefoot#468 is on main, a smoke dispatched from main stops
+  at the identity step, which reports the sequential and demand images
+  differing. No result is recorded yet.
+- [`compiler-compare/`](compiler-compare/README.md) — two whole compilers on
+  the same programs (the `HashMap` cells, Halo's fib and the wasm interpreter's
+  CoreMark), timed in interleaved rounds against a twin of the base, with the
+  wall time checked against the CPU time of the same runs. Run on request by
+  `compiler-compare.yml`; never a gate.
+- [`interpreter-compare/`](interpreter-compare/README.md) — two sources of the
+  wasm interpreter v2h built by one compiler: CoreMark timed against a twin of
+  the base, or the share of CPU samples in each instruction's handler. Run on
+  request by `interpreter-compare.yml`; never a gate.
 
 ## Completed current-compiler bounded research
 
