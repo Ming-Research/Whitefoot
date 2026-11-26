@@ -1046,12 +1046,14 @@ static void monitor_watch_stages(void) {
     }
     atomic_store(&wf_driver_root.run_count, 0u);
     atomic_store(&wf_driver_root.ingress_count, 0u);
+    CHECK(wf_driver_alone(&wf_driver_root));
+
+    /* A new run restarts the count: the first sighting of it asks nothing.
+     * The driver parks a sleep in service before the run departs. */
+    CHECK(wf_driver_return_service(&wf_driver_root, outside));
     wf_context timer = {0};
     (void)park_record(&timer, WF_COMPLETION_ROUTE_TIMER, 1u);
     CHECK(atomic_load(&wf_driver_root.host_waits) == 1u);
-
-    /* A new run restarts the count: the first sighting of it asks nothing. */
-    CHECK(wf_driver_return_service(&wf_driver_root, outside));
     outside = wf_driver_leave_service(&wf_driver_root);
     run = outside & ~WF_DRIVER_PHASE_MASK;
     CHECK(wf_monitor_watch(&wf_driver_root, t0) == WF_WATCH_NONE);
