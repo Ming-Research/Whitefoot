@@ -86,9 +86,10 @@ from the second pass.
 | --- | --- | --- | --- |
 | ubuntu-24.04 | 0 failed | 0 failed | none |
 | macos-15 | 0 failed | 2 failed | `no release met a reserve beside the swaps (rounds) (2000, 0)`, twice |
+| macos-15, second pass (run 45748160597) | 0 failed | 5 failed | the same message, five times |
 
-On macOS the third assertion failed twice in 200 loaded runs, so its diagnosis
-stands there. The first two assertions did not fail on either host, and the
+On macOS the third assertion failed twice in 200 loaded runs, and five times
+in 200 in a second pass of the same step, so its diagnosis stands there. The first two assertions did not fail on either host, and the
 third did not on Linux: by C1's own rule these are derived from the code, and
 C6 is what shows that they depend on the scheduler. The one failure of the
 item's history known by its message was the reader's, on macOS; the loaded
@@ -140,10 +141,11 @@ the changed test waits for it.
 
 ### C7, controls of the tests added after the first hand-in
 
-Run 45748160597 on commit `d8879bb2c`, ubuntu-24.04 (the workflow's other
-steps ran on this head as well, with the same results as above: C2 0 of 50
-and 0 of 200, C3, C4 and C6 as before, C1 0 of 50 and 0 of 200). The macOS
-result is added below when its job has ended.
+Run 45748160597 on commit `d8879bb2c`, on ubuntu-24.04 and macos-15 (the
+workflow's other steps ran on this head as well, with the same results as
+above on both hosts: C2 0 of 50 and 0 of 200, C3 5 of 5 and 0 of 5, C4, C6; C1
+as in its table). The table is the same on both hosts: every count and every
+message below was the same on ubuntu-24.04 and on macos-15.
 
 | path | sources as they are | wrong behaviour | runs failed | message |
 | --- | --- | --- | --- | --- |
@@ -156,13 +158,14 @@ result is added below when its job has ended.
 | `owed-bound` | 0 of 5 failed | bound 10 s made 100 s | 5 of 5 | `a wait 11 s old for an act did not end the test with exit status 1 (signal or status + 1000) (1007, 0)` |
 | `owed-bound` | | early return deleted | 5 of 5 | `a wait for an act already made asked again or started its clock (answer, calls) (1, 0)` |
 
-C7 holds on Linux: each wrong behaviour is caught by its own test with its own
+C7 holds on both hosts: each wrong behaviour is caught by its own test with its own
 message. Two behaviours are not covered: a swap that takes the lock of a map
 swapped with itself twice would wait for ever and end at the test's 120 s alarm
 instead of a message, and a bound made 11 s instead of 10 s is not told apart
 by the child that is 10 s old, whose integer-second difference may or may not
-reach 11. The whole binary on Linux, with the three tests in it, ran in 2 s
-(plain), 7 s (ASan+UBSan) and 23 s (TSan).
+reach 11. The whole binary with the three tests in it ran, on ubuntu-24.04, in
+2 s (plain), 7 s (ASan+UBSan) and 23 s (TSan), and on macos-15 in 3 to 4 s,
+14 s and 38 s.
 
 ## Limits
 
