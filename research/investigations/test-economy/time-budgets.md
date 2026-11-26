@@ -1416,8 +1416,62 @@ which installs LLVM and then the Rust components (about 12 s), one after the
 other. The compile uses neither clang nor lld (neither `compiler/build.rs` nor
 `compiler/Cargo.toml` names them); the tests that run programs do.
 
-Not yet measured: the five runs of the question above. They are appended here,
-each with its job times and the CPU model of its jobs, when they have run.
+#### Changes after the first run, and two more runs
+
+Three changes followed from the table. Only the static group checks out the
+history and the design-tree submodule, since no other group's recipe or test
+runs git. The unit group runs in four parts instead of three, since its compile
+is the same for every part and more parts shorten only the 47 s to 59 s of test
+run. The LLVM install starts in the background at the start of the job
+(`.github/host-toolchain.sh`) and the stage waits for it where its tests begin,
+so it overlaps the compile; a group that does not compile first waits before
+its stage starts, so that the wait is not part of the stage's time.
+
+The second run (commit a9113839, the wait inside every group's stage) had every
+job green but one: the runtime job's stage took 57.2 s against its budget of
+40 s, because the 25 s to 35 s wait for the install was inside it with nothing
+to overlap. The third run (commit 4cb0d5565, the wait before the stage of the
+groups that do not compile first) was green in every job, the runtime stage
+taking 26.0 s. Both runs, again from the temporary workflow without the final
+job, were created and began at once (the selection job started 3 s to 4 s after
+the creation, the matrix jobs 3 s after it ended), and both ended 293 s after
+their creation:
+
+| Job (third run) | CPU model | Job | Compile | Tests |
+|---|---|---|---|---|
+| unit 1 of 4 | Xeon 6975P-C | 207 | 145.5 | 40.1 |
+| unit 2 of 4 | Xeon 6975P-C | 206 | 152.1 | 35.2 |
+| unit 3 of 4 | Xeon 6975P-C | 215 | 158.9 | 30.0 |
+| unit 4 of 4 | Xeon 6975P-C | 212 | 154.1 | 32.3 |
+| corpus walk 1 of 3 | Xeon 6975P-C | 171 | 103.2 | 42.9 |
+| corpus walk 2 of 3 | Xeon 6975P-C | 164 | 98.0 | 41.4 |
+| corpus walk 3 of 3 | EPYC 7763 | 230 | 137.1 | 68.1 |
+| corpus receipts | Xeon 6975P-C | 268 | 99.8 | 145.9 |
+| corpus rest | Xeon 6975P-C | 177 | 102.4 | 54.3 |
+| static | EPYC 9V45 | 96 | | |
+| runtime | Xeon 6975P-C | 77 | | |
+
+The receipt job, 324 s in the first run on the same CPU model, took 272 s in the
+second and 268 s in the third: a job's setup before its stage fell from 69 s to
+22 s, and the receipt test (145.9 s here) is now most of what is left of it. The
+temporary copy of the workflow has the selection job but not the final job,
+which took 18 s in the recorded run before the change, so the time from a run's
+creation to the end of its final job is not measured by these runs.
+
+The tests run are the same as before. The unit parts reported 768, 769, 769 and
+768 results, 3074 in all, as the three parts of the first run did (1025, 1025
+and 1024). The `rest` part reported 41 results of the CLI's own tests and 199
+(one ignored) of the integration target, and the walk and the receipt test were
+reported once in each of their parts: together the 41 and 202 results that the
+whole group reports on main (`41 passed` and `201 passed; 1 ignored`). Each of
+the three walk parts reported `Pass=1052`, 3156 cases together, which is the
+number of manifest lines that carry an `id` (the other 13 lines are coverage
+annotations the loader leaves out); the receipt test reported 6312 checks,
+twice 3156.
+
+Not yet measured: the five runs of the question above, with the final job. They
+are appended here, each with its job times and the CPU model of its jobs, when
+they have run.
 
 ## Daily loop
 
