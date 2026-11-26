@@ -36,7 +36,26 @@ use whitefoot::{
     SCHED_PRIM_WINDOWS_SOURCE as PRIM_SOURCE, WINDOWS_RUNTIME_SOURCE,
 };
 
-pub(crate) const CLANG: &str = whitefoot::clang_executable();
+/// The toolchain every test compiles and links with: the one the compiler
+/// resolves for the executable running the test, so a test binary placed in an
+/// installed package builds with that package's clang, and any other with the
+/// source-build default.
+fn selected_toolchain() -> &'static whitefoot::Toolchain {
+    whitefoot::resolved_toolchain().unwrap_or_else(|error| panic!("no usable toolchain: {error}"))
+}
+
+/// A clang command for compiling, as the compiler itself starts one.
+#[allow(dead_code)]
+pub(crate) fn clang() -> Command {
+    selected_toolchain().command()
+}
+
+/// A clang command for linking, as the compiler itself starts one.
+#[allow(dead_code)]
+pub(crate) fn clang_link() -> Command {
+    selected_toolchain().link_command()
+}
+
 #[cfg(unix)]
 pub(crate) const COMPILE_ARGUMENTS: &[&str] = &["-pthread"];
 #[cfg(windows)]
@@ -246,7 +265,7 @@ fn compile_native_object(
     c_standard: Option<&str>,
     guard_counters: bool,
 ) -> Vec<u8> {
-    let mut command = Command::new(CLANG);
+    let mut command = clang();
     if let Some(standard) = c_standard {
         command.arg(format!("-std={standard}"));
     }

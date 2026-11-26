@@ -1,19 +1,20 @@
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 use super::{
     build_linked_executable_inner, compile, compile_and_run, emit_with_overlap, test_directory,
 };
 
-/// Runs the host toolchain's code generator over `module` and returns what it
-/// said, so a module it refuses fails with the toolchain's own words.
+/// Runs the resolved toolchain's code generator over `module` and returns what
+/// it said, so a module it refuses fails with the toolchain's own words.
 ///
 /// `clang -x ir -S` parses the LLVM text and then runs the same back end `llc`
 /// does, so acceptance here is acceptance by the consumer the compiler's own
-/// native builds use.
+/// native builds use: the clang beside the compiler in a package, the host's
+/// otherwise.
 fn host_code_generation(module: &str) -> Result<String, String> {
     #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
-    let mut child = Command::new(crate::clang_executable())
+    let mut child = super::clang()
         .args(["-x", "ir", "-", "-S", "-o", "-"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

@@ -46,7 +46,13 @@ jobs:
     # (wf-agents.toml), and this comparison is not one of them.
     if: github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.pull_request.head.repo.full_name != github.repository || !startsWith(github.head_ref, 'work-')))
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # The sum of the budget rows of every stage one run can execute on the
+    # model where that sum is largest (a cold merge-base build, the
+    # qualification's controls, the judgment with its retest round and every
+    # data-placement round the qualification and the control can run), plus 3
+    # minutes for checkout, caches and the two warm-ups, rounded up to 5
+    # minutes.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -92,7 +98,15 @@ jobs:
         if: steps.scope.outputs.baseline == 'true'
         run: |
           echo "WHITEFOOT_TIME_BUDGET_RECORD=$RUNNER_TEMP/time-budget-overruns.txt" >> "$GITHUB_ENV"
-          if [ '${{ steps.scope.outputs.measure }}' = true ]; then sh tests/performance/test-verdict.sh; fi
+          if [ '${{ steps.scope.outputs.measure }}' = true ]; then
+            sh tests/performance/test-verdict.sh
+            # The data-placement control traces each arm's mapping calls.
+            if ! command -v strace > /dev/null; then
+              sudo apt-get update -qq
+              sudo apt-get install -y -qq strace > /dev/null
+            fi
+            strace --version | head -n 1
+          fi
           rustup default stable
           rustc -vV
           cargo --version
@@ -301,7 +315,7 @@ jobs:
       # and everything after it as one more imported library function does:
       # by 96 bytes, 32 within a 64-byte line, if functions are not aligned,
       # and by one or two whole lines if every compiler-produced function
-      # starts on a 64-byte boundary (design/compiler/code-alignment.md). The
+      # starts on a 64-byte boundary (design/decisions/compiler/lowering/code-alignment.md). The
       # control first requires that the module moved, then that the move
       # changed no kernel's time; a failure means this instrument would charge
       # a change with a slowdown that placement alone produces.
@@ -320,6 +334,26 @@ jobs:
           WHITEFOOT_CHECK_TIMEOUT=300 perl .github/run-check.pl performance-placement-control \
             bash tests/performance/compare.sh "$RUNNER_TEMP/performance-candidate" \
             "$RUNNER_TEMP/performance-shifted" "$RUNNER_TEMP/performance-results/placement"
+      # The data-placement control on the candidate alone: its images against
+      # themselves must map alike, against themselves with one more idle
+      # mapping before the entry must map differently, and launched at the 32
+      # positions must set no kernel aside (tests/performance/README.md).
+      - name: Qualify the data-placement control
+        if: steps.scope.outputs.measure == 'true' && steps.scope.outputs.qualify == 'true'
+        run: |
+          bash tests/performance/data-placement.sh qualify "$RUNNER_TEMP/performance-candidate" \
+            "$RUNNER_TEMP/performance-results/data-control"
+      # A kernel whose two arms map their data differently, and whose 32
+      # positions in order of time differ in two rounds, is neither timed nor
+      # judged below: on this host its comparison is decided by where its data
+      # lies (tests/performance/README.md, "Data placement"). The judgment
+      # reads the kernels set aside from the results WF_PERFORMANCE_PLACEMENT
+      # names.
+      - name: Check data placement
+        if: steps.scope.outputs.measure == 'true'
+        run: |
+          bash tests/performance/data-placement.sh control "$RUNNER_TEMP/performance-baseline" \
+            "$RUNNER_TEMP/performance-candidate" "$RUNNER_TEMP/performance-results/data"
       # Judged per kernel by tests/performance/judge.sh: a kernel whose two
       # executables are byte-identical is the same program and is not timed;
       # each other kernel is timed against the null control of its own image on
@@ -335,6 +369,7 @@ jobs:
         if: steps.scope.outputs.measure == 'true'
         env:
           WHITEFOOT_CHECK_TIMEOUT: 300
+          WF_PERFORMANCE_PLACEMENT: ${{ runner.temp }}/performance-results/data
         run: |
           status=0
           bash tests/performance/judge.sh "$RUNNER_TEMP/performance-baseline" \
@@ -343,11 +378,11 @@ jobs:
       - name: Publish decisions and visible suspects
         if: always() && steps.scope.outputs.measure == 'true'
         run: |
-          for run in judgment slow placement judgment/round1/null judgment/round1/comparison judgment/round2/null judgment/round2/comparison; do
+          for run in judgment slow placement data-control data judgment/round1/null judgment/round1/comparison judgment/round2/null judgment/round2/comparison; do
             file="$RUNNER_TEMP/performance-results/$run/verdict.txt"
             if [ -f "$file" ]; then
               { printf '\n### %s\n\n```text\n' "$run"; cat "$file"; printf '\n```\n'; } >> "$GITHUB_STEP_SUMMARY"
-              while IFS= read -r line; do echo "::warning::$run: $line"; done < <(grep '^suspect: ' "$file" || true)
+              while IFS= read -r line; do echo "::warning::$run: $line"; done < <(grep -E '^(suspect|not judged): ' "$file" || true)
             fi
           done
       # run-check.pl appended every stage over its budget in

@@ -1095,11 +1095,11 @@ fn extended_forms_execute_forced_splits_against_literal_oracles() {
     std::fs::remove_dir_all(directory).expect("remove extended-form artifacts");
 }
 
-/// The host clang's LLVM verifier accepts `module`. The CI host's clang
-/// already rejects a non-dominating use when it links the executable these
-/// tests build, so this adds no failure there; it names the violation and does
-/// not depend on a host clang's default of running the verifier. It costs one
-/// `clang -S` run per module and no extra program build.
+/// The LLVM verifier of the resolved toolchain's clang accepts `module`. The
+/// CI host's clang already rejects a non-dominating use when it links the
+/// executable these tests build, so this adds no failure there; it names the
+/// violation and does not depend on a clang's default of running the verifier.
+/// It costs one `clang -S` run per module and no extra program build.
 fn assert_llvm_verifies(module: &str, directory: &Path, name: &str) {
     let output = verify_llvm(directory, name, module).expect("run clang's LLVM verifier");
     assert!(

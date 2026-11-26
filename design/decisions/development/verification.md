@@ -131,6 +131,12 @@ A timed program is judged against its own null control; a failing comparison wit
 - replaced: Ending the whole comparison as inconclusive when any host control failed, with no retry, was on main; the owner changed it, because the control reads at the threshold in 2.3% of cells (data: `research/investigations/identical-code-noise/README.md`).
 - rejected: the owner proposed judging an undecided program on the 14900K machine; the owner rejected it, because only the same-host retest can be checked against the 182 retained runs, and the other adds a self-hosted job and queueing.
 
+### decision kernels-placed-by-their-data-are-not-judged
+A kernel whose arms map differently and whose 32 positions in order of time differ in two rounds is neither timed nor judged; the job passes with a warning and judges the rest.
+- rejected: an agent proposed timing every kernel's arms at the 32 positions in each run, with no mapping record; the owner rejected it, because that adds about two minutes on AMD hosts, two to three campaigns, to every run (data: `research/investigations/data-placement/README.md`).
+- rejected: an agent proposed setting a kernel aside when the candidate alone is 10 percent off at one position twice; the owner rejected it, because every image has one on Zen 3 and Zen 4 hosts, so `stencil` would never be judged there (data: `research/investigations/data-placement/README.md`).
+- rejected: an agent proposed failing the job as inconclusive when a kernel is set aside; the owner rejected it, because a change of startup would then turn red on every Zen 3 or Zen 4 host and pass only when a rerun drew another host.
+
 ### decision performance-comparison-warms-the-toolchain-first
 The paired performance comparison fetches the locked crates and reads the Rust toolchain in one untimed step before its first compiler build, outside every labeled stage.
 - rejected: an agent proposed building the candidate compiler once untimed first, as the kernel images are; the owner rejected it, because it removes any first-use cost but adds a cold build of 89 to 147 s per run (data: `research/investigations/test-economy/candidate-build-samples-2026-11.tsv`).
@@ -183,10 +189,16 @@ Every gate run that checks a revision runs every group on Linux; a manual run st
 - rejected: an agent proposed a daily scheduled macOS run of the main line as well; the owner rejected it, because the scheduled commit is seldom the one a downstream needs, so it cannot replace the release run, and its failures need someone to watch them.
 
 ### decision final-gate-job-retries-github-queries
-The final job "Gate on both platforms" retries a failed GitHub query up to five times and lists the runs again up to four times while an expected job is missing, leaving cancelled jobs out.
+When its own run's groups did not all succeed, the final job "Gate on both platforms" retries a failed GitHub query five times and lists again up to four times while an expected job is missing.
 - replaced: A single listing of the revision's runs and jobs was on main; the owner changed it, because on one pull request with every group green it failed four times in a row, twice on HTTP 502 or 504 and twice on listings that lacked passed jobs.
 - replaced: Counting a cancelled job as its result was on main; the owner changed it, because a cancelled job belongs to a superseded or stopped run, and a duplicate run cancelled one second after its twin finished a job let that cancellation decide it.
 - rejected: an agent proposed listing again after any conclusion other than success too; the owner rejected it, because a failed job is already final for its run, and waiting for it to change only delays a red verdict.
+
+### decision final-gate-job-takes-its-own-runs-success
+The final job "Gate on both platforms" takes the result of its own run's groups as the verdict when it is success, with no GitHub call, and reads the revision's runs and jobs only when it is not.
+- replaced: Judging every run by the revision's job listing was on main; the owner changed it, because GitHub recorded finished group jobs as complete minutes late, so a passed group read as absent (data: `research/investigations/test-economy/time-budgets.md`).
+- rejected: an agent proposed keeping the listing and counting a group it lacks as the run's success; the owner rejected it, because the final job would still need GitHub's answer, so repeated HTTP 502 would still turn a green run red, and a failure already listed would still decide.
+- rejected: an agent proposed dropping the listing and judging only by the run's own groups, deleting the summary script, its self-test and the Makefile line; the owner rejected it, because the listing still decides where a later success of another run settles a run whose groups did not succeed.
 
 ### decision ready-event-reuses-a-manual-run
 Marking a pull request ready skips the gate and the I/O host checks when its head already has a successful manual run of the same workflow, and runs them when it has none.

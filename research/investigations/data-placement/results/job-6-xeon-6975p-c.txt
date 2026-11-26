@@ -1,0 +1,552 @@
+-- host.txt
+CPU(s):                                  4
+Model name:                              Intel(R) Xeon(R) 6975P-C
+Thread(s) per core:                      2
+Core(s) per socket:                      2
+L1d cache:                               96 KiB (2 instances)
+L2 cache:                                4 MiB (2 instances)
+L3 cache:                                480 MiB (1 instance)
+7.0.0-1014-aws
+glibc 2.39
+stack limit (KiB): 16384
+randomize_va_space: 2
+transparent_hugepage: always [madvise] never
+-- statuses.txt
+== null-h: exit 0, 25 s
+== bs: exit 0, 26 s
+== b-thread: exit 0, 25 s
+== s-thread: exit 0, 26 s
+== h-thread: exit 0, 25 s
+== b-arena1: exit 0, 26 s
+== s-arena1: exit 0, 26 s
+== h-arena1: exit 0, 26 s
+== b-map8: exit 0, 26 s
+== s-map8: exit 0, 26 s
+== h-map8: exit 0, 26 s
+== h-touch: exit 0, 26 s
+== h-map1: exit 0, 26 s
+== h-map34: exit 0, 26 s
+== h-datapad: exit 0, 27 s
+-- alias.txt
+# low distance fastest_ns median_ns
+0x600009fff000	0x2001000	36758642	36852634
+0x600009fff000	0x7fff000	37062408	37136310
+0x600009fff000	0x8000000	37657896	37826221
+0x600009fff000	0x8001000	37295588	37410725
+0x600009fff000	0x7ffe000	37495297	37532210
+0x600009fff000	0x61ff000	37728479	38258820
+0x600009fff000	0x6bff000	37841602	38175555
+0x600009fff000	0x7dff000	37474582	37786794
+0x600009fff000	0x3fff000	37781185	37874489
+0x600009fff000	0x4000000	37258175	37983288
+0x600009fff000	0x2200000	37562668	37802036
+0x600009fff000	0xa001000	37446133	37719405
+0x600009fff000	0x10000000	37628600	37878848
+0x600009fff000	0x40000000	37399986	37950183
+0x600009fff000	0x47a00000	37195472	37637271
+0x600009fff000	0x47c00000	37187735	38048842
+0x600009fff000	0x46ff0000	37276010	37322878
+0x600000000000	0x10000000	37167591	37351422
+0x600000000000	0x10001000	37422809	37841692
+0x600000000000	0x10002000	37083902	37482651
+0x600000000000	0x10100000	37665384	37823656
+0x600000000000	0x18000000	37511018	37755724
+0x600000000000	0x18001000	36968360	37094865
+0x600000000000	0x14002000	37495900	37601505
+0x600000000000	0x12004000	37764986	37816815
+0x600000000000	0x10108000	37354892	37602698
+0x600000000000	0x10210000	37205196	37713934
+0x600000000000	0x10420000	37165220	37445576
+0x600000000000	0x10840000	37066837	37316361
+0x600000000000	0x11080000	37139108	37422421
+-- datapad.txt
+mandelbrot: code symbol lines that differ: 0; data symbol lines that differ: 18
+records: code symbol lines that differ: 0; data symbol lines that differ: 194
+fir: code symbol lines that differ: 0; data symbol lines that differ: 194
+quadrature: code symbol lines that differ: 0; data symbol lines that differ: 26
+stencil: code symbol lines that differ: 0; data symbol lines that differ: 22
+campaign b-arena1
+  mandelbrot  W=1 1.001 lower=2/5 
+  mandelbrot  W=2 1.002 lower=2/5 
+  mandelbrot  W=4 1.004 lower=1/5 
+  records     W=1 0.999 lower=3/5 
+  records     W=2 1.000 lower=3/5 
+  records     W=4 1.004 lower=1/5 
+  fir         W=1 0.996 lower=3/5 
+  fir         W=2 0.991 lower=3/5 
+  fir         W=4 0.994 lower=4/5 
+  quadrature  W=1 1.000 lower=3/5 
+  quadrature  W=2 1.001 lower=2/5 
+  quadrature  W=4 1.004 lower=1/5 
+  stencil     W=1 0.999 lower=3/5 
+  stencil     W=2 0.996 lower=3/5 
+  stencil     W=4 0.995 lower=3/5 
+  moved: none
+  stencil W=1 baseline  ms: 60.3 60.5 60.6 61.0 61.7
+  stencil W=1 candidate ms: 59.4 60.5 60.6 61.9 62.7
+campaign b-map8
+  mandelbrot  W=1 1.000 lower=1/5 
+  mandelbrot  W=2 1.001 lower=2/5 
+  mandelbrot  W=4 0.995 lower=4/5 
+  records     W=1 1.003 lower=1/5 
+  records     W=2 0.997 lower=4/5 
+  records     W=4 0.993 lower=4/5 
+  fir         W=1 0.989 lower=4/5 
+  fir         W=2 0.993 lower=3/5 
+  fir         W=4 1.008 lower=1/5 
+  quadrature  W=1 1.001 lower=1/5 
+  quadrature  W=2 1.001 lower=2/5 
+  quadrature  W=4 0.999 lower=3/5 
+  stencil     W=1 1.019 lower=1/5 
+  stencil     W=2 0.990 lower=5/5 
+  stencil     W=4 0.991 lower=3/5 
+  moved: none
+  stencil W=1 baseline  ms: 59.1 60.7 60.8 61.2 62.1
+  stencil W=1 candidate ms: 59.6 59.9 60.5 60.7 60.9
+campaign b-thread
+  mandelbrot  W=1 0.999 lower=4/5 
+  mandelbrot  W=2 1.003 lower=2/5 
+  mandelbrot  W=4 0.997 lower=3/5 
+  records     W=1 1.002 lower=2/5 
+  records     W=2 1.002 lower=2/5 
+  records     W=4 0.989 lower=4/5 
+  fir         W=1 0.992 lower=3/5 
+  fir         W=2 1.008 lower=2/5 
+  fir         W=4 1.000 lower=2/5 
+  quadrature  W=1 0.998 lower=5/5 
+  quadrature  W=2 1.012 lower=2/5 
+  quadrature  W=4 0.998 lower=4/5 
+  stencil     W=1 1.001 lower=2/5 
+  stencil     W=2 1.001 lower=1/5 
+  stencil     W=4 0.987 lower=5/5 
+  moved: none
+  stencil W=1 baseline  ms: 58.2 58.4 59.1 59.2 61.0
+  stencil W=1 candidate ms: 58.0 58.1 58.3 58.6 61.1
+campaign bs
+  mandelbrot  W=1 1.003 lower=0/5 
+  mandelbrot  W=2 0.997 lower=3/5 
+  mandelbrot  W=4 1.004 lower=2/5 
+  records     W=1 1.001 lower=1/5 
+  records     W=2 0.999 lower=3/5 
+  records     W=4 1.000 lower=3/5 
+  fir         W=1 0.989 lower=4/5 
+  fir         W=2 0.990 lower=3/5 
+  fir         W=4 1.005 lower=1/5 
+  quadrature  W=1 0.999 lower=5/5 
+  quadrature  W=2 0.991 lower=4/5 
+  quadrature  W=4 0.999 lower=3/5 
+  stencil     W=1 1.000 lower=2/5 
+  stencil     W=2 0.990 lower=4/5 
+  stencil     W=4 0.992 lower=3/5 
+  moved: none
+  stencil W=1 baseline  ms: 60.7 60.7 60.7 61.4 61.8
+  stencil W=1 candidate ms: 59.9 60.5 61.4 61.4 63.1
+campaign h-arena1
+  mandelbrot  W=1 0.999 lower=4/5 
+  mandelbrot  W=2 1.002 lower=1/5 
+  mandelbrot  W=4 1.002 lower=2/5 
+  records     W=1 1.002 lower=1/5 
+  records     W=2 0.996 lower=5/5 
+  records     W=4 1.010 lower=1/5 
+  fir         W=1 1.006 lower=2/5 
+  fir         W=2 1.021 lower=2/5 
+  fir         W=4 1.002 lower=2/5 
+  quadrature  W=1 1.001 lower=2/5 
+  quadrature  W=2 1.001 lower=2/5 
+  quadrature  W=4 1.001 lower=2/5 
+  stencil     W=1 1.017 lower=1/5 
+  stencil     W=2 1.002 lower=2/5 
+  stencil     W=4 1.004 lower=2/5 
+  moved: none
+  stencil W=1 baseline  ms: 61.7 62.4 63.1 63.2 69.2
+  stencil W=1 candidate ms: 62.0 62.1 62.2 63.8 68.0
+campaign h-datapad
+  mandelbrot  W=1 1.001 lower=1/5 
+  mandelbrot  W=2 1.040 lower=0/5 faster
+  mandelbrot  W=4 1.005 lower=2/5 
+  records     W=1 1.002 lower=1/5 
+  records     W=2 0.999 lower=3/5 
+  records     W=4 1.000 lower=2/5 
+  fir         W=1 0.997 lower=3/5 
+  fir         W=2 1.002 lower=2/5 
+  fir         W=4 0.992 lower=4/5 
+  quadrature  W=1 1.001 lower=2/5 
+  quadrature  W=2 0.995 lower=5/5 
+  quadrature  W=4 1.000 lower=4/5 
+  stencil     W=1 1.001 lower=2/5 
+  stencil     W=2 1.004 lower=2/5 
+  stencil     W=4 0.996 lower=3/5 
+  moved: mandelbrot W=2 1.040 faster
+  stencil W=1 baseline  ms: 64.8 65.7 65.7 66.1 66.8
+  stencil W=1 candidate ms: 62.4 66.1 66.1 67.0 70.3
+campaign h-map1
+  mandelbrot  W=1 0.999 lower=4/5 
+  mandelbrot  W=2 1.000 lower=3/5 
+  mandelbrot  W=4 0.998 lower=3/5 
+  records     W=1 0.999 lower=3/5 
+  records     W=2 1.014 lower=0/5 
+  records     W=4 1.003 lower=2/5 
+  fir         W=1 0.997 lower=4/5 
+  fir         W=2 0.970 lower=3/5 
+  fir         W=4 1.002 lower=1/5 
+  quadrature  W=1 0.999 lower=3/5 
+  quadrature  W=2 0.996 lower=3/5 
+  quadrature  W=4 1.000 lower=3/5 
+  stencil     W=1 0.993 lower=4/5 
+  stencil     W=2 0.999 lower=3/5 
+  stencil     W=4 0.997 lower=3/5 
+  moved: none
+  stencil W=1 baseline  ms: 60.5 60.7 62.3 62.3 63.0
+  stencil W=1 candidate ms: 62.2 62.2 62.8 62.9 63.1
+campaign h-map34
+  mandelbrot  W=1 1.000 lower=3/5 
+  mandelbrot  W=2 0.999 lower=3/5 
+  mandelbrot  W=4 1.000 lower=2/5 
+  records     W=1 0.998 lower=5/5 
+  records     W=2 0.987 lower=4/5 
+  records     W=4 1.002 lower=1/5 
+  fir         W=1 1.007 lower=0/5 
+  fir         W=2 0.985 lower=3/5 
+  fir         W=4 1.003 lower=2/5 
+  quadrature  W=1 0.994 lower=3/5 
+  quadrature  W=2 0.998 lower=4/5 
+  quadrature  W=4 1.002 lower=1/5 
+  stencil     W=1 1.041 lower=2/5 
+  stencil     W=2 0.992 lower=4/5 
+  stencil     W=4 1.000 lower=2/5 
+  moved: none
+  stencil W=1 baseline  ms: 61.6 63.5 63.8 67.0 67.9
+  stencil W=1 candidate ms: 61.3 62.3 62.8 63.2 64.4
+campaign h-map8
+  mandelbrot  W=1 1.002 lower=1/5 
+  mandelbrot  W=2 1.000 lower=3/5 
+  mandelbrot  W=4 0.992 lower=3/5 
+  records     W=1 0.999 lower=3/5 
+  records     W=2 1.016 lower=1/5 
+  records     W=4 1.000 lower=4/5 
+  fir         W=1 1.019 lower=2/5 
+  fir         W=2 0.991 lower=3/5 
+  fir         W=4 0.996 lower=4/5 
+  quadrature  W=1 1.007 lower=1/5 
+  quadrature  W=2 0.990 lower=5/5 
+  quadrature  W=4 1.005 lower=1/5 
+  stencil     W=1 1.024 lower=1/5 
+  stencil     W=2 1.012 lower=2/5 
+  stencil     W=4 1.015 lower=2/5 
+  moved: none
+  stencil W=1 baseline  ms: 62.0 62.2 62.8 64.7 67.1
+  stencil W=1 candidate ms: 60.5 60.5 63.0 63.3 64.4
+campaign h-thread
+  mandelbrot  W=1 0.999 lower=4/5 
+  mandelbrot  W=2 1.004 lower=1/5 
+  mandelbrot  W=4 0.994 lower=3/5 
+  records     W=1 1.001 lower=2/5 
+  records     W=2 0.996 lower=4/5 
+  records     W=4 0.999 lower=3/5 
+  fir         W=1 1.011 lower=0/5 
+  fir         W=2 0.996 lower=4/5 
+  fir         W=4 0.996 lower=5/5 
+  quadrature  W=1 1.000 lower=3/5 
+  quadrature  W=2 1.007 lower=2/5 
+  quadrature  W=4 1.008 lower=2/5 
+  stencil     W=1 1.002 lower=1/5 
+  stencil     W=2 0.994 lower=3/5 
+  stencil     W=4 1.004 lower=2/5 
+  moved: none
+  stencil W=1 baseline  ms: 59.4 59.4 59.5 60.8 60.9
+  stencil W=1 candidate ms: 59.1 59.4 59.8 60.7 60.7
+campaign h-touch
+  mandelbrot  W=1 0.999 lower=3/5 
+  mandelbrot  W=2 0.999 lower=3/5 
+  mandelbrot  W=4 0.996 lower=3/5 
+  records     W=1 1.000 lower=3/5 
+  records     W=2 1.013 lower=2/5 
+  records     W=4 1.005 lower=1/5 
+  fir         W=1 1.000 lower=3/5 
+  fir         W=2 0.961 lower=3/5 
+  fir         W=4 0.997 lower=3/5 
+  quadrature  W=1 1.001 lower=1/5 
+  quadrature  W=2 0.989 lower=3/5 
+  quadrature  W=4 1.008 lower=1/5 
+  stencil     W=1 1.002 lower=2/5 
+  stencil     W=2 1.005 lower=1/5 
+  stencil     W=4 0.986 lower=4/5 
+  moved: none
+  stencil W=1 baseline  ms: 61.1 61.2 62.9 63.4 63.8
+  stencil W=1 candidate ms: 60.2 60.9 61.1 61.4 64.7
+campaign null-h
+  mandelbrot  W=1 1.001 lower=1/5 
+  mandelbrot  W=2 1.000 lower=2/5 
+  mandelbrot  W=4 0.996 lower=4/5 
+  records     W=1 0.999 lower=4/5 
+  records     W=2 1.008 lower=1/5 
+  records     W=4 0.996 lower=3/5 
+  fir         W=1 0.997 lower=3/5 
+  fir         W=2 0.892 lower=4/5 slower
+  fir         W=4 1.003 lower=2/5 
+  quadrature  W=1 1.001 lower=2/5 
+  quadrature  W=2 1.005 lower=2/5 
+  quadrature  W=4 1.000 lower=2/5 
+  stencil     W=1 1.002 lower=2/5 
+  stencil     W=2 1.000 lower=3/5 
+  stencil     W=4 1.005 lower=2/5 
+  moved: fir W=2 0.892 slower
+  stencil W=1 baseline  ms: 59.2 60.4 60.5 60.6 60.9
+  stencil W=1 candidate ms: 59.4 59.4 59.8 60.7 62.0
+campaign s-arena1
+  mandelbrot  W=1 1.001 lower=2/5 
+  mandelbrot  W=2 0.999 lower=3/5 
+  mandelbrot  W=4 0.997 lower=3/5 
+  records     W=1 0.998 lower=3/5 
+  records     W=2 0.999 lower=3/5 
+  records     W=4 0.998 lower=4/5 
+  fir         W=1 0.996 lower=4/5 
+  fir         W=2 1.013 lower=1/5 
+  fir         W=4 0.997 lower=3/5 
+  quadrature  W=1 1.000 lower=1/5 
+  quadrature  W=2 1.001 lower=2/5 
+  quadrature  W=4 1.001 lower=2/5 
+  stencil     W=1 1.001 lower=2/5 
+  stencil     W=2 0.987 lower=4/5 
+  stencil     W=4 0.992 lower=4/5 
+  moved: none
+  stencil W=1 baseline  ms: 61.4 62.4 62.6 64.0 64.1
+  stencil W=1 candidate ms: 60.9 61.9 62.6 62.6 64.9
+campaign s-map8
+  mandelbrot  W=1 1.000 lower=2/5 
+  mandelbrot  W=2 1.000 lower=2/5 
+  mandelbrot  W=4 1.000 lower=3/5 
+  records     W=1 1.003 lower=1/5 
+  records     W=2 0.987 lower=3/5 
+  records     W=4 0.996 lower=4/5 
+  fir         W=1 0.983 lower=4/5 
+  fir         W=2 0.988 lower=3/5 
+  fir         W=4 0.995 lower=3/5 
+  quadrature  W=1 1.001 lower=0/5 
+  quadrature  W=2 0.997 lower=3/5 
+  quadrature  W=4 1.007 lower=2/5 
+  stencil     W=1 1.001 lower=2/5 
+  stencil     W=2 1.012 lower=2/5 
+  stencil     W=4 1.006 lower=2/5 
+  moved: none
+  stencil W=1 baseline  ms: 60.0 62.7 63.4 63.5 63.8
+  stencil W=1 candidate ms: 59.8 61.8 61.9 63.8 66.3
+campaign s-thread
+  mandelbrot  W=1 1.001 lower=1/5 
+  mandelbrot  W=2 0.999 lower=3/5 
+  mandelbrot  W=4 0.997 lower=4/5 
+  records     W=1 1.003 lower=0/5 
+  records     W=2 1.002 lower=2/5 
+  records     W=4 1.008 lower=2/5 
+  fir         W=1 1.005 lower=1/5 
+  fir         W=2 0.998 lower=3/5 
+  fir         W=4 0.999 lower=4/5 
+  quadrature  W=1 1.000 lower=2/5 
+  quadrature  W=2 0.993 lower=4/5 
+  quadrature  W=4 0.997 lower=3/5 
+  stencil     W=1 1.002 lower=2/5 
+  stencil     W=2 0.993 lower=3/5 
+  stencil     W=4 1.001 lower=2/5 
+  moved: none
+  stencil W=1 baseline  ms: 58.3 58.5 58.6 59.3 60.4
+  stencil W=1 candidate ms: 58.1 58.3 58.5 58.6 58.7
+traced b-arena1: 6 of 6 launches read
+  A-B=+0x2001000 n=6 median=66.8 ms: 65.0 66.3 66.6 67.0 68.3 69.0
+traced b-none: 24 of 24 launches read
+  A-B=+0x2001000 n=9 median=69.0 ms: 66.6 67.0 67.4 68.1 69.0 69.4 69.6 70.9 77.1
+  A-B=+0x67ff000 n=3 median=67.8 ms: 66.0 67.8 71.2
+  A-B=+0x6dff000 n=2 median=67.5 ms: 67.1 68.0
+  A-B=+0x7dff000 n=2 median=69.9 ms: 64.8 75.0
+  A-B=+0x63ff000 n=2 median=69.7 ms: 68.9 70.5
+  A-B=+0x79ff000 n=1 median=67.5 ms: 67.5
+  A-B=+0x61ff000 n=1 median=67.5 ms: 67.5
+  A-B=+0x73ff000 n=1 median=68.6 ms: 68.6
+  A-B=+0x7def000 n=1 median=66.2 ms: 66.2
+  A-B=+0x6fff000 n=1 median=67.8 ms: 67.8
+  A-B=+0x63ef000 n=1 median=66.4 ms: 66.4
+traced b-thread: 16 of 16 launches read
+  A-B=+0x7fff000 n=7 median=66.2 ms: 64.0 64.8 65.6 66.2 67.2 67.7 71.3
+  A-B=+0x46400000 n=2 median=67.8 ms: 65.6 70.0
+  A-B=+0x46e00000 n=2 median=67.6 ms: 66.9 68.3
+  A-B=+0x47000000 n=1 median=68.2 ms: 68.2
+  A-B=+0x47600000 n=1 median=68.0 ms: 68.0
+  A-B=+0x46c00000 n=1 median=64.9 ms: 64.9
+  A-B=+0x2001000 n=1 median=66.8 ms: 66.8
+  A-B=+0x47a00000 n=1 median=67.5 ms: 67.5
+traced h-arena1: 6 of 6 launches read
+  A-B=+0x2001000 n=6 median=63.1 ms: 62.2 62.5 62.9 63.3 63.4 64.0
+traced h-none: 24 of 24 launches read
+  A-B=+0x2001000 n=13 median=62.5 ms: 60.5 60.9 61.3 61.5 61.5 62.5 62.5 62.5 62.9 62.9 63.0 63.1 68.3
+  A-B=+0x73ff000 n=1 median=61.8 ms: 61.8
+  A-B=+0x67ff000 n=1 median=61.5 ms: 61.5
+  A-B=+0x77ef000 n=1 median=62.5 ms: 62.5
+  A-B=+0x61ff000 n=1 median=63.3 ms: 63.3
+  A-B=+0x71ff000 n=1 median=62.5 ms: 62.5
+  A-B=+0x65ff000 n=1 median=64.7 ms: 64.7
+  A-B=+0x75ff000 n=1 median=62.7 ms: 62.7
+  A-B=+0x6dff000 n=1 median=62.2 ms: 62.2
+  A-B=+0x7fff000 n=1 median=61.5 ms: 61.5
+  A-B=+0x6bef000 n=1 median=64.9 ms: 64.9
+  A-B=+0x79ff000 n=1 median=64.6 ms: 64.6
+traced h-thread: 16 of 16 launches read
+  A-B=+0x7fff000 n=8 median=63.3 ms: 62.7 63.0 63.1 63.2 63.5 63.8 64.0 65.4
+  A-B=+0x46600000 n=1 median=62.4 ms: 62.4
+  A-B=+0x2001000 n=1 median=63.6 ms: 63.6
+  A-B=+0x46e00000 n=1 median=65.8 ms: 65.8
+  A-B=+0x46200000 n=1 median=64.2 ms: 64.2
+  A-B=+0x475f0000 n=1 median=65.2 ms: 65.2
+  A-B=+0x47000000 n=1 median=64.7 ms: 64.7
+  A-B=+0x46400000 n=1 median=63.8 ms: 63.8
+  A-B=+0x47e00000 n=1 median=62.2 ms: 62.2
+traced s-arena1: 6 of 6 launches read
+  A-B=+0x2001000 n=6 median=61.1 ms: 59.3 60.4 60.5 61.8 62.1 62.2
+traced s-none: 24 of 24 launches read
+  A-B=+0x7fff000 n=9 median=62.0 ms: 60.6 61.1 61.1 61.8 62.0 62.0 62.3 62.3 62.5
+  A-B=+0x47a00000 n=2 median=64.0 ms: 62.5 65.5
+  A-B=+0x46600000 n=2 median=61.4 ms: 60.8 62.0
+  A-B=+0x47c00000 n=2 median=61.3 ms: 59.7 62.9
+  A-B=+0x2001000 n=2 median=62.4 ms: 61.3 63.5
+  A-B=+0x47e00000 n=2 median=61.4 ms: 61.1 61.8
+  A-B=+0x46800000 n=1 median=60.6 ms: 60.6
+  A-B=+0x46c00000 n=1 median=61.8 ms: 61.8
+  A-B=+0x47800000 n=1 median=61.5 ms: 61.5
+  A-B=+0x46200000 n=1 median=61.9 ms: 61.9
+  A-B=+0x46400000 n=1 median=60.9 ms: 60.9
+traced s-thread: 16 of 16 launches read
+  A-B=+0x2001000 n=6 median=62.2 ms: 60.9 61.2 62.0 62.4 62.4 62.6
+  A-B=+0x4ebff000 n=2 median=60.7 ms: 60.7 60.8
+  A-B=+0x47000000 n=2 median=60.6 ms: 60.0 61.2
+  A-B=+0x4eddf000 n=1 median=61.7 ms: 61.7
+  A-B=+0x4e5ff000 n=1 median=61.3 ms: 61.3
+  A-B=+0x4b1cf000 n=1 median=61.4 ms: 61.4
+  A-B=+0x4b1ff000 n=1 median=61.4 ms: 61.4
+  A-B=+0x4e1ff000 n=1 median=62.8 ms: 62.8
+  A-B=+0x4e3ff000 n=1 median=60.8 ms: 60.8
+fixed addresses, b: pad of k * 2 MiB -> A-B, ms
+  k= 0 A-B=+0x7bff000 67.1 A=0x7fffb5bfe000 B=0x7fffadfff000
+  k= 1 A-B=+0x79ff000 64.3 A=0x7fffb59fe000 B=0x7fffadfff000
+  k= 2 A-B=+0x77ff000 63.5 A=0x7fffb57fe000 B=0x7fffadfff000
+  k= 3 A-B=+0x75ff000 64.2 A=0x7fffb55fe000 B=0x7fffadfff000
+  k= 4 A-B=+0x73ff000 64.0 A=0x7fffb53fe000 B=0x7fffadfff000
+  k= 5 A-B=+0x71ff000 65.0 A=0x7fffb51fe000 B=0x7fffadfff000
+  k= 6 A-B=+0x6fff000 63.5 A=0x7fffb4ffe000 B=0x7fffadfff000
+  k= 7 A-B=+0x6dff000 63.7 A=0x7fffb4dfe000 B=0x7fffadfff000
+  k= 8 A-B=+0x6bff000 64.0 A=0x7fffb4bfe000 B=0x7fffadfff000
+  k= 9 A-B=+0x69ff000 63.6 A=0x7fffb49fe000 B=0x7fffadfff000
+  k=10 A-B=+0x67ff000 65.9 A=0x7fffb47fe000 B=0x7fffadfff000
+  k=11 A-B=+0x65ff000 64.7 A=0x7fffb45fe000 B=0x7fffadfff000
+  k=12 A-B=+0x63ff000 64.6 A=0x7fffb43fe000 B=0x7fffadfff000
+  k=13 A-B=+0x61ff000 64.3 A=0x7fffb41fe000 B=0x7fffadfff000
+  k=14 A-B=+0x2001000 63.6 A=0x7fffadfff000 B=0x7fffabffe000
+  k=15 A-B=+0x2001000 63.2 A=0x7fffadfff000 B=0x7fffabffe000
+  k=16 A-B=-0x4002000 61.4 A=0x7fffa9ffd000 B=0x7fffadfff000
+  k=17 A-B=+0x2001000 63.5 A=0x7fffadfff000 B=0x7fffabffe000
+  k=18 A-B=+0x2001000 61.7 A=0x7fffadfff000 B=0x7fffabffe000
+  k=19 A-B=+0x2001000 63.8 A=0x7fffadfff000 B=0x7fffabffe000
+  k=20 A-B=+0x2001000 63.6 A=0x7fffadfff000 B=0x7fffabffe000
+  k=21 A-B=+0x2001000 63.0 A=0x7fffadfff000 B=0x7fffabffe000
+  k=22 A-B=+0x2001000 64.6 A=0x7fffadfff000 B=0x7fffabffe000
+  k=23 A-B=+0x2001000 62.9 A=0x7fffadfff000 B=0x7fffabffe000
+  k=24 A-B=+0x2001000 62.2 A=0x7fffadfff000 B=0x7fffabffe000
+  k=25 A-B=+0x2001000 64.1 A=0x7fffadfff000 B=0x7fffabffe000
+  k=26 A-B=+0x2001000 64.5 A=0x7fffadfff000 B=0x7fffabffe000
+  k=27 A-B=+0x2001000 65.0 A=0x7fffadfff000 B=0x7fffabffe000
+  k=28 A-B=+0x2001000 62.4 A=0x7fffadfff000 B=0x7fffabffe000
+  k=29 A-B=+0x2001000 63.8 A=0x7fffb21fe000 B=0x7fffb01fd000
+  k=30 A-B=+0x7fff000 62.8 A=0x7fffb1ffe000 B=0x7fffa9fff000
+  k=31 A-B=+0x7dff000 65.0 A=0x7fffb1dfe000 B=0x7fffa9fff000
+fixed addresses, h: pad of k * 2 MiB -> A-B, ms
+  k= 0 A-B=+0x7bff000 62.0 A=0x7fffb5bfe000 B=0x7fffadfff000
+  k= 1 A-B=+0x79ff000 63.9 A=0x7fffb59fe000 B=0x7fffadfff000
+  k= 2 A-B=+0x77ff000 63.9 A=0x7fffb57fe000 B=0x7fffadfff000
+  k= 3 A-B=+0x75ff000 63.6 A=0x7fffb55fe000 B=0x7fffadfff000
+  k= 4 A-B=+0x73ff000 63.1 A=0x7fffb53fe000 B=0x7fffadfff000
+  k= 5 A-B=+0x71ff000 60.3 A=0x7fffb51fe000 B=0x7fffadfff000
+  k= 6 A-B=+0x6fff000 60.6 A=0x7fffb4ffe000 B=0x7fffadfff000
+  k= 7 A-B=+0x6dff000 61.1 A=0x7fffb4dfe000 B=0x7fffadfff000
+  k= 8 A-B=+0x6bff000 61.0 A=0x7fffb4bfe000 B=0x7fffadfff000
+  k= 9 A-B=+0x69ff000 64.7 A=0x7fffb49fe000 B=0x7fffadfff000
+  k=10 A-B=+0x67ff000 65.9 A=0x7fffb47fe000 B=0x7fffadfff000
+  k=11 A-B=+0x65ff000 61.4 A=0x7fffb45fe000 B=0x7fffadfff000
+  k=12 A-B=+0x63ff000 59.9 A=0x7fffb43fe000 B=0x7fffadfff000
+  k=13 A-B=+0x61ff000 60.7 A=0x7fffb41fe000 B=0x7fffadfff000
+  k=14 A-B=+0x2001000 63.7 A=0x7fffadfff000 B=0x7fffabffe000
+  k=15 A-B=+0x2001000 69.1 A=0x7fffadfff000 B=0x7fffabffe000
+  k=16 A-B=-0x4002000 64.5 A=0x7fffa9ffd000 B=0x7fffadfff000
+  k=17 A-B=+0x2001000 63.9 A=0x7fffadfff000 B=0x7fffabffe000
+  k=18 A-B=+0x2001000 62.0 A=0x7fffadfff000 B=0x7fffabffe000
+  k=19 A-B=+0x2001000 63.0 A=0x7fffadfff000 B=0x7fffabffe000
+  k=20 A-B=+0x2001000 65.6 A=0x7fffadfff000 B=0x7fffabffe000
+  k=21 A-B=+0x2001000 65.1 A=0x7fffadfff000 B=0x7fffabffe000
+  k=22 A-B=+0x2001000 65.5 A=0x7fffadfff000 B=0x7fffabffe000
+  k=23 A-B=+0x2001000 63.3 A=0x7fffadfff000 B=0x7fffabffe000
+  k=24 A-B=+0x2001000 63.0 A=0x7fffadfff000 B=0x7fffabffe000
+  k=25 A-B=+0x2001000 62.1 A=0x7fffadfff000 B=0x7fffabffe000
+  k=26 A-B=+0x2001000 62.5 A=0x7fffadfff000 B=0x7fffabffe000
+  k=27 A-B=+0x2001000 63.4 A=0x7fffadfff000 B=0x7fffabffe000
+  k=28 A-B=+0x2001000 64.7 A=0x7fffadfff000 B=0x7fffabffe000
+  k=29 A-B=+0x2001000 63.2 A=0x7fffb21fe000 B=0x7fffb01fd000
+  k=30 A-B=+0x7fff000 63.1 A=0x7fffb1ffe000 B=0x7fffa9fff000
+  k=31 A-B=+0x7dff000 62.1 A=0x7fffb1dfe000 B=0x7fffa9fff000
+fixed addresses, s: pad of k * 2 MiB -> A-B, ms
+  k= 0 A-B=+0x46c00000 59.5 A=0x7ffff4bfe000 B=0x7fffadffe000
+  k= 1 A-B=+0x46a00000 61.0 A=0x7ffff49fe000 B=0x7fffadffe000
+  k= 2 A-B=+0x46800000 61.6 A=0x7ffff47fe000 B=0x7fffadffe000
+  k= 3 A-B=+0x46600000 62.7 A=0x7ffff45fe000 B=0x7fffadffe000
+  k= 4 A-B=+0x46400000 62.2 A=0x7ffff43fe000 B=0x7fffadffe000
+  k= 5 A-B=+0x46200000 61.4 A=0x7ffff41fe000 B=0x7fffadffe000
+  k= 6 A-B=+0x7fff000 62.4 A=0x7fffadffe000 B=0x7fffa5fff000
+  k= 7 A-B=+0x7fff000 63.5 A=0x7fffadffe000 B=0x7fffa5fff000
+  k= 8 A-B=+0x7fff000 62.3 A=0x7fffadffe000 B=0x7fffa5fff000
+  k= 9 A-B=+0x7fff000 62.3 A=0x7fffadffe000 B=0x7fffa5fff000
+  k=10 A-B=+0x7fff000 63.4 A=0x7fffadffe000 B=0x7fffa5fff000
+  k=11 A-B=+0x7fff000 62.2 A=0x7fffadffe000 B=0x7fffa5fff000
+  k=12 A-B=+0x7fff000 64.1 A=0x7fffadffe000 B=0x7fffa5fff000
+  k=13 A-B=+0x7fff000 64.0 A=0x7fffadffe000 B=0x7fffa5fff000
+  k=14 A-B=+0x7fff000 63.5 A=0x7fffadffe000 B=0x7fffa5fff000
+  k=15 A-B=+0x7fff000 66.1 A=0x7fffadffe000 B=0x7fffa5fff000
+  k=16 A-B=-0xa000000 65.1 A=0x7fffa3ffe000 B=0x7fffadffe000
+  k=17 A-B=+0x7fff000 67.4 A=0x7fffadffe000 B=0x7fffa5fff000
+  k=18 A-B=+0x7fff000 62.3 A=0x7fffadffe000 B=0x7fffa5fff000
+  k=19 A-B=+0x7fff000 63.3 A=0x7fffadffe000 B=0x7fffa5fff000
+  k=20 A-B=+0x7fff000 62.9 A=0x7fffadffe000 B=0x7fffa5fff000
+  k=21 A-B=+0x2001000 63.8 A=0x7fffa9ffe000 B=0x7fffa7ffd000
+  k=22 A-B=+0x48000000 66.2 A=0x7ffff1ffe000 B=0x7fffa9ffe000
+  k=23 A-B=+0x47e00000 66.9 A=0x7ffff1dfe000 B=0x7fffa9ffe000
+  k=24 A-B=+0x47c00000 62.2 A=0x7ffff1bfe000 B=0x7fffa9ffe000
+  k=25 A-B=+0x47a00000 62.3 A=0x7ffff19fe000 B=0x7fffa9ffe000
+  k=26 A-B=+0x47800000 59.9 A=0x7ffff17fe000 B=0x7fffa9ffe000
+  k=27 A-B=+0x47600000 60.5 A=0x7ffff15fe000 B=0x7fffa9ffe000
+  k=28 A-B=+0x47400000 61.6 A=0x7ffff13fe000 B=0x7fffa9ffe000
+  k=29 A-B=+0x47200000 63.5 A=0x7ffff11fe000 B=0x7fffa9ffe000
+  k=30 A-B=+0x47000000 63.4 A=0x7ffff0ffe000 B=0x7fffa9ffe000
+  k=31 A-B=+0x46e00000 61.7 A=0x7ffff0dfe000 B=0x7fffa9ffe000
+launches with address randomization, all series, by distance class
+  adjacent, +0x2001000         n= 50 min=  59.3 median=  62.9 max=  77.1 ms
+  +0x46000000 to +0x49000000   n= 30 min=  59.7 median=  62.7 max=  70.0 ms
+  +0x61ff000 to +0x7dff000     n= 25 min=  61.5 median=  66.2 max=  75.0 ms
+  0x7fff000 either way         n= 25 min=  60.6 median=  63.1 max=  71.3 ms
+  another distance             n=  8 min=  60.7 median=  61.3 max=  62.8 ms
+layout.py against the launches with address randomization, per startup order
+  entry-one-heap: distance given in 12 of 12 launches; traced: adjacent, +0x2001000 12
+  entry: distance given in 48 of 48 launches; traced: +0x61ff000 to +0x7dff000 25, adjacent, +0x2001000 22, 0x7fff000 either way 1
+  thread-then-entry: distance given in 56 of 56 launches; traced: +0x46000000 to +0x49000000 28, 0x7fff000 either way 24, adjacent, +0x2001000 4
+  thread-then-entry-one-heap: distance given in 6 of 6 launches; traced: adjacent, +0x2001000 6
+positions without address randomization, 10 percent or more from the median position
+  b: 32 positions read, off: none; the others 0.963 to 1.052
+  h: 32 positions read, off: none; the others 0.949 to 1.094
+  s: 32 positions read, off: none; the others 0.951 to 1.078
+  off the same way in b and in h: none
+positions where two arms' profiles differ by 10 percent or more
+  h over b: 1 of 32 15:1.10; all ratios 0.933 to 1.105
+  s over b: 1 of 32 0:0.90; all ratios 0.904 to 1.087
+  s over h: 0 of 32; all ratios 0.961 to 1.080
+positions in order of time, ranks where two arms differ by 10 percent or more
+  h over b: 0 of 32; all ratios 0.980 to 1.040
+  s over b: 0 of 32; all ratios 0.987 to 1.039
+  s over h: 0 of 32; all ratios 0.985 to 1.026
+positions unlike one against one, h moved by r positions over b, r = 1 to 31
+  0 0 0 0 1 0 0 0 0 0 0 1 0 0 0 0 1 0 1 0 0 0 1 1 0 1 0 0 1 0 1; least 0, most 1
+mapping calls without address randomization, position by position
+  b and h: identical at 32 positions, different at 0
+  b and s: identical at 0 positions, different at 32

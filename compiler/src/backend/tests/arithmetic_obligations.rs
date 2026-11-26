@@ -94,3 +94,72 @@ fn a_proved_exact_site_emits_no_overflow_branch() {
         "the shipped path and the forced-on entry are one judgment",
     );
 }
+
+/// Fallthrough and continue share one exact compiler-owned range update,
+/// whether the immutable binder is a scalar or has storage for a shared
+/// borrow. The source accumulation remains wrapping in both bodies.
+#[test]
+fn counted_range_updates_carry_no_wrap_without_strengthening_source_wrap() {
+    let source = br#"fn scalar_range(lower: u64, upper: u64, skip: u64) -> result: u64 pure {
+  let total = 0_u64;
+  for (i in lower..upper) {
+    if i == skip {
+      continue;
+    }
+    set total = total +wrap i;
+  }
+  return total;
+}
+
+fn addressed_range(lower: u64, upper: u64, skip: u64) -> result: u64 pure {
+  let total = 0_u64;
+  for (i in lower..upper) {
+    let observed = &i;
+    let seen = observed^;
+    if seen == skip {
+      continue;
+    }
+    set total = total +wrap seen;
+  }
+  return total;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let scalar = scalar_range(lower: 0_u64, upper: 4_u64, skip: 1_u64);
+  let addressed = addressed_range(lower: 0_u64, upper: 4_u64, skip: 1_u64);
+  if scalar != addressed {
+    return std::process::exit_status(code: 1_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    let module = emit(source);
+    for name in ["scalar_range", "addressed_range"] {
+        let function = super::emitted_function(&module, name);
+        if name == "addressed_range" {
+            assert!(
+                function.contains("load i64, ptr"),
+                "the shared borrow must exercise the addressed binder: {function}",
+            );
+        }
+        assert_eq!(
+            function.matches("= add nuw i64").count(),
+            1,
+            "{name}: the shared counted update carries its guarded domain: {function}",
+        );
+        assert_eq!(
+            function.matches("= add i64").count(),
+            1,
+            "{name}: the user-written +wrap remains a plain add: {function}",
+        );
+        assert!(
+            !function.contains(" nsw "),
+            "{name}: neither unsigned update nor +wrap claims signed no-wrap: {function}",
+        );
+        assert_eq!(
+            overflow_call_count(function),
+            0,
+            "{name}: publishing the update's proof adds no overflow check: {function}",
+        );
+    }
+}
