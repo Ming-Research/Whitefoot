@@ -235,6 +235,12 @@ impl Reader<'_> {
         loop {
             self.skip_space();
             let key = self.string()?;
+            // Readers disagree on which of two equal names wins (this one
+            // would take the first, Python's `json` the last), so a manifest
+            // that holds two is not read at all.
+            if members.iter().any(|(name, _)| *name == key) {
+                return self.fail(&format!("duplicate key \"{key}\""));
+            }
             self.skip_space();
             self.expect(b':')?;
             members.push((key, self.value(depth + 1)?));
@@ -409,6 +415,20 @@ mod tests {
             };
             assert!(error.contains("not valid JSON"), "{bad}: {error}");
         }
+    }
+
+    /// Two equal names would be read as the first by this reader and as the
+    /// last by Python's, so the manifest is refused.
+    #[test]
+    fn a_duplicated_key_is_not_trusted() {
+        let text = manifest(LINE, ",\"preserve_none\":false");
+        let Err(error) = recorded(&text, LINE) else {
+            panic!("a manifest with two preserve_none answers was taken");
+        };
+        assert!(
+            error.contains("not valid JSON") && error.contains("duplicate key \"preserve_none\""),
+            "{error}"
+        );
     }
 
     #[test]
