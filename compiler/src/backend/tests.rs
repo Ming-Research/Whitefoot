@@ -477,7 +477,7 @@ fn append_runtime_units_with_library_defines(
         ) {
             let object = directory.join(name).with_extension("o");
             #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
-            let output = Command::new(crate::clang_executable())
+            let output = clang()
                 .args(HOST_OPTIMIZATION_ARGUMENTS)
                 .args(crate::RESTRICTED_CHILD_COMPILE_ARGUMENTS)
                 .arg("-std=c11")
@@ -513,7 +513,7 @@ fn append_runtime_units_with_library_defines(
     if custom_library {
         // A scripted linked body interposes this library translation unit's
         // private dependencies. The WF module and native engine stay unchanged.
-        let mut library = Command::new(crate::clang_executable());
+        let mut library = clang();
         library
             .arg("-std=c11")
             .arg("-c")
@@ -611,7 +611,7 @@ fn build_linked_executable_inner(
     let module = directory.join("program.ll");
     let executable = directory.join("program");
     std::fs::write(&module, llvm).expect("write backend test module");
-    let mut command = Command::new(crate::clang_executable());
+    let mut command = clang_link();
     // The dialect the driver names, for the same reason: a test link must not
     // compile the compiler-owned C units in a dialect the shipped one does not.
     command.arg("-std=c11");
@@ -761,10 +761,26 @@ fn compile_link_and_run_with(
     output
 }
 
+/// A clang command for compiling, started as the compiler starts one: through
+/// the toolchain resolved for the running test binary, so a test binary placed
+/// in an installed package compiles with that package's clang.
+fn clang() -> Command {
+    crate::resolved_toolchain()
+        .expect("resolved toolchain")
+        .command()
+}
+
+/// A clang command for linking, started as the compiler starts one.
+fn clang_link() -> Command {
+    crate::resolved_toolchain()
+        .expect("resolved toolchain")
+        .link_command()
+}
+
 /// Returns the module as the host optimizer leaves it at the shipped level.
 fn host_optimized_module(llvm: &str) -> String {
     #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
-    let mut child = Command::new(crate::clang_executable())
+    let mut child = clang()
         .arg("-x")
         .arg("ir")
         .arg("-")

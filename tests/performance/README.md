@@ -90,13 +90,85 @@ regression. Failed controls retain their raw data. The only retry is the one
 retest round of a kernel left indeterminate, never a changed threshold. The
 null control needs no third native build.
 
+## Data placement
+
+On some hosts a kernel's time depends on where its large blocks are mapped,
+which a change of startup or of the allocator moves without changing generated
+code: on EPYC 7763 and 9V74 hosts `stencil` runs 26 to 43 percent slower when
+its two grids lie 128 MiB less 4 KiB apart, because the first-level data
+cache's way predictor cannot tell them apart
+([data placement](../../research/investigations/data-placement/README.md)).
+Under address randomization each launch draws where its data lies, so a
+campaign of five pairs then reads such a kernel slower or not about as often.
+Before the comparison, `data-placement.sh control` decides which kernels
+placement decides on this host:
+
+1. Each kernel's two arms are launched once at one worker without address
+   randomization (`setarch -R`), and `strace` records their `mmap`, `munmap`
+   and `mremap` calls up to the runner's `layout` exit. `layout.awk` drops the
+   process ids and joins interrupted calls; sorted, the two records are equal
+   when the arms map alike. A kernel that maps alike is judged as usual and is
+   launched no more.
+2. Both arms of a kernel that maps differently are launched at the 32
+   positions: `WF_PERFORMANCE_POSITION=k` makes the runner map k times 2 MiB
+   before the entry thread exists, which walks the entry's stack and heap
+   through the C library's 64 MiB heap alignment. Each launch's time is the
+   median of its five measured calls.
+3. `positions.awk` divides each arm's 32 times by the arm's median, so a loss
+   the arm has everywhere cancels, sorts them and compares the two rank by
+   rank. A rank is unlike when the candidate's quotient over the baseline's is
+   1.10 or more, or 1/1.10 or less. It does not read which position a time
+   came from: an image that only maps more before its entry has the same
+   profile moved by some positions, and address randomization draws the
+   position, so such a pair has its times in equal shares and is judged.
+4. A kernel with an unlike rank is launched at the 32 positions again, and is
+   set aside when the second round has a rank unlike in a direction the first
+   had. `judge.sh` then neither times nor judges it: its verdict has the line
+   `not judged: KERNEL (data placement)`, which changes no exit status, and
+   the other kernels are judged as usual. The control's `verdict.txt` shows
+   both arms' sorted quotients for each round of a kernel set aside, and the
+   workflow shows a warning for it.
+
+`data-placement.sh qualify CANDIDATE RESULTS`, which the workflow runs with
+the other instrument controls, requires the candidate against itself to map
+alike, against itself with one more idle mapping (position 1) to map
+differently for every kernel, and its 32 positions launched against themselves
+to set no kernel aside. At position 1 a record differs by that mapping in any
+case, so each kernel's record must also differ without it: the record has to
+see the later mappings lie lower, which is what shows a startup that makes the
+same calls in another order. The positions are launched only when both
+records pass. Each record and each kernel's round is a labeled stage
+of its own (`performance-data-layout`, `performance-data-round-KERNEL`), so a
+kernel added to the instrument needs its row in `.github/time-budgets.txt`.
+
+The control reads one worker only, where the order of the program's mappings
+is fixed; at two and four workers the order the workers map in is not. It
+sees no effect under 10 percent (adjacent grids cost the 7763 6 to 10
+percent), and only blocks the mapping calls show: not an offset of static data
+within the image or of a small block within a heap. Which launches of either
+arm land in a slow placement under address randomization is still noise of
+the ordinary comparison, which each kernel's null control bounds. Slow
+launches of one arm in each round, even one a round and at positions that
+change between rounds, also set a kernel aside: the rule cannot tell them
+from placement, and the control's two confirmation runs met that on 2 of 32
+jobs, both on EPYC 9V45 hosts.
+
+## Entries and artifacts
+
 `compare.sh BASELINE_IMAGES CANDIDATE_IMAGES FRESH_RESULTS` from the candidate
-revision is the explicit measurement entry for both image sets. Each child has
-a 60-second deadline, and the workflow bounds the campaign as a whole.
-`manifest.txt`, `raw.tsv`, `paired.tsv`, `verdict.txt` and per-process logs are
-uploaded on success or failure. The artifact also retains each arm's generated
-LLVM modules, native objects and executable images, so a regression can be
-inspected using the exact hosted code and its final linked addresses rather
+revision is the explicit measurement entry for both image sets.
+`data-placement.sh control BASELINE_IMAGES CANDIDATE_IMAGES FRESH_RESULTS` is
+the control's entry; it records the kernels `KERNELS :=` names, or `KERNELS` in
+the environment. With `WF_PERFORMANCE_PLACEMENT` naming its results,
+`judge.sh` leaves the kernels of their `aside.txt` untimed and unjudged; it
+refuses a directory without that file, and a list that names a kernel it does
+not judge or one kernel twice, before it measures anything. Each child has a
+60-second deadline, and the workflow bounds the campaign as a whole.
+`manifest.txt`, `raw.tsv`, `paired.tsv`, `verdict.txt` and per-process logs
+are uploaded on success or failure, with the control's traces, mapping
+records, `rows.tsv` and `verdict.txt`. The artifact also retains each arm's
+generated LLVM modules, native objects and executable images, so a regression
+can be inspected using the exact hosted code and its final linked addresses rather
 than a local toolchain approximation. The input identity record includes the
 host CPU report so architecture-dependent code-placement hypotheses can be
 checked against the machine that produced the samples.

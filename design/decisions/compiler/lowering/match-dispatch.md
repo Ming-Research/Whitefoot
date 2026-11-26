@@ -13,7 +13,7 @@ Every part takes one parameter list in one order: the result destination, regist
 - rejected: an agent proposed one shared dispatcher out of line; the owner rejected it, because inlining the dispatch function into each arm gives every arm its own indirect transfer.
 
 ### decision dispatch-parts-use-preserve-none-where-the-host-has-it
-The parts use `preserve_none` where a run-time probe finds the host clang takes it with a guaranteed tail call, else the C convention; unchanging values past the registers wait in the frame.
+The parts use `preserve_none` where the clang's probe, or a package's record, shows it takes it with a guaranteed tail call, else the C convention; unchanging values past registers wait in the frame.
 - rejected: an agent proposed requiring an LLVM that has the convention; the owner rejected it, because LLVM 18, still a supported host compiler, lacks it.
 - rejected: an agent proposed passing the parameters that do not fit on the stack; the owner rejected it, because E0 measured a part passing one parameter on the stack 8% slower and two 43% slower, worse than the whole-function switch (data: `research/experiments/match-dispatch/RESULTS.md`).
 - rejected: an agent proposed spilling values that change on every dispatch to the frame; the owner rejected it, because only a value that never changes costs just a load where it is read.

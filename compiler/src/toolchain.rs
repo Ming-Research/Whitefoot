@@ -2,36 +2,49 @@
 //!
 //! A released compiler can run on a host whose clang accepts different forms
 //! from the build host's clang. Probe the same executable the driver uses,
-//! once on the first request for emission facts in each process.
+//! once on the first request for emission facts in each process. A bundled
+//! package fixes its clang, so its release records the answers in
+//! `toolchain-manifest.json`; a compiler running from the package takes them
+//! when they were recorded for the clang it finds, and probes otherwise.
 
+use std::cell::Cell;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-#[cfg(test)]
-use std::process::Command;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+mod recorded_facts;
 mod resolution;
 pub use resolution::{Toolchain, resolved_toolchain};
 
-/// The source-build default retained by native test helpers.
-/// Production commands use [`resolved_toolchain`] instead.
-pub const fn clang_executable() -> &'static str {
-    if cfg!(target_os = "windows") {
-        "clang"
-    } else {
-        "/usr/bin/clang"
-    }
-}
-
 /// LLVM forms accepted by the clang on the running compiler's host.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct ToolchainFacts {
     pub(crate) preserve_none: bool,
     pub(crate) no_capture_attribute: &'static str,
     pub(crate) coro_end_result: &'static str,
     pub(crate) darwin_stack_probe_helper: bool,
+}
+
+/// Where one process's LLVM forms came from.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum FactsSource {
+    /// The package's manifest recorded them for the clang that was found.
+    Manifest,
+    /// The clang was probed. `reason` says why a package's recorded answers
+    /// were not taken; it is empty for a source build, which has none.
+    Probed { reason: Option<String> },
+}
+
+/// The forms with where they came from and what finding them cost.
+struct ResolvedFacts {
+    facts: ToolchainFacts,
+    source: FactsSource,
+    probes_run: usize,
+    /// The first line of the package clang's `--version`; none for a source
+    /// build, whose clang is never asked.
+    clang_version: Option<String>,
 }
 
 impl ToolchainFacts {
@@ -44,7 +57,15 @@ impl ToolchainFacts {
         }
     }
 
+    /// The forms the selected clang accepts, found by probing it.
+    #[cfg(test)]
     fn probe(toolchain: &Toolchain) -> Result<Self, String> {
+        Self::probe_counted(toolchain).map(|(facts, _)| facts)
+    }
+
+    /// The forms the selected clang accepts, found by probing it, and how many
+    /// probe commands that took.
+    fn probe_counted(toolchain: &Toolchain) -> Result<(Self, usize), String> {
         if toolchain.packaged {
             // A failed loader/version launch is not evidence that a newer
             // optional LLVM spelling is unsupported.
@@ -63,17 +84,21 @@ impl ToolchainFacts {
                     "cannot create the bundled clang capability-probe directory: {error}"
                 ));
             }
-            Err(_) => return Ok(conservative),
+            Err(_) => return Ok((conservative, 0)),
         };
-        let required = |result: io::Result<bool>, name: &str| match result {
-            Ok(accepted) => Ok(accepted),
-            Err(error) if toolchain.packaged => Err(format!(
-                "cannot run bundled clang capability probe {name} with {}: {error}",
-                toolchain.clang().display()
-            )),
-            Err(_) => Ok(false),
+        let run = Cell::new(0_usize);
+        let required = |result: io::Result<bool>, name: &str| {
+            run.set(run.get() + 1);
+            match result {
+                Ok(accepted) => Ok(accepted),
+                Err(error) if toolchain.packaged => Err(format!(
+                    "cannot run bundled clang capability probe {name} with {}: {error}",
+                    toolchain.clang().display()
+                )),
+                Err(_) => Ok(false),
+            }
         };
-        Ok(Self {
+        let facts = Self {
             preserve_none: required(
                 preserve_none_supported(toolchain, &directory.0),
                 "preserve_nonecc",
@@ -109,24 +134,156 @@ impl ToolchainFacts {
                     false
                 }
             },
-        })
+        };
+        Ok((facts, run.get()))
     }
 }
 
-fn probed_facts() -> Result<&'static ToolchainFacts, String> {
-    static FACTS: OnceLock<Result<ToolchainFacts, String>> = OnceLock::new();
+/// The forms for `toolchain`: a package's recorded answers when they were
+/// recorded for the clang it carries, else the probes' answers, with the
+/// reason a package's record was not taken.
+fn resolve(toolchain: &Toolchain) -> Result<ResolvedFacts, String> {
+    if !toolchain.packaged {
+        let (facts, probes_run) = ToolchainFacts::probe_counted(toolchain)?;
+        return Ok(ResolvedFacts {
+            facts,
+            source: FactsSource::Probed { reason: None },
+            probes_run,
+            clang_version: None,
+        });
+    }
+    // A package whose clang cannot even report its version is broken, and no
+    // probe answer would be evidence about it.
+    let line = toolchain.version_line()?;
+    let clang_version = String::from_utf8_lossy(line)
+        .trim_end_matches('\r')
+        .to_owned();
+    match recorded_for(toolchain, &clang_version) {
+        Ok(facts) => Ok(ResolvedFacts {
+            facts,
+            source: FactsSource::Manifest,
+            probes_run: 0,
+            clang_version: Some(clang_version),
+        }),
+        Err(reason) => {
+            let (facts, probes_run) = ToolchainFacts::probe_counted(toolchain)?;
+            Ok(ResolvedFacts {
+                facts,
+                source: FactsSource::Probed {
+                    reason: Some(reason),
+                },
+                probes_run,
+                clang_version: Some(clang_version),
+            })
+        }
+    }
+}
+
+/// What the package's manifest records for the clang whose version is
+/// `clang_version`, or why it records nothing usable.
+fn recorded_for(toolchain: &Toolchain, clang_version: &str) -> Result<ToolchainFacts, String> {
+    let path = toolchain
+        .manifest()
+        .ok_or_else(|| "the installation has no toolchain-manifest.json".to_owned())?;
+    let text = fs::read_to_string(path)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    recorded_facts::recorded(&text, clang_version)
+}
+
+/// This process's settled LLVM forms, once [`prepare_toolchain`] (or the first
+/// read of the forms) has settled them.
+static FACTS: OnceLock<Result<ResolvedFacts, String>> = OnceLock::new();
+
+fn resolved_facts() -> Result<&'static ResolvedFacts, String> {
     FACTS
-        .get_or_init(|| ToolchainFacts::probe(resolved_toolchain()?))
+        .get_or_init(|| resolve(resolved_toolchain()?))
         .as_ref()
         .map_err(Clone::clone)
 }
 
-/// Settle resolution and probes before any emission reads the infallible facts.
-/// Source builds retain their conservative probe-launch fallback; packaged
-/// resolution, scratch and launch errors stop with a toolchain diagnostic.
+/// The forms as already settled, with no resolution, no clang launch and no
+/// probe of its own: a command that never prepared the toolchain has none.
+fn settled_facts() -> Option<&'static ResolvedFacts> {
+    FACTS.get()?.as_ref().ok()
+}
+
+fn probed_facts() -> Result<&'static ToolchainFacts, String> {
+    resolved_facts().map(|resolved| &resolved.facts)
+}
+
+/// Settle resolution and the LLVM forms before any emission reads the
+/// infallible facts. Source builds retain their conservative probe-launch
+/// fallback; packaged resolution, scratch and launch errors stop with a
+/// toolchain diagnostic.
 #[doc(hidden)]
 pub fn prepare_toolchain() -> Result<(), String> {
-    probed_facts().map(|_| ())
+    resolved_facts().map(|_| ())
+}
+
+/// Where this process's LLVM forms came from and what they are, for the
+/// driver's report. `None` before [`prepare_toolchain`] has succeeded.
+#[doc(hidden)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ToolchainFactsReport {
+    /// `manifest` when the package's recorded answers were taken, `probed`
+    /// when the clang was asked.
+    pub source: &'static str,
+    /// Why a package's recorded answers were not taken, when they were not.
+    pub reason: Option<String>,
+    /// How many probe commands ran.
+    pub probes_run: usize,
+    /// The first line of the package clang's `--version`; none for a source
+    /// build.
+    pub clang_version: Option<String>,
+    /// Whether the clang takes `preserve_nonecc` with a guaranteed tail call.
+    pub preserve_none: bool,
+    /// The spelling of the no-capture parameter attribute.
+    pub no_capture_attribute: &'static str,
+    /// The result type of `llvm.coro.end`, `void` or `i1`.
+    pub coro_end_result: &'static str,
+    /// Whether the clang lowers `__chkstk_darwin`; asked on macOS only.
+    pub darwin_stack_probe_helper: Option<bool>,
+}
+
+/// The report of the forms [`prepare_toolchain`] settled. It only reads what
+/// was settled: a process that never prepared the toolchain (`check`, `fmt`, a
+/// program rejected before native construction) has none, and asking for the
+/// report starts no clang.
+#[doc(hidden)]
+#[must_use]
+pub fn toolchain_facts_report() -> Option<ToolchainFactsReport> {
+    settled_facts().map(report_of)
+}
+
+fn report_of(resolved: &ResolvedFacts) -> ToolchainFactsReport {
+    let (source, reason) = match &resolved.source {
+        FactsSource::Manifest => ("manifest", None),
+        FactsSource::Probed { reason } => ("probed", reason.clone()),
+    };
+    ToolchainFactsReport {
+        source,
+        reason,
+        probes_run: resolved.probes_run,
+        clang_version: resolved.clang_version.clone(),
+        preserve_none: resolved.facts.preserve_none,
+        no_capture_attribute: resolved.facts.no_capture_attribute,
+        coro_end_result: resolved.facts.coro_end_result,
+        darwin_stack_probe_helper: cfg!(target_os = "macos")
+            .then_some(resolved.facts.darwin_stack_probe_helper),
+    }
+}
+
+/// The sentence the driver prints when a package's recorded answers were not
+/// taken and the clang was probed instead.
+#[doc(hidden)]
+#[must_use]
+pub fn toolchain_probe_note() -> Option<String> {
+    let report = toolchain_facts_report()?;
+    let reason = report.reason?;
+    Some(format!(
+        "the clang answers recorded for this package were not taken ({reason}); probed the package's clang at run time ({} probes)",
+        report.probes_run
+    ))
 }
 
 /// The clang arguments that give every definition of the runtime's own C
@@ -310,10 +467,10 @@ fn probe_status(toolchain: &Toolchain, status: std::process::ExitStatus) -> io::
     Ok(status.success())
 }
 
-/// Runs `module` through the host clang's LLVM verifier without optimizing it
-/// (`-fverify-intermediate-code`). Whether compiling a module runs the
-/// verifier depends on how the host clang was built, so this asks for it. The
-/// module is written into `directory` as `<name>.ll`.
+/// Runs `module` through the LLVM verifier of the resolved toolchain's clang
+/// without optimizing it (`-fverify-intermediate-code`). Whether compiling a
+/// module runs the verifier depends on how that clang was built, so this asks
+/// for it. The module is written into `directory` as `<name>.ll`.
 #[cfg(test)]
 #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
 pub(crate) fn verify_llvm(
@@ -323,7 +480,9 @@ pub(crate) fn verify_llvm(
 ) -> io::Result<std::process::Output> {
     let input = directory.join(format!("{name}.ll"));
     fs::write(&input, module).expect("write verification module");
-    Command::new(clang_executable())
+    resolved_toolchain()
+        .expect("resolved toolchain")
+        .command()
         .args([
             "-x",
             "ir",
@@ -357,18 +516,39 @@ mod tests {
     fn runtime_facts_match_host_clang() {
         prepare_toolchain().expect("prepare host toolchain before reading emission facts");
         let facts = facts();
-        #[cfg(target_os = "macos")]
-        {
-            let toolchain = resolved_toolchain().expect("prepared source-build toolchain");
-            assert!(!toolchain.packaged, "native tests use the source-build default");
-            assert_eq!(toolchain.clang(), Path::new("/usr/bin/clang"));
-            // Apple clang's native large-frame lowering supports its helper.
-            // This also rejects an always-false capability probe: matching
-            // emitter text to the same false fact would not expose that bug.
+        let toolchain = resolved_toolchain().expect("prepared toolchain");
+        if std::env::var_os("WHITEFOOT_TEST_COMPILER").is_some() {
             assert!(
-                facts.darwin_stack_probe_helper,
-                "the macOS source-build default /usr/bin/clang must lower __chkstk_darwin"
+                toolchain.packaged,
+                "a run against a packaged compiler resolves the package's toolchain"
             );
+        }
+        if toolchain.packaged {
+            // The package's answers, taken from its manifest or probed, must
+            // be what the package's clang gives when it is asked afresh.
+            let asked = ToolchainFacts::probe(toolchain).expect("probe the packaged clang");
+            assert_eq!(facts.preserve_none, asked.preserve_none);
+            assert_eq!(facts.no_capture_attribute, asked.no_capture_attribute);
+            assert_eq!(facts.coro_end_result, asked.coro_end_result);
+            assert_eq!(
+                facts.darwin_stack_probe_helper,
+                asked.darwin_stack_probe_helper
+            );
+        } else {
+            let report = toolchain_facts_report().expect("a prepared toolchain reports");
+            assert_eq!(report.source, "probed");
+            assert_eq!(report.reason, None, "a source build has no package record");
+            assert!(report.probes_run >= 3, "{report:?}");
+            #[cfg(target_os = "macos")]
+            {
+                // Apple clang's native large-frame lowering supports its helper.
+                // This also rejects an always-false capability probe: matching
+                // emitter text to the same false fact would not expose that bug.
+                assert!(
+                    facts.darwin_stack_probe_helper,
+                    "the macOS source-build default clang must lower __chkstk_darwin"
+                );
+            }
         }
         let directory = ProbeDirectory::new().expect("create verification directory");
         let chosen = coroutine_module(facts.coro_end_result, facts.no_capture_attribute);
@@ -377,7 +557,7 @@ mod tests {
         let accepted = verify_llvm(&directory.0, "chosen", &chosen).unwrap_or_else(|error| {
             panic!(
                 "cannot run {} to check the probed forms: {error}",
-                clang_executable()
+                toolchain.clang().display()
             )
         });
         assert!(
@@ -416,7 +596,8 @@ mod tests {
         )
         .expect("write tail-call verification module");
         #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
-        let tail = Command::new(clang_executable())
+        let tail = toolchain
+            .command()
             .args(["-x", "ir", "-c", "-o"])
             .arg(directory.0.join("tail.o"))
             .arg(input)
@@ -428,5 +609,39 @@ mod tests {
             "runtime convention fact must agree with host code generation: {}",
             String::from_utf8_lossy(&tail.stderr)
         );
+    }
+
+    /// Every step that starts clang takes the resolved toolchain, so that a test
+    /// binary placed in a package builds with the package's clang. Only the
+    /// resolution code names the source-build default, and a path or helper
+    /// naming it anywhere else would pass through the host's clang instead.
+    #[test]
+    fn only_resolution_names_the_source_build_clang() {
+        let needles = [["/usr/bin/", "clang"].concat(), ["clang_", "executable"].concat()];
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let resolution = root.join("src/toolchain/resolution.rs");
+        let mut pending = vec![root.join("src"), root.join("tests")];
+        let mut scanned = 0_usize;
+        while let Some(directory) = pending.pop() {
+            for entry in fs::read_dir(&directory).expect("read a source directory") {
+                let path = entry.expect("read a directory entry").path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else if path.extension().is_some_and(|extension| extension == "rs")
+                    && path != resolution
+                {
+                    scanned += 1;
+                    let text = fs::read_to_string(&path).expect("read a source file");
+                    for needle in &needles {
+                        assert!(
+                            !text.contains(needle.as_str()),
+                            "{} names {needle:?}; start clang through resolved_toolchain()",
+                            path.display()
+                        );
+                    }
+                }
+            }
+        }
+        assert!(scanned > 100, "the scan found only {scanned} source files");
     }
 }
