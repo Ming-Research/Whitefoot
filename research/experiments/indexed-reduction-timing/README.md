@@ -67,7 +67,13 @@ per_histogram_ns = (wall_ns(K=REPS) - wall_ns(K=0)) / REPS
 ```
 
 `wall_ns` is the elapsed time between the shell's two `date +%s%N` readings
-around the pinned, timeout-wrapped process. The difference estimates the
+around the pinned process. The runs below were made with the process wrapped
+in `timeout 120s`, which `run.sh` no longer does: where the host's `timeout`
+polls for its child's exit in steps of 0.1 s, as the compiler-compare
+interpreter rounds on the same host did (research/experiments/
+interpreter-compare/RESULTS.md), each wall time carries that grid and a
+difference of two of them, tens of milliseconds here, is not resolved by it.
+Until the host's `timeout` is named, the table below is unconfirmed. The difference estimates the
 additional cost of the repetitions: histogram allocation and initialization,
 counting, joined combine of private copies, digest, checksum fold, loop
 overhead and histogram cleanup. Both processes include argument parsing,
