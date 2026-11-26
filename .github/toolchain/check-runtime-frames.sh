@@ -28,9 +28,13 @@ if [ "$#" -ne 2 ]; then
 fi
 package="$1"
 test_binary="$2"
-test -x "$package/bin/clang"
-test -f "$package/toolchain-manifest.json"
-test -x "$test_binary"
+fail() {
+  echo "check-runtime-frames: $1" >&2
+  exit 1
+}
+[ -x "$package/bin/clang" ] || fail "the package holds no executable bin/clang: $package"
+[ -f "$package/toolchain-manifest.json" ] || fail "the package holds no toolchain-manifest.json: $package"
+[ -x "$test_binary" ] || fail "the frame test is not an executable file: $test_binary"
 
 test_name=runtime_frames::every_runtime_c_frame_over_a_page_is_probed
 installed="$package/bin/whitefootc-runtime-frames"
@@ -49,11 +53,14 @@ if ! grep -Eq 'test result: ok\. 1 passed; 0 failed' "$log"; then
   echo 'runtime frame test did not run exactly one passing test' >&2
   exit 1
 fi
-reported=$(grep '^runtime frames compiled by ' "$log")
-if [ "$(printf '%s\n' "$reported" | wc -l | tr -d ' ')" -ne 1 ]; then
-  echo 'the test did not name its clang exactly once' >&2
+# grep -c prints 0 and exits 1 when no line matches, which `set -e` must not
+# turn into a silent exit.
+named=$(grep -c '^runtime frames compiled by ' "$log" || true)
+if [ "$named" -ne 1 ]; then
+  echo "the test named its clang $named times, not once" >&2
   exit 1
 fi
+reported=$(grep '^runtime frames compiled by ' "$log")
 # The line is "runtime frames compiled by <path>: <first line of --version>".
 python3 -I - "$package/bin/clang" "$reported" <<'PY'
 import os, subprocess, sys
