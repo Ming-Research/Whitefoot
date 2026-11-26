@@ -81,3 +81,43 @@ fn an_exit_ends_the_program_at_once_while_the_same_program_without_it_keeps_wait
     // Dropping the child stops its process group.
     drop(staying);
 }
+
+/// WAIT-2: when several contexts call `exit_now`, the first call to execute
+/// ends the execution with its status, and a host operation whose call has
+/// completed keeps its effect; where a context executes is not observable, so
+/// the outcome holds on one driver and on four alike. Four contexts released
+/// by one atomic statement race their exits, statuses 11 to 14, beside a
+/// context waiting on a guard that never holds; the entry writes its line
+/// before the release and would return status 0. Every run must end with one
+/// of the four statuses and keep the line. The race is repeated on four
+/// drivers, where the exits run on different threads at once.
+#[test]
+fn of_several_racing_exits_one_ends_the_program_with_its_status_on_one_driver_and_on_four() {
+    let program = build_program(&compile_corpus_module_program(
+        "process_exit_race",
+        "process_exit_race",
+    ));
+    for (drivers, runs) in [("1", 2), ("4", 16)] {
+        for run in 0..runs {
+            let mut command = Command::new(program.executable());
+            command
+                .env_remove("WF_WORKERS")
+                .env("WF_DRIVERS", drivers)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            let started = Instant::now();
+            let output = ProgramChild::spawn(&mut command)
+                .expect("start the racing exits")
+                .wait_with_output()
+                .expect("the racing exits end the program");
+            let code = output.status.code();
+            assert!(
+                matches!(code, Some(11..=14)),
+                "drivers {drivers}, run {run}: the status must be one exit's, after {:?}: {output:?}",
+                started.elapsed()
+            );
+            assert_eq!(output.stdout, b"go\n", "drivers {drivers}, run {run}: {output:?}");
+        }
+    }
+}

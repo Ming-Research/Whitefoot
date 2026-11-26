@@ -1,0 +1,4 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+
+public fn main(inputs: Inputs) -> status: ExitStatus pure waits doc "Starts a context that waits on a guard that never holds and four that each end the program with a status of their own once released, writes a line, then releases the four together.";
