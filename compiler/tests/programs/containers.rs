@@ -358,6 +358,35 @@ fn ordered_map_cursors_match_the_sorted_oracle_in_both_lowering_modes() {
     }
 }
 
+/// Cursors on maps shaped by interleaved insertions and removals of
+/// pseudo-random keys, where splits, borrows from either sibling, merges and
+/// root contraction leave nodes of every size side by side, agree with a
+/// membership-array oracle: the keys in ascending order, each rank the number
+/// of smaller keys, and each seek the first or last key on its side of the
+/// split the `ordered_map_seek` contract names, also for a probe that places
+/// whole runs of keys at it across node boundaries.
+#[test]
+fn ordered_map_cursors_match_a_membership_oracle_after_random_churn_in_both_lowering_modes() {
+    let sources: [(&str, &[u8]); 1] = [(
+        "containers/ordered-map-cursor-churn-program.wf",
+        include_bytes!("../../../tests/programs/containers/ordered-map-cursor-churn-program.wf"),
+    )];
+    // Status 1 reports a cursor or a map report that disagrees with the
+    // oracle, 2 a pair count consumed at release other than the oracle's.
+    for (mode, llvm) in [
+        ("sequential", compile_sources(&sources)),
+        (
+            "parallel",
+            compile_sources_with_cli_parallel_defaults(&sources),
+        ),
+    ] {
+        let output = build_program(&llvm).run_with_workers(None);
+        assert_eq!(output.status.code(), Some(0), "{mode}: {output:?}");
+        assert!(output.stdout.is_empty(), "{mode}: {output:?}");
+        assert!(output.stderr.is_empty(), "{mode}: {output:?}");
+    }
+}
+
 /// The ordered map's tree is private to `std::collections::ordered_map`
 /// [MOD-5, MOD-6]: a client that reads the map's root link is refused, while
 /// the same client reading the public length is accepted, so the refusal
