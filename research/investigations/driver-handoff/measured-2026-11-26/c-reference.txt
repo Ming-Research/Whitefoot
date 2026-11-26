@@ -1,0 +1,12 @@
+block=1 witness=c_plain contexts=1 drivers=1 ops=1930780672 ns=3000000854 ops_per_s=643593374 check=11706237673919045632 wrong=0
+block=1 witness=c_locked contexts=1 drivers=1 ops=550724608 ns=3000004366 ops_per_s=183574602 check=4054121055140105216 wrong=0
+block=2 witness=c_plain contexts=1 drivers=1 ops=1997306880 ns=3000000331 ops_per_s=665768887 check=2893004102682936320 wrong=0
+block=2 witness=c_locked contexts=1 drivers=1 ops=555373568 ns=3000003600 ops_per_s=185124301 check=661065232445848576 wrong=0
+block=3 witness=c_plain contexts=1 drivers=1 ops=1973198848 ns=3000000932 ops_per_s=657732745 check=857640252624642048 wrong=0
+block=3 witness=c_locked contexts=1 drivers=1 ops=527619072 ns=3000003185 ops_per_s=175872837 check=10242523235303767040 wrong=0
+block=4 witness=c_plain contexts=1 drivers=1 ops=2053645312 ns=3000000910 ops_per_s=684548230 check=8627506449389685760 wrong=0
+block=4 witness=c_locked contexts=1 drivers=1 ops=516497408 ns=3000001916 ops_per_s=172165693 check=16993361371781144576 wrong=0
+block=5 witness=c_plain contexts=1 drivers=1 ops=2040152064 ns=3000001393 ops_per_s=680050372 check=13751643698713083904 wrong=0
+block=5 witness=c_locked contexts=1 drivers=1 ops=525211648 ns=3000001745 ops_per_s=175070448 check=10394607562366744576 wrong=0
+block=6 witness=c_plain contexts=1 drivers=1 ops=2026300416 ns=3000001077 ops_per_s=675433230 check=17496925277761915904 wrong=0
+block=6 witness=c_locked contexts=1 drivers=1 ops=527857664 ns=3000001403 ops_per_s=175952472 check=8650759376320108544 wrong=0

@@ -1,0 +1,62 @@
+kernel: Linux 7.0.0-38-generic #38-Ubuntu SMP PREEMPT_DYNAMIC Fri Sep  4 09:10:14 UTC 2026 x86_64 GNU/Linux
+cpus: 32
+model: Intel(R) Core(TM) i9-14900K
+load: 33.56 44.73 42.49 29/1313 433539
+governor: performance
+no_turbo: 0
+base revision: 0b8b4ad348b9e75aafdf3f3dbaa034c7aba78635
+candidate revision: 58efaa8ba90d0c1914a3ba19f2ce3b697415b50f
+base compiler: adcef3d7f105f62c8f209ec9df2b7aad25a81b75be98f273cb1d3abf841e6722
+candidate compiler: 8c929e1e6b27fbe52eeb2e1389237a3f0cd93d58509a45bec503e43dd180fa60
+clang: Ubuntu clang version 22.1.8 (++20260714015917+ca7933e47d3a-1~exp1~20260714135927.17)
+images (sha256):
+  take_base 6721f219e4485193eacb4637c15bd571bcf6f25a417669127384fde4785b83a6
+  take_twin 6721f219e4485193eacb4637c15bd571bcf6f25a417669127384fde4785b83a6
+  take_candidate 0457c7ca4bcc7e7617a7f621913eef46db934727d9d61f15e6a00fcf50a3e567
+  own_base d2cca5b46263838047483908818fe1b3e2b75b218f05817f51b6ddbf3ce37a01
+  own_twin d2cca5b46263838047483908818fe1b3e2b75b218f05817f51b6ddbf3ce37a01
+  own_candidate 3e43bf9fce65ac3c414d1ed4c29ca6b50111a2b0c4445da0612691a77226dac7
+emitted LLVM call sites:
+  take base: wf__shared_take=0 wf__atomic_group_acquire/take=2 wf__shared_acquire=12
+  take candidate: wf__shared_take=0 wf__atomic_group_acquire/take=2 wf__shared_acquire=12
+  take: base and candidate emit identical LLVM
+  own base: wf__shared_take=0 wf__atomic_group_acquire/take=2 wf__shared_acquire=13
+  own candidate: wf__shared_take=0 wf__atomic_group_acquire/take=2 wf__shared_acquire=13
+  own: base and candidate emit identical LLVM
+cpu map (CPU, core, max MHz):
+CPU CORE    MAXMHZ
+  0    0 5700.0000
+  1    0 5700.0000
+  2    1 5700.0000
+  3    1 5700.0000
+  4    2 5700.0000
+  5    2 5700.0000
+  6    3 5700.0000
+  7    3 5700.0000
+  8    4 6000.0000
+  9    4 6000.0000
+ 10    5 6000.0000
+ 11    5 6000.0000
+ 12    6 5700.0000
+ 13    6 5700.0000
+ 14    7 5700.0000
+ 15    7 5700.0000
+ 16    8 4400.0000
+ 17    9 4400.0000
+ 18   10 4400.0000
+ 19   11 4400.0000
+ 20   12 4400.0000
+ 21   13 4400.0000
+ 22   14 4400.0000
+ 23   15 4400.0000
+ 24   16 4400.0000
+ 25   17 4400.0000
+ 26   18 4400.0000
+ 27   19 4400.0000
+ 28   20 4400.0000
+ 29   21 4400.0000
+ 30   22 4400.0000
+ 31   23 4400.0000
+pilot: 0  blocks: 6  millis: 3000
+arms: Tb Tc Tt Ob Oc Ot
+cpu lists: 0 0,2

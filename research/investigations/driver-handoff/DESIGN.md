@@ -769,6 +769,103 @@ widened. The scripts are `research/experiments/handoff-yield-check/` and
    commands run for microseconds, would show that the trigger fires where no
    context computes for long, and is reported to the owner.
 
+### First 14900K run: the host was not idle
+
+Run [45812772918](https://github.com/Ming-Research/Whitefoot/actions/runs/45812772918),
+2026-11-26 11:43 to 12:17 UTC, base 0b8b4ad34 against candidate 58efaa8ba,
+whose runtime is this change's (later commits change only comments in
+`bridge.h` and `frames.rs` and the latency script's summary). The data are in
+`measured-2026-11-26/`. Other projects' and works' compiler builds were running
+on the host during the whole run. The idle check before the runs found load
+averages of 32, 45 and 43 on 32 logical CPUs and 98 percent of all CPUs busy
+(`host-load.txt`); the script warned and went on. Most fixed-cost blocks ran
+with 50 to 100 percent of the host busy (`fixed-cost.tsv`, column
+`host_busy`), and Firn's base reached 273,028 requests a second at one CPU
+and depth 1 against 485,895 on the idle host of run 38057973380 above. In
+addition, fast run 45815451489 of this work ran its tests on the same host
+from 11:59:20 to 12:01:43, during the one-CPU Firn passes 2 (base) and 3
+(base and candidate) (`firn-passes.csv`: the times of each pass's first and
+last result). So the run tests the criteria above on a loaded host only.
+Read by those criteria:
+
+1. Ready context (`latency.tsv`, shape `ready`). Base: 250 in each of its
+   64 attempts at one driver and 128 at two, none with a reassignment.
+   Candidate: every attempt showed a reassignment. The statuses were:
+
+   | Drivers | Attempts | Status 1 to 3 | Over 3 | Largest | Median |
+   |---|---|---|---|---|---|
+   | 1 | 64 | 55 | 9 | 10 | 2 |
+   | 2 | 64 | 56 | 8 | 14 | 2 |
+
+   The criterion rejects the bound on this run: 17 attempts started more
+   than 4 ms after becoming ready. The run cannot tell whether the bound
+   holds when the monitor and the spare are not competing with other work
+   for CPUs. It has to be measured again on an idle host.
+2. Polling shape (`latency.tsv`, shape `poll`), lateness in milliseconds of
+   the 16 sleeps and the read, 64 runs per side:
+
+   | Route, drivers | Base median | Base over 3 | Candidate median | Candidate over 3 | Candidate largest | Candidate yield requests |
+   |---|---|---|---|---|---|---|
+   | io_uring, 1 | 0 | 2 | 1 | 11 | 19 | 1,724 |
+   | no ring, 1 | 0 | 1 | 1 | 8 | 6 | 1,733 |
+   | io_uring, 2 | 0 | 0 | 0 | 0 | 0 | 1 |
+
+   On poll_contexts.wf's shape (shape `turn`), the median wall time of a
+   whole run was 985 µs for base and 1,997 µs for the candidate, with one
+   yield request a run: the waiting reader's turn now comes at the
+   monitor's request, about 1 ms later, as `yield_check` traded.
+3. Fixed cost of an atomic statement (`fixed-cost.tsv`; `c-reference.txt`:
+   the C loop takes 1.491 ns per plain increment and 5.685 ns with a spin
+   lock around it, medians of six blocks). The medians over all six blocks
+   are, in ns per statement: `own` on one CPU, base 17.16, candidate 16.40,
+   twin 16.06; on two CPUs, 7.96, 7.95 and 8.09; `take` on one CPU 33.28,
+   33.61 and 31.43; on two CPUs 16.55, 22.76 and 19.42. The twin's blocks
+   alone spread from 13.78 to 21.38 ns (`own`, one CPU) and from 15.13 to
+   27.19 ns (`take`, two CPUs). By the criterion, the claim is not rejected,
+   but these blocks cannot show a change that small. Blocks with less than
+   30 percent of the host busy were selected after reading the data, so
+   this reading is exploratory. In them, `own` on one CPU took 13.74 and
+   13.78 ns (candidate) and 13.78 and 13.80 ns (twin), with no base block
+   that quiet. On two CPUs it took 6.83 and 6.87 (candidate), 6.85 and 6.88
+   (twin), and 7.09 and 7.25 (base). `take` on one CPU took 31.38, 31.44
+   and 33.45 (candidate), 31.26 to 31.39 (twin) and 31.21 to 31.25 (base).
+   On two CPUs it took 15.16 and 15.24 (candidate), 15.13 (twin) and 15.24
+   (base). The base and the twin are one image, yet they differ by up to 4
+   percent in these blocks (`own` on two CPUs). So even the quiet blocks do
+   not measure the removed count.
+4. Firn (`firn-compare.csv`). With every pass, all 12 cells are undecided:
+   each base-twin interval is wider than 10 percent, from [0.683, 0.912]
+   (set, depth 1, one CPU) to [0.893, 6.197] (set, depth 16, two CPUs).
+   Without the passes the fast run overlapped (one CPU, passes 2 and 3),
+   two passes remain in each one-CPU cell:
+
+   | Test, depth | Twin ÷ base | Candidate ÷ base, median (per pass) | Reading |
+   |---|---|---|---|
+   | set, 16 | [0.988, 1.026] | 0.792 (0.783, 0.801) | below |
+   | set, 1 | [0.890, 0.912] | 0.662 (0.796, 0.528) | below |
+   | get, 16 | [0.839, 0.870] | 0.689 (0.919, 0.459) | below |
+   | get, 1 | [0.925, 1.191] | 0.799 (1.056, 0.543) | undecided |
+   | mset, 16 | [0.833, 1.725] | 1.441 (0.939, 1.943) | undecided |
+   | mset, 1 | [0.761, 3.570] | 1.457 (1.134, 1.779) | undecided |
+
+   The two-CPU cells stay undecided. The passes that remain were as loaded
+   as the ones taken out, and a candidate pass varies by a factor of two
+   (0.459 to 0.919 in get at depth 16). So three cells fall below their
+   interval, but two passes on a loaded host cannot separate the change
+   from the other work. There is also a way for the change itself to cost
+   throughput only on a loaded host. If the host deschedules a Firn driver
+   thread for more than 2 ms in the middle of a run, the monitor sees a long
+   run, asks it to yield and then hands the role to a spare. With one
+   server CPU, that spare shares the CPU. The yield-request and
+   reassignment counts would show whether this happened, but they were not
+   recorded: `WF_SCHED_REPORT=2` prints them only as the program exits.
+   Firn never reads its stop requests, and `redis-bench.sh` ends it with a
+   signal, so `compare-sched.txt` stayed empty.
+
+Acceptance 10 and 12 of item 159 are therefore not shown, and 11 lacks the
+Firn counts. All three need a run on an idle host and a way to read the
+counts from a Firn that is stopped.
+
 ### The runtime test fails on each removed condition
 
 `driver_service_test.c` was built and run on mutants of `bridge.c`, each

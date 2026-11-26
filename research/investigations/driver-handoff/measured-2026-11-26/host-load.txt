@@ -1,0 +1,4 @@
+11:43:51 UTC load: 32.36 45.31 42.63 37/1364 409517; busy share of all CPUs over 5 s: 0.9781
+11:43:51 UTC the host is not idle; stop its other work first
+11:43:51 UTC the host was not idle before the runs; see the load above
+11:44:09 UTC load: 33.56 44.73 42.49 29/1313 433539
