@@ -101,9 +101,11 @@ already terminal when detached, and `stolen_contexts` counts individual
 contexts moved from another ready queue. Cancelled sleeps do not count as
 due sleeps completed. `reassignments` counts role transfers into RESERVED,
 `ingress_commits` counts displaced native returns published after unwind,
-and `reserve_misses` counts due-deadline probes with no available spare;
-these three belong to the transferred or waiting role and their totals also
-appear in the table. An arm-a timer improvement with a reassignment can thus
+`reserve_misses` counts handoff attempts that found no available spare
+(due-deadline probes before item 159, attempts one monitor period after a
+yield request since), and `yield_requests` counts runs the monitor asked to
+yield at their next waiting boundary; these belong to the transferred or
+waiting role, and the first three's totals also appear in the table. An arm-a timer improvement with a reassignment can thus
 be distinguished from idle-driver borrowing. These are observations, never
 scheduling inputs. The table does not establish the internal 25 ms deadline
 criterion or the ordinary-I/O cost criterion; those still need their own
