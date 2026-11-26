@@ -192,6 +192,19 @@ package, which names Apple's `/usr/bin/clang`: it fails with "the runtime was
 compiled by another clang than the package's", status 1. On the line the test
 prints beside the package's clang it passes, status 0.
 
+The acceptance's frame check, through the release workflow's push dry run
+(`compiler-release.yml`, which builds and packages the pushed commit as a
+bundled package and runs `package-acceptance.yml` on it, publishing nothing).
+Every row is a job of the acceptance's qualification, which ends with
+`check-runtime-frames.sh` on the installed package: in the stock
+`ubuntu:24.04` container on Linux, under the host-clang denial on macOS.
+
+| Commit | Run | Frame check |
+| --- | --- | --- |
+| `3441d6632` (the implementation) | [45729610580](https://github.com/Ming-Research/Whitefoot/actions/runs/45729610580) | macOS job 139611446773 and Linux jobs 139611446749 and 139611446782 pass it: the test ran once, passed, and printed the installed package's `bin/clang-22`, `clang version 22.1.8 (… ca7933e47d3a…)`; the Linux jobs then failed at their summary line, as above |
+| `87e97069c`, the Linux and Darwin-inline arguments emptied | [45731598465](https://github.com/Ming-Research/Whitefoot/actions/runs/45731598465) | fails on every platform, jobs 139617593428 (macOS), 139617593473 and 139617593443 (Linux): `wf_file_wait_readiness` 32832 and 32808 static, unprobed, probes `[]`, test status 101 |
+| `536e2a917`, only the three acceptance files on the main before this work | [45731598441](https://github.com/Ming-Research/Whitefoot/actions/runs/45731598441) | fails on every platform, jobs 139617605116 (macOS), 139617605124 and 139617605072 (Linux): `running 0 tests`, "runtime frame test did not run exactly one passing test" |
+
 Defects these runs found in the first trials of the check, each fixed:
 
 - The first ablation of the LLVM unit stored one byte into a 64 KiB alloca.
