@@ -1,0 +1,73 @@
+# Keeps on the 14900K the build each new work of the wf-agents engine starts
+# from, and removes the builds no work uses any more (.github/fast-state.sh).
+#
+# fast.yml keeps each work's build of the tests in
+# $HOME/fast-state/Whitefoot/<work>/, and a work's first run copies
+# .../main/. After each push to main, this workflow moves .../main/ to the
+# commit pushed and builds the tests there as fast.yml builds them, so that a
+# new work builds again only what its branch changed. Then, and once a day
+# where nothing is pushed, it removes each work's directory that no run has
+# used for 24 hours.
+#
+# It runs on a push to main and on its schedule, never on a pull request: the
+# repository is public, and the runner is the owner's machine. No step
+# pushes, so the checkout keeps no token.
+name: fast-state
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One at a time; a newer push makes an older build of main not worth ending.
+concurrency:
+  group: fast-state
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+
+jobs:
+  main:
+    runs-on: [self-hosted, 14900k]
+    # Main's first build is from nothing.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: false
+          persist-credentials: false
+
+      - name: Clear what the last run left
+        run: git clean -ffdxq -e /compiler/target/
+
+      - name: Set up the machine's tools
+        run: |
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.cargo/bin:$PATH"
+          missing=
+          for tool in /usr/bin/clang ld.lld cargo rustc flock git; do
+            command -v "$tool" >/dev/null || missing="$missing $tool"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::The machine lacks:$missing"
+            exit 1
+          fi
+          (cd compiler && rustc --version && cargo --version)
+          echo "CARGO_BUILD_JOBS: ${CARGO_BUILD_JOBS:-not set, so as many as cargo chooses}"
+
+      # Only main's own commits: a scheduled run or one by hand builds main's
+      # last commit too.
+      - name: Build main's tests
+        if: ${{ github.ref == 'refs/heads/main' }}
+        run: bash .github/fast-state.sh refresh "$GITHUB_WORKSPACE"
+
+      - name: Remove the builds no run has used for a day
+        if: ${{ !cancelled() }}
+        run: bash .github/fast-state.sh clean
