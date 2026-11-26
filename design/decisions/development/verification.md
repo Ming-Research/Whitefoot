@@ -54,7 +54,7 @@ A Linux column the owner adds for a model with fewer than 20 runs of a stage tak
 ### decision candidate-compiler-build-budget-is-set-per-processor
 The candidate compiler's build budget follows the table's rule per processor class over cold builds after the toolchain warm-up: 160 s on the EPYC 7763, 185 s on the 9V74, 140 s on the 9V45.
 - replaced: One budget for every Linux class (145 s, 160 s since the tenth added to every Linux budget) was on main; the owner changed it, because the 145 s had been exceeded four times, up to 152.0 s, and the classes differ in speed (data: `research/investigations/test-economy/time-budgets.md`).
-- replaced: Values the owner set per class (165, 150, 135 and 165 s) were on main; the owner changed it, because they were set from builds whose first took 7% longer than a second, which loosened them (data: `research/investigations/test-economy/time-budgets.md`).
+- replaced: A budget the owner set per class (165, 150, 135 and 165 s) was on main; the owner changed it, because it was set from builds whose first took 7% longer than a second, which loosened it (data: `research/investigations/test-economy/time-budgets.md`).
 
 ### decision the-xeon-6975p-has-a-budget-column
 The budget table has a column for the Xeon 6975P-C, which took 56% of the sampled hosted jobs; it is an owner column whose cells started at each row's largest Linux value.
