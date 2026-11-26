@@ -752,33 +752,7 @@ fn e1_collect(step: usize, programs: bool) {
             };
             program_report.push_str(&format!("program {name} {shown}\n"));
         }
-        let firn = root.join("apps/firn");
-        whitefoot::e1::label("app:firn");
-        let Ok(graph) =
-            form_module_program_graph(&firn.join("modules.wfg"), CompilerLimits::default())
-        else {
-            panic!("firn's graph must form");
-        };
-        let sources = discover_module_sources(&firn, &graph)
-            .unwrap_or_else(|failure| panic!("firn's records: {failure}"));
-        let inputs: Vec<_> = sources
-            .iter()
-            .map(|source| {
-                SourceInput::new(&source.logical_path, &source.bytes)
-                    .in_module(source.module, source.role)
-            })
-            .collect();
-        let verdict = check_module_program(&graph, &inputs, CompilerLimits::default()).and_then(
-            |()| {
-                check_module_entry(
-                    &graph,
-                    &inputs,
-                    ModuleEntry::Named("firn"),
-                    CompilerLimits::default(),
-                )
-            },
-        );
-        program_report.push_str(&format!("app firn {}\n", verdict.is_ok()));
+        program_report.push_str(&format!("app firn {}\n", e1_firn()));
     }
     let total_seconds = started.elapsed().as_secs_f64();
     let script = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -827,6 +801,128 @@ fn e1_collect(step: usize, programs: bool) {
     assert!(failures.is_empty(), "E1 changed verdicts: {failures:?}");
     assert!(refused, "the E1 analysis accepted a file missing a record row");
     assert!(analysis.status.success(), "E1 analysis failed");
+}
+
+/// E1: `apps/firn` checked as `--graph apps/firn/modules.wfg --entry firn`,
+/// under the label `app:firn`; whether it is accepted.
+fn e1_firn() -> bool {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let firn = root.join("apps/firn");
+    whitefoot::e1::label("app:firn");
+    let Ok(graph) =
+        form_module_program_graph(&firn.join("modules.wfg"), CompilerLimits::default())
+    else {
+        panic!("firn's graph must form");
+    };
+    let sources = discover_module_sources(&firn, &graph)
+        .unwrap_or_else(|failure| panic!("firn's records: {failure}"));
+    let inputs: Vec<_> = sources
+        .iter()
+        .map(|source| {
+            SourceInput::new(&source.logical_path, &source.bytes)
+                .in_module(source.module, source.role)
+        })
+        .collect();
+    check_module_program(&graph, &inputs, CompilerLimits::default())
+        .and_then(|()| {
+            check_module_entry(&graph, &inputs, ModuleEntry::Named("firn"), CompilerLimits::default())
+        })
+        .is_ok()
+}
+
+/// E1: each record's ordinary answer and route in one configuration's rows,
+/// keyed by label, scope, function, record, kind and site, with every
+/// occurrence kept (a function judged twice has two).
+fn e1_ordinary_answers(
+    path: &Path,
+    config: &str,
+) -> std::collections::BTreeMap<Vec<String>, Vec<(String, String)>> {
+    let mut answers: std::collections::BTreeMap<Vec<String>, Vec<(String, String)>> =
+        std::collections::BTreeMap::new();
+    let text = std::fs::read_to_string(path).expect("E1 rows");
+    for line in text.lines().skip(1) {
+        let cells: Vec<&str> = line.split('\t').collect();
+        if cells.get(1) != Some(&config)
+            || matches!(cells.get(7), Some(&"records-total" | &"range-clause"))
+        {
+            continue;
+        }
+        let key = [0, 2, 4, 5, 7, 8].iter().map(|&i| cells[i].to_owned()).collect();
+        answers.entry(key).or_default().push((cells[9].to_owned(), cells[10].to_owned()));
+    }
+    for values in answers.values_mut() {
+        values.sort();
+    }
+    answers
+}
+
+/// E1: the records whose ordinary answers or routes differ between two runs.
+fn e1_answer_differences(
+    off: &std::collections::BTreeMap<Vec<String>, Vec<(String, String)>>,
+    on: &std::collections::BTreeMap<Vec<String>, Vec<(String, String)>>,
+) -> Vec<String> {
+    off.keys()
+        .chain(on.keys())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .filter(|key| off.get(*key) != on.get(*key))
+        .map(|key| format!("{} off={:?} on={:?}", key.join(" "), off.get(key), on.get(key)))
+        .collect()
+}
+
+/// E1: ordinary entailment's answer and route for every record are the same
+/// with the shadow off (today's compiler, rows only) and on (every function
+/// walked, S7 intervals captured everywhere), on every 60th conformance case
+/// and `apps/firn`.
+#[test]
+#[ignore = "E1 experiment: run by name"]
+fn e1_onoff() {
+    let _serial = E1_SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let scratch = std::env::var_os("WHITEFOOT_SCRATCH_ROOT")
+        .map_or_else(std::env::temp_dir, PathBuf::from)
+        .join(format!("e1-onoff-{}", std::process::id()));
+    std::fs::create_dir_all(&scratch).expect("E1 scratch directory");
+    let cases = corpus::load();
+    let mut runs = Vec::new();
+    for (off, name, config) in [(true, "off.tsv", "off"), (false, "on.tsv", "baseline")] {
+        let rows = scratch.join(name);
+        std::fs::write(&rows, format!("{}\n", whitefoot::e1::HEADER)).expect("E1 header");
+        whitefoot::e1::set_off(off);
+        whitefoot::e1::open(&rows);
+        let mut sampled = 0;
+        for case in cases.iter().step_by(60) {
+            whitefoot::e1::label(&case.id);
+            let _ = e1_check(case);
+            sampled += 1;
+        }
+        let firn = e1_firn();
+        runs.push((e1_ordinary_answers(&rows, config), sampled, firn));
+    }
+    whitefoot::e1::set_off(false);
+    let (off, sampled, firn_off) = &runs[0];
+    let (on, _, firn_on) = &runs[1];
+    // The comparison must see one changed answer.
+    let mut changed = off.clone();
+    if let Some(values) = changed.values_mut().next() {
+        values[0].0 = format!("{}-changed", values[0].0);
+    }
+    let caught = e1_answer_differences(&changed, off).len();
+    let differences = e1_answer_differences(off, on);
+    let records: usize = off.values().map(Vec::len).sum();
+    let _ = std::io::stderr().write_all(
+        format!(
+            "E1 ONOFF cases {sampled} firn {firn_off}/{firn_on} records off {records} on {} \
+             differences {} changed-copy differences {caught}\n{}",
+            on.values().map(Vec::len).sum::<usize>(),
+            differences.len(),
+            differences.iter().take(20).map(|line| format!("DIFF {line}\n")).collect::<String>(),
+        )
+        .as_bytes(),
+    );
+    assert_eq!(caught, 1, "the comparison missed a changed answer");
+    assert!(records > 0, "the sample wrote no record");
+    assert!(firn_off && firn_on, "firn must be accepted both ways");
+    assert!(differences.is_empty(), "the shadow changed ordinary answers");
 }
 
 /// The source verdict alone: the check path of `build` for every case.

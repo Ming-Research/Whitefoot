@@ -337,7 +337,7 @@ impl Analyzer<'_, '_> {
         expression: &CheckedExpression,
         state: &FactState,
     ) {
-        if !self.input.range_participant && !crate::semantic::range_judgment::e1::data() {
+        if !self.input.range_participant && !crate::semantic::range_judgment::e1::captures() {
             return;
         }
         let Some(shape) = operation_shape(expression) else {

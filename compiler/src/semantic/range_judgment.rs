@@ -410,7 +410,13 @@ fn e1_shadow<'p>(
         let deferred = (0..function.obligations.len())
             .map(|index| (index, walk::DeferredAnswer::Pending))
             .collect();
-        let ((answers, imprecise), counted, nanos) = e1::shadow(config, || {
+        let ((answers, imprecise), counted, nanos) = if config == e1::Config::Off {
+            let answers = (0..function.obligations.len())
+                .map(|index| (index, walk::DeferredAnswer::Pending))
+                .collect();
+            ((answers, false), std::collections::BTreeMap::new(), 0)
+        } else {
+            e1::shadow(config, || {
             let mut walker = walk::Walker::new(
                 functions,
                 nominals,
@@ -423,7 +429,8 @@ fn e1_shadow<'p>(
             );
             walker.run();
             (walker.deferred, walker.imprecise.is_some())
-        });
+            })
+        };
         if !e1::data() {
             continue;
         }

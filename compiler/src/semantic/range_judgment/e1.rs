@@ -7,7 +7,10 @@
 //! shadow's answers and counts go only to the file. `WHITEFOOT_E1_TIMING=1`
 //! runs one shadow walk per function, in the configuration
 //! `WHITEFOOT_E1_JOIN` names (`selector` or `weakest`), with no counters, and
-//! prints the phase totals at exit through [`timing_totals`].
+//! prints the phase totals at exit through [`timing_totals`]. With the file
+//! open and [`set_off`] on, no shadow walk runs and the extra interval
+//! capture stays off: the rows then carry today's ordinary answers alone, for
+//! comparison with the rows of a run with the shadow on.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet};
@@ -28,6 +31,8 @@ pub(crate) enum Config {
     Remedy,
     /// `Remedy` and, at each join, the weakest common bound.
     RemedyJoin,
+    /// No shadow walk: the ordinary answers alone.
+    Off,
 }
 
 impl Config {
@@ -36,6 +41,7 @@ impl Config {
             Self::Baseline => "baseline",
             Self::Remedy => "remedy",
             Self::RemedyJoin => "remedy+join",
+            Self::Off => "off",
         }
     }
 }
@@ -43,6 +49,7 @@ impl Config {
 static OUTPUT: OnceLock<Mutex<Option<std::fs::File>>> = OnceLock::new();
 static OPENED: AtomicBool = AtomicBool::new(false);
 static LABEL: Mutex<String> = Mutex::new(String::new());
+static OFF: AtomicBool = AtomicBool::new(false);
 
 /// Nanoseconds spent, for the timing mode's totals.
 static ORDINARY_NANOS: AtomicU64 = AtomicU64::new(0);
@@ -94,6 +101,18 @@ pub(crate) fn data() -> bool {
     OPENED.load(Ordering::Relaxed)
 }
 
+/// Turns the shadow off while the counters are written: rows then carry the
+/// ordinary answers alone.
+pub fn set_off(off: bool) {
+    OFF.store(off, Ordering::Relaxed);
+}
+
+/// Whether ordinary entailment captures S7 operand intervals in every
+/// function, for the shadow walk, rather than in range participants alone.
+pub(crate) fn captures() -> bool {
+    data() && !OFF.load(Ordering::Relaxed)
+}
+
 /// Whether the timing mode runs one uncounted shadow walk per function.
 pub(crate) fn timing() -> bool {
     static TIMING: OnceLock<bool> = OnceLock::new();
@@ -102,7 +121,9 @@ pub(crate) fn timing() -> bool {
 
 /// The configurations each function's shadow walk runs in.
 pub(crate) fn configs() -> Vec<Config> {
-    if data() {
+    if data() && OFF.load(Ordering::Relaxed) {
+        vec![Config::Off]
+    } else if data() {
         vec![Config::Baseline, Config::Remedy, Config::RemedyJoin]
     } else if timing() {
         match std::env::var("WHITEFOOT_E1_JOIN").as_deref() {

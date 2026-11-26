@@ -39,7 +39,7 @@ pub use toolchain::clang_executable;
 /// Experiment E1 (`research/investigations/derivation-ceiling`): the shadow
 /// derivation's counter file. Instrument API of an unmerged experiment branch.
 pub mod e1 {
-    pub use crate::semantic::range_judgment::e1::{HEADER, label, open, timing_totals};
+    pub use crate::semantic::range_judgment::e1::{HEADER, label, open, set_off, timing_totals};
 }
 #[doc(hidden)]
 pub use toolchain::{
