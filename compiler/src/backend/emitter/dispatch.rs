@@ -822,8 +822,12 @@ impl FunctionEmitter<'_, '_> {
         // hands no pin to a callee. Keep them live without treating those
         // unconditional stores as readers for the spill order.
         part_reads.extend(invariant.pins.iter().map(|(_, canonical)| *canonical));
-        parameters.retain(|(value, _, role)| {
-            !matches!(role, Role::Hoisted | Role::Invariant) || part_reads.contains(value)
+        parameters.retain(|(value, _, role)| match role {
+            Role::Hoisted => part_reads.contains(value),
+            // A reference the loop only projects, or hands to callees that
+            // keep its box, reaches no part: they take its box's projection.
+            Role::Invariant => part_reads.contains(value) && !invariant.unread.contains(value),
+            _ => true,
         });
         let (convention, registers) = convention(self.target.triple());
         let mut scratch = References::default();
@@ -1542,10 +1546,14 @@ impl FunctionEmitter<'_, '_> {
     }
 
     /// What the loop cannot change. A header parameter is passed through
-    /// when every edge back to the header gives it its own value; it holds
-    /// a read-only reference when the one edge into the loop gives it one of
-    /// the function's read-only reference parameters, whose referents the
-    /// function does not write [EFF-2, EFF-5]. A header instruction that
+    /// when every edge back to the header gives it its own value, and a value
+    /// defined before the loop and read inside it cannot change either: both
+    /// are candidates for what follows, and a reference the loop reads
+    /// without any header parameter carrying it is the second kind. A header
+    /// parameter holds a read-only reference when the one edge into the loop
+    /// gives it one of the function's read-only reference parameters, whose
+    /// referents the function does not write [EFF-2, EFF-5], and a
+    /// read-only reference parameter read directly is one itself. A header instruction that
     /// projects a box's referent or reads a container's measure through such
     /// a reference, or through a value so hoisted, is hoisted into the
     /// enclosing function. A passed-through parameter nothing else in the
@@ -1675,6 +1683,19 @@ impl FunctionEmitter<'_, '_> {
             if readonly.contains(value) {
                 rooted.insert(*value);
             }
+            // A function parameter the loop reads directly reaches the parts
+            // with the facts it has in the function, as a header parameter
+            // holding the same pointer does.
+            if self.storage.slot(*value).is_none()
+                && let Some(index) = function_parameters
+                    .iter()
+                    .position(|parameter| parameter == value)
+                && let Some((_, ty)) = self.function.parameters().get(index)
+                && let Ok(facts) = self.reference_parameter_facts(index, *ty)
+                && !facts.is_empty()
+            {
+                result.facts.insert(*value, facts);
+            }
         }
         for (index, instruction) in header.instructions().iter().enumerate() {
             let IrInstruction::Define {
@@ -1774,10 +1795,30 @@ impl FunctionEmitter<'_, '_> {
         // that box, and no other reference reaches it [EFF-5]. Its
         // projections are hoisted, and such a callee receives a part-local
         // slot holding the hoisted box.
-        for (position, parameter) in parameters.iter().enumerate() {
-            if !passed_through[position] || self.storage.slot(*parameter).is_some() {
-                continue;
-            }
+        // The references the loop may keep one box of: the header parameters
+        // it passes through, and the values it reads that are defined before
+        // it (which have no place among the header's parameters).
+        let mut candidates: Vec<(Option<usize>, IrValueId)> = parameters
+            .iter()
+            .enumerate()
+            .filter(|(position, parameter)| {
+                passed_through[*position] && self.storage.slot(**parameter).is_none()
+            })
+            .map(|(position, parameter)| (Some(position), *parameter))
+            .collect();
+        candidates.extend(
+            plan.invariants
+                .iter()
+                .filter(|value| {
+                    self.storage.slot(**value).is_none()
+                        && !self
+                            .frame
+                            .slots
+                            .contains_key(&FunctionSlot::Address(**value))
+                })
+                .map(|value| (None, *value)),
+        );
+        for (position, parameter) in &candidates {
             let mut projections: Vec<(usize, usize, IrValueId)> = Vec::new();
             let mut kept_arguments: Vec<IrValueId> = Vec::new();
             let mut pinned = true;
@@ -1838,7 +1879,8 @@ impl FunctionEmitter<'_, '_> {
                             let onward = target_parameters
                                 .get(argument_position)
                                 .map(|(value, _)| *value);
-                            let own_place = *target == plan.header && argument_position == position;
+                            let own_place =
+                                *target == plan.header && Some(argument_position) == *position;
                             let alias = plan.region[target.index()]
                                 && onward.is_some_and(|value| root(&value) == *parameter);
                             pinned &= own_place || alias;
