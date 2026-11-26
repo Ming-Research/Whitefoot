@@ -102,7 +102,7 @@ Paired performance compiles each revision's own formal version of the same workl
 
 ### decision performance-comparison-warms-the-toolchain-first
 The paired performance comparison fetches the locked crates and reads the Rust toolchain in one untimed step before its first compiler build, outside every labeled stage.
-- rejected: an agent proposed building the candidate compiler once untimed first, as the kernel images are; the owner rejected it, because it removes any first-use cost but adds a cold build of 85 to 146 s to every run (data: `research/investigations/test-economy/time-budgets.md`).
+- rejected: an agent proposed building the candidate compiler once untimed first, as the kernel images are; the owner rejected it, because it removes any first-use cost but adds a cold build of 89 to 147 s to every run (data: `research/investigations/test-economy/candidate-build-samples-2026-11.tsv`).
 
 ### decision conformance-cases-are-only-runnable
 Conformance has only the `runnable` manifest status and pass or fail outcomes; an unexpected unsupported stop fails the case.
