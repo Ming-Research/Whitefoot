@@ -107,7 +107,7 @@ DOCKER_IMAGE ?= wf-io-bench:linux
 
 .PHONY: programs-check build prepare compiler gen verify bench bench-pipe linux linux-image expected clean chain \
 	read-build read-gen read-uncache read-settle read-warm read-verify expected-read bench-read \
-	linux-read net-tools uring-check net-verify linux-net
+	linux-read net-tools uring-check net-verify linux-net net-scale net-scale-check
 
 build: prepare compiler $(BUILD)/gen $(BUILD)/baseline $(BUILD)/runner \
 	$(BUILD)/pipe_producer $(BUILD)/pipe_harness \
@@ -533,6 +533,9 @@ chain: $(BUILD)/chain $(BUILD)/gen
 #   make uring-check  the io_uring reference's own deterministic traces
 #   make net-verify   every server against netload at 4 connections
 #   make linux-net    the protocol, here
+#   make net-scale-check  the sweep's summary and the CPU placement against fabricated input
+#   make net-scale    the core-count sweep, here (SCALE_CORES, SCALE_CONNECTIONS,
+#                     SCALE_ROUNDTRIPS, CLIENT_CPU_LIST, ... in linux-net-bench.sh)
 NET_OUT := $(WORK)/net
 NET_ROUNDS ?= 5
 NET_WARMUP ?= 1
@@ -591,6 +594,21 @@ linux-net:
 		CARGO_TARGET_DIR=$(ROOT)/compiler/target \
 		ROUNDS=$(NET_ROUNDS) WARMUP=$(NET_WARMUP) \
 		sh linux-net-bench.sh
+
+# The core-count sweep of research/investigations/echo-scaling: the servers
+# pinned to 1, 2, 4 and 8 CPUs against one fixed client, and the summary's
+# verdict on each doubling. Linux only; it measures, so it runs where the
+# investigation says (the io-bench workflow's scale_echo job).
+net-scale-check:
+	sh echo-scale-summary-check.sh
+	sh placement-check.sh
+
+net-scale: net-scale-check
+	@mkdir -p $(NET_OUT)
+	env ROOT=$(ROOT) OUT=$(NET_OUT) CLANG=$(CLANG) \
+		CARGO_TARGET_DIR=$(ROOT)/compiler/target \
+		ROUNDS=$(NET_ROUNDS) WARMUP=$(NET_WARMUP) \
+		sh linux-net-bench.sh scale
 
 clean:
 	rm -rf $(WORK)
