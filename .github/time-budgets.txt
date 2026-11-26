@@ -98,10 +98,12 @@ linux-deque-tsan                10         10         10         10          -  
 linux-runtime-tsan              10         10         10         10          -      -
 
 # io-hosts.yml, completion-windows: every run step of the job but two runs under
-# run-check.pl and is held to the row its step id names. The Windows column is
-# the rule above on seven runs of the job (research/investigations/test-
-# economy/time-budgets.md, "Windows I/O host stages"): 1.25 times the slowest
-# of the seven, rounded up to 5 s, with the 10 s floor.
+# run-check.pl and is held to the row its step id names. The Windows column
+# follows the Windows rule above on runs of the job (research/investigations/
+# test-economy/time-budgets.md, "Windows I/O host stages"): 1.25 times the
+# slowest run, rounded up to 5 s, with the 10 s floor. Seven runs set the
+# first 16 rows; windows-bounded-connect, a step main added after them, is set
+# from eight runs of the job on 2026-11-26, in which every other row held.
 windows-llvm-mingw              -          -          -          -           -      25
 windows-clang-identity          -          -          -          -           -      10
 windows-host                    -          -          -          -           -      40
@@ -113,7 +115,7 @@ windows-sched-startup           -          -          -          -           -  
 windows-default-route           -          -          -          -           -      10
 windows-adapter-probe           -          -          -          -           -      10
 windows-bounded-send            -          -          -          -           -      10
-windows-bounded-connect         -          -          -          -           -      600
+windows-bounded-connect         -          -          -          -           -      65
 windows-ordinary-values         -          -          -          -           -      10
 windows-bridge-init             -          -          -          -           -      10
 windows-corpus-build            -          -          -          -           -      400

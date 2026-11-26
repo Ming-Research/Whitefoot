@@ -1812,6 +1812,75 @@ GitHub's step records give, in whole seconds: building the program cases 179 s
 test images 7 s (15 s); the 0 s run took 253, 42, 20 and 10 s. The logs of these
 runs, whose `== START` and `== END` lines name each label, were not read.
 
+**A step that main added, found by the form test on the self-hosted runner
+(2026-11-26).** The `static` check of the fast workflow, which runs
+`.github/test-run-check.sh` as part of `repository-invariants` on the
+self-hosted 14900K runner, failed with no message about 19.6 s into the test, on
+commit 213247340 (run 45787129711) and again on 435144ab2 (run 45795788323), at
+the same recipe line and after the same time, which a timing flake would not
+repeat. A temporary
+workflow on the same runner class (run 45795787453, commit 435144ab2) ran the
+test as `sh -x` under the wrapper, as that job does. The host was Ubuntu 26.04.1
+LTS with `sh` dash, `awk` mawk 1.3.4 20260129, bash 5.3.9 and perl 5.40.1; the
+trace has 301 lines and ends at `grep -qx noid .../windows-steps` and `exit 1`:
+the awk that lists the Windows job's steps printed a step without an id. The
+step is "Bound Windows connects to a listener that never answers", which main
+added in commit fdeb8cd41 (2026-11-25) and which reached this branch when main's
+2050ce844 was merged (954c1811e), after the evidence above was read; it had no
+`id`, and so no budget row. That is the case the test is written for, not a
+difference of awk: the two earlier runs of the test on Linux (`ubuntu-24.04`,
+gawk 5.2.1) read a tree that did not have the step. The test stops at its first
+failing line, so the checks after it had not run on mawk. With the step's id
+and a row added (commit ca4e9df9d), `static` passed on the self-hosted runner
+(run 45797758879, 64 s), which runs every awk script of the test under mawk.
+Before that run the comment pattern `/^[ \t]*(#|$)/` of the test's two table
+scripts, an anchor inside an alternation, was rewritten as
+`/^[ \t]*#/ || /^[ \t]*$/`; no run shows that mawk reads the first form
+differently, and only the second form has been run on mawk.
+
+**The new step in eight runs (2026-11-26).** A temporary workflow ran the
+`completion-windows` job of `io-hosts.yml` as a matrix of eight (run
+45797757284, commit ca4e9df9d): the job's text unchanged but for its `needs` and
+`if` lines, with the new step's row provisionally at 600 s. All eight jobs
+passed, the final verdict step included. The wrapper's `== END <label>` lines
+were read from each job's log. The matrix entries ran on four processors, by
+entry: 1 EPYC 7763, 2 EPYC 9V74, 3 Xeon Platinum 8370C, 4 EPYC 7763, 5 EPYC
+7763, 6 Xeon Platinum 8370C, 7 EPYC 9V74, 8 Xeon Platinum 8573C. The wall times
+of the new step were 45.47, 44.84, 48.64, 45.35, 45.36, 47.70, 45.01 and 49.55 s
+in that order: 44.84 to 49.55 s on every processor, 11 to 13% of the job's
+timed stages (355 to 424 s in sum), with a slowest-to-fastest ratio of 1.10
+where the program-case build's is 1.22. The budget rule of the Windows column,
+1.25 times the slowest run, is 61.94 s, which rounds up to 65 s: the row
+`windows-bounded-connect` is 65. The fastest and slowest `END` time of each
+stage in the eight runs against its row:
+
+| Stage | Fastest | Slowest | Budget |
+|---|---:|---:|---:|
+| `windows-llvm-mingw` | 8.82 | 11.19 | 25 |
+| `windows-clang-identity` | 0.42 | 1.30 | 10 |
+| `windows-host` | 8.88 | 15.85 | 40 |
+| `windows-test-images` | 8.94 | 11.95 | 15 |
+| `windows-image-imports` | 1.06 | 1.59 | 10 |
+| `windows-sched-deque` | 0.11 | 0.22 | 10 |
+| `windows-sched-cpu-policy` | 1.07 | 1.39 | 10 |
+| `windows-sched-startup` | 0.32 | 0.34 | 10 |
+| `windows-default-route` | 0.21 | 0.41 | 10 |
+| `windows-adapter-probe` | 0.11 | 0.21 | 10 |
+| `windows-bounded-send` | 2.81 | 2.91 | 10 |
+| `windows-bounded-connect` | 44.84 | 49.55 | 65 |
+| `windows-ordinary-values` | 0.31 | 0.33 | 10 |
+| `windows-bridge-init` | 0.21 | 0.22 | 10 |
+| `windows-corpus-build` | 216.63 | 264.11 | 400 |
+| `windows-corpus` | 36.39 | 52.31 | 65 |
+| `windows-driver-links` | 15.57 | 21.28 | 35 |
+
+No stage of any run was over its budget, so none of the 16 rows set on 25
+November needed a raise; `windows-corpus` at 52.31 s would round to 70 s if the
+rule were applied to these eight runs alone, and keeps the 65 s of the seven
+runs it was set on, as a Windows value is raised only by the owner. The new
+image the Makefile builds for the step did not push `windows-test-images` past
+its row: 8.94 to 11.95 s against 15 s.
+
 ## Daily loop
 
 One edit, measured in the local container with the new defaults: an unused
