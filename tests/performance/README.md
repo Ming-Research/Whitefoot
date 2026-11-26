@@ -105,7 +105,11 @@ placement decides on this host:
 the other instrument controls, requires the candidate against itself to map
 alike, against itself with one more idle mapping (position 1) to map
 differently for every kernel, and its 32 positions launched against themselves
-to set no kernel aside. Each record and each kernel's round is a labeled stage
+to set no kernel aside. At position 1 a record differs by that mapping in any
+case, so each kernel's record must also differ without it: the record has to
+see the later mappings lie lower, which is what shows a startup that makes the
+same calls in another order. The positions are launched only when both
+records pass. Each record and each kernel's round is a labeled stage
 of its own (`performance-data-layout`, `performance-data-round-KERNEL`), so a
 kernel added to the instrument needs its row in `.github/time-budgets.txt`.
 

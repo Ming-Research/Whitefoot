@@ -11,10 +11,11 @@
 #       aside, 2 on a refusal.
 #   qualify CANDIDATE RESULTS
 #       The control on the candidate against itself must find every kernel
-#       mapping alike; with the candidate arm at position 1 it must find every
-#       kernel mapping differently and, launching all five at the 32 positions,
-#       set none aside. Writes RESULTS/verdict.txt; exit 1 when an expectation
-#       fails, 2 on a refusal.
+#       mapping alike; with the candidate arm at position 1 every kernel's
+#       record must hold the runner's idle mapping and, without it, still
+#       differ, as the later mappings lie lower. Only then are all five
+#       launched at the 32 positions, which must set none aside. Writes
+#       RESULTS/verdict.txt; exit 1 when an expectation fails, 2 on a refusal.
 #
 # Those two start each unit of fixed work below under run-check.pl, so every
 # run of one label is one amount of work and its budget row bounds it:
@@ -112,11 +113,17 @@ round() {
 # The control in RESULTS, its verdict in RESULTS/verdict.txt and its list in
 # RESULTS/aside.txt.
 control() {
-    local baseline=$1 candidate=$2 results=$3 shifted=${4:-} kernel word
+    local baseline=$1 candidate=$2 results=$3
     [[ ! -e $results ]] || refuse 'results must be a fresh directory'
     mkdir -p "$results"
-    unit performance-data-layout record "$baseline" "$candidate" "$results" ${shifted:+"$shifted"} ||
-        refuse 'the mapping record'
+    unit performance-data-layout record "$baseline" "$candidate" "$results" || refuse 'the mapping record'
+    positions "$baseline" "$candidate" "$results"
+}
+
+# The rounds of the kernels RESULTS/layout.txt reads as differing, and what
+# positions.awk reads from them.
+positions() {
+    local baseline=$1 candidate=$2 results=$3 kernel word
     : > "$results/rows.tsv"
     for kernel in $(awk '$2 == "differ" { print $1 }' "$results/layout.txt"); do
         unit "performance-data-round-$kernel" round "$baseline" "$candidate" "$results" "$kernel" 1 ||
@@ -136,15 +143,32 @@ control() {
     cat "$results/verdict.txt"
 }
 
+# The runner's own idle mapping at position 1 (runner.c), as layout.awk writes
+# it. A record of the candidate there differs from one at position 0 by this
+# call in any case; the qualification requires each kernel's record to differ
+# without it too, as it does when every later mapping lies 2 MiB lower.
+own_mapping='mmap(NULL, 2097152, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE, -1, 0) = '
 qualify() {
-    local candidate=$1 results=$2 failed=0 alike differ aside
+    local candidate=$1 results=$2 failed=0 alike moved=0 aside= kernel calls
     [[ ! -e $results ]] || refuse 'results must be a fresh directory'
-    mkdir -p "$results"
+    mkdir -p "$results/moved"
     control "$candidate" "$candidate" "$results/same"
-    control "$candidate" "$candidate" "$results/moved" shifted
+    unit performance-data-layout record "$candidate" "$candidate" "$results/moved" shifted ||
+        refuse 'the mapping record'
     alike=$(awk '$2 == "alike"' "$results/same/layout.txt" | wc -l)
-    differ=$(awk '$2 == "differ"' "$results/moved/layout.txt" | wc -l)
-    aside=$(cat "$results/moved/aside.txt")
+    for kernel in "${kernels[@]}"; do
+        calls=$results/moved/layout/$kernel
+        grep -v -F -- "$own_mapping" "$calls-candidate.calls" > "$calls-candidate.later" || true
+        if [[ $(grep -c -F -- "$own_mapping" "$calls-candidate.calls") == 1 &&
+              $(grep -c -F -- "$own_mapping" "$calls-baseline.calls") == 0 ]] &&
+            ! cmp -s "$calls-candidate.later" "$calls-baseline.calls"; then
+            moved=$((moved + 1))
+        fi
+    done
+    if ((alike == ${#kernels[@]} && moved == ${#kernels[@]})); then
+        positions "$candidate" "$candidate" "$results/moved"
+        aside=$(cat "$results/moved/aside.txt")
+    fi
     {
         echo 'data-placement qualification: the candidate against itself'
         if ((alike == ${#kernels[@]})); then
@@ -152,18 +176,23 @@ qualify() {
         else
             echo "FAIL: $((${#kernels[@]} - alike)) kernel(s) map differently"; failed=1
         fi
-        if ((differ == ${#kernels[@]})); then
-            echo 'PASS: with the candidate arm at position 1, every kernel maps differently'
+        if ((moved == ${#kernels[@]})); then
+            echo 'PASS: with the candidate arm at position 1, every kernel maps its later calls elsewhere'
         else
-            echo "FAIL: with the candidate arm at position 1, $((${#kernels[@]} - differ)) kernel(s) map alike"; failed=1
+            echo "FAIL: with the candidate arm at position 1, $((${#kernels[@]} - moved)) kernel(s) lack the idle mapping or a later call elsewhere"
+            failed=1
         fi
-        if [[ -z $aside ]]; then
-            echo 'PASS: the 32 positions set no kernel aside'
+        if ((failed)); then
+            echo 'the 32 positions were not launched: a record check failed'
         else
-            echo "FAIL: the 32 positions set aside: $aside"; failed=1
+            if [[ -z $aside ]]; then
+                echo 'PASS: the 32 positions set no kernel aside'
+            else
+                echo "FAIL: the 32 positions set aside: $aside"; failed=1
+            fi
+            printf '\nwith the candidate arm at position 1:\n'
+            cat "$results/moved/verdict.txt"
         fi
-        printf '\nwith the candidate arm at position 1:\n'
-        cat "$results/moved/verdict.txt"
     } > "$results/verdict.txt"
     cat "$results/verdict.txt"
     return "$failed"
