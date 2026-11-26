@@ -135,6 +135,7 @@ repository-invariants:
 	@$(PY) .github/check-research-inputs.py --self-test
 	@$(PY) .github/check-research-inputs.py
 	@sh .github/test-run-check.sh
+	@bash .github/test-fast-state.sh
 	@$(PY) .github/recompute-time-budgets.py --self-test
 	@sh .github/merge-base.sh --self-test
 	@sh .github/test-merge-base.sh
