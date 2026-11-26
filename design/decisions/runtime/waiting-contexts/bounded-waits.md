@@ -18,7 +18,7 @@ When a driver stays outside past a due deadline and no idle driver can borrow it
 - rejected: an agent proposed a form that runs a pure function on a compute thread, its join being a wait point; the owner rejected it, because it needs WAIT-3 extended and covers only the computation the writer marks, not cleanup.
 
 ### decision cancellation-goes-through-the-operations-route
-A cancellation goes through the route that holds the operation: a ring cancel, `CancelIoEx`, or a repeated interrupt of the helper, with Windows helper sends and accepts on bounded polls.
+A cancellation goes through the route that holds the operation: a ring cancel, `CancelIoEx`, or a repeated interrupt of the helper, with Windows helper connects, accepts and sends on bounded waits.
 - rejected: an agent proposed polling for readiness before each blocking helper call; the owner rejected it, because a standard stream shared with other processes can be ready at the poll and empty at the call, and a poll does not bound a large socket send.
 
 ### decision a-bounded-operation-stays-off-the-driver-thread

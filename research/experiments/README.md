@@ -130,6 +130,15 @@ completion criterion were refused.
   the compiler of Whitefoot#468 is on main, a smoke dispatched from main stops
   at the identity step, which reports the sequential and demand images
   differing. No result is recorded yet.
+- [`compiler-compare/`](compiler-compare/README.md) — two whole compilers on
+  the same programs (the `HashMap` cells, Halo's fib and the wasm interpreter's
+  CoreMark), timed in interleaved rounds against a twin of the base, with the
+  wall time checked against the CPU time of the same runs. Run on request by
+  `compiler-compare.yml`; never a gate.
+- [`interpreter-compare/`](interpreter-compare/README.md) — two sources of the
+  wasm interpreter v2h built by one compiler: CoreMark timed against a twin of
+  the base, or the share of CPU samples in each instruction's handler. Run on
+  request by `interpreter-compare.yml`; never a gate.
 
 ## Completed current-compiler bounded research
 
