@@ -70,13 +70,13 @@ got_b=$(resolved "$work/b")
 
 # In a directory a caller shares, a program made under another configuration
 # is built again even when it is newer than every source. The concurrent map's
-# four test programs are the ones that once ignored the stamp that records the
+# five test programs are the ones that once ignored the stamp that records the
 # configuration. The control has the same age and no stamp: a dry run must plan
 # nothing for it, or the dates in this fixture do not make a program look newer
 # than its sources and the rest of the case shows nothing.
 shared=$work/shared
 mkdir -p "$shared"
-programs="concurrent-map-test-copy-out concurrent-map-test-locked concurrent-map-test-collide concurrent-map-test-ignore-activity"
+programs="concurrent-map-test-copy-out concurrent-map-test-locked concurrent-map-test-collide concurrent-map-test-ignore-activity concurrent-map-test-refusal-continues"
 targets=
 for name in $programs control; do
     : > "$shared/$name"

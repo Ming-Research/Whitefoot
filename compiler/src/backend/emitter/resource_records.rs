@@ -126,12 +126,12 @@ pub(super) fn windows_sequential_resource_record_writer() -> Result<Module, Back
 /// two records on one channel. Asking the floor for the address is what makes
 /// "no execution writes a second one" a mechanism rather than an argument.
 ///
-/// The `weak` definition here is the same standalone answer
-/// [`floor::floor_runtime_fallback`] gives: an emitted module must link and run
-/// without the floor's translation unit, and the real definition replaces this
-/// one whenever that unit is linked, which is every ordinary build. Zero until
-/// some thread writes a record, and no path outside the writer reads it, so a
-/// program that writes none pays nothing for it.
+/// The `weak` definition here is the same kind of standalone answer
+/// [`floor::floor_runtime_fallback`] gives the floor entry: an emitted module
+/// must link and run without the floor's translation unit, and the real
+/// definition replaces this one whenever that unit is linked, which is every
+/// ordinary build. Zero until some thread writes a record, and no path outside
+/// the writer reads it, so a program that writes none pays nothing for it.
 pub(super) fn resource_record_latch() -> Result<Module, BackendFailure> {
     let mut module = Module::default();
     module.global(
