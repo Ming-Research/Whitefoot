@@ -1552,13 +1552,14 @@ impl FunctionEmitter<'_, '_> {
     /// without any header parameter carrying it is the second kind. A header
     /// parameter holds a read-only reference when the one edge into the loop
     /// gives it one of the function's read-only reference parameters, whose
-    /// referents the function does not write [EFF-2, EFF-5], and a
-    /// read-only reference parameter read directly is one itself. A header instruction that
-    /// projects a box's referent or reads a container's measure through such
-    /// a reference, or through a value so hoisted, is hoisted into the
-    /// enclosing function. A passed-through parameter nothing else in the
-    /// loop reads is dropped, and one holding the same pointer as a function
-    /// parameter carries that parameter's checked facts.
+    /// referents the function does not write [EFF-2, EFF-5]; such a
+    /// parameter read directly is a read-only reference itself. A header
+    /// instruction that projects a box's referent or reads a container's
+    /// measure through such a reference, or through a value so hoisted, is
+    /// hoisted into the enclosing function. A passed-through parameter
+    /// nothing else in the loop reads is dropped, and a candidate holding
+    /// the same pointer as a function parameter carries that parameter's
+    /// checked facts.
     fn loop_invariants(
         &self,
         plan: &DispatchLoop,
@@ -1787,17 +1788,17 @@ impl FunctionEmitter<'_, '_> {
                 break;
             }
         }
-        // A passed-through reference the loop uses only to project its box's
-        // referent, to hand on unchanged to a join's parameter that is the
-        // same value or to its own place on a back edge, or to hand to a
-        // non-waiting callee whose formal writes only below the box's content,
-        // keeps one box for the whole loop: nothing in the loop can replace
-        // that box, and no other reference reaches it [EFF-5]. Its
-        // projections are hoisted, and such a callee receives a part-local
-        // slot holding the hoisted box.
         // The references the loop may keep one box of: the header parameters
         // it passes through, and the values it reads that are defined before
         // it (which have no place among the header's parameters).
+        // A candidate the loop uses only to project its box's referent, to
+        // hand on unchanged to a join's parameter that is the same value or
+        // to its own place on a back edge, or to hand to a non-waiting callee
+        // whose formal writes only below the box's content, keeps one box
+        // for the whole loop: nothing in the loop can replace that box, and
+        // no other reference reaches it [EFF-5]. Its projections are hoisted,
+        // and such a callee receives a part-local slot holding the hoisted
+        // box.
         let mut candidates: Vec<(Option<usize>, IrValueId)> = parameters
             .iter()
             .enumerate()
