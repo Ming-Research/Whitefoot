@@ -347,9 +347,17 @@ def self_test():
     with open(BUDGETS) as handle:
         shipped = Table(handle.read())
     assert set(OWNER_COLUMNS) <= set(shipped.classes), (OWNER_COLUMNS, list(shipped.classes))
-    # The owner's columns are the table's Xeon models, which the pool gives too
-    # few runs for the rule; a Xeon class left out of OWNER_COLUMNS would be
-    # held at its cells until it has 20 runs and fall behind the others.
+    # The table does not say who added a column, so the vendor stands for it:
+    # every column the owner added so far is a Xeon model, whose runs the pool
+    # gives too few for the rule, and a Xeon class left out of OWNER_COLUMNS
+    # would be held at its cells until it has 20 runs and fall behind the
+    # others. A Xeon class that later has 20 runs in every row stays listed
+    # without effect, since a cell with 20 runs is recomputed as a class's before
+    # the owner-column rule applies; so this does not fire on that. A Xeon class
+    # that should follow only the class rule is taken out of OWNER_COLUMNS, and
+    # this assertion then names the decision that makes it a class; a thin
+    # column for a model that is not a Xeon is listed by hand, which this does
+    # not check.
     assert all(column in OWNER_COLUMNS for column, model in shipped.classes.items() if "xeon" in model.lower()), \
         (OWNER_COLUMNS, shipped.classes)
     owner = OWNER_COLUMNS[0]
