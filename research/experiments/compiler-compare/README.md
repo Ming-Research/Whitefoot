@@ -56,7 +56,13 @@ investigation did; the component CRCs of the 2K performance run and the final
 CRC that investigation recorded for 2000 iterations must all match. A
 mismatch is invalid data, not a measurement. Both are native programs, so the
 timed quantity is the wall time of the whole process, pinned to one CPU with
-`taskset`, after one untimed run of each image. The wasm interpreter opens its
+`taskset`, after one untimed run of each image. The span runs from the spawn to
+the return of a blocking wait: no `timeout` stands around the program, because
+a helper that polls for its child's exit (a 0.1 s step in some coreutils
+builds) puts the exit on its own grid, as it did in the first 14900K rounds,
+which read fib at 0.302 to 0.303 s and CoreMark at 0.402 to 0.403 s in every
+launch while fib's user plus sys time was 0.21 s. A timer thread bounds each
+run at 600 s and kills its process group. The wasm interpreter opens its
 module relative to its working directory and rejects an absolute path, so each
 run starts in the directory that holds the inputs.
 
@@ -104,7 +110,7 @@ whatever happens outside the counting window, so each `perf stat` run also
 records, in `perf.json`, its wall time (the launch's elapsed time), perf's
 counting window (the enabled time its CSV rows report), and the user and sys
 CPU time and the page faults the kernel accounted to every process of the
-launch: `taskset`, `timeout`, `perf stat` and the workload, the same wrapper
+launch: `taskset`, `perf stat` and the workload, the same wrapper
 for every arm. The user and sys split is sampled by the scheduler tick, so
 only their sum is exact. The table prints the medians per image, with
 `outside` the median of each run's wall - window (not the difference of two
@@ -113,6 +119,21 @@ to the base (seconds, or a count of faults) and ratio, each with its range over
 the rounds.
 
 ## Controls
+
+Each `time` row also holds the user and sys CPU time the kernel accounted to
+the launch, and the summary prints, per workload, the median and maximum of
+wall time minus that CPU time (`residual`) for the timed runs and for the
+`perf` runs. The workloads are pinned and CPU bound, so the residual is
+start-up and whatever a waiter adds. `residual_limit` (seconds) makes a
+workload whose median residual is above it invalid data; without it the
+residual is printed and not checked. The limit is chosen from a measurement,
+not assumed: the one-off group `wallclock` launches a stand-in that sleeps
+0.21 s and one that counts for 0.21 s under the bare program, `taskset`, and
+`taskset` with `timeout`, 20 times each, and prints the host's `timeout` and
+`taskset`, the distinct wall readings at 1 ms and the residuals of each chain.
+Its confirmation is recorded in `../interpreter-compare/RESULTS.md`; once it is
+there the group, its stage in `run.sh` and this paragraph's description of it
+are removed.
 
 The twin is the null control in every run, and the null run (the same commit
 as candidate and base) checks the instrument end to end: a rate of false
@@ -152,17 +173,20 @@ sensitivity is what the synthetic rows and the stand-in images show.
 ## Running and outputs
 
 ```sh
-# the null run, then a comparison, on the 14900K
+# the wall clock probe, the null run, then a comparison, on the 14900K
+gh workflow run compiler-compare.yml --ref main -f runner=14900k \
+  -f candidate=BRANCH -f groups=wallclock
 gh workflow run compiler-compare.yml --ref main -f runner=14900k \
   -f candidate=BRANCH -f base=BRANCH
 gh workflow run compiler-compare.yml --ref main -f runner=14900k \
   -f candidate=BRANCH -f floor="..." -f interp_floor="..."
 ```
 
-`groups` selects `hash_map`, `interpreters` and `perf` (a comma-separated
-list; `perf` runs inside the `interpreters` stage, on the 14900K only, so it
-needs `interpreters`). The first step refuses a list that names no group, an
-unknown name or `perf` without `interpreters`, before anything is built. The
+`groups` selects `hash_map`, `interpreters`, `perf` and `wallclock` (a
+comma-separated list; `perf` runs inside the `interpreters` stage, on the
+14900K only, so it needs `interpreters`; `wallclock` builds nothing). The first
+step refuses a list that names no group, an unknown name or `perf` without
+`interpreters`, before anything is built. The
 job summary holds each group's `summary.txt`; the artifact holds the raw rows
 (`raw.tsv`, `memory.tsv`, `hold.tsv`, `tail.tsv`, `shrink.tsv`, `time.tsv`,
 `perf.json` and the `perf stat` CSV files) and the manifests with the
@@ -176,7 +200,9 @@ decide nothing.
 The programs are two interpreters and one library at one key and value type,
 one CPU and one input size each; a compiler change that matters elsewhere is
 not measured. The interpreters' timing is whole-process wall time: it includes
-process start-up, which is the same for the arms. The wasm interpreter's
+process start-up, which is the same for the arms. A noise floor measured by
+one launcher does not carry to another: the floors recorded before the launch
+lost its `timeout` helper are void. The wasm interpreter's
 source was edited to compile under the specification of 2026-10-23: a field
 and a local named with a reserved word (`held`, now `held_local`) and seven
 conditions the compiler proves always true (`if i < v^.inner.len` inside a
