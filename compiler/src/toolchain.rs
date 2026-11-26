@@ -259,9 +259,14 @@ fn preserve_none_supported(toolchain: &Toolchain, directory: &Path) -> io::Resul
 /// entry's ordinary call, handlers that clobber RBP, and the one boundary
 /// that must preserve it. `definition_attribute` and `call_attribute` are
 /// the attribute text on every definition and every call, or empty.
+///
+/// Both globals take a handler's address: an internal function nothing
+/// refers to is deleted by `-O2`, and a probe whose handler is missing from
+/// the assembly could never be told from one that saves nothing.
 fn no_callee_saved_registers_module(definition_attribute: &str, call_attribute: &str) -> String {
     format!(
         "@probe_targets = global ptr @probe_direct\n\
+         @probe_indirect_targets = global ptr @probe_indirect\n\
          define internal preserve_nonecc i64 @probe_handler(ptr %targets, i64 %value) noinline{definition_attribute} {{\n  \
          call void asm sideeffect \"\", \"~{{rbp}}\"()\n  ret i64 %value\n}}\n\
          define internal preserve_nonecc i64 @probe_direct(ptr %targets, i64 %value) noinline{definition_attribute} {{\n  \
@@ -569,6 +574,12 @@ mod tests {
         );
     }
     const ATTRIBUTE: &str = " \"no_callee_saved_registers\"";
+    const PROBE_FUNCTIONS: [&str; 4] = [
+        "probe_handler",
+        "probe_direct",
+        "probe_indirect",
+        "probe_entry",
+    ];
 
     /// The probed fact must be what the host's code generation shows for the
     /// probe module, judged independently of the fact itself, and the
@@ -589,31 +600,83 @@ mod tests {
             assert!(!facts.no_callee_saved_registers);
             return;
         }
-        let attributed = assemble("register_contract", ATTRIBUTE, ATTRIBUTE);
-        assert_eq!(
-            facts.no_callee_saved_registers,
-            attributed
-                .as_deref()
-                .is_some_and(no_callee_saved_registers_contract),
-            "the runtime ABI fact must match definition and call-side preservation: {attributed:?}"
-        );
-        // A backend that ignored the string would behave like this module:
-        // its handlers must save RBP, and the contract must say so.
+        // A string attribute never makes a backend refuse the module, and
+        // every probe function must survive `-O2`: a function the optimizer
+        // dropped would fail the contract without any register being saved.
+        let attributed = assemble("register_contract", ATTRIBUTE, ATTRIBUTE)
+            .expect("an unknown string attribute is ignored, not refused");
         let legacy = assemble("register_legacy", "", "")
             .expect("preserve_nonecc already generated code");
+        for (kind, assembly) in [("attributed", &attributed), ("legacy", &legacy)] {
+            for name in PROBE_FUNCTIONS {
+                assert!(
+                    probe_function_assembly(assembly, name).is_some(),
+                    "{name} is missing from the {kind} assembly: {assembly}"
+                );
+            }
+        }
+        assert_eq!(
+            facts.no_callee_saved_registers,
+            no_callee_saved_registers_contract(&attributed),
+            "the runtime ABI fact must match definition and call-side preservation: {attributed}"
+        );
+        // A backend that ignored the string would behave like the legacy
+        // module: a handler saves RBP, and the contract must say so for that
+        // reason.
+        assert!(
+            ["probe_handler", "probe_direct", "probe_indirect"]
+                .into_iter()
+                .any(|name| probe_function_assembly(&legacy, name)
+                    .is_some_and(|body| rbp_preservation(body).0 > 0)),
+            "a legacy handler must save RBP: {legacy}"
+        );
         assert!(
             !no_callee_saved_registers_contract(&legacy),
             "the contract must reject the legacy ABI: {legacy}"
         );
+        // Judging the fact only against itself would pass a probe that is
+        // always false. The Linux x86-64 hosts of this repository run LLVM
+        // 22, whose backend honors the attribute.
+        if cfg!(target_os = "linux") {
+            assert!(
+                facts.no_callee_saved_registers,
+                "the pinned LLVM must honor no_callee_saved_registers: {attributed}"
+            );
+        }
         if facts.no_callee_saved_registers {
             // A definition-side attribute alone leaves the entry's call
             // promising RBP survives, which would be wrong code.
-            let missing_call = assemble("register_missing_call", ATTRIBUTE, "");
+            let missing_call = assemble("register_missing_call", ATTRIBUTE, "")
+                .expect("the module with definition attributes only assembles");
+            for name in PROBE_FUNCTIONS {
+                assert!(
+                    probe_function_assembly(&missing_call, name).is_some(),
+                    "{name} is missing from the missing-call assembly: {missing_call}"
+                );
+            }
             assert!(
-                !missing_call
-                    .as_deref()
-                    .is_some_and(no_callee_saved_registers_contract),
-                "the contract must detect a missing call-site attribute: {missing_call:?}"
+                !no_callee_saved_registers_contract(&missing_call),
+                "the contract must detect a missing call-site attribute: {missing_call}"
+            );
+        }
+    }
+
+    /// `-O2` deletes an internal function nothing refers to, and the
+    /// contract then fails for a function that is missing, not for a saved
+    /// register.
+    #[test]
+    fn the_register_probe_module_refers_to_every_part_it_defines() {
+        let module = no_callee_saved_registers_module(ATTRIBUTE, ATTRIBUTE);
+        for name in ["probe_handler", "probe_direct", "probe_indirect"] {
+            assert!(
+                module.contains(&format!("define internal preserve_nonecc i64 @{name}(")),
+                "{name} is an internal part of the probe: {module}"
+            );
+            let symbol = format!("@{name}");
+            assert!(
+                module.lines().any(|line| !line.starts_with("define ")
+                    && (line.ends_with(&symbol) || line.contains(&format!("{symbol}(")))),
+                "{name} is referenced outside its definition: {module}"
             );
         }
     }
