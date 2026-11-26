@@ -45,7 +45,7 @@ pub(super) fn machine_report(emitted: &str, directory: &std::path::Path) -> (Str
     let assembly = directory.join("ledger.s");
     std::fs::write(&module, emitted).expect("write the ledger module");
     #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
-    let status = Command::new(crate::clang_executable())
+    let status = super::clang()
         .arg("-x")
         .arg("ir")
         .arg(&module)
@@ -277,7 +277,7 @@ fn link_measured_boundary(directory: &std::path::Path, wide: bool) -> std::path:
         let object = scratch.join("floor.o");
         std::fs::write(&path, source).expect("write small-stack floor variant");
         #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
-        let output = Command::new(crate::clang_executable())
+        let output = super::clang()
             .args(["-std=c11", "-pthread", "-c"])
             .arg(&path)
             .args(crate::HOST_OPTIMIZATION_ARGUMENTS)
@@ -297,7 +297,7 @@ fn link_measured_boundary(directory: &std::path::Path, wide: bool) -> std::path:
     let host = directory.join("boundary.c");
     std::fs::write(&host, include_str!("stack_boundary.c")).expect("write boundary observer");
     let executable = directory.join("boundary");
-    let mut command = Command::new(crate::clang_executable());
+    let mut command = super::clang_link();
     command
         .arg("-x")
         .arg("assembler")

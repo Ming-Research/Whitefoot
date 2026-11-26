@@ -83,6 +83,25 @@ done:
   ret void
 }
 
+declare i32 @wf_std.fs.create_new_file.start(ptr, ptr, ptr, ptr, i64, i64, i64, ptr)
+declare void @wf_std.fs.create_new_file.finish(ptr, ptr, ptr, ptr, i64, i64, i64, ptr)
+
+define void @wf_test_public_create_new_file(ptr %result, ptr %factory, ptr %root, ptr %name, i64 %start, i64 %end) {
+entry:
+  %operation = alloca [1216 x i8], align 16
+  %view = load { ptr, i64 }, ptr %name
+  %data = extractvalue { ptr, i64 } %view, 0
+  %len = extractvalue { ptr, i64 } %view, 1
+  %state = call i32 @wf_std.fs.create_new_file.start(ptr %result, ptr %factory, ptr %root, ptr %data, i64 %len, i64 %start, i64 %end, ptr %operation)
+  %answered = icmp eq i32 %state, 0
+  br i1 %answered, label %done, label %finish
+finish:
+  call void @wf_std.fs.create_new_file.finish(ptr %result, ptr %factory, ptr %root, ptr %data, i64 %len, i64 %start, i64 %end, ptr %operation)
+  br label %done
+done:
+  ret void
+}
+
 declare void @wf_std.process.stop_listen(ptr, ptr, ptr)
 declare i32 @wf_std.process.stop_next.start(ptr, ptr, ptr, ptr, ptr, ptr)
 declare void @wf_std.process.stop_next.finish(ptr, ptr, ptr, ptr, ptr, ptr)

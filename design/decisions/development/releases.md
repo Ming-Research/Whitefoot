@@ -31,8 +31,13 @@ The release workflow's `bundle_toolchain` input defaults to false, and a lightwe
 - rejected: an agent proposed making every release carry its toolchain; the owner rejected it, because existing downstreams take frequent small releases and already install that toolchain, and existing tags have extraction consumers.
 
 ### decision bundled-releases-carry-their-toolchain
-With `bundle_toolchain=true`, a `-bundled` release holds Linux x86-64, macOS arm64 and Windows x86-64 packages holding the compiler, clang, lld, headers, runtime objects and a toolchain manifest.
+With `bundle_toolchain=true`, a `-bundled` release holds Linux x86-64, macOS arm64 and Windows x86-64 packages of compiler, clang, lld, headers, runtime objects and a manifest recording its answers.
 - replaced: Releases that use the host's clang, a bundled clang being deferred to the first formal release, was on main; the owner changed it, because the first release for outside users must work once installed, which the host's clang cannot promise.
+
+### decision the-release-records-its-clangs-answers
+The release asks the staged clang the compiler's probes once, with the staged compiler, and writes the answers and the clang's version line into the package manifest before sealing the archive.
+- rejected: an agent proposed a separate command-line option that prints the answers; the owner rejected it, because it adds a user-visible switch, while the compiler's `--report` already says where its answers came from.
+- replaced: A package that probed its clang in every process, though no release step had asked that clang anything, was on main; the owner changed it, because the answers are fixed once the package is.
 
 ### decision windows-bundle-uses-llvm-mingw
 The Windows package is a zip holding a statically linked `whitefootc.exe` and a trimmed, pinned llvm-mingw toolchain, and it exists only in bundled mode.
@@ -42,9 +47,14 @@ The Windows package is a zip holding a statically linked `whitefootc.exe` and a 
 - rejected: an agent proposed a tar.gz Windows archive like the other platforms; the owner rejected it, because Windows Explorer cannot open it, so users would need an extra command-line step.
 
 ### decision bundled-releases-publish-after-acceptance
-A bundled release is published only after the acceptance workflow passes every check on the exact candidate archive bytes; the workflow's revision supplies the checks but the runtime frame test.
+A bundled release is published only after the acceptance workflow passes every check on the exact candidate archive bytes; the workflow supplies the checks but the candidate's own compiler tests.
 - rejected: an agent proposed taking the acceptance files from the candidate commit; the owner rejected it, because a candidate commit may predate those files.
 - rejected: an agent proposed publishing before acceptance, or counting a trimming smoke test as qualification; the owner rejected it, because only a check of the delivered archive shows that it finds its own toolchain and keeps native behavior.
+
+### decision acceptance-runs-the-gate-tests-with-the-packaged-clang
+Acceptance runs the candidate's gate compiler tests and conformance cases with each archive's own clang, test executables placed in the extracted package and every host clang denied.
+- rejected: an agent proposed an environment variable naming the clang for the compiler and its tests; the owner rejected it, because it gives every user a toolchain switch and does not test the installed layout.
+- replaced: A release whose acceptance never ran the compiler tests with the packaged clang was on main; the owner changed it, because users received a compiler and clang pair no test had run.
 
 ### decision acceptance-runs-the-candidates-runtime-frame-test
 The acceptance builds the runtime frame test from the candidate's source and runs it beside each Linux and macOS package's clang, and passes only if that test ran, once, with that clang.

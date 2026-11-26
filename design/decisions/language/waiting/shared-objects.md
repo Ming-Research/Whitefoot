@@ -46,7 +46,7 @@ An atomic statement names each object it holds as a target, `&h`, `&h[key]` or `
 - rejected: an agent proposed ordering every object by identity alone and taking every target when the statement begins; the owner rejected it, because a conditional logging tail would then hold its log object through a block that may never reach it.
 
 ### decision shared-handle-ends-by-release-or-close
-A shared handle is `nocopy`, `shared_share` or `shared_read_share` makes another, and a handle ends by its release or by `shared_close`; the last of an object's handles to end takes the state.
+A shared handle is `nocopy`, `shared_share` or `shared_read_share` makes another, and a handle ends by its release or by `shared_close`; the last to end gives the state to its close or releases it.
 - replaced: Releasing the state with the last handle, so that only a droppable state could be shared, was on main; the owner changed it, because a linear state cannot be released implicitly, so a handle also ends in `shared_close`, which gives the state to the last handle to end.
 - rejected: an agent proposed an owner context whose end releases the object; the owner rejected it, because contexts finish in an order the program does not know, so no one binding can own the state.
 
@@ -69,8 +69,9 @@ An object's state is a path of no effect row, so a function that changes it decl
 - rejected: an agent proposed an effect row entry that names the object; the owner rejected it, because the state belongs to no binding and no caller, and its changes take effect in the atomic order, an input of the execution like a host's effects.
 
 ### decision statement-keeps-its-object-live
-An atomic statement keeps its object live until the statement completes, whatever its block does with the handle place it named.
+An atomic statement counts as one of its object's handles until it completes, so the object stays live whatever its block does with the handle place it named.
 - rejected: an agent proposed reading the target again when the block ends; the owner rejected it, because that would refuse a block that moves or replaces the handle it was reached through.
+- rejected: an agent proposed that a close wait until no atomic statement on the object is executing before it returns the state; the owner rejected it, because the design tree and the compiler already count the statement as a handle, so only the specification lacked the sentence.
 
 ### decision guard-waits-for-its-condition
 An optional `when` guard, a `Bool` expression that writes nothing, makes the statement take effect at a point where the guard holds, and the block may use the guard as a proved fact.
