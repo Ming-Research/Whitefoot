@@ -504,6 +504,20 @@ dp_file control-launches-nothing-for-alike-mappings "$dp/data-a/aside.txt" '\n'
 dp_file control-launches-nothing-for-alike-mappings "$dp/stages" 'performance-data-layout\n'
 dp_has control-launches-nothing-for-alike-mappings "$dp/data-a/verdict.txt" '^ASIDE: none$'
 pass control-launches-nothing-for-alike-mappings
+
+# The stand-in image at a position adds only the runner's own idle mapping and
+# leaves every later mapping where it was, so its records at position 1 differ
+# by that one call alone. qualify must then fail before it launches a round: a
+# record that sees only the extra call would not see a startup that maps the
+# same calls in another order.
+dp_run qualify-needs-the-later-mappings-moved 1 bash "$control" qualify "$dp/b" "$dp/qualify-b"
+dp_has qualify-needs-the-later-mappings-moved "$dp/qualify-b/verdict.txt" '^PASS: every kernel maps alike$'
+dp_has qualify-needs-the-later-mappings-moved "$dp/qualify-b/verdict.txt" \
+    '^FAIL: with the candidate arm at position 1, 5 kernel\(s\) lack the idle mapping or a later call elsewhere$'
+dp_has qualify-needs-the-later-mappings-moved "$dp/qualify-b/verdict.txt" \
+    '^the 32 positions were not launched: a record check failed$'
+dp_file qualify-needs-the-later-mappings-moved "$dp/stages" 'performance-data-layout\nperformance-data-layout\n'
+pass qualify-needs-the-later-mappings-moved
 else
     echo 'SKIP the data-placement control end to end: it runs on Linux only'
 fi
