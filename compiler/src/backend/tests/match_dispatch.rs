@@ -3779,28 +3779,28 @@ fn a_caller_s_callee_saved_values_survive_a_split_loop() {
         .fold(second, u64::wrapping_add);
     let mut check = String::new();
     for (index, multiple) in multiples.iter().enumerate() {
-        check.push_str(&format!("let m{index} = r *wrap {multiple}_u64;\n"));
+        check.push_str(&format!("\n    let m{index} = r *wrap {multiple}_u64;"));
     }
     for (index, mask) in masks.iter().enumerate() {
-        check.push_str(&format!("let x{index} = ixor(r, {mask}_u64);\n"));
+        check.push_str(&format!("\n    let x{index} = ixor(r, {mask}_u64);"));
     }
-    check.push_str("let s = run(code: &code, start: 0_u64, seed: 7_u64, steps: 10_u64);\n");
-    check.push_str("let t0 = s +wrap m0;\n");
+    check.push_str("\n    let s = run(code: &code, start: 0_u64, seed: 7_u64, steps: 10_u64);");
+    check.push_str("\n    let t0 = s +wrap m0;");
     let mut previous = "t0".to_owned();
     for (number, value) in ["m1", "m2", "m3", "x0", "x1", "x2", "x3"].iter().enumerate() {
         let next = format!("t{}", number + 1);
-        check.push_str(&format!("let {next} = {previous} +wrap {value};\n"));
+        check.push_str(&format!("\n    let {next} = {previous} +wrap {value};"));
         previous = next;
     }
     check.push_str(&format!(
-        "if {previous} == {expected}_u64 {{\n return exit_status(code: 0_u8);\n}}\n\
+        "\n    if {previous} == {expected}_u64 {{\n      return exit_status(code: 0_u8);\n    }}\n    \
          return exit_status(code: 1_u8);"
     ));
     let source = INTERPRETER
         .replace("RESULT", "u64")
         .replace("FAILED", "0_u64")
         .replace("DONE", "acc")
-        .replace("CHECK", &check);
+        .replace("CHECK", check.trim_start());
     let module = emit(source.as_bytes());
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
