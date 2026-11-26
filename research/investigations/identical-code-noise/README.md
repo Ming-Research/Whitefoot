@@ -58,8 +58,9 @@ less the runs whose artifact lacks them, plus run 38389055091).
 
 ## The path map and the judgment on hosted machines (2026-11-25)
 
-Two temporary workflows of this work ran on revision 0c918fc9d, whose `tests/performance`
-and `compute-regression.yml` are those of the branch's head; their logs are the data.
+Two temporary workflows of this work ran on revision 0c918fc9d, and the second batch of
+machines below on revision 97ce68455; both revisions have the `tests/performance` and
+`compute-regression.yml` of the branch's head. Their logs are the data.
 
 - Path independence (run 45631748235, EPYC 7763). The same commit was built under two
   checkout paths with the Makefile's prefix map: all five linked executables were
@@ -69,20 +70,28 @@ and `compute-regression.yml` are those of the branch's head; their logs are the 
   identical, timed only `stencil`, and, with a measuring stub whose null control reads at the
   threshold in both rounds, ended `INCONCLUSIVE` with the `::warning::` line and status 3, the
   status the workflow step passes.
-- Identical images on 64 hosted machines (run 45631748215). Each machine ran `judge.sh` on two copies
-  of one image set, the instrument's slowdown control (`compare.sh ... slow`), and a timed
-  null control (`compare.sh` of the images against themselves), and printed its processor
-  model:
+- Identical images on 192 hosted machines (run 45631748215 of 64 machines, run 45683254032 of
+  128 more, both of revision 0c918fc9d's `tests/performance`; the hosted model is not selectable,
+  so the second run was added to bring the EPYC 9V45 above ten machines). Each machine ran
+  `judge.sh` on two copies of one image set, the instrument's slowdown control
+  (`compare.sh ... slow`), and a timed null control (`compare.sh` of the images against
+  themselves), and printed its processor model:
 
   | processor | machines | `judge.sh` passes | slowdown control fails all five kernels | timed null control fails |
   |---|---:|---:|---:|---:|
-  | EPYC 9V45 | 5 | 5 | 5 | 0 |
-  | EPYC 9V74 | 12 | 12 | 12 | 0 |
-  | EPYC 7763 | 10 | 10 | 10 | 1 |
-  | Xeon 8573C | 2 | 2 | 2 | 0 |
-  | Xeon 6975P-C | 35 | 35 | 35 | 0 |
-  | all | 64 | 64 | 64 | 1 |
+  | EPYC 9V45 | 19 | 19 | 19 | 1 |
+  | EPYC 9V74 | 26 | 26 | 26 | 0 |
+  | EPYC 7763 | 29 | 29 | 29 | 1 |
+  | Xeon 8573C | 10 | 10 | 10 | 0 |
+  | Xeon 6975P-C | 106 | 106 | 106 | 0 |
+  | Xeon 6973P-C | 1 | 1 | 1 | 0 |
+  | Xeon 8370C | 1 | 1 | 1 | 0 |
+  | all | 192 | 192 | 192 | 2 |
 
-  `judge.sh` times nothing for identical executables, so it passed on all 64 whatever the
-  host's noise; the one timed null control that failed (an EPYC 7763) is what the old
-  workflow would have turned into an inconclusive job.
+  `judge.sh` times nothing for identical executables, so it passed on all 192 whatever the
+  host's noise, among them the 19 EPYC 9V45 machines, on each of which the slowdown control
+  also failed all five kernels. The two timed null controls that failed (an EPYC 7763 of the
+  first run, an EPYC 9V45 of the second, job `judge (114)`) are what the old workflow would have
+  turned into an inconclusive job; the job log keeps only the exit status of that control,
+  not which cell read adverse. Reading: run 45631748215 and run 45683254032 logs, the `RESULT`
+  line of each `judge` job.
