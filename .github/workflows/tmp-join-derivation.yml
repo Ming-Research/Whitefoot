@@ -1,0 +1,114 @@
+# The measurements of research/investigations/join-derivation. A temporary
+# workflow of the study branch, which is never merged.
+name: tmp-join-derivation
+
+on:
+  push:
+    branches: [join-derivation-study]
+    paths:
+      - research/investigations/join-derivation/model/**
+      - research/investigations/join-derivation/probe/**
+      - .github/workflows/tmp-join-derivation.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-join-derivation
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  model:
+    if: ${{ !contains(github.event.head_commit.message, '[probe-only]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host
+        run: |
+          lscpu | sed -n '1,16p'
+          nproc
+          rustc --version
+          uptime
+      - name: Build
+        working-directory: research/investigations/join-derivation/model
+        run: cargo build --release 2>&1 | tail -60
+      - name: Check every candidate against exhaustive evaluation
+        working-directory: research/investigations/join-derivation/model
+        run: |
+          set -o pipefail
+          status=0
+          ./target/release/join-derivation-model check > "$RUNNER_TEMP/check.csv" || status=$?
+          tail -1 "$RUNNER_TEMP/check.csv"
+          grep -E 'UNSOUND|SEL-INEXACT|NOT-ENUMERATED' "$RUNNER_TEMP/check.csv" | head -40 || true
+          exit "$status"
+      - name: Measure
+        if: always()
+        working-directory: research/investigations/join-derivation/model
+        run: |
+          for round in 1 2; do
+            taskset -c 1 ./target/release/join-derivation-model measure > "$RUNNER_TEMP/measure-$round.csv"
+            wc -l "$RUNNER_TEMP/measure-$round.csv"
+            uptime
+          done
+          cut -d, -f1-19,21 "$RUNNER_TEMP/measure-1.csv" > "$RUNNER_TEMP/counts-1.csv"
+          cut -d, -f1-19,21 "$RUNNER_TEMP/measure-2.csv" > "$RUNNER_TEMP/counts-2.csv"
+          if cmp -s "$RUNNER_TEMP/counts-1.csv" "$RUNNER_TEMP/counts-2.csv"; then
+            echo "counts identical across the two rounds"
+          else
+            echo "COUNTS DIFFER across the two rounds"
+            diff "$RUNNER_TEMP/counts-1.csv" "$RUNNER_TEMP/counts-2.csv" | head -20
+          fi
+      - name: Theory step on dense systems
+        if: always()
+        working-directory: research/investigations/join-derivation/model
+        run: |
+          ./target/release/join-derivation-model dense > "$RUNNER_TEMP/dense.csv"
+          cat "$RUNNER_TEMP/dense.csv"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: model-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/check.csv
+            ${{ runner.temp }}/measure-1.csv
+            ${{ runner.temp }}/measure-2.csv
+            ${{ runner.temp }}/dense.csv
+
+  probe:
+    if: ${{ !contains(github.event.head_commit.message, '[model-only]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: derivation-ceiling-prototype
+          path: exp
+      - name: Host
+        run: |
+          lscpu | sed -n '1,16p'
+          (cd exp/compiler && rustc --version)
+          git -C exp rev-parse HEAD
+      - uses: actions/cache@v4
+        with:
+          path: exp-target
+          key: exp-target-derivation-ceiling-prototype-release
+      - name: Build the experiment compiler
+        run: cargo build --manifest-path exp/compiler/Cargo.toml --release --bin whitefootc --locked --target-dir exp-target 2>&1 | tail -5
+      - name: Generate and check
+        run: |
+          python3 -B research/investigations/join-derivation/probe/generate.py "$RUNNER_TEMP/programs"
+          python3 -B research/investigations/join-derivation/probe/run.py exp-target/release/whitefootc "$RUNNER_TEMP/programs" "$RUNNER_TEMP/counters" exp | tee "$RUNNER_TEMP/probe.tsv"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: probe-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/probe.tsv
+            ${{ runner.temp }}/counters
+            ${{ runner.temp }}/programs

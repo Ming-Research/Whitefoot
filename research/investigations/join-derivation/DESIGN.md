@@ -122,9 +122,10 @@ disagree, with join value `v`:
   are `v - E` and `E - v`. An arm that leaves the place alone gives `E` = the
   entry value.
 - *State bounds.* For each inequality that held at the join's entry and names
-  the place's entry value `e`, and that is a path condition, a fact from a
-  source, or a state bound of an earlier join, the candidate is that
-  inequality's linear form with `e` replaced by `v`.
+  the entry value of a place whose arms disagree, and that is a path
+  condition, a fact from a source, or a state bound of an earlier join, the
+  candidate is that inequality's linear form with the entry value of every
+  such place replaced by that place's join value.
 - For each candidate form, each arm's supremum is the tightest constant
   upper bound T gives for the form at the arm's end, with the arm's value in
   place of `v`, without any split. An arm whose literals are contradictory is
@@ -369,6 +370,13 @@ Refuted if the WIN count at k = 64 exceeds 8 times the count at k = 16.
 - Between the candidates that remain, the measured curves and the decision
   table go to the owner with a recommendation. P, and the exact definition
   of "near", are the owner's choices; RESULTS.md gives the cost of each P.
+
+## Changes before the first measurement
+
+- State bounds replace the entry value of every place whose arms disagree,
+  not of one place at a time. Writing the BINSEARCH family showed the need:
+  `low <= high` after a join that changes both must be asked of both join
+  values together. No measurement had been taken.
 
 ## Changes after the first measurement
 
