@@ -41,6 +41,15 @@ has "$inventory" 'length > 0 and all(.[]; (.group | length) > 0 and (.shard | le
 groups=$(make -C "$here/.." --no-print-directory --silent check-groups)
 has "$groups" 'length > 0 and all(.[]; type == "string")' 'check-groups is not a list of group names'
 has "$groups" "(. | length) == (. | unique | length) and . == ($inventory | map(.group) | reduce .[] as \$g ([]; if index(\$g) then . else . + [\$g] end))" 'check-groups differs from the groups of check-parts'
+# The numbered parts of a group (`1/4`, `walk-2/3`) together cover its tests
+# only when they are exactly i/N for i = 1..N with one N for each kind of part,
+# so a mistyped or missing number in the Makefile fails here and not by running
+# less than the group's tests. Both numbered kinds must exist.
+numbered='[.[] | select(.shard | test("^(walk-)?[0-9]+/[0-9]+$"))
+    | (.shard | capture("^(?<kind>walk-)?(?<i>[0-9]+)/(?<n>[0-9]+)$")) as $c
+    | {kind: (.group + ":" + ($c.kind // "")), i: ($c.i | tonumber), n: ($c.n | tonumber)}]'
+has "$inventory" "$numbered | map(.kind) | unique == [\"corpus:walk-\", \"unit:\"]" 'the inventory lacks the unit parts or the corpus walk parts'
+has "$inventory" "$numbered | group_by(.kind) | all(.[]; ([.[].n] | unique | length) == 1 and ([.[].i] | sort) == [range(1; .[0].n + 1)])" 'the numbered parts of a group are not exactly 1/N to N/N'
 output "$linux"
 has "$matrix" "length == ($inventory | length) and all(.[]; .os == \"ubuntu-24.04\")" 'Linux does not run every part of the inventory'
 has "$jobs" 'length == (unique | length)' 'two Linux jobs have one name'
