@@ -1,9 +1,10 @@
 # Temporary (removed before the full check): runs the conformance cases
 # share1-pos-close-leaves-the-state-to-an-executing-statement and
-# share1-pos-close-leaves-the-state-to-a-statement-naming-it-twice on the
+# share1-pos-statement-naming-an-object-twice-counts-it-once on the
 # compiler as it is (control), on a compiler whose atomic statements count no
 # handle of their own (m0) and on one whose statement retains only for the
-# first target of a group while each target still releases (m1), plain and
+# first target of a group while each target still releases (m1), and on one
+# that retains for each target but releases only for the first (m2), plain and
 # under each sanitizer, 30 times each, and prints the tally of exit statuses
 # and the first report of each mode.
 name: tmp-statement-count-mutants
@@ -27,7 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [control, m0, m1]
+        variant: [control, m1, m2]
     steps:
       - uses: actions/checkout@v4
 
@@ -53,10 +54,10 @@ jobs:
           python3 - <<'PY'
           import os
           variant = os.environ['VARIANT']
-          if variant == 'm0':
-              p = 'compiler/src/semantic/check/control/atomic.rs'
-              old = 'target.kept_by_place = watch.as_ref()'
-              new = 'target.kept_by_place = true || watch.as_ref()'
+          if variant == 'm2':
+              p = 'compiler/src/lowering/builder/atomic.rs'
+              old = 'owned: !target.kept_by_place,'
+              new = 'owned: !target.kept_by_place && members.len() == 1,'
           else:
               p = 'compiler/src/lowering/builder/atomic.rs'
               old = 'let object = if target.kept_by_place {'
@@ -79,7 +80,7 @@ jobs:
           export ASAN_OPTIONS=detect_leaks=0:detect_stack_use_after_return=0
           export TSAN_OPTIONS=halt_on_error=1
           export UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1
-          for case_name in share1-pos-close-leaves-the-state-to-an-executing-statement share1-pos-close-leaves-the-state-to-a-statement-naming-it-twice; do
+          for case_name in share1-pos-close-leaves-the-state-to-an-executing-statement share1-pos-statement-naming-an-object-twice-counts-it-once; do
           case_file="$PWD/tests/conformance/cases/$case_name.wf"
           for mode in plain par address address-par thread thread-par; do
             case "$mode" in

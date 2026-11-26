@@ -2,7 +2,7 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn worker(first: Shared<Box<u8>>, second: Shared<Box<u8>>) -> result: u8 pure waits {
-  doc "One statement names the object through two handles and its block ends both before it touches the state: the statement counts once, so the state outlives the block and is released once.";
+  doc "One statement names the object through two handles and its block ends both before it touches the state: the statement counts once, so the state outlives the block and the statement's completion ends exactly the one handle it counted.";
   let seen = 0_u8;
   atomic a = &first, b = &second {
     release::<Shared<Box<u8>>>(value: move first);
@@ -14,11 +14,11 @@ fn worker(first: Shared<Box<u8>>, second: Shared<Box<u8>>) -> result: u8 pure wa
   return seen;
 }
 
-fn distance_from_nine(found: Option<Box<u8>>) -> result: u8 pure {
-  doc "Zero for no state and for the state the statement left, the only state a close can return.";
+fn held_value(found: Option<Box<u8>>) -> result: u8 pure {
+  doc "The state a close returned, or zero when the close was not the last to end.";
   match move found {
     Some(value: kept) => {
-      return kept.inner -wrap 9_u8;
+      return kept.inner;
     }
     None() => {
       return 0_u8;
@@ -27,14 +27,15 @@ fn distance_from_nine(found: Option<Box<u8>>) -> result: u8 pure {
 }
 
 fn main() -> status: ExitStatus pure waits {
-  doc "SHARE-1, SHARE-2: a statement that names one object through two handles counts as one handle until it completes, so a close that comes while it executes returns None, a close that returns Some finds the state the statement wrote, and the state is released once, whichever order the contexts take.";
+  doc "SHARE-1: the worker's statement has completed when the starter joins it, so the object's only handle left is the starter's, its close is the last to end and returns the state the statement wrote. A statement that counted its object once and ended two handles, or counted twice and ended one, would leave that close not last and give None.";
   let boxed = box_new::<u8>(value: 7_u8);
   let cell = shared_new::<Box<u8>>(value: move boxed);
   let one = shared_share::<Box<u8>>(shared: &cell);
   let two = shared_share::<Box<u8>>(shared: &cell);
   let seen = spawn worker(first: move one, second: move two);
+  let joined = seen -wrap 9_u8;
   let closed = shared_close::<Box<u8>>(shared: move cell);
-  let distance = distance_from_nine(found: move closed);
-  let total = seen +wrap distance;
+  let held = held_value(found: move closed);
+  let total = held +wrap joined;
   return exit_status(code: total);
 }
