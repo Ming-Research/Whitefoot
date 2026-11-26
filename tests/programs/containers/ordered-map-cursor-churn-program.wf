@@ -1,0 +1,360 @@
+alias ExitStatus = std::process::ExitStatus;
+alias OrderedCursor = std::collections::ordered_map::OrderedCursor;
+alias OrderedDirection = std::collections::ordered_map::OrderedDirection;
+alias OrderedKey = std::collections::ordered_map::OrderedKey;
+alias OrderedMap = std::collections::ordered_map::OrderedMap;
+alias OrderedPut = std::collections::ordered_map::OrderedPut;
+alias OrderedSeek = std::collections::ordered_map::OrderedSeek;
+alias exit_status = std::process::exit_status;
+alias ordered_map_first = std::collections::ordered_map::ordered_map_first;
+alias ordered_map_free = std::collections::ordered_map::ordered_map_free;
+alias ordered_map_last = std::collections::ordered_map::ordered_map_last;
+alias ordered_map_new = std::collections::ordered_map::ordered_map_new;
+alias ordered_map_put = std::collections::ordered_map::ordered_map_put;
+alias ordered_map_rank = std::collections::ordered_map::ordered_map_rank;
+alias ordered_map_read = std::collections::ordered_map::ordered_map_read;
+alias ordered_map_remove = std::collections::ordered_map::ordered_map_remove;
+alias ordered_map_seek = std::collections::ordered_map::ordered_map_seek;
+alias ordered_map_step = std::collections::ordered_map::ordered_map_step;
+
+struct ChurnOrder {
+  mode: u64;
+}
+
+struct ChurnPair {
+  key: u64;
+  value: u64;
+}
+
+struct ChurnLog {
+  failures: u64;
+  consumed: u64;
+}
+
+struct ChurnOracle {
+  doc "The membership oracle over the keys 0 to 511: present holds 1 for a key in the map; after a rebuild sorted holds the present keys in ascending order, count how many there are, and below at k the number of present keys less than k, for k from 0 to 512.";
+  present: Array<u64, 512>;
+  sorted: Array<u64, 512>;
+  below: Array<u64, 513>;
+  count: u64;
+}
+
+fn churn_compare(env: &ChurnOrder, left: &u64, right: &u64) -> result: i32 reads(left), reads(right) {
+  if left^ < right^ {
+    return -1_i32;
+  }
+  if left^ > right^ {
+    return 1_i32;
+  }
+  return 0_i32;
+}
+
+binding ChurnKey : OrderedKey<u64, ChurnOrder> {
+  compare = churn_compare;
+}
+
+fn churn_coarse_place(env: &ChurnOrder, left: &u64, right: &u64) -> result: i32 reads(left), reads(right) {
+  doc "Orders a stored key by its group of sixteen against a group probe: every key of the probe's group places at it, so a seek's split falls inside runs of equal places that cross node boundaries.";
+  let group = left^ / 16_u64;
+  if group < right^ {
+    return -1_i32;
+  }
+  if group > right^ {
+    return 1_i32;
+  }
+  return 0_i32;
+}
+
+fn churn_take(env: &ChurnLog, key: &u64, value: &u64) -> result: ChurnPair reads(key), reads(value) {
+  return ChurnPair(key: key^, value: value^);
+}
+
+fn churn_consume(env: &ChurnLog, key: u64, value: u64) -> result: unit writes(env) {
+  set env^.consumed = env^.consumed +wrap 1_u64;
+  return unit;
+}
+
+fn churn_fail(log: &ChurnLog) -> result: unit writes(log) {
+  set log^.failures = log^.failures +wrap 1_u64;
+  return unit;
+}
+
+fn churn_value(key: u64) -> result: u64 pure {
+  let scaled = key *wrap 10_u64;
+  let value = scaled +wrap 1_u64;
+  return value;
+}
+
+fn churn_rebuild(oracle: &ChurnOracle) -> result: unit writes(oracle) {
+  let count = 0_u64;
+  for (key in 0_u64..512_u64) {
+    set oracle^.below[key] = count;
+    if oracle^.present[key] != 0_u64 {
+      if count < oracle^.sorted.len {
+        set oracle^.sorted[count] = key;
+      }
+      set count = count +wrap 1_u64;
+    }
+  }
+  set oracle^.below[512_u64] = count;
+  set oracle^.count = count;
+  return unit;
+}
+
+fn churn_below(oracle: &ChurnOracle, bound: u64) -> count: u64 reads(oracle) {
+  doc "The number of present keys less than bound.";
+  if bound < oracle^.below.len {
+    return oracle^.below[bound];
+  }
+  return oracle^.count;
+}
+
+fn churn_expect(map: &OrderedMap<u64, u64, 1024>, cursor: &OrderedCursor, oracle: &ChurnOracle, on: Bool, index: u64, log: &ChurnLog) -> result: unit reads(map), reads(cursor), reads(oracle), writes(log) {
+  doc "The cursor is on the oracle's pair of rank index when on is set, and on no pair, reading and ranking nothing, otherwise.";
+  let key = 0_u64;
+  if index < oracle^.sorted.len {
+    set key = oracle^.sorted[index];
+  } else if on {
+    churn_fail(log: log);
+    return unit;
+  }
+  let value = churn_value(key: key);
+  let read = ordered_map_read::<u64, u64, ChurnLog, ChurnPair, fn churn_take, 1024>(map: map, cursor: cursor, env: log);
+  match read {
+    Ok(value: pair) => {
+      if on {
+        if pair.key != key {
+          churn_fail(log: log);
+        }
+        if pair.value != value {
+          churn_fail(log: log);
+        }
+      } else {
+        churn_fail(log: log);
+      }
+    }
+    Err(error: absent) => {
+      if on {
+        churn_fail(log: log);
+      }
+    }
+  }
+  let ranked = ordered_map_rank::<u64, u64, 1024>(map: map, cursor: cursor);
+  match ranked {
+    Ok(value: before) => {
+      if on {
+        if before != index {
+          churn_fail(log: log);
+        }
+      } else {
+        churn_fail(log: log);
+      }
+    }
+    Err(error: unranked) => {
+      if on {
+        churn_fail(log: log);
+      }
+    }
+  }
+  return unit;
+}
+
+fn churn_walk(map: &OrderedMap<u64, u64, 1024>, start: OrderedCursor, oracle: &ChurnOracle, on: Bool, index: u64, forward: Bool, moves: u64, log: &ChurnLog) -> result: unit reads(map), reads(oracle), writes(log) {
+  doc "From a cursor the oracle places at rank index, or on no pair when on is clear, takes up to moves steps one way, checking every pair reached, that a step past either end returns False and leaves the cursor on no pair, and that a cursor on no pair stays there.";
+  let cursor = start;
+  let direction = OrderedDirection::OrderedBackward();
+  if forward {
+    set direction = OrderedDirection::OrderedForward();
+  }
+  let here = on;
+  let at = index;
+  for (move_count in 0_u64..moves) {
+    churn_expect(map: map, cursor: &cursor, oracle: oracle, on: here, index: at, log: log);
+    let moved = ordered_map_step::<u64, u64, 1024>(map: map, cursor: &cursor, direction: direction);
+    let expect_moved = False();
+    if here {
+      if forward {
+        let following = at +wrap 1_u64;
+        if following < oracle^.count {
+          set expect_moved = True();
+          set at = following;
+        }
+      } else if at > 0_u64 {
+        set expect_moved = True();
+        set at = at - 1_u64;
+      }
+    }
+    if moved {
+      if expect_moved {
+      } else {
+        churn_fail(log: log);
+      }
+    } else if expect_moved {
+      churn_fail(log: log);
+    }
+    set here = expect_moved;
+  }
+  return unit;
+}
+
+fn churn_around(map: &OrderedMap<u64, u64, 1024>, cursor: OrderedCursor, oracle: &ChurnOracle, on: Bool, index: u64, log: &ChurnLog) -> result: unit reads(map), reads(oracle), writes(log) {
+  let forward = True();
+  let backward = False();
+  churn_walk(map: map, start: cursor, oracle: oracle, on: on, index: index, forward: forward, moves: 3_u64, log: log);
+  churn_walk(map: map, start: cursor, oracle: oracle, on: on, index: index, forward: backward, moves: 3_u64, log: log);
+  return unit;
+}
+
+fn churn_upward(map: &OrderedMap<u64, u64, 1024>, cursor: OrderedCursor, oracle: &ChurnOracle, bound: u64, log: &ChurnLog) -> result: unit reads(map), reads(oracle), writes(log) {
+  doc "The cursor is on the least present key not less than bound, or on no pair when there is none.";
+  let index = churn_below(oracle: oracle, bound: bound);
+  let on = index < oracle^.count;
+  churn_around(map: map, cursor: cursor, oracle: oracle, on: on, index: index, log: log);
+  return unit;
+}
+
+fn churn_downward(map: &OrderedMap<u64, u64, 1024>, cursor: OrderedCursor, oracle: &ChurnOracle, bound: u64, log: &ChurnLog) -> result: unit reads(map), reads(oracle), writes(log) {
+  doc "The cursor is on the greatest present key less than bound, or on no pair when there is none.";
+  let fewer = churn_below(oracle: oracle, bound: bound);
+  let on = fewer > 0_u64;
+  let index = fewer -wrap 1_u64;
+  churn_around(map: map, cursor: cursor, oracle: oracle, on: on, index: index, log: log);
+  return unit;
+}
+
+fn churn_check(map: &OrderedMap<u64, u64, 1024>, oracle: &ChurnOracle, order: &ChurnOrder, log: &ChurnLog) -> result: unit reads(map), reads(oracle), reads(order), writes(log) {
+  doc "Whole walks both ways, every exact seek for the probes 0 to 513, and every coarse seek for the groups 0 to 33, each landing and its neighbours against the oracle.";
+  let count = oracle^.count;
+  let nonempty = count > 0_u64;
+  let moves = count +wrap 2_u64;
+  let first = ordered_map_first::<u64, u64, 1024>(map: map);
+  let forward = True();
+  churn_walk(map: map, start: first, oracle: oracle, on: nonempty, index: 0_u64, forward: forward, moves: moves, log: log);
+  let last = ordered_map_last::<u64, u64, 1024>(map: map);
+  let backward = False();
+  let final = count -wrap 1_u64;
+  churn_walk(map: map, start: last, oracle: oracle, on: nonempty, index: final, forward: backward, moves: moves, log: log);
+  for (probe in 0_u64..514_u64) {
+    let next = probe +wrap 1_u64;
+    let at_least = OrderedSeek::OrderedAtLeast();
+    let cursor = ordered_map_seek::<u64, u64, ChurnOrder, u64, fn churn_compare, 1024>(map: map, seek: at_least, probe: &probe, env: order);
+    churn_upward(map: map, cursor: cursor, oracle: oracle, bound: probe, log: log);
+    let above = OrderedSeek::OrderedAbove();
+    set cursor = ordered_map_seek::<u64, u64, ChurnOrder, u64, fn churn_compare, 1024>(map: map, seek: above, probe: &probe, env: order);
+    churn_upward(map: map, cursor: cursor, oracle: oracle, bound: next, log: log);
+    let at_most = OrderedSeek::OrderedAtMost();
+    set cursor = ordered_map_seek::<u64, u64, ChurnOrder, u64, fn churn_compare, 1024>(map: map, seek: at_most, probe: &probe, env: order);
+    churn_downward(map: map, cursor: cursor, oracle: oracle, bound: next, log: log);
+    let below = OrderedSeek::OrderedBelow();
+    set cursor = ordered_map_seek::<u64, u64, ChurnOrder, u64, fn churn_compare, 1024>(map: map, seek: below, probe: &probe, env: order);
+    churn_downward(map: map, cursor: cursor, oracle: oracle, bound: probe, log: log);
+  }
+  for (group in 0_u64..34_u64) {
+    let start = group *wrap 16_u64;
+    let end = start +wrap 16_u64;
+    let at_least = OrderedSeek::OrderedAtLeast();
+    let cursor = ordered_map_seek::<u64, u64, ChurnOrder, u64, fn churn_coarse_place, 1024>(map: map, seek: at_least, probe: &group, env: order);
+    churn_upward(map: map, cursor: cursor, oracle: oracle, bound: start, log: log);
+    let above = OrderedSeek::OrderedAbove();
+    set cursor = ordered_map_seek::<u64, u64, ChurnOrder, u64, fn churn_coarse_place, 1024>(map: map, seek: above, probe: &group, env: order);
+    churn_upward(map: map, cursor: cursor, oracle: oracle, bound: end, log: log);
+    let at_most = OrderedSeek::OrderedAtMost();
+    set cursor = ordered_map_seek::<u64, u64, ChurnOrder, u64, fn churn_coarse_place, 1024>(map: map, seek: at_most, probe: &group, env: order);
+    churn_downward(map: map, cursor: cursor, oracle: oracle, bound: end, log: log);
+    let below = OrderedSeek::OrderedBelow();
+    set cursor = ordered_map_seek::<u64, u64, ChurnOrder, u64, fn churn_coarse_place, 1024>(map: map, seek: below, probe: &group, env: order);
+    churn_downward(map: map, cursor: cursor, oracle: oracle, bound: start, log: log);
+  }
+  return unit;
+}
+
+fn churn_toggle(map: &OrderedMap<u64, u64, 1024>, oracle: &ChurnOracle, key: u64, insert: Bool, remove: Bool, order: &ChurnOrder, log: &ChurnLog) -> result: unit reads(order), writes(map), writes(oracle), writes(log) {
+  doc "Inserts key when it is absent and insert is set, and removes it when it is present and remove is set, keeping the oracle's membership in step and checking what the map reports.";
+  if key < oracle^.present.len {
+  } else {
+    churn_fail(log: log);
+    return unit;
+  }
+  if oracle^.present[key] == 0_u64 {
+    if insert {
+      let value = churn_value(key: key);
+      let put = ordered_map_put::<ChurnKey, u64, 1024>(map: map, key: key, value: value, env: order);
+      match put {
+        OrderedInserted() => {
+        }
+        OrderedReturned(reason: returned_reason, pair: returned_pair) => {
+          churn_fail(log: log);
+        }
+      }
+      set oracle^.present[key] = 1_u64;
+    }
+    return unit;
+  }
+  if remove {
+    let removed = ordered_map_remove::<ChurnKey, u64, 1024>(map: map, key: &key, env: order);
+    match removed {
+      Some(value: pair) => {
+        if pair.key != key {
+          churn_fail(log: log);
+        }
+      }
+      None() => {
+        churn_fail(log: log);
+      }
+    }
+    set oracle^.present[key] = 0_u64;
+  }
+  return unit;
+}
+
+fn churn_run(log: &ChurnLog) -> result: unit writes(log) {
+  doc "Eight rounds of 300 pseudo-random keys from 0 to 511 on one map: the first four insert every absent key and remove a present one on every third step, growing the map to three levels through splits; the last four remove every present key and insert an absent one on every third step, shrinking it through borrows from either sibling, merges and root contraction. After each round the cursors are checked against the oracle.";
+  let order = ChurnOrder(mode: 0_u64);
+  let present = array_filled::<u64, 512>(value: 0_u64);
+  let sorted = array_filled::<u64, 512>(value: 0_u64);
+  let below = array_filled::<u64, 513>(value: 0_u64);
+  let oracle = ChurnOracle(present: present, sorted: sorted, below: below, count: 0_u64);
+  let map = ordered_map_new::<u64, u64, 1024>();
+  let state = 12345_u64;
+  for (round in 0_u64..8_u64) {
+    let growing = round < 4_u64;
+    for (step in 0_u64..300_u64) {
+      set state = state *wrap 6364136223846793005_u64;
+      set state = state +wrap 1442695040888963407_u64;
+      let high = state / 8589934592_u64;
+      let key = high % 512_u64;
+      let third = step % 3_u64;
+      let rare = third == 0_u64;
+      let insert = rare;
+      let remove = True();
+      if growing {
+        set insert = True();
+        set remove = rare;
+      }
+      churn_toggle(map: &map, oracle: &oracle, key: key, insert: insert, remove: remove, order: &order, log: log);
+    }
+    churn_rebuild(oracle: &oracle);
+    churn_check(map: &map, oracle: &oracle, order: &order, log: log);
+  }
+  let before = log^.consumed;
+  ordered_map_free::<u64, u64, ChurnLog, fn churn_consume, 1024>(map: move map, env: log);
+  let released = log^.consumed -wrap before;
+  if released != oracle.count {
+    set log^.consumed = 0_u64;
+  } else {
+    set log^.consumed = 1_u64;
+  }
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure {
+  let log = ChurnLog(failures: 0_u64, consumed: 0_u64);
+  churn_run(log: &log);
+  if log.failures != 0_u64 {
+    return exit_status(code: 1_u8);
+  }
+  if log.consumed != 1_u64 {
+    return exit_status(code: 2_u8);
+  }
+  return exit_status(code: 0_u8);
+}

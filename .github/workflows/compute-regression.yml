@@ -50,7 +50,8 @@ jobs:
     # model where that sum is largest (a cold merge-base build, the
     # qualification's controls, the judgment with its retest round and every
     # data-placement round the qualification and the control can run), plus 3
-    # minutes for checkout, caches and the warm-up, rounded up to 5 minutes.
+    # minutes for checkout, caches and the two warm-ups, rounded up to 5
+    # minutes.
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -191,6 +192,20 @@ jobs:
               "$RUNNER_TEMP"/baseline/tests/programs/compute/host-adapter.awk \
               "$RUNNER_TEMP"/baseline/compiler/runtime.mk
           } > "$RUNNER_TEMP/performance-results/identity.txt"
+      # The first compiler build of a job took 9 to 15% more wall time than an
+      # identical second one with the same user time, whichever compiler it
+      # built, so its budget covered time that is not the compiler's. The
+      # untimed steps here take the cost that comes before the build: the
+      # locked crates are fetched, and every file of the Rust toolchain is read
+      # once (research/investigations/test-economy/time-budgets.md, "The first
+      # compiler build's extra time"). Like the image warm-up below, it is not
+      # a labeled stage and has no budget.
+      - name: Warm the Rust toolchain
+        if: steps.scope.outputs.baseline == 'true'
+        run: |
+          cargo fetch --locked --manifest-path compiler/Cargo.toml
+          cargo fetch --locked --manifest-path "$RUNNER_TEMP/baseline/compiler/Cargo.toml"
+          find "$(rustc --print sysroot)" -type f -print0 | xargs -0 cat > /dev/null
       - name: Build the candidate compiler
         if: steps.scope.outputs.measure == 'true'
         run: |

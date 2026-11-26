@@ -318,6 +318,132 @@ fn an_accepted_connection_reports_its_peer_and_its_own_end_on_both_routes() {
     }
 }
 
+/// Sixteen bytes that differ from one call to the next, so that a listener
+/// which echoes them back is one that received them from this call.
+fn fresh_token() -> [u8; 16] {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the host clock is past 1970")
+        .as_nanos();
+    let mut state = nanos as u64 ^ ((nanos >> 64) as u64) ^ 0x9e37_79b9_7f4a_7c15;
+    let mut token = [0_u8; 16];
+    for byte in token.iter_mut() {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        *byte = (state >> 24) as u8;
+    }
+    token
+}
+
+/// [PRE-2] A listener opened on port 0 reports the port the host chose:
+/// `tcp_listener_address.wf` connects to a listener this test holds, listens
+/// on 127.0.0.1 port 0, reads its own port with `listener_address`, and sends
+/// that port over the connection as decimal text. This test then connects to
+/// the reported port and sends a token that differs on every call; the program
+/// accepts on its own listener and echoes what arrives. The token coming back
+/// whole is what shows that the reported port is the one the program's own
+/// listener is bound to, which this side's view of its own connection to that
+/// port cannot show, since that connection reaches whatever listens there. The
+/// port is never reserved outside the program: this side holds the first
+/// listener for the whole run.
+#[test]
+fn a_listener_reports_the_port_the_host_chose_on_both_routes() {
+    let llvm = compile_program("tcp_listener_address.wf");
+    let program = build_program(&llvm);
+    for native_ring in [true, false] {
+        let held = TcpListener::bind("127.0.0.1:0").expect("hold a loopback listener");
+        let held_port = held.local_addr().expect("the held listener's address").port();
+        let text = held_port.to_string();
+        let child = program.spawn_on_route(native_ring, &[text.as_bytes()]);
+        let mut report = accept_when_ready(&held);
+        let mut line = Vec::new();
+        let mut byte = [0_u8; 1];
+        while line.last() != Some(&b'\n') {
+            assert!(line.len() < 16, "the report is a short line: {line:?}");
+            let count = report.read(&mut byte).expect("read the reported port");
+            assert_eq!(count, 1, "the report ended before its line feed: {line:?}");
+            line.push(byte[0]);
+        }
+        let reported: u16 = std::str::from_utf8(&line[..line.len() - 1])
+            .expect("the report is text")
+            .parse()
+            .expect("the report is one decimal port");
+        assert_ne!(reported, 0, "native ring: {native_ring}");
+        assert_ne!(reported, held_port, "native ring: {native_ring}");
+        let mut stream = connect_to_when_ready(SocketAddr::from(([127, 0, 0, 1], reported)));
+        let token = fresh_token();
+        stream.write_all(&token).expect("send the token");
+        stream
+            .shutdown(Shutdown::Write)
+            .expect("end this side's sending");
+        let mut echoed = Vec::new();
+        stream
+            .read_to_end(&mut echoed)
+            .expect("read the echoed token");
+        drop(stream);
+        drop(report);
+        let (status, _) = finished(child);
+        assert_eq!(status, 0, "native ring: {native_ring}");
+        assert_eq!(echoed, token, "native ring: {native_ring}");
+    }
+}
+
+/// [PRE-2] A listener opened on the IPv6 loopback with port 0 reports the
+/// port the host chose, and its address is `::1`: `tcp_listener_address_v6.wf`
+/// does what `tcp_listener_address.wf` does with a listener on `::1`, and
+/// answers a nonzero exit code when the address `listener_address` reports is
+/// not the IPv6 loopback. The token this side sends to `[::1]:<reported>` comes
+/// back only from the program's own listener. A host without an IPv6 loopback
+/// skips the case, since the program could not listen there.
+#[test]
+fn an_ipv6_listener_reports_the_port_the_host_chose_on_both_routes() {
+    if free_port_v6().is_none() {
+        eprintln!("skipped: this host has no IPv6 loopback to bind");
+        return;
+    }
+    let llvm = compile_program("tcp_listener_address_v6.wf");
+    let program = build_program(&llvm);
+    for native_ring in [true, false] {
+        let held = TcpListener::bind("127.0.0.1:0").expect("hold a loopback listener");
+        let held_port = held.local_addr().expect("the held listener's address").port();
+        let text = held_port.to_string();
+        let child = program.spawn_on_route(native_ring, &[text.as_bytes()]);
+        let mut report = accept_when_ready(&held);
+        let mut line = Vec::new();
+        let mut byte = [0_u8; 1];
+        while line.last() != Some(&b'\n') {
+            assert!(line.len() < 16, "the report is a short line: {line:?}");
+            let count = report.read(&mut byte).expect("read the reported port");
+            assert_eq!(count, 1, "the report ended before its line feed: {line:?}");
+            line.push(byte[0]);
+        }
+        let reported: u16 = std::str::from_utf8(&line[..line.len() - 1])
+            .expect("the report is text")
+            .parse()
+            .expect("the report is one decimal port");
+        assert_ne!(reported, 0, "native ring: {native_ring}");
+        let mut stream = connect_to_when_ready(SocketAddr::new(
+            std::net::Ipv6Addr::LOCALHOST.into(),
+            reported,
+        ));
+        let token = fresh_token();
+        stream.write_all(&token).expect("send the token");
+        stream
+            .shutdown(Shutdown::Write)
+            .expect("end this side's sending");
+        let mut echoed = Vec::new();
+        stream
+            .read_to_end(&mut echoed)
+            .expect("read the echoed token");
+        drop(stream);
+        drop(report);
+        let (status, _) = finished(child);
+        assert_eq!(status, 0, "native ring: {native_ring}");
+        assert_eq!(echoed, token, "native ring: {native_ring}");
+    }
+}
+
 /// One port the host is not using on the IPv6 loopback, or `None` when the
 /// host has no IPv6 loopback to bind.
 fn free_port_v6() -> Option<u16> {
@@ -5072,6 +5198,88 @@ fn firn_answers_the_value_types_as_redis_does_with_hashes_and_sorted_sets() {
     }
     client.write_all(&batch).expect("send the large sets");
     expect_replies(&mut client, expected.as_bytes(), "the sets of 200 members");
+    // A set of 300 members added in a scattered order, each score held by
+    // four members, so that runs of equal scores, ordered by member as Redis
+    // orders them, cross the tree's node boundaries. Every expected reply is
+    // computed here from Redis's documented order: by score, then by member
+    // bytes; ZRANK counts the members before one, ZREVRANK those after it.
+    let spread = |index: usize| format!("s{index:03}");
+    let mut ordered = (0..300_usize)
+        .map(|index| (index % 75, spread(index)))
+        .collect::<Vec<_>>();
+    ordered.sort();
+    let mut scattered_set = words(&["ZADD", "spread"]);
+    for step in 0..300_usize {
+        let index = step * 7 % 300;
+        scattered_set.push((index % 75).to_string());
+        scattered_set.push(spread(index));
+    }
+    let mut checks = vec![(scattered_set, ":300\r\n".to_owned())];
+    for (rank, (_, member)) in ordered.iter().enumerate() {
+        checks.push((
+            words(&["ZRANK", "spread", member.as_str()]),
+            format!(":{rank}\r\n"),
+        ));
+        checks.push((
+            words(&["ZREVRANK", "spread", member.as_str()]),
+            format!(":{}\r\n", 299 - rank),
+        ));
+    }
+    let bound = |score: usize, open: bool| {
+        if open {
+            format!("({score}")
+        } else {
+            score.to_string()
+        }
+    };
+    for low in (0..75_usize).step_by(4) {
+        let high = low + 3;
+        for (low_open, high_open) in [(false, false), (true, false), (false, true), (true, true)] {
+            let within = ordered
+                .iter()
+                .filter(|(score, _)| {
+                    (if low_open { *score > low } else { *score >= low })
+                        && (if high_open { *score < high } else { *score <= high })
+                })
+                .map(|(_, member)| member.clone())
+                .collect::<Vec<_>>();
+            let min = bound(low, low_open);
+            let max = bound(high, high_open);
+            checks.push((
+                words(&["ZRANGEBYSCORE", "spread", min.as_str(), max.as_str(), "LIMIT", "1", "6"]),
+                array(within.iter().skip(1).take(6).cloned().collect()),
+            ));
+            checks.push((
+                words(&["ZREVRANGEBYSCORE", "spread", max.as_str(), min.as_str(), "LIMIT", "2", "5"]),
+                array(within.iter().rev().skip(2).take(5).cloned().collect()),
+            ));
+            checks.push((
+                words(&["ZCOUNT", "spread", min.as_str(), max.as_str()]),
+                format!(":{}\r\n", within.len()),
+            ));
+        }
+    }
+    checks.push((
+        words(&["ZRANGE", "spread", "(1", "-inf", "BYSCORE", "REV"]),
+        array(ordered[..4].iter().rev().map(|(_, member)| member.clone()).collect()),
+    ));
+    checks.push((
+        words(&["ZRANGE", "spread", "(73", "+inf", "BYSCORE"]),
+        array(ordered[296..].iter().map(|(_, member)| member.clone()).collect()),
+    ));
+    let mut batch = Vec::new();
+    let mut expected = String::new();
+    for (request, reply) in &checks {
+        let request = request.iter().map(String::as_str).collect::<Vec<_>>();
+        batch.extend(resp(&request));
+        expected.push_str(reply);
+    }
+    client.write_all(&batch).expect("send the scattered set");
+    expect_replies(
+        &mut client,
+        expected.as_bytes(),
+        "the scattered set of 300 members",
+    );
     drop(client);
     let (status, _) = finished(child);
     assert_eq!(status, 0);

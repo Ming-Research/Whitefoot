@@ -540,10 +540,10 @@ logs) gives it:
 | `performance-data-round-quadrature` | 10.41 (9), 15 | 8.61 (9), 10 | 5.71 (8), 10 | 5.71 (36) |
 | `performance-data-round-stencil` | 50.96 (12), 60 | 60.08 (12), 80 | 37.15 (9), 45 | 35.75 (36) |
 
-The table has no Xeon 6975P-C column, so that model takes each row's largest
-value, which covers its runs; the Xeon 8573C column, which no job reached,
-takes it too. The rows were recomputed over more runs after the judgment's
-run, below. The control's step for B against S took 63 to 67 s on the Xeon
+The table then had no Xeon 6975P-C column, so that model took each row's
+largest value, which covers its runs; the Xeon 8573C column, which no job
+reached, took it too. The rows were recomputed over more runs after the
+judgment's run, below. The control's step for B against S took 63 to 67 s on the Xeon
 jobs and 100 to 173 s on the AMD jobs. A run of a pull request whose arms map
 alike executes only the record.
 
@@ -619,16 +619,19 @@ by model, with the number of runs, the median, the maximum and the cell:
 
 | label | EPYC 7763 | EPYC 9V74 | EPYC 9V45 | Xeon 6975P-C |
 |---|---|---|---|---|
-| `performance-data-layout` | 32, 2.90, 3.20, 10 | 28, 2.85, 3.40, 10 | 17, 2.10, 2.40, 10 | 104, 2.10, 2.30 |
-| `performance-data-round-mandelbrot` | 14, 13.61, 13.62, 15 | 13, 12.21, 15.72, 25 | 7, 9.91, 10.62, 15 | 42, 9.31, 9.51 |
-| `performance-data-round-records` | 14, 12.16, 12.41, 15 | 14, 11.46, 14.42, 20 | 11, 8.51, 9.72, 15 | 42, 9.11, 9.41 |
-| `performance-data-round-fir` | 13, 12.51, 12.61, 15 | 13, 10.71, 13.42, 20 | 9, 6.51, 7.22, 10 | 42, 7.41, 7.71 |
-| `performance-data-round-quadrature` | 13, 10.31, 10.41, 15 | 13, 8.21, 10.41, 15 | 10, 5.56, 6.51, 10 | 42, 5.61, 5.71 |
-| `performance-data-round-stencil` | 18, 46.86, 50.96, 65 | 20, 50.06, 60.08, 80 | 10, 35.09, 37.15, 45 | 42, 32.09, 36.05 |
+| `performance-data-layout` | 32, 2.90, 3.20, 10 | 28, 2.85, 3.40, 10 | 17, 2.10, 2.40, 10 | 104, 2.10, 2.30, 10 |
+| `performance-data-round-mandelbrot` | 14, 13.61, 13.62, 15 | 13, 12.21, 15.72, 25 | 7, 9.91, 10.62, 15 | 42, 9.31, 9.51, 15 |
+| `performance-data-round-records` | 14, 12.16, 12.41, 15 | 14, 11.46, 14.42, 20 | 11, 8.51, 9.72, 15 | 42, 9.11, 9.41, 15 |
+| `performance-data-round-fir` | 13, 12.51, 12.61, 15 | 13, 10.71, 13.42, 20 | 9, 6.51, 7.22, 10 | 42, 7.41, 7.71, 10 |
+| `performance-data-round-quadrature` | 13, 10.31, 10.41, 15 | 13, 8.21, 10.41, 15 | 10, 5.56, 6.51, 10 | 42, 5.61, 5.71, 10 |
+| `performance-data-round-stencil` | 18, 46.86, 50.96, 65 | 20, 50.06, 60.08, 80 | 10, 35.09, 37.15, 45 | 42, 32.09, 36.05, 45 |
 
-The Xeon 6975P-C and Xeon 8573C take each row's largest cell. With these
-rows every stage one run of `compute-regression.yml` can execute sums to at
-most 1330 s, in those columns.
+The Xeon 6975P-C, which has a column of the table since 2026-11-26 and 42
+runs or more of each label, follows the rule like a class; the Xeon 8573C
+takes each row's largest cell. With these rows and the table's other rows of
+`compute-regression.yml` as of 2026-11-26, every stage one run can execute
+sums to at most 1350 s, in the Xeon 8573C column and for a model with no
+column.
 
 ## Limitations
 
