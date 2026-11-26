@@ -223,8 +223,8 @@ pub(crate) fn lower_checked_from(
     // Once every body and cleanup is complete, remove unobserved forwarding
     // and then merge each block parameter whose incoming edges all carry one
     // value into that value, before work estimates and backend storage
-    // planning see the graph. This changes neither source signatures nor
-    // instruction definitions; merging rewrites the operands that named a
+    // planning see the graph. This changes no source signature and adds or
+    // removes no instruction; merging rewrites the operands that named a
     // removed parameter.
     for function in &mut functions {
         parameters::prune_block_parameters(function, 0, &[])?;
