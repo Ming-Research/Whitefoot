@@ -3605,8 +3605,9 @@ fn indexed_marks_and_record_fields_retain_their_family_contracts() {
 
 #[test]
 fn indexed_marks_and_fields_deny_mixed_updates_and_root_reads() {
-    for (source, expected) in [
+    for (case, source, expected) in [
         (
+            "mark-constants",
             include_bytes!(
                 "../../../../tests/conformance/cases/par2-neg-indexed-mark-constants.wf"
             )
@@ -3614,6 +3615,7 @@ fn indexed_marks_and_fields_deny_mixed_updates_and_root_reads() {
             "one fixed operation or one constant",
         ),
         (
+            "mark-operation",
             include_bytes!(
                 "../../../../tests/conformance/cases/par2-neg-indexed-mark-operation.wf"
             )
@@ -3621,6 +3623,7 @@ fn indexed_marks_and_fields_deny_mixed_updates_and_root_reads() {
             "one fixed operation or one constant",
         ),
         (
+            "mark-subscript-read",
             include_bytes!(
                 "../../../../tests/conformance/cases/par2-neg-indexed-mark-subscript-read.wf"
             )
@@ -3628,6 +3631,7 @@ fn indexed_marks_and_fields_deny_mixed_updates_and_root_reads() {
             "every occurrence",
         ),
         (
+            "field-whole-write",
             include_bytes!(
                 "../../../../tests/conformance/cases/par2-neg-indexed-field-whole-write.wf"
             )
@@ -3635,6 +3639,7 @@ fn indexed_marks_and_fields_deny_mixed_updates_and_root_reads() {
             "integer or Bool cell",
         ),
         (
+            "field-sibling-read",
             include_bytes!(
                 "../../../../tests/conformance/cases/par2-neg-indexed-field-sibling-read.wf"
             )
@@ -3642,10 +3647,17 @@ fn indexed_marks_and_fields_deny_mixed_updates_and_root_reads() {
             "every occurrence",
         ),
     ] {
-        let LoopDenial::IndexedReduction { reason, .. } = denied(source, "reduce", 1) else {
-            panic!("expected an indexed denial");
+        let table = permission_of(source);
+        let judged = only_loop(&table, "reduce");
+        assert!(
+            matches!(judged.verdict, LoopVerdict::Denied(_)),
+            "{case} must be denied, got {:?}",
+            judged.verdict
+        );
+        let LoopDenial::IndexedReduction { reason, .. } = denial(judged, 1) else {
+            panic!("{case} must be denied by the indexed reduction rule");
         };
-        assert!(reason.contains(expected), "{reason}");
+        assert!(reason.contains(expected), "{case}: {reason}");
     }
 }
 
