@@ -79,6 +79,10 @@ A map user keeps its table publication across statements as an address token, an
 A single-entry statement whose writes all pass through the `Some` payload takes no cell or node for an absent key and locks a present key exclusively.
 - rejected: an agent proposed deferring the node until the block first writes; the owner rejected it, because that still claims and unlocks a cell for every absent key.
 
+### decision a-write-selection-under-a-read-only-whole-hold-stops
+A request to select an entry for write, by one key, a set of keys or a set of none, while the map's whole hold is read-only, stops the program with a one-line reason and locks no cell.
+- rejected: an agent proposed unlocking the cells a read-only hold recorded at its release; the owner rejected it, because a plain per-key read legitimately records cells with their readers counted, where a writer may already be waiting.
+
 ### decision a-map-reserve-release-never-waits
 A release of a map's reserve only tries the map's short lock, answering zero when busy; holding it, it frees the spare cells and the retired tables no user is in.
 - replaced: Releasing only the spare cells, relying on the caller asking again, was on main; the owner changed it, because a finished statement's publication could pin a retired table for ever, and asking again only retried the short lock, so firn kept getting zero over its memory limit.
