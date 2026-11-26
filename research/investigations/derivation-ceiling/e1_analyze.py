@@ -7,7 +7,9 @@ Usage: python3 -B e1_analyze.py ROWS.tsv
 
 import collections
 import csv
+import json
 import sys
+from pathlib import Path
 
 CONFIGS = ("baseline", "remedy", "remedy+join")
 CAP = 1 << 20
@@ -308,6 +310,92 @@ def main(path):
         for value in (2, 4, 8, 16, 32):
             print(f"    n1>{value}: {sum(1 for row in today if row['n1'] > value)}"
                   f"  n3>{value}: {sum(1 for row in today if row['n3'] > value)}")
+
+    verdicts(by_config)
+    worst_records(by_config)
+
+
+def declared():
+    """Each conformance case's declared verdict, by id."""
+    manifest = Path(__file__).resolve().parents[3] / "tests/conformance/manifest.jsonl"
+    out = {}
+    for line in manifest.read_text().splitlines():
+        if line.strip():
+            case = json.loads(line)
+            out[case["id"]] = case["expect"]["kind"]
+    return out
+
+
+def verdicts(by_config):
+    """Per program, the two verdicts DESIGN.md reads from the file:
+    handoff (every record proved by ordinary entailment or the shadow) and
+    derivation alone (every posed record proved by the shadow, no condition
+    the shadow decides); a record the shadow did not pose keeps its ordinary
+    answer and the program is counted apart."""
+    expect = declared()
+    print("\n== verdicts per program against today's")
+    for config in CONFIGS:
+        per_label = collections.defaultdict(lambda: {"handoff": True, "alone": True,
+                                                     "unposed": False, "today": True})
+        for row in by_config[config].values():
+            state = per_label[row["label"]]
+            kind = row["kind"]
+            if kind == "range-clause":
+                ok = proved(row)
+                state["handoff"] &= ok
+                state["alone"] &= ok
+                state["today"] &= ok
+                continue
+            if kind == "condition":
+                state["today"] &= row["ordinary"] != "decided"
+                state["handoff"] &= row["ordinary"] != "decided"
+                state["alone"] &= not row["shadow"].startswith("decided")
+                continue
+            ordinary_ok = row["ordinary"] == "proved"
+            state["today"] &= ordinary_ok
+            state["handoff"] &= ordinary_ok or proved(row)
+            if row["shadow"].startswith("not-posed"):
+                state["unposed"] = True
+                state["alone"] &= ordinary_ok
+            else:
+                state["alone"] &= proved(row)
+        table = collections.Counter()
+        examples = collections.defaultdict(list)
+        for label, state in per_label.items():
+            if label.startswith("probe:"):
+                continue
+            if label.startswith(("program:", "app:")):
+                want = "accept"
+            else:
+                want = {"run": "accept", "accept": "accept", "reject": "reject"}.get(
+                    expect.get(label, "?"), "other")
+            for verdict in ("today", "handoff", "alone"):
+                got = "accept" if state[verdict] else "reject"
+                table[(verdict, want, got)] += 1
+                if verdict == "alone" and want == "accept" and got == "reject":
+                    examples["accept->reject"].append(label)
+                if verdict == "alone" and want == "reject" and got == "accept":
+                    examples["reject->accept"].append(label)
+            if state["unposed"] and want == "accept" and not state["alone"]:
+                table[("alone-with-unposed", want, "reject")] += 1
+        print(f"  -- {config}")
+        for (verdict, want, got), count in sorted(table.items()):
+            print(f"    {verdict:20} declared={want:7} reached={got:7} {count}")
+        for name, labels in sorted(examples.items()):
+            print(f"    {name}: {len(labels)}: {' '.join(sorted(labels)[:40])}")
+
+
+def worst_records(by_config):
+    print("\n== slowest today-proved records (form, judge, full analysis)")
+    for config in CONFIGS:
+        rows = [row for row in by_config[config].values() if today_proved(row)]
+        rows.sort(key=lambda row: -(row["form_ns"] + row["judge_ns"]))
+        for row in rows[:8]:
+            print(f"  {config:12} {row['label'][:50]:50} {row['function'][:24]:24} {row['kind']:16}"
+                  f" n1={row['n1']} atoms={row['atoms']} instances={row['instances']}"
+                  f" form_ms={row['form_ns'] / 1e6:.1f} judge_ms={row['judge_ns'] / 1e6:.1f}"
+                  f" full_ms={row['full_ns'] / 1e6:.1f} full={row['full_nodes']}"
+                  f" backjump={row['backjump_nodes']} queries={row['queries']}")
 
 
 if __name__ == "__main__":
