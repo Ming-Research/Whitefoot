@@ -151,3 +151,7 @@ Marking a pull request ready skips the gate and the I/O host checks when its hea
 ### decision performance-comparison-waits-for-ready
 The paired performance comparison runs for a ready pull request, its later pushes and by hand, and shows as skipped for a draft.
 - replaced: Running the comparison on every pull request push was on main; the owner changed it, because it times two compilers and may first build the baseline compiler, for up to 20 minutes, which every push of a draft would repeat.
+
+### decision emitted-llvm-is-verified-explicitly
+The backend tests of indexed marks and fields run the host clang's LLVM verifier on their emitted modules through one shared helper, not only the link.
+- rejected: an agent proposed dropping the explicit verifier calls and relying on clang rejecting invalid IR when it builds the executable; the owner rejected it, because that coverage depends on how the host clang was built and its message is cut from the CI result.
