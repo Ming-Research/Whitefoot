@@ -494,29 +494,50 @@ def walkStmt (env : Env) (st : State) (pos : Pos) (s : Stmt) : M (Env × Out) :=
 termination_by structural s
 end
 
-/-- Whether a side of a requirement is one operand of shape (a) [ENT-3]: one
-name or one literal. -/
-def strictSide : Option Lin → Bool
-  | some (_, []) => true
-  | some (0, [(_, 1)]) => true
-  | _ => false
+-- spec ENT-3.S4 baa5bae4763965e5
+/-- Whether a requirement side is an entry side [ENT-3.S4]: `some true` when
+it holds one term, `some false` when it holds none, and `none` when it is no
+entry side. A sum has a term on at most one side, a difference none in its
+subtrahend and a product none on either side, so a term is never scaled. The
+fragment has no named const, const generic or measure, so a binding is the
+only term and a literal the only constant. -/
+def entrySide : Affine → Option Bool
+  | .atom (.int _ _) => some false
+  | .atom (.var _) => some true
+  | .atom _ => none
+  | .add a b => do
+    let x ← entrySide a
+    let y ← entrySide b
+    if x && y then none else some (x || y)
+  | .sub a b => do
+    let x ← entrySide a
+    let y ← entrySide b
+    if y then none else some x
+  | .mul a b => do
+    let x ← entrySide a
+    let y ← entrySide b
+    if x || y then none else some false
 
--- spec FN-8 15c207cb24ae7045
+-- spec FN-8 b21e00bcfcdc7a1d
 -- spec FN-8 2569a9dddaf72dba
 -- spec ENT-3.S4 5c0ff9900b220551
--- spec ENT-3.S4 ad2672a8a82e59f9
--- spec ENT-3.S4 0a9b8a6032b2c48a
--- spec ENT-3.S4 7d0b38d368aaacb3
+-- spec ENT-3.S4 05c0d4a35f7a8156
+-- spec ENT-3.S4 bb0192bbc244841a
+-- spec ENT-3.S4 5874b68ffe353820
+-- spec ENT-3.S4 5db66da67683ef13
 -- spec ENT-3.S4 b1ca56491321758f
 /-- Establish a requirement at body entry [ENT-3.S4, FN-8]: its goal; its
-comparison when each side is one name or literal; otherwise, for an ordering,
-its normalized affine inequality over the entry images. -/
+entry projection, the comparison over each side's one term and folded constant,
+when both sides are entry sides; otherwise, for an ordering, its normalized
+affine inequality over the entry images, so a requirement with an entry
+projection adds no affine premise. A requirement of the fragment is one
+comparison, so it is its own only decomposition member. -/
 def establishRequire (env : Env) (st : State) (r : Relation) : State :=
   let st := match relG (fun x => (env.var? x).map (GExpr.var ·.id)) r with
     | some g => { st with goals := st.goals ++ [(true, g)] }
     | none => st
-  if strictSide (lin r.lhs) && strictSide (lin r.rhs) then
-    match linTerm (lookT env) ((lin r.lhs).getD (0, [])), linTerm (lookT env) ((lin r.rhs).getD (0, [])) with
+  if (entrySide r.lhs).isSome && (entrySide r.rhs).isSome then
+    match (lin r.lhs).bind (linTerm (lookT env)), (lin r.rhs).bind (linTerm (lookT env)) with
     | some a, some b => let (bs, ds) := relFacts r.op a b; st.add env bs ds
     | _, _ => st
   else

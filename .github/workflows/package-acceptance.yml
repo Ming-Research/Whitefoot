@@ -11,6 +11,13 @@
 # The workflow revision supplies the maintained runner and witness, even when
 # the candidate predates them; unsupported witness behavior fails qualification
 # without changing expectations. Candidate bytes and manifest identity stay fixed.
+# One check comes from the candidate's own source: the runtime's frame test
+# (compiler/src/bin/whitefootc/runtime_frames.rs), built from the verified
+# commit and run beside each installed package's clang by
+# .github/toolchain/check-runtime-frames.sh, because the runtime's C is compiled
+# by the clang of the package and the test is what reads those frames. A
+# candidate whose source holds no such test runs none and fails, as it should:
+# nothing there probes the runtime's C frames.
 name: Bundled package acceptance
 
 on:
@@ -171,9 +178,46 @@ jobs:
           name: package-acceptance-inputs
           path: candidate
 
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          path: candidate-source
+
+      # The candidate's compiler tests, built here on the host and run by
+      # check-package.sh in the environment it qualifies in. The test binary
+      # needs no compiler of its own to build.
+      - name: Build the candidate's runtime frame test
+        id: frame-test
+        env:
+          CARGO_INCREMENTAL: 0
+        run: |
+          set -euo pipefail
+          rustup default stable
+          cargo test --manifest-path candidate-source/compiler/Cargo.toml --locked \
+            --profile gate --bin whitefootc --no-run --message-format=json \
+            > "$RUNNER_TEMP/frame-test-build.json"
+          executable=$(python3 - "$RUNNER_TEMP/frame-test-build.json" <<'PY'
+          import json, sys
+          found = []
+          for line in open(sys.argv[1]):
+              if not line.startswith('{'):
+                  continue
+              message = json.loads(line)
+              if (message.get('reason') == 'compiler-artifact'
+                      and message['target']['name'] == 'whitefootc'
+                      and message['profile']['test'] and message.get('executable')):
+                  found.append(message['executable'])
+          assert len(found) == 1, found
+          print(found[0])
+          PY
+          )
+          test -x "$executable"
+          echo "executable=$executable" >> "$GITHUB_OUTPUT"
+
       - name: Qualify in a fresh minimal development container
         env:
           MODE: ${{ matrix.mode }}
+          FRAME_TEST: ${{ steps.frame-test.outputs.executable }}
         run: |
           set -euo pipefail
           test -f .github/toolchain/check-package.sh
@@ -196,6 +240,7 @@ jobs:
             --mount "type=bind,src=$PWD/tests/package-fixtures,dst=/input/fixtures,readonly" \
             --mount "type=bind,src=$PWD/.github/toolchain,dst=/input/toolchain,readonly" \
             --mount "type=bind,src=$PWD/docs/guide,dst=/input/guide,readonly" \
+            --mount "type=bind,src=$FRAME_TEST,dst=/input/frame-test,readonly" \
             --mount "type=bind,src=$RUNNER_TEMP/package-$MODE,dst=/output" \
             --env "MODE=$MODE" ubuntu:24.04 /bin/bash -c '
               set -euo pipefail
@@ -207,7 +252,7 @@ jobs:
               fi
               bash /input/toolchain/check-package.sh \
                 /input/candidate/whitefootc-linux-x86_64-bundled.tar.gz /input/fixtures \
-                /output "$MODE" /input/guide/getting-started.md
+                /output "$MODE" /input/guide/getting-started.md /input/frame-test
             ' > "$RUNNER_TEMP/package-$MODE/logs/container.txt" 2>&1 || status=$?
           cat "$RUNNER_TEMP/package-$MODE/logs/container.txt"
           exit "$status"
@@ -218,7 +263,7 @@ jobs:
           MODE: ${{ matrix.mode }}
           COMMIT: ${{ needs.prepare.outputs.commit }}
         run: |
-          printf 'Linux %s: exact candidate %s, installed by the Linux commands of the getting started guide, built and ran the programs of the guide and passed inventory, coroutine IR, ordinary/full/ThinLTO, cold/warm caches, stack exhaustion, relocation and completeness checks. Successful clang/lld executions are traced; host calls are zero.\n' \
+          printf 'Linux %s: exact candidate %s, installed by the Linux commands of the getting started guide, built and ran the programs of the guide and passed inventory, coroutine IR, ordinary/full/ThinLTO, cold/warm caches, stack exhaustion, the stack probes of the runtime frames, relocation and completeness checks. Successful clang/lld executions are traced; host calls are zero.\n' \
             "$MODE" "$COMMIT" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Linux command, inventory and execution logs
@@ -249,8 +294,46 @@ jobs:
           name: package-acceptance-inputs
           path: candidate
 
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          path: candidate-source
+
+      # The candidate's compiler tests, built here on the host and run by
+      # check-package.sh in the environment it qualifies in. The test binary
+      # needs no compiler of its own to build.
+      - name: Build the candidate's runtime frame test
+        id: frame-test
+        env:
+          CARGO_INCREMENTAL: 0
+        run: |
+          set -euo pipefail
+          rustup default stable
+          cargo test --manifest-path candidate-source/compiler/Cargo.toml --locked \
+            --profile gate --bin whitefootc --no-run --message-format=json \
+            > "$RUNNER_TEMP/frame-test-build.json"
+          executable=$(python3 - "$RUNNER_TEMP/frame-test-build.json" <<'PY'
+          import json, sys
+          found = []
+          for line in open(sys.argv[1]):
+              if not line.startswith('{'):
+                  continue
+              message = json.loads(line)
+              if (message.get('reason') == 'compiler-artifact'
+                      and message['target']['name'] == 'whitefootc'
+                      and message['profile']['test'] and message.get('executable')):
+                  found.append(message['executable'])
+          assert len(found) == 1, found
+          print(found[0])
+          PY
+          )
+          test -x "$executable"
+          echo "executable=$executable" >> "$GITHUB_OUTPUT"
+
       - name: Qualify the package and prove host invocation denial
         id: check
+        env:
+          FRAME_TEST: ${{ steps.frame-test.outputs.executable }}
         run: |
           set -euo pipefail
           test -f .github/toolchain/check-package.sh
@@ -261,7 +344,7 @@ jobs:
           bash .github/toolchain/check-package.sh \
             "$PWD/candidate/whitefootc-macos-arm64-bundled.tar.gz" \
             "$PWD/tests/package-fixtures" "$RUNNER_TEMP/package-macos" macos \
-            "$PWD/docs/guide/getting-started.md"
+            "$PWD/docs/guide/getting-started.md" "$FRAME_TEST"
           cat "$RUNNER_TEMP/package-macos/logs/result.txt" >> "$GITHUB_OUTPUT"
 
       - name: Record qualification and the isolation boundary

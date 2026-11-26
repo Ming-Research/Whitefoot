@@ -1,0 +1,18 @@
+fn pick_two(i: u32, b: u32, c: u32, n: u32) -> out: u32 pure contract {
+  requires i < 100_u32;
+  requires b < 100_u32;
+  requires c < 100_u32;
+  requires 2_u32 * i + 2_u32 <= 2_u32 * b;
+  requires 2_u32 * b + 2_u32 <= 2_u32 * c;
+  requires 2_u32 * c + 2_u32 <= 2_u32 * n;
+} {
+  let j1 = i + 1_u32;
+  let j2 = j1 + 1_u32;
+  let j3 = j2 + 1_u32;
+  let out = n - j3;
+  return out;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

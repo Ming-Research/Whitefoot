@@ -16,9 +16,14 @@ cpus=$(nproc)
 ((cpus >= 2)) || { echo 'at least two available CPUs required' >&2; exit 2; }
 widths=(1 2)
 if ((cpus >= 4)); then widths+=(4); fi
-kernels=(mandelbrot records fir quadrature stencil)
+# The kernels are the Makefile's; KERNELS in the environment names fewer for a
+# retest round (judge.sh).
+read -r -a kernels <<< "${KERNELS:-$(sed -n 's/^KERNELS := //p' "$here/Makefile")}"
+((${#kernels[@]} > 0)) || { echo 'no kernels named' >&2; exit 2; }
+cpu_model=$(sh "$here/cpu-model.sh")
 {
     printf 'cpus=%s widths=%s passes=5 warmups=1 calls=5\n' "$cpus" "${widths[*]}"
+    printf 'cpu model: %s\nkernels=%s\n' "$cpu_model" "${kernels[*]}"
     printf 'baseline=%s\ncandidate=%s\ncontrol=%s\n' "$baseline" "$candidate" "${4:-none}"
     uname -a
     for arm in "$baseline" "$candidate"; do
@@ -56,9 +61,10 @@ for pass in {0..4}; do
         done
     done
 done
-awk -v cpus="$cpus" -f "$here/reduce.awk" "$results/raw.tsv" > "$results/paired.tsv"
+awk -v cpus="$cpus" -v kernels="${kernels[*]}" -f "$here/reduce.awk" "$results/raw.tsv" > "$results/paired.tsv"
 # Do not pipe a decision through tee without preserving its exit status.
 status=0
-awk -v cpus="$cpus" -f "$here/verdict.awk" "$results/paired.tsv" > "$results/verdict.txt" || status=$?
+awk -v cpus="$cpus" -v kernels="${kernels[*]}" -f "$here/verdict.awk" "$results/paired.tsv" > "$results/verdict.txt" || status=$?
+printf 'cpu model: %s\n' "$cpu_model" >> "$results/verdict.txt"
 cat "$results/verdict.txt"
 exit "$status"
