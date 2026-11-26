@@ -386,7 +386,7 @@ test "$(uniq -d < "$work/windows-step-ids" | wc -l)" -eq 0
 # The table side: the rows that name windows stages, with seconds of at least
 # the 10 s floor in the windows column and '-' in every other column.
 awk '
-/^[ \t]*(#|$)/ { next }
+/^[ \t]*#/ || /^[ \t]*$/ { next }
 $1 == "label" { nf = NF; for (i = 2; i <= NF; i++) if ($i == "windows") w = i; next }
 $1 ~ /^windows-/ {
     if (!w || NF != nf) bad = 1
@@ -405,7 +405,7 @@ cmp "$work/windows-step-ids" "$work/windows-rows"
 # every Linux column and '-' for the hosts that do not run it.
 grep -q 'CHECK_RUN) compiler/build ' "$repo/compiler/Makefile"
 awk '
-/^[ \t]*(#|$)/ { next }
+/^[ \t]*#/ || /^[ \t]*$/ { next }
 $1 == "label" { for (i = 2; i <= NF; i++) col[i] = $i; n = NF; next }
 $1 == "compiler/build" {
     found = 1

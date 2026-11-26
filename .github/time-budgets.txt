@@ -113,6 +113,7 @@ windows-sched-startup           -          -          -          -           -  
 windows-default-route           -          -          -          -           -      10
 windows-adapter-probe           -          -          -          -           -      10
 windows-bounded-send            -          -          -          -           -      10
+windows-bounded-connect         -          -          -          -           -      600
 windows-ordinary-values         -          -          -          -           -      10
 windows-bridge-init             -          -          -          -           -      10
 windows-corpus-build            -          -          -          -           -      400

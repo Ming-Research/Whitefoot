@@ -413,6 +413,7 @@ jobs:
       # blocking-mode probe fail on purpose, so a pass is known to be able to
       # fail.
       - name: Bound Windows connects to a listener that never answers
+        id: windows-bounded-connect
         run: |
           set -u
           test_exe="$RUNNER_TEMP/completion/windows-bounded-connect-test.exe"
