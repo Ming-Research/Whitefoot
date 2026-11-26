@@ -5,6 +5,7 @@
 mod atomic_groups;
 mod contexts;
 mod held_placement;
+mod merged_parameters;
 mod overlap_storage;
 mod wake;
 
