@@ -527,7 +527,7 @@ expect_positions_match second-round-missing aside 2 'REFUSED: stencil baseline r
 if [ "$(uname -s)" = Linux ]; then
 dp=$work/dp
 mkdir -p "$dp/tree/tests/performance" "$dp/tree/.github" "$dp/bin"
-cp "$here/data-placement.sh" "$here/positions.awk" "$here/layout.awk" "$dp/tree/tests/performance/"
+cp "$here/data-placement.sh" "$here/positions.awk" "$here/layout.awk" "$here/Makefile" "$dp/tree/tests/performance/"
 cat > "$dp/tree/.github/run-check.pl" <<'EOF'
 my $label = shift @ARGV;
 open my $log, '>>', $ENV{FAKE_STAGES} or die "stage log: $!\n";
@@ -662,6 +662,12 @@ dp_file control-launches-nothing-for-alike-mappings "$dp/data-a/aside.txt" '\n'
 dp_file control-launches-nothing-for-alike-mappings "$dp/stages" 'performance-data-layout\n'
 dp_has control-launches-nothing-for-alike-mappings "$dp/data-a/verdict.txt" '^ASIDE: none$'
 pass control-launches-nothing-for-alike-mappings
+
+# The kernels are the Makefile's, as compare.sh and judge.sh read them, and
+# KERNELS in the environment names fewer.
+dp_run control-records-the-kernels-named 0 env KERNELS='fir stencil' bash "$control" control "$dp/b" "$dp/a" "$dp/data-named"
+dp_file control-records-the-kernels-named "$dp/data-named/layout.txt" 'fir alike\nstencil alike\n'
+pass control-records-the-kernels-named
 
 # The stand-in image at a position adds only the runner's own idle mapping and
 # leaves every later mapping where it was, so its records at position 1 differ
