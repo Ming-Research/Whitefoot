@@ -15,11 +15,8 @@ fn first(start: u64, end: u64) -> result: u64 pure contract {
   let count = view^.len;
   let empty = &view^[count..count];
   let empty_count = empty^.len;
-  if empty_count != 0_u64 {
-    return 99_u64;
-  }
   if count == 0_u64 {
-    return 0_u64;
+    return empty_count;
   }
   return view^[0_u64];
 }

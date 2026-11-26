@@ -93,23 +93,23 @@ fn replay(store: &Keyspace, factory: &HandleFactory, root: &DirectoryRead, name:
       }
       let args = box_slots_new::<Span>(capacity: 16_u64);
       let input = input_new(capacity: 65536_u64);
-      let held = 0_u64;
+      let observed = 0_u64;
       let offset = 0_u64;
       loop @chunks {
-        if held >= input.inner.len {
+        if observed >= input.inner.len {
           input_grow(input: &input);
-          if held >= input.inner.len {
+          if observed >= input.inner.len {
             break @chunks;
           }
         }
         let ended = False();
         let length = input.inner.len;
         let window = &input.inner[0_u64..length];
-        match read_at(factory: factory, file: &file, destination: window, file_offset: offset, start: held, end: length) {
+        match read_at(factory: factory, file: &file, destination: window, file_offset: offset, start: observed, end: length) {
           Ok(value: next) => {
-            let got = next -wrap held;
+            let got = next -wrap observed;
             set offset = offset +wrap got;
-            set held = next;
+            set observed = next;
             if got == 0_u64 {
               set ended = True();
             }
@@ -127,7 +127,7 @@ fn replay(store: &Keyspace, factory: &HandleFactory, root: &DirectoryRead, name:
           let current = input.inner.len;
           let bytes = &input.inner[0_u64..current];
           let unlocked = False();
-          let parsed = parse_request(input: bytes, start: consumed, held: held, args: &args, locked: unlocked);
+          let parsed = parse_request(input: bytes, start: consumed, observed: observed, args: &args, locked: unlocked);
           if parsed.state == 0_u64 {
             break @commands;
           }
@@ -144,7 +144,7 @@ fn replay(store: &Keyspace, factory: &HandleFactory, root: &DirectoryRead, name:
         if broken {
           break @chunks;
         }
-        set held = keep_rest(input: &input, from: consumed, held: held);
+        set observed = keep_rest(input: &input, from: consumed, observed: observed);
       }
       let closed = close_read(factory: factory, file: move file);
     }

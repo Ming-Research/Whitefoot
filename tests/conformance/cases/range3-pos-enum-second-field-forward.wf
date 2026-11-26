@@ -1,0 +1,37 @@
+enum RoutedCells {
+  Pair(marker: u64, cells: Box<Array<u64>>);
+}
+
+fn make() -> result: RoutedCells pure contract {
+  ensures when Pair(cells: selected): selected.inner.len == 2_u64;
+  ensures when Pair(cells: selected): forall bounded(k in 0_u64..selected.inner.len): selected.inner[k] <= 7_u64;
+} {
+  let cells = box_array_filled::<u64>(count: 2_u64, value: 7_u64);
+  return RoutedCells::Pair(marker: 99_u64, cells: move cells);
+}
+
+fn forward() -> result: RoutedCells pure contract {
+  ensures when Pair(cells: selected): selected.inner.len == 2_u64;
+  ensures when Pair(cells: selected): forall bounded(k in 0_u64..selected.inner.len): selected.inner[k] <= 7_u64;
+} {
+  let made = make();
+  return move made;
+}
+
+fn read(cells: &Box<Array<u64>>) -> result: u8 reads(cells) contract {
+  requires cells^.inner.len > 0_u64;
+  requires forall bounded(k in 0_u64..cells^.inner.len): cells^.inner[k] <= 7_u64;
+} {
+  let got = cells^.inner[0_u64];
+  return cvt::<u64, u8>(got);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let made = forward();
+  match move made {
+    Pair(marker: tag, cells: selected) => {
+      let code = read(cells: &selected);
+      return std::process::exit_status(code: code);
+    }
+  }
+}

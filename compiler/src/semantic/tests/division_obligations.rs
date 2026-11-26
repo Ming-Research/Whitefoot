@@ -892,13 +892,9 @@ fn a_referenced_run_indexed_defined_guard_discharges_the_same_structural_exact_o
     // the two cases still pin two distinct index rows.
     let source = br#"fn increment(values: &Array<u8, 2>) -> result: u8 reads(values) {
   let spare = values^.len;
-  if 0_u64 < spare {
-    if values^[0_u64] +defined 1_u8 {
-      let result = values^[0_u64] + 1_u8;
-      return result;
-    } else {
-      return 0_u8;
-    }
+  if values^[0_u64] +defined 1_u8 {
+    let result = values^[0_u64] + 1_u8;
+    return result;
   } else {
     return 0_u8;
   }

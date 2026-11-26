@@ -1,0 +1,8 @@
+fn open_config(factory: &std::io::HandleFactory, base: &std::fs::DirectoryRead, path: &std::text::HostString) -> result: Result<std::fs::ReadFile, std::io::IoError> reads(base), reads(path), writes(factory) waits {
+  doc "A function given only a directory's read half has no host-path authority: passing that directory where open_host_read takes HostPaths is an argument type mismatch, so the directory cannot open a path that ignores it.";
+  return std::fs::open_host_read(factory: factory, paths: base, base: base, path: path);
+}
+
+fn main() -> result: u8 pure {
+  return 0_u8;
+}

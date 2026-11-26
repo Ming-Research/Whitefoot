@@ -54,7 +54,7 @@ fn reset(store: Shared<Totals>, store_map: Shared<ConcurrentHashMap<u64>>) -> re
 fn trade(store: Shared<Totals>, store_map: Shared<ConcurrentHashMap<u64>>) -> result: unit pure waits {
   doc "Exchanges the state's table with a map of its own a hundred times, adjusting the total by what each table held, in one statement.";
   let mine = shared_map_new::<u64>(capacity: 0_u64);
-  let held = 0_u64;
+  let observed = 0_u64;
   let keys = prefixes();
   for @again (index in 0_u64..100_u64) {
     atomic t = &store_map, m = &mine, s = &store {
@@ -71,8 +71,8 @@ fn trade(store: Shared<Totals>, store_map: Shared<ConcurrentHashMap<u64>>) -> re
       }
       swap(first: t, second: m);
       let lowered = s^.total -wrap sum;
-      set s^.total = lowered +wrap held;
-      set held = sum;
+      set s^.total = lowered +wrap observed;
+      set observed = sum;
     }
   }
   return unit;

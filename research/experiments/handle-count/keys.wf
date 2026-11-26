@@ -1,0 +1,50 @@
+fn keys_seed(keys: &Shared<ConcurrentHashMap<u64>>, contexts: u64) -> result: unit reads(keys) waits {
+  doc "Gives each context's key the value 0 before the contexts start, so that no timed operation inserts.";
+  for @seed (index in 0_u64..contexts) {
+    let own = context_key(index: index);
+    let key = &own[0_u64..8_u64];
+    atomic slot = &keys^[key] {
+      set slot^ = Some<u64>(value: 0_u64);
+    }
+  }
+  return unit;
+}
+
+fn keys_sum(keys: &Shared<ConcurrentHashMap<u64>>, contexts: u64) -> total: u64 reads(keys) waits {
+  doc "The sum of the values at the contexts' keys.";
+  let sum = 0_u64;
+  for @look (index in 0_u64..contexts) {
+    let own = context_key(index: index);
+    let key = &own[0_u64..8_u64];
+    atomic slot = &keys^[key] {
+      match slot^ {
+        Some(value: seen) => {
+          set sum = sum +wrap seen^;
+        }
+        None() => {
+        }
+      }
+    }
+  }
+  return sum;
+}
+
+fn totals_ops(totals: &Shared<Totals>) -> made: u64 reads(totals) waits {
+  doc "The operations the contexts added to the totals.";
+  let seen = 0_u64;
+  atomic t = &totals^ {
+    set seen = t^.ops;
+  }
+  return seen;
+}
+
+fn keys_verify(keys: &Shared<ConcurrentHashMap<u64>>, totals: &Shared<Totals>, contexts: u64) -> agrees: Bool reads(keys), reads(totals) waits {
+  doc "True when the map's values sum to the operations the contexts reported, and records that sum in the totals' check field, so that the printed check equals ops.";
+  let sum = keys_sum(keys: keys, contexts: contexts);
+  let made = totals_ops(totals: totals);
+  if sum != made {
+    return False();
+  }
+  tally(totals: totals, done: 0_u64, state: sum);
+  return True();
+}

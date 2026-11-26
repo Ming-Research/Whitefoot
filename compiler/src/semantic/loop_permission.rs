@@ -2577,6 +2577,9 @@ impl<'check, 'run> Survey<'check, 'run> {
         elements: &[ProvenElementReference],
         call: Option<&NodePath>,
     ) {
+        if footprint.decision_cell.is_some() {
+            self.form.get_or_insert("a call with a decision-cell boundary [SHARE-3]");
+        }
         if let Some(argument) = &footprint.unresolved {
             self.unresolved.get_or_insert(argument.clone());
         }
@@ -3059,6 +3062,7 @@ fn path_subscripts(path: &[CheckedPlaceStep]) -> Vec<(&NodePath, bool)> {
                 Some((&index.obligation, checked_type_is_ring(index.base_type)))
             }
             CheckedPlaceStep::Field(_)
+            | CheckedPlaceStep::Payload { .. }
             | CheckedPlaceStep::BoxReferent(_)
             | CheckedPlaceStep::Measure(_) => None,
         })

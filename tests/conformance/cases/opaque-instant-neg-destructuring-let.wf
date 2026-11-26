@@ -1,0 +1,13 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias Instant = std::time::Instant;
+
+fn taking_apart(instant: Instant) -> result: u64 pure {
+  doc "TYPE-2: a destructuring let whose TYPEID names an opaque struct is a hard error at the complete let statement. The pattern binds no field, so no private-field judgment competes with it.";
+  let Instant(..) = instant;
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

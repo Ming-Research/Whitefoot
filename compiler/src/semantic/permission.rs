@@ -108,6 +108,8 @@ use crate::NodePath;
 #[derive(Clone, Debug, Default)]
 pub(crate) struct PermissionSignature {
     pub(crate) name: String,
+    /// [SHARE-3] a signature that may observe or decide an independent cell.
+    pub(crate) decision_cell: bool,
     pub(crate) parameter_declarations: Vec<crate::DeclarationId>,
     pub(crate) parameter_modes: Vec<CheckedMode>,
     /// Whether consuming each owned parameter, or writing through each
@@ -257,6 +259,8 @@ pub(crate) enum Denial {
     /// A statement that contains a waiting call [WAIT-1], which has no
     /// overlap permission with any statement [PAR-1].
     WaitingCall { side: PairSide, call: NodePath },
+    /// A call can observe or decide an independently ordered cell [SHARE-3].
+    DecisionCell { side: PairSide, call: NodePath },
 }
 
 impl Denial {
@@ -268,7 +272,7 @@ impl Denial {
             | Self::UnresolvedFootprint { .. }
             | Self::UnclassifiedForm { .. } => 1,
             Self::SkippingExit { .. } => 2,
-            Self::WaitingCall { .. } => 3,
+            Self::WaitingCall { .. } | Self::DecisionCell { .. } => 3,
         }
     }
 }
@@ -535,7 +539,7 @@ pub(crate) struct ConditionalCall<'check> {
 pub(crate) fn conditional_call(statement: &CheckedStatement) -> Option<ConditionalCall<'_>> {
     let CheckedStatement::Match {
         scrutinee,
-        enum_type: super::model::CheckedEnumType::Bool,
+        match_type: super::model::CheckedMatchType::Enum(super::model::CheckedEnumType::Bool),
         arms,
         ..
     } = statement
@@ -573,7 +577,10 @@ pub(crate) fn conditional_call(statement: &CheckedStatement) -> Option<Condition
             statement,
             value,
             site: call,
-            tag: arm.tag,
+            tag: match arm.selection {
+                super::model::CheckedMatchSelection::Variant(tag) => tag,
+                _ => return None,
+            },
         });
     }
     found
@@ -604,6 +611,7 @@ fn unconditional_argument(value: &CheckedExpression) -> bool {
             matches!(
                 step,
                 super::model::CheckedPlaceStep::Field(_)
+                    | super::model::CheckedPlaceStep::Payload { .. }
                     | super::model::CheckedPlaceStep::BoxReferent(_)
                     | super::model::CheckedPlaceStep::Measure(_)
             )
@@ -1052,6 +1060,12 @@ impl<'check> Program<'check> {
                     });
                 }
                 Ok(footprint) => {
+                    if let Some(call) = &footprint.decision_cell {
+                        return PermissionVerdict::Denied(Denial::DecisionCell {
+                            side,
+                            call: call.clone(),
+                        });
+                    }
                     if let Some(argument) = &footprint.unresolved {
                         return PermissionVerdict::Denied(Denial::UnresolvedFootprint {
                             side,
@@ -1322,36 +1336,39 @@ impl<'check> Program<'check> {
                 )
             }
             CheckedStatement::Match {
-                enum_type, arms, ..
+                match_type, arms, ..
             } => (
                 // Report a refused Bool conditional only when its sole acting
                 // arm is one call statement, including a discarded result that
                 // needs release. It gets a diagnostic site, not a call member.
                 // Multi-statement arms, multiple acting arms and other matches
                 // keep their existing unreported boundary.
-                matches!(enum_type, super::model::CheckedEnumType::Bool)
-                    .then(|| {
-                        let mut acting = arms.iter().filter(|arm| !arm.body.is_empty());
-                        let arm = acting.next()?;
-                        if acting.next().is_some() {
-                            return None;
-                        }
-                        match arm.body.as_slice() {
-                            [
-                                CheckedStatement::Evaluate {
-                                    node_path,
-                                    value: CheckedExpression::UserCall { .. },
-                                }
-                                | CheckedStatement::DropExpression {
-                                    node_path,
-                                    value: CheckedExpression::UserCall { .. },
-                                    ..
-                                },
-                            ] => Some(node_path),
-                            _ => None,
-                        }
-                    })
-                    .flatten(),
+                matches!(
+                    match_type,
+                    super::model::CheckedMatchType::Enum(super::model::CheckedEnumType::Bool)
+                )
+                .then(|| {
+                    let mut acting = arms.iter().filter(|arm| !arm.body.is_empty());
+                    let arm = acting.next()?;
+                    if acting.next().is_some() {
+                        return None;
+                    }
+                    match arm.body.as_slice() {
+                        [
+                            CheckedStatement::Evaluate {
+                                node_path,
+                                value: CheckedExpression::UserCall { .. },
+                            }
+                            | CheckedStatement::DropExpression {
+                                node_path,
+                                value: CheckedExpression::UserCall { .. },
+                                ..
+                            },
+                        ] => Some(node_path),
+                        _ => None,
+                    }
+                })
+                .flatten(),
                 None,
                 None,
                 "a match statement",
@@ -1653,6 +1670,12 @@ impl<'check> Program<'check> {
             footprint.unresolved = Some(call.call.clone());
             return;
         };
+        if signature.decision_cell {
+            // A decision has its own shared-effect point. Its ordinary read
+            // footprint on the handle cannot authorize moving that point.
+            footprint.unresolved = Some(call.call.clone());
+            footprint.decision_cell = Some(call.call.clone());
+        }
 
         // "A by-value consumption counts as a write of the argument's place"
         // [PAR-1]. The affine discipline already forbids two consumers of one
@@ -1825,11 +1848,17 @@ pub(super) struct Footprint {
     /// Set where a footprint element's caller place is not resolved. Every
     /// such statement denies [PAR-1].
     pub(super) unresolved: Option<NodePath>,
+    /// Independently ordered effects also close consumers that only inspect
+    /// unresolved footprints; this witness gives the precise denial reason.
+    pub(super) decision_cell: Option<NodePath>,
 }
 
 impl Footprint {
     /// Adds one statement's halves to a running union [checker-facts].
     fn absorb(&mut self, other: &Self) {
+        if let Some(call) = &other.decision_cell {
+            self.decision_cell.get_or_insert_with(|| call.clone());
+        }
         self.writes.extend(other.writes.iter().cloned());
         self.reads.extend(other.reads.iter().cloned());
         self.operand_reads
@@ -2315,7 +2344,7 @@ pub(super) fn visit_read_bindings(
 
 /// Whether an expression tree names `binding` anywhere, through
 /// [`named_binding`] at each node, both matches being exhaustive.
-fn expression_names(expression: &CheckedExpression, binding: BindingId) -> bool {
+pub(super) fn expression_names(expression: &CheckedExpression, binding: BindingId) -> bool {
     named_binding(expression) == Some(binding)
         || expression_children(expression)
             .into_iter()
@@ -2325,7 +2354,7 @@ fn expression_names(expression: &CheckedExpression, binding: BindingId) -> bool 
 /// Whether a statement that holds no block names `binding` in an expression
 /// or set target it holds; a statement that holds a block answers yes, since
 /// its caller walks it.
-fn leaf_names(statement: &CheckedStatement, binding: BindingId) -> bool {
+pub(super) fn leaf_names(statement: &CheckedStatement, binding: BindingId) -> bool {
     match statement {
         CheckedStatement::Let { value, .. }
         | CheckedStatement::DestructuringLet { value, .. }

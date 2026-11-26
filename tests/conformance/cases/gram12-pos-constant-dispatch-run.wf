@@ -1,0 +1,40 @@
+const code_ping: u64 = 10_u64;
+
+const code_echo: u64 = 20_u64;
+
+fn dispatch(code: u64) -> result: u8 pure {
+  match code {
+    code_ping => {
+      return 1_u8;
+    }
+    code_echo => {
+      return 2_u8;
+    }
+    30_u64 => {
+      return 3_u8;
+    }
+    else => {
+      return 0_u8;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let ping = dispatch(code: code_ping);
+  let echo = dispatch(code: code_echo);
+  let literal = dispatch(code: 30_u64);
+  let other = dispatch(code: 40_u64);
+  if ping != 1_u8 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if echo != 2_u8 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if literal != 3_u8 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  if other != 0_u8 {
+    return std::process::exit_status(code: 4_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

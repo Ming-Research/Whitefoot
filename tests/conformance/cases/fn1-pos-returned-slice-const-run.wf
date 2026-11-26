@@ -11,17 +11,14 @@ fn second_byte(part: &[u8]) -> value: u8 reads(part) contract {
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "A range reference over immutable const storage is formed by the reader that uses it: a reference is never a result [REF-3, REF-4], so the caller writes `&fixed_bytes[0..3]` and hands it to the callee, whose own measure `part^.len` discharges the requirement [MSR-1].";
+  doc "A range reference over immutable const storage is formed by the reader that uses it: a reference is never a result [REF-3, REF-4], so the caller writes `&fixed_bytes[0..3]` and hands it to the callee, whose own measure `part^.len` discharges the requirement [MSR-1]. The caller returns the range length it reads as its exit status.";
   let part = &fixed_bytes[0_u64..3_u64];
   let width = part^.len;
-  if width == 3_u64 {
-  } else {
-    return exit_status(code: 211_u8);
-  }
   let observed = second_byte(part: part);
   if observed == 13_u8 {
   } else {
     return exit_status(code: 201_u8);
   }
-  return exit_status(code: 0_u8);
+  let code = cvt::<u64, u8>(width);
+  return exit_status(code: code);
 }

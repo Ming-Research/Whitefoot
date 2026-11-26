@@ -1,0 +1,15 @@
+fn observe(value: &u64) -> result: u64 reads(value) contract {
+  requires held(value);
+} {
+  return value^;
+}
+
+fn sample(left: &Shared<u64>, right: &Shared<u64>, use_right: Bool) -> result: u64 reads(left), reads(right) waits {
+  atomic current_left = &left^, current_right = &right^ {
+    let chosen = current_left;
+    if use_right {
+      set chosen = current_right;
+    }
+    return observe(value: chosen);
+  }
+}

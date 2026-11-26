@@ -1,0 +1,26 @@
+struct ZeroesAliasConditionalReset {
+  cells: Array<u64, 1>;
+  invariant(c): forall zero(k in 0_u64..c^.cells.len): c^.cells[k] == 0_u64;
+}
+
+fn need_aliasconditionalreset(z: &ZeroesAliasConditionalReset) -> result: unit pure {
+  return unit;
+}
+
+fn update_aliasconditionalreset(first: Shared<ZeroesAliasConditionalReset>, second: Shared<ZeroesAliasConditionalReset>, flag: Bool) -> result: unit pure waits {
+  atomic a = &first, b = &second {
+    if flag {
+      set a^.cells[0_u64] = 1_u64;
+      set a^.cells[0_u64] = 0_u64;
+    } else {
+      set b^.cells[0_u64] = 0_u64;
+    }
+    need_aliasconditionalreset(z: a);
+    need_aliasconditionalreset(z: b);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

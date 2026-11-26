@@ -60,6 +60,11 @@ fn obligation_records(
                 use_site.site.clone(),
                 ObligationFamily::ReferencePreservation(query),
             ),
+            (None, _) if separation.held_use.is_some() => (
+                SemanticRule::Hold1,
+                separation.held_use.as_ref().expect("held diagnostic site").site.clone(),
+                ObligationFamily::CallSeparation(query),
+            ),
             (None, CheckedSeparationOccasion::Exchange) => (
                 SemanticRule::Op11,
                 separation.site.clone(),
@@ -70,6 +75,9 @@ fn obligation_records(
                 target.clone(),
                 ObligationFamily::AtomicTargetSeparation(query),
             ),
+            (None, CheckedSeparationOccasion::WindowBound) => {
+                unreachable!("window bounds always belong to a reference use")
+            }
             (None, CheckedSeparationOccasion::Call) => (
                 SemanticRule::Eff5,
                 separation.site.clone(),
@@ -89,6 +97,15 @@ fn obligation_records(
     // compiler-owned [PRE-1] signature has none, its contract being a
     // declaration premise.
     if function.body.is_some() {
+        // [ENT-2, FN-9] the places a postcondition forms owe their
+        // subscripts' obligations at every return that selects it.
+        for postcondition in &function.postconditions {
+            for _ in &postcondition.selected_returns {
+                for place in &postcondition.places {
+                    records.expression(&place.expression);
+                }
+            }
+        }
         for (ordinal, postcondition) in function.postconditions.iter().enumerate() {
             records.push(
                 SemanticRule::Fn9,
@@ -101,6 +118,24 @@ fn obligation_records(
         }
     }
     records.list
+}
+
+/// [ENT-2, FN-8] whether some place a requirement of `function` forms at
+/// body entry owes an obligation at `site`.
+pub(super) fn requirement_forms_site(function: &CheckedFunction, site: &NodePath) -> bool {
+    let mut records = Records {
+        list: Vec::new(),
+        empties_run: &|_| false,
+        function: function.id,
+        loops: Vec::new(),
+        gives: 0,
+        atomic: None,
+        branches: Vec::new(),
+    };
+    for place in function.requirement_places.iter().flatten() {
+        records.expression(place);
+    }
+    records.list.iter().any(|record| record.site == *site)
 }
 
 struct Records<'rows> {
@@ -126,6 +161,19 @@ impl Records<'_> {
             site,
             subject,
         });
+    }
+
+    /// [OP-5] every source `if` condition is judged for redundancy after
+    /// its own evaluation's obligations, so a function is accepted only when
+    /// the walk answers each one undecided.
+    fn condition(&mut self, condition: Option<&NodePath>) {
+        if let Some(site) = condition {
+            self.push(
+                SemanticRule::Op5,
+                site.clone(),
+                ObligationSubject::Condition,
+            );
+        }
     }
 
     fn source(
@@ -231,9 +279,13 @@ impl Records<'_> {
                 );
             }
             CheckedStatement::Match {
-                scrutinee, arms, ..
+                condition,
+                scrutinee,
+                arms,
+                ..
             } => {
                 self.expression(scrutinee);
+                self.condition(condition.as_ref());
                 for arm in arms {
                     self.branches.push(arm.label.clone());
                     self.statements(&arm.body);
@@ -241,9 +293,13 @@ impl Records<'_> {
                 }
             }
             CheckedStatement::ValueMatchLet {
-                scrutinee, arms, ..
+                condition,
+                scrutinee,
+                arms,
+                ..
             } => {
                 self.expression(scrutinee);
+                self.condition(condition.as_ref());
                 self.gives += 1;
                 for arm in arms {
                     self.branches.push(arm.label.clone());
@@ -611,6 +667,7 @@ impl Records<'_> {
                     );
                 }
                 CheckedPlaceStep::Field(_)
+                | CheckedPlaceStep::Payload { .. }
                 | CheckedPlaceStep::BoxReferent(_)
                 | CheckedPlaceStep::Measure(_) => {}
             }

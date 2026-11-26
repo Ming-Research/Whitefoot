@@ -529,13 +529,15 @@ fn linked_definitions_return_their_declared_register_results() {
             }
             // The two Instant producers, the four cancellation constructors, whose
             // results are one-field structs over a shared handle [PRE-2],
-            // `Result<u64, Utf8Error>` and the resident reading's `Option<u64>`
-            // fit the register-result budget.
+            // `Result<u64, Utf8Error>`, the local offset's `Option<i64>` and
+            // the resident reading's `Option<u64>` fit the register-result
+            // budget.
             assert_eq!(
                 linked,
                 [
                     "std.time.now",
                     "std.time.instant_after",
+                    "std.time.local_offset_seconds",
                     "std.time.cancel_source",
                     "std.time.cancel_share",
                     "std.time.cancel_watch",

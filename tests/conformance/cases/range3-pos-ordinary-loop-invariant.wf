@@ -30,11 +30,8 @@ fn mark_all(n: u64) -> result: u64 pure contract {
       break;
     }
   }
-  if at == n {
-    let got = all_marked(cells: &cells.inner[0_u64..n], mark: 9_u64);
-    return got;
-  }
-  return 0_u64;
+  let got = all_marked(cells: &cells.inner[0_u64..n], mark: 9_u64);
+  return got;
 }
 
 fn main() -> status: ExitStatus pure {

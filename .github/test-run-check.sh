@@ -9,7 +9,7 @@ cleanup() {
     rm -rf "$work"
 }
 trap cleanup EXIT
-unset WHITEFOOT_CHECK_OWNER WHITEFOOT_TIME_BUDGET_RECORD WHITEFOOT_TIME_BUDGET_FILE
+unset WHITEFOOT_CHECK_OWNER WHITEFOOT_TIME_BUDGET_RECORD WHITEFOOT_TIME_BUDGET_FILE WHITEFOOT_CPUINFO
 WHITEFOOT_CHECK_LOCK_DIR=$work/lock
 export WHITEFOOT_CHECK_LOCK_DIR
 
@@ -82,67 +82,184 @@ test "$status" -eq 1
 test ! -e "$work/lock"
 if kill -0 "$(cat "$work/orphan")" 2>/dev/null; then exit 1; fi
 
-# Budgets. The host's own column holds the budget that decides each case, and
-# the other columns the opposite value, so a wrong column fails the case.
-case "$(uname -s)" in
-    Linux) host=linux ;;
-    Darwin) host=macos ;;
-    *) echo "check runner test: unsupported host $(uname -s)" >&2; exit 1 ;;
-esac
-others=
-for column in linux macos windows; do
-    if [ "$column" != "$host" ]; then others="$others $column"; fi
-done
-row() { # row LABEL HOST-BUDGET OTHER-BUDGET, the host's column last
-    for column in $others; do printf ' %s' "$3"; done
-    printf ' %s' "$2"
-}
-{
-    printf '# test budgets\nlabel%s %s\n' "$others" "$host"
-    printf 'within%s\n' "$(row within 600 0)"
-    printf 'over%s\n' "$(row over 0 600)"
-    printf 'parent%s\n' "$(row parent 600 0)"
-    printf 'nowhere%s\n' "$(row nowhere - 600)"
-    printf 'timeout%s\n' "$(row timeout 0 600)"
-    printf 'malformed%s\n' "$(row malformed 1.5 600)"
-} > "$work/budgets"
+# Emulate the platform seen by the wrapper, so every CI host checks Linux,
+# macOS and Windows budget policy without changing the real command's host.
+# An external command, not a shell function: a POSIX shell may keep the
+# variable assignments written before a function call (bash does), which
+# would leak one case's environment into the next.
+cat > "$work/run-host.pl" <<'HOST'
+$^O = shift @ARGV;
+my $runner = shift @ARGV;
+do $runner;
+die $@ || $!;
+HOST
+cat > "$work/budgets" <<'BUDGETS'
+# Different class/host values expose selection of the wrong column.
+cpu fast  Test Fast CPU
+cpu slow  Test Slow CPU
+label fast slow macos windows
+within 600 0 0 0
+over 0 600 0 0
+parent 600 0 0 0
+nowhere - 600 - -
+timeout 0 600 0 0
+malformed 1.5 600 1.5 1.5
+unknown-max 0 600 0 0
+fallback-before-last 600 0 0 0
+host-within 0 0 600 600
+host-over 600 600 0 0
+BUDGETS
+printf 'model name\t: Test Fast CPU\n' > "$work/cpuinfo"
 WHITEFOOT_TIME_BUDGET_FILE=$work/budgets
-export WHITEFOOT_TIME_BUDGET_FILE
+WHITEFOOT_CPUINFO=$work/cpuinfo
+export WHITEFOOT_TIME_BUDGET_FILE WHITEFOOT_CPUINFO
 record=$work/over-budget
 
-perl "$runner" over true > "$work/report.log" 2>&1
-grep -q 'OVER BUDGET: over took' "$work/report.log"
-perl "$runner" within true > "$work/within.log" 2>&1
-grep -q '== BUDGET within: [0-9.]* s of 600 s' "$work/within.log"
-perl "$runner" unlisted true > "$work/unlisted.log" 2>&1
+perl "$work/run-host.pl" linux "$runner" over true > "$work/report.log" 2>&1
+grep -q 'OVER BUDGET: enforced: over took' "$work/report.log"
+perl "$work/run-host.pl" linux "$runner" within true > "$work/within.log" 2>&1
+grep -q '== BUDGET within: [0-9.]* s of 600 s (linux) ==' "$work/within.log"
+perl "$work/run-host.pl" linux "$runner" unlisted true > "$work/unlisted.log" 2>&1
 if grep -q 'BUDGET' "$work/unlisted.log"; then exit 1; fi
 test ! -e "$record"
 
-# A record collects every overrun; the commands keep their own statuses.
-WHITEFOOT_TIME_BUDGET_RECORD=$record perl "$runner" parent sh -c \
-    'perl "$1" over true; perl "$1" within true; touch "$2"' sh "$runner" "$work/continued" \
+# A record collects every overrun; nested commands keep their own statuses.
+WHITEFOOT_TIME_BUDGET_RECORD=$record perl "$work/run-host.pl" linux "$runner" parent sh -c \
+    'perl -e "$3" "$1" over true; perl -e "$3" "$1" within true; touch "$2"' \
+    sh "$runner" "$work/continued" '$^O = "linux"; do shift @ARGV; die $@ || $!' \
     > "$work/recorded.log" 2>&1
 test -f "$work/continued"
-grep -q '^  over took [0-9.]* s, over its 0 s' "$record"
+grep -q '^  ENFORCED: over took [0-9.]* s, over its 0 s' "$record"
 if grep -q 'within\|parent' "$record"; then exit 1; fi
 test ! -e "$work/lock"
 status=0
-WHITEFOOT_TIME_BUDGET_RECORD=$record perl "$runner" over sh -c 'exit 17' > "$work/over-failed.log" 2>&1 || status=$?
+WHITEFOOT_TIME_BUDGET_RECORD=$record perl "$work/run-host.pl" linux "$runner" over sh -c 'exit 17' > "$work/over-failed.log" 2>&1 || status=$?
 test "$status" -eq 17
 for label in unlisted nowhere; do
-    WHITEFOOT_TIME_BUDGET_RECORD=$record perl "$runner" "$label" true > "$work/$label-recorded.log" 2>&1
-    grep -q "^  $label has no $host budget" "$record"
+    WHITEFOOT_TIME_BUDGET_RECORD=$record perl "$work/run-host.pl" linux "$runner" "$label" true > "$work/$label-recorded.log" 2>&1
+    grep -q "^  ENFORCED: $label has no linux budget" "$record"
 done
-test "$(grep -c '^  over took' "$record")" -eq 2
-WHITEFOOT_TIME_BUDGET_RECORD=$record perl "$runner" over true > "$work/over-passed.log" 2>&1
-test "$(grep -c '^  over took' "$record")" -eq 3
-WHITEFOOT_TIME_BUDGET_RECORD=$record perl "$runner" malformed true > "$work/malformed.log" 2>&1
-grep -q "malformed needs seconds or - for $host" "$record"
+test "$(grep -c '^  ENFORCED: over took' "$record")" -eq 2
+WHITEFOOT_TIME_BUDGET_RECORD=$record perl "$work/run-host.pl" linux "$runner" over true > "$work/over-passed.log" 2>&1
+test "$(grep -c '^  ENFORCED: over took' "$record")" -eq 3
+WHITEFOOT_TIME_BUDGET_RECORD=$record perl "$work/run-host.pl" linux "$runner" malformed true > "$work/malformed.log" 2>&1
+grep -q "malformed needs seconds or - for fast" "$record"
+
+# The second mapped model selects its own column without a fallback note.
+printf 'model name\t: Test Slow CPU\n' > "$work/slow-cpuinfo"
+WHITEFOOT_CPUINFO=$work/slow-cpuinfo WHITEFOOT_TIME_BUDGET_RECORD=$work/slow-record \
+    perl "$work/run-host.pl" linux "$runner" unknown-max true > "$work/slow.log" 2>&1
+grep -q '== BUDGET unknown-max: [0-9.]* s of 600 s (linux) ==' "$work/slow.log"
+test ! -s "$work/slow-record"
+
+# Unknown models use the largest Linux class value and record a note even
+# when the selected budget is met. Notes alone never fail the verdict.
+printf 'model name\t: Test Unmapped CPU\n' > "$work/unknown-cpuinfo"
+WHITEFOOT_CPUINFO=$work/unknown-cpuinfo WHITEFOOT_TIME_BUDGET_RECORD=$work/unknown-record \
+    perl "$work/run-host.pl" linux "$runner" unknown-max true > "$work/unknown.log" 2>&1
+grep -q '== BUDGET unknown-max: [0-9.]* s of 600 s (linux) ==' "$work/unknown.log"
+grep -q '== BUDGET NOTE: Linux CPU model "Test Unmapped CPU"' "$work/unknown.log"
+grep -q '^  NOTE: Linux CPU model "Test Unmapped CPU".*slowest Linux class budget (600 s)' "$work/unknown-record"
+perl "$runner" --budget-verdict "$work/unknown-record" > "$work/unknown-verdict.log" 2>&1
+
+# The largest class need not be the last column, and a model extending a
+# mapped name must still use the fallback rather than a prefix match.
+WHITEFOOT_CPUINFO=$work/unknown-cpuinfo WHITEFOOT_TIME_BUDGET_RECORD=$work/before-last-record \
+    perl "$work/run-host.pl" linux "$runner" fallback-before-last true > "$work/before-last.log" 2>&1
+grep -q '== BUDGET fallback-before-last: [0-9.]* s of 600 s (linux) ==' "$work/before-last.log"
+grep -q '== BUDGET NOTE: Linux CPU model "Test Unmapped CPU".*(600 s)' "$work/before-last.log"
+grep -q '^  NOTE: Linux CPU model "Test Unmapped CPU".*(600 s)' "$work/before-last-record"
+if grep -q '^  ENFORCED:\|^  REPORT-ONLY:' "$work/before-last-record"; then exit 1; fi
+perl "$runner" --budget-verdict "$work/before-last-record" > "$work/before-last-verdict.log" 2>&1
+printf 'model name\t: Test Fast CPU Extra\n' > "$work/near-cpuinfo"
+WHITEFOOT_CPUINFO=$work/near-cpuinfo WHITEFOOT_TIME_BUDGET_RECORD=$work/near-record \
+    perl "$work/run-host.pl" linux "$runner" unknown-max true > "$work/near.log" 2>&1
+grep -q '== BUDGET unknown-max: [0-9.]* s of 600 s (linux) ==' "$work/near.log"
+grep -q '== BUDGET NOTE: Linux CPU model "Test Fast CPU Extra".*(600 s)' "$work/near.log"
+grep -q '^  NOTE: Linux CPU model "Test Fast CPU Extra".*(600 s)' "$work/near-record"
+if grep -q '^  ENFORCED:\|^  REPORT-ONLY:' "$work/near-record"; then exit 1; fi
+perl "$runner" --budget-verdict "$work/near-record" > "$work/near-verdict.log" 2>&1
+
+# A known mapping without a column and unreadable cpuinfo use the same
+# fallback. A mapped '-' was checked above and must never fall back.
+{ printf 'cpu omitted  Test Omitted CPU\n'; cat "$work/budgets"; } > "$work/omitted-budgets"
+printf 'model name\t: Test Omitted CPU\n' > "$work/omitted-cpuinfo"
+WHITEFOOT_TIME_BUDGET_FILE=$work/omitted-budgets WHITEFOOT_CPUINFO=$work/omitted-cpuinfo \
+    WHITEFOOT_TIME_BUDGET_RECORD=$work/omitted-record perl "$work/run-host.pl" linux "$runner" unknown-max true > "$work/omitted.log" 2>&1
+grep -q '^  NOTE: Linux CPU model "Test Omitted CPU".*(600 s)' "$work/omitted-record"
+WHITEFOOT_CPUINFO=$work/no-cpuinfo WHITEFOOT_TIME_BUDGET_RECORD=$work/no-cpuinfo-record \
+    perl "$work/run-host.pl" linux "$runner" unknown-max true > "$work/no-cpuinfo.log" 2>&1
+grep -q '^  NOTE: Linux CPU model "<unavailable>".*(600 s)' "$work/no-cpuinfo-record"
+
+# macOS overruns remain visible but do not enforce; missing rows/values and
+# malformed tables still fail there. Linux and Windows overruns enforce.
+WHITEFOOT_TIME_BUDGET_RECORD=$work/macos-record perl "$work/run-host.pl" darwin "$runner" over true > "$work/macos.log" 2>&1
+grep -q '== OVER BUDGET: report-only: over took' "$work/macos.log"
+grep -q '^  REPORT-ONLY: over took' "$work/macos-record"
+perl "$runner" --budget-verdict "$work/macos-record" > "$work/macos-verdict.log" 2>&1
+grep -q 'REPORT-ONLY: over took' "$work/macos-verdict.log"
+for label in unlisted nowhere malformed; do
+    WHITEFOOT_TIME_BUDGET_RECORD=$work/macos-missing perl "$work/run-host.pl" darwin "$runner" "$label" true > "$work/macos-$label.log" 2>&1
+done
+grep -q '^  ENFORCED: unlisted has no macos budget' "$work/macos-missing"
+grep -q '^  ENFORCED: nowhere has no macos budget' "$work/macos-missing"
+grep -q '^  ENFORCED: .*malformed needs seconds or - for macos' "$work/macos-missing"
+status=0
+perl "$runner" --budget-verdict "$work/macos-missing" > "$work/macos-missing-verdict.log" 2>&1 || status=$?
+test "$status" -eq 1
+WHITEFOOT_TIME_BUDGET_RECORD=$work/linux-record perl "$work/run-host.pl" linux "$runner" over true > "$work/linux.log" 2>&1
+WHITEFOOT_TIME_BUDGET_RECORD=$work/windows-record perl "$work/run-host.pl" MSWin32 "$runner" over true > "$work/windows.log" 2>&1
+for platform in linux windows; do
+    grep -q '^  ENFORCED: over took' "$work/$platform-record"
+    status=0
+    perl "$runner" --budget-verdict "$work/$platform-record" > "$work/$platform-verdict.log" 2>&1 || status=$?
+    test "$status" -eq 1
+done
+
+# WHITEFOOT_BUDGET_REPORT_ONLY reports only the labels it names, on Linux too;
+# an unnamed label stays enforced, and so does a named label with no budget.
+WHITEFOOT_BUDGET_REPORT_ONLY=over WHITEFOOT_TIME_BUDGET_RECORD=$work/named-record \
+    perl "$work/run-host.pl" linux "$runner" over true > "$work/named.log" 2>&1
+grep -q '== OVER BUDGET: report-only: over took' "$work/named.log"
+grep -q '^  REPORT-ONLY: over took' "$work/named-record"
+perl "$runner" --budget-verdict "$work/named-record" > "$work/named-verdict.log" 2>&1
+status=0
+WHITEFOOT_BUDGET_REPORT_ONLY=other WHITEFOOT_TIME_BUDGET_RECORD=$work/unnamed-record \
+    perl "$work/run-host.pl" linux "$runner" over true > "$work/unnamed.log" 2>&1
+grep -q '^  ENFORCED: over took' "$work/unnamed-record"
+perl "$runner" --budget-verdict "$work/unnamed-record" > "$work/unnamed-verdict.log" 2>&1 || status=$?
+test "$status" -eq 1
+WHITEFOOT_BUDGET_REPORT_ONLY=unlisted WHITEFOOT_TIME_BUDGET_RECORD=$work/nowhere-record \
+    perl "$work/run-host.pl" linux "$runner" unlisted true > "$work/nowhere.log" 2>&1
+grep -q '^  ENFORCED: unlisted has no linux budget' "$work/nowhere-record"
+
+# Both Linux columns oppose the host's value, so selecting either Linux
+# column fails even when the macOS final verdict would still report success.
+for budget_host in macos windows; do
+    case "$budget_host" in
+        macos) platform=darwin; kind=REPORT-ONLY; mode=report-only; expected=0 ;;
+        windows) platform=MSWin32; kind=ENFORCED; mode=enforced; expected=1 ;;
+    esac
+    WHITEFOOT_TIME_BUDGET_RECORD=$work/$budget_host-within-record \
+        perl "$work/run-host.pl" "$platform" "$runner" host-within true > "$work/$budget_host-within.log" 2>&1
+    grep -q "== BUDGET host-within: [0-9.]* s of 600 s ($budget_host) ==" "$work/$budget_host-within.log"
+    test ! -s "$work/$budget_host-within-record"
+    perl "$runner" --budget-verdict "$work/$budget_host-within-record" > "$work/$budget_host-within-verdict.log" 2>&1
+    WHITEFOOT_TIME_BUDGET_RECORD=$work/$budget_host-over-record \
+        perl "$work/run-host.pl" "$platform" "$runner" host-over true > "$work/$budget_host-over.log" 2>&1
+    grep -q "== OVER BUDGET: $mode: host-over took [0-9.]* s, over its 0 s $budget_host budget ==" "$work/$budget_host-over.log"
+    grep -q "^  $kind: host-over took [0-9.]* s, over its 0 s $budget_host budget$" "$work/$budget_host-over-record"
+    if grep -q '^  NOTE:' "$work/$budget_host-over-record"; then exit 1; fi
+    status=0
+    perl "$runner" --budget-verdict "$work/$budget_host-over-record" > "$work/$budget_host-over-verdict.log" 2>&1 || status=$?
+    test "$status" -eq "$expected"
+    grep -q "^  $kind: host-over took" "$work/$budget_host-over-verdict.log"
+done
 
 # A cancelled stage has no budget verdict.
 status=0
 WHITEFOOT_CHECK_TIMEOUT=1 WHITEFOOT_TIME_BUDGET_RECORD=$work/timeout-record \
-    perl "$runner" timeout sleep 5 > "$work/timeout-budget.log" 2>&1 || status=$?
+    perl "$work/run-host.pl" linux "$runner" timeout sleep 5 > "$work/timeout-budget.log" 2>&1 || status=$?
 test "$status" -eq 124
 test ! -s "$work/timeout-record"
 

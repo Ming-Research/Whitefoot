@@ -32,7 +32,7 @@ fn pass_window(values: Ring<u8, 4>) -> result: Ring<u8, 4> pure contract {
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "Runs a queue over one four-slot Ring: the window wraps, and every element comes back in the order it went in.";
+  doc "Runs a queue over one four-slot Ring: the window wraps, and every element comes back in the order it went in. The length the drained queue is left with is the exit status.";
   let built = pair();
   let first_of_two = built[0_u64];
   if first_of_two == 7_u8 {
@@ -93,9 +93,6 @@ fn main() -> status: ExitStatus pure {
     return exit_status(code: 7_u8);
   }
   let left = rest4.len;
-  if left == 0_u64 {
-  } else {
-    return exit_status(code: 8_u8);
-  }
-  return exit_status(code: 0_u8);
+  let code = cvt::<u64, u8>(left);
+  return exit_status(code: code);
 }

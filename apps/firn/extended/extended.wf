@@ -1022,8 +1022,8 @@ fn push_shifted(out: &Box<Slots<u8>>, significand: u64, shift: u64) -> result: u
     let amount = cvt.wrap::<u64, u32>(step);
     let carry = 0_u64;
     for @limbs (index in 0_u64..limbs.inner.len) {
-      let held = limbs.inner[index];
-      let moved = ishl.wrap(held, amount);
+      let observed = limbs.inner[index];
+      let moved = ishl.wrap(observed, amount);
       let sum = moved +wrap carry;
       set limbs.inner[index] = sum % limb;
       set carry = sum / limb;
@@ -1044,15 +1044,15 @@ fn push_shifted(out: &Box<Slots<u8>>, significand: u64, shift: u64) -> result: u
   for @emit (step in 0_u64..count) {
     let back = count -wrap step;
     let index = back -wrap 1_u64;
-    let held = 0_u64;
+    let observed = 0_u64;
     if index < limbs.inner.len {
-      set held = limbs.inner[index];
+      set observed = limbs.inner[index];
     }
     let width = 9_u64;
     if step == 0_u64 {
       set width = 1_u64;
     }
-    push_digits(out: out, value: held, width: width);
+    push_digits(out: out, value: observed, width: width);
   }
   return unit;
 }

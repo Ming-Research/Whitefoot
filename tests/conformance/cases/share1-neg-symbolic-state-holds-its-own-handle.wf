@@ -1,0 +1,12 @@
+struct Chain<U> {
+  item: U;
+  next: Option<Shared<Chain<U>>>;
+}
+
+fn keep<U>(chain: Chain<U>) -> result: Chain<U> pure {
+  return move chain;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

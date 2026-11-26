@@ -1,0 +1,38 @@
+enum Holder {
+  Boxed(cell: Box<u64>, stamp: u64);
+  Nothing();
+}
+
+fn build(kind: u64, seed: u64) -> result: Holder pure waits {
+  if kind == 0_u64 {
+    let cell = box_new::<u64>(value: seed);
+    let next = seed +wrap 1_u64;
+    return Holder::Boxed(cell: move cell, stamp: next);
+  }
+  return Holder::Nothing();
+}
+
+fn weight(holder: Holder) -> result: u64 pure waits {
+  match move holder {
+    Boxed(cell: c, stamp: s) => {
+      return c.inner +wrap s;
+    }
+    Nothing() => {
+      return 7777_u64;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let direct = build(kind: 0_u64, seed: 3_u64);
+  let bound = spawn build(kind: 0_u64, seed: 5_u64);
+  let direct_weight = weight(holder: move direct);
+  if direct_weight != 7_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let bound_weight = weight(holder: move bound);
+  if bound_weight != 11_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

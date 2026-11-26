@@ -18,7 +18,7 @@ fn filled_four(value: u32) -> result: Slots<u32, 4> pure contract {
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "[ENT-2] the implicit cap = n of a Slots<T, n> place holds at every program point. An element read feeding a branch condition puts a join on the path, and the OP-11 swap of the run's root bindings then kills every relation supported by those places [ENT-5]. The capacity equality is a function of the place's type rather than a fact that had to survive, so it still reads back on both sides of the exchange [ENT-4]; the honest difference from an Array is that len is a descriptor word rather than a type constant, so the length does not survive the exchange and the subscripts stand before it.";
+  doc "[ENT-2] the implicit cap = n of a Slots<T, n> place holds at every program point. An element read feeding a branch condition puts a join on the path, and the OP-11 swap of the run's root bindings then kills every relation supported by those places [ENT-5]. The capacity equality is a function of the place's type rather than a fact that had to survive, so it still reads back on both sides of the exchange [ENT-4]; the honest difference from an Array is that len is a descriptor word rather than a type constant, so the length does not survive the exchange and the subscripts stand before it. The exit status is ten times the one capacity plus the other.";
   let samples = filled_four(value: 1_u32);
   let before = samples[0_u64];
   if before == 1_u32 {
@@ -28,14 +28,9 @@ fn main() -> status: ExitStatus pure {
   let fresh = filled_four(value: 9_u32);
   swap(first: &samples, second: &fresh);
   let capacity = samples.cap;
-  if capacity == 4_u64 {
-  } else {
-    return exit_status(code: 2_u8);
-  }
   let carried = fresh.cap;
-  if carried == 4_u64 {
-  } else {
-    return exit_status(code: 3_u8);
-  }
-  return exit_status(code: 0_u8);
+  let tens = capacity * 10_u64;
+  let combined = tens + carried;
+  let code = cvt::<u64, u8>(combined);
+  return exit_status(code: code);
 }

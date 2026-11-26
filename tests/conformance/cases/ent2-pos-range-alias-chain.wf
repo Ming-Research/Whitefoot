@@ -1,0 +1,16 @@
+fn probe(r: &[u64]) -> result: u64 reads(r) contract {
+  requires r^.len >= 2_u64;
+} {
+  doc "ENT-2, REF-4: p is bound to q, which is bound to r, and none is rebound, so p is identified through r; the subrange formation's bound and the element read both discharge from r's length.";
+  let q = r;
+  let p = q;
+  let part = &p^[0_u64..2_u64];
+  let second = part^[1_u64];
+  let first = p^[0_u64];
+  return first +wrap second;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "No call is needed to exercise the proof identity.";
+  return std::process::exit_status(code: 0_u8);
+}

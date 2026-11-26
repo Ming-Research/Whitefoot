@@ -1,0 +1,15 @@
+fn probe(rows: &[Slots<u8, 8>], j: u64, k: u64) -> result: u8 writes(rows) contract {
+  requires 0_u64 < j;
+  requires j < rows^.len;
+  requires k < rows^[0_u64].len;
+} {
+  doc "ENT-5 preserves row zero's length when the current context proves the symbolic written index positive. OWN-7 must compare a literal support index with a symbolic write index.";
+  set rows^[j] = slots_new::<u8, 8>();
+  let value = rows^[0_u64][k];
+  return value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Checking probe exercises mixed literal and symbolic separation without constructing runtime rows.";
+  return std::process::exit_status(code: 0_u8);
+}

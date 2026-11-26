@@ -1,0 +1,47 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn churn(counter: Shared<u64>, highest: Shared<u64>) -> result: unit pure waits {
+  for @bump (index in 0_u64..2000_u64) {
+    atomic count = &counter {
+      let scratch = shared_new::<u64>(value: 7_u64);
+      set count^ = count^ +wrap 1_u64;
+    }
+  }
+  let seen = 0_u64;
+  atomic count = &counter {
+    set seen = count^;
+  }
+  atomic best = &highest {
+    if seen > best^ {
+      set best^ = seen;
+    }
+  }
+  return unit;
+}
+
+fn start_all(counter: Shared<u64>, highest: &Shared<u64>) -> result: unit reads(highest) waits {
+  for @start (index in 0_u64..15_u64) {
+    let handle = shared_share::<u64>(shared: &counter);
+    let started_best = shared_share::<u64>(shared: highest);
+    spawn churn(counter: move handle, highest: move started_best);
+  }
+  let last_best = shared_share::<u64>(shared: highest);
+  spawn churn(counter: move counter, highest: move last_best);
+  return unit;
+}
+
+fn main() -> status: ExitStatus pure waits {
+  doc "Sixteen contexts hold the only handles to one counter. Each adds to it through its own handle, making and releasing another object inside every statement, and releases its handle when it finishes while the others' statements still run. The context whose last read of the counter comes last sees every increment, so the highest count read is 32000 on every order of the statements; a counter released while a statement on it ran would lose increments to the objects made after it, and the status is then 1.";
+  let counter = shared_new::<u64>(value: 0_u64);
+  let highest = shared_new::<u64>(value: 0_u64);
+  start_all(counter: move counter, highest: &highest);
+  let best = 0_u64;
+  atomic seen = &highest {
+    set best = seen^;
+  }
+  if best != 32000_u64 {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}

@@ -1,0 +1,40 @@
+enum RefinementVariant {
+  First(index: u64);
+  Second(index: u64);
+}
+
+interface Provider {
+  fn produce(value: u64) -> result: RefinementVariant pure contract {
+    ensures when First(index: payload): payload <= 7_u64;
+  };
+}
+
+fn choose(value: u64) -> result: RefinementVariant pure contract {
+  ensures when Second(index: payload): payload <= 7_u64;
+} {
+  if value <= 7_u64 {
+    return RefinementVariant::Second(index: value);
+  }
+  return RefinementVariant::First(index: value);
+}
+
+binding Wrong : Provider {
+  produce = choose;
+}
+
+fn through<interface Provider>(value: u64) -> result: u8 pure {
+  let made = Provider::produce(value: value);
+  match made {
+    First(index: selected) => {
+      return cvt::<u64, u8>(selected);
+    }
+    Second(index: selected) => {
+      return 0_u8;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let code = through::<Wrong>(value: 300_u64);
+  return std::process::exit_status(code: code);
+}

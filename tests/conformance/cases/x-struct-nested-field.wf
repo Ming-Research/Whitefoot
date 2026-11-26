@@ -15,9 +15,6 @@ fn main() -> status: ExitStatus pure {
   let inner_atom_0001 = Inner(v: 10_i32);
   let o = Outer(inner: inner_atom_0001, k: 5_i32);
   let s = o.inner.v +wrap o.k;
-  if s == 15_i32 {
-  } else {
-    return exit_status(code: 201_u8);
-  }
-  return exit_status(code: 0_u8);
+  let status_code = cvt::<i32, u8>(s);
+  return exit_status(code: status_code);
 }

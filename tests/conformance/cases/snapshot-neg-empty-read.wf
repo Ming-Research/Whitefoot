@@ -1,0 +1,11 @@
+alias Reserve = std::snapshot::Reserve;
+alias Job = std::snapshot::Job;
+alias CreateError = std::snapshot::CreateError;
+
+fn collect(job: Job) -> result: std::snapshot::Outcome pure waits {
+  let bytes = array_filled::<u8, 0>(value: 0_u8);
+  let deadline = None<std::time::Instant>();
+  let watch = std::time::cancel_never();
+  let read_result = std::snapshot::read(job: &job, out: &bytes[0_u64..0_u64], deadline: deadline, cancel: &watch);
+  return std::snapshot::finish(job: move job);
+}

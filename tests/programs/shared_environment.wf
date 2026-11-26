@@ -1,0 +1,120 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Words {
+  list: Box<Array<u64>>;
+}
+
+fn weigh(left: &Words, right: &Words, scale: &[u64], window: &[u64], depth: u64, at: u64, bias: u64, total: u64) -> result: u64 reads(left), reads(right), reads(scale), reads(window) {
+  doc "One level of a mutually recursive walk with descend: adds the weighted pair of words at position at, then hands every borrow on to descend. With ten argument words it passes more than any admitted target's argument registers hold, and left, right and scale reach every level unchanged.";
+  if depth == 0_u64 {
+    return total;
+  }
+  let picked = 0_u64;
+  if at < left^.list.inner.len {
+    set picked = left^.list.inner[at];
+  }
+  let other = 0_u64;
+  if at < right^.list.inner.len {
+    set other = right^.list.inner[at];
+  }
+  let factor = 1_u64;
+  if depth < scale^.len {
+    set factor = scale^[depth];
+  }
+  let sum = picked +wrap other;
+  let product = sum *wrap factor;
+  let weighted = product +wrap bias;
+  let next_total = total +wrap weighted;
+  let next_depth = depth -wrap 1_u64;
+  let next_at = at +wrap 1_u64;
+  let walked_on = descend(left: left, right: right, scale: scale, window: window, depth: next_depth, at: next_at, bias: bias, total: next_total);
+  return walked_on;
+}
+
+fn descend(left: &Words, right: &Words, scale: &[u64], window: &[u64], depth: u64, at: u64, bias: u64, total: u64) -> result: u64 reads(left), reads(right), reads(scale), reads(window) {
+  doc "The other half of the walk: consumes the first word of window and passes weigh the rest of it, a narrower borrow than it received, or adds bias once window is empty and passes window on unchanged.";
+  let count = window^.len;
+  let start = 1_u64;
+  let ordered = start <= count;
+  if ordered {
+    let first = 0_u64;
+    let zero = 0_u64;
+    set first = window^[zero];
+    let rest = &window^[start..count];
+    let shifted = total +wrap first;
+    let narrowed = weigh(left: left, right: right, scale: scale, window: rest, depth: depth, at: at, bias: bias, total: shifted);
+    return narrowed;
+  }
+  let plain = total +wrap bias;
+  let passed_on = weigh(left: left, right: right, scale: scale, window: window, depth: depth, at: at, bias: bias, total: plain);
+  return passed_on;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Runs the walk of weigh and descend from outside their group and compares its total with the same sum computed by one loop, then checks the total against its value worked out by hand.";
+  let left_list = box_array_filled::<u64>(count: 64_u64, value: 0_u64);
+  let right_list = box_array_filled::<u64>(count: 64_u64, value: 0_u64);
+  for (position in 0_u64..64_u64) {
+    let doubled = position +wrap position;
+    let tripled = doubled +wrap position;
+    set left_list.inner[position] = doubled;
+    set right_list.inner[position] = tripled;
+  }
+  let left = Words(list: move left_list);
+  let right = Words(list: move right_list);
+  let scale_values = array_filled::<u64, 8>(value: 2_u64);
+  let window_values = array_filled::<u64, 5>(value: 0_u64);
+  for (position in 0_u64..5_u64) {
+    let word = position +wrap 7_u64;
+    set window_values[position] = word;
+  }
+  let depth = 12_u64;
+  let at = 3_u64;
+  let bias = 1_u64;
+  let walked = weigh(left: &left, right: &right, scale: &scale_values[0_u64..8_u64], window: &window_values[0_u64..5_u64], depth: depth, at: at, bias: bias, total: 0_u64);
+  let expected = 0_u64;
+  let level = depth;
+  let place = at;
+  let offset = 0_u64;
+  for (round in 0_u64..12_u64) {
+    let picked = 0_u64;
+    if place < left.list.inner.len {
+      set picked = left.list.inner[place];
+    }
+    let other = 0_u64;
+    if place < right.list.inner.len {
+      set other = right.list.inner[place];
+    }
+    let factor = 1_u64;
+    if level < 8_u64 {
+      set factor = scale_values[level];
+    }
+    let sum = picked +wrap other;
+    let product = sum *wrap factor;
+    let weighted = product +wrap bias;
+    let added = expected +wrap weighted;
+    set expected = added;
+    let lower = level -wrap 1_u64;
+    set level = lower;
+    let further = place +wrap 1_u64;
+    set place = further;
+    if offset < 5_u64 {
+      let word = window_values[offset];
+      let consumed = expected +wrap word;
+      set expected = consumed;
+      let moved = offset +wrap 1_u64;
+      set offset = moved;
+    } else {
+      let padded = expected +wrap bias;
+      set expected = padded;
+    }
+  }
+  if walked != expected {
+    return exit_status(code: 1_u8);
+  }
+  if walked != 959_u64 {
+    return exit_status(code: 2_u8);
+  }
+  return exit_status(code: 0_u8);
+}

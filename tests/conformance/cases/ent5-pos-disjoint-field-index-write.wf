@@ -1,0 +1,19 @@
+struct Cursor {
+  k: u64;
+}
+
+fn probe(rows: &[Slots<u8, 8>], s: Cursor, j: u64, k: u64) -> result: u8 writes(rows) contract {
+  requires s.k < j;
+  requires j < rows^.len;
+  requires k < rows^[s.k].len;
+} {
+  doc "ENT-5 and OWN-7 use s.k < j in the write's current context to separate rows[j] from the support of k < rows[s.k].len, so a field-valued support index is compared like a binding-valued one and the nested subscript proof is preserved.";
+  set rows^[j] = slots_new::<u8, 8>();
+  let value = rows^[s.k][k];
+  return value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Checking probe exercises field-valued separation without constructing runtime rows.";
+  return std::process::exit_status(code: 0_u8);
+}

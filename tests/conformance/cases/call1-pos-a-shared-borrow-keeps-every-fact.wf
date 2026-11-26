@@ -10,7 +10,7 @@ fn inspect<const n: u64>(source: &Slots<u8, n>, i: u64) -> seen: u8 reads(source
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "A call is a kill event for no fact supported by a shared-reference actual's place. The callee's row carries no writes of any path rooted at that parameter, so a body can exhibit none and EFF-2's both-ways check admits none in the declared row; no writes occurrence projects onto line and no MSR-2 kill fires. The length the two placements established survives both calls and discharges the requirement of each.";
+  doc "A shared-reference parameter the callee only reads contributes no write to the call, and no other argument writes, so the call kills no fact supported by line. The callee's row carries no writes of any path rooted at that parameter, so a body can exhibit none and EFF-2's both-ways check admits none in the declared row; no writes occurrence projects from it and no MSR-2 kill fires. The length the two placements established survives both calls and discharges the requirement of each.";
   let line = slots_new::<u8, 4>();
   place_back(window: &line, value: 7_u8);
   place_back(window: &line, value: 9_u8);

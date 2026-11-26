@@ -15,15 +15,14 @@ use crate::semantic::goal::{
     CheckedCallRequirement, ConcreteGoal, GoalDatum, GoalExpression, GoalProjection, GoalTemplate,
 };
 use crate::semantic::postcondition::{
-    CheckedPostcondition, CheckedPostconditionSelector, CheckedRoutedRequirement,
-    NormalizedRelation, ParameterDenotation, PayloadRoute, PostconditionPlace,
-    PostconditionPlaceRoot, RelationDatum, RelationTemplate, RelationTerm,
+    CheckedPostconditionSelector, CheckedRoutedRequirement, NormalizedRelation, ParameterDenotation,
+    PayloadRoute, PostconditionPlace, PostconditionPlaceRoot, RelationDatum, RelationTemplate,
+    RelationTerm,
 };
 use crate::FixedTerminal;
 
 const TYPE11_DROP_THE_GENERICS: &str = "declare the invariant on a struct without generics, or state the relation as a `requires` and `ensures` pair on each function that takes the value";
 const TYPE11_DROP_OPAQUE: &str = "declare the invariant on a struct that is not `opaque`";
-const TYPE11_MAKE_THE_FIELD_READONLY: &str = "write the field `public readonly`, so that code outside the declaring module reads it and only that module writes it, or make it private";
 const TYPE11_RENAME_THE_INVARIANT: &str = "give each type invariant of the struct its own name";
 const TYPE11_STATE_ONE_COMPARISON: &str = "state the invariant as one comparison between two sides, such as `table.next < table.slots.len`; write two invariants for a conjunction";
 const TYPE11_ONE_DATUM_A_SIDE: &str = "keep one field or measure of the binder on each side, displaced by a constant, such as `table.next + 1_u64 <= table.slots.len`";
@@ -110,7 +109,7 @@ impl<'unit> Checker<'_, 'unit> {
                                 self.types.declarations.tree.token_bytes(name)?,
                             )
                             .into_owned(),
-                            mechanical_fix: TYPE11_MAKE_THE_FIELD_READONLY,
+                            mechanical_fix: super::repairs::INVARIANT_FIELD_READONLY,
                         },
                     );
                 }
@@ -223,6 +222,7 @@ impl<'unit> Checker<'_, 'unit> {
             declared_effects: EffectSet::default(),
             contract_reads: None,
             waits: false,
+            held_parameters: Vec::new(),
             formal_parameter: None,
             substitution: GenericSubstitution::default(),
         };
@@ -494,33 +494,6 @@ impl<'unit> Checker<'_, 'unit> {
             }
         }
         Ok(requirements)
-    }
-
-    /// [TYPE-11] each type invariant over the exit state of a reference
-    /// parameter whose row writes it, and over each result ordinal whose
-    /// declared type is the struct, as that callable's postcondition after
-    /// its written ones [FN-9], selecting every explicit return; then each
-    /// over a variant field of an own result ordinal of enum type, routed by
-    /// that variant field.
-    pub(super) fn type_invariant_postconditions(
-        &self,
-        context: FunctionContext<'_, '_>,
-        parameters: &[CheckedParameter],
-        body: &[CheckedStatement],
-    ) -> Result<Vec<CheckedPostcondition>, CheckStop> {
-        let mut postconditions = Vec::new();
-        for (invariant, subject, selector) in
-            self.type_invariant_postcondition_selectors(context.function)?
-        {
-            postconditions.push(self.types.build_checked_postcondition(
-                context,
-                parameters,
-                selector,
-                substitute_relation(&invariant.relation, subject),
-                body,
-            )?);
-        }
-        Ok(postconditions)
     }
 
     /// [TYPE-11] each type invariant a callable's boundary promises after its

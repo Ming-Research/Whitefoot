@@ -1,0 +1,14 @@
+nodrop struct Ledger {
+  total: u8;
+}
+
+fn pass(inner: Shared<Ledger>, outer: &Shared<Slots<Shared<Ledger>, 1>>) -> result: unit reads(outer) waits {
+  atomic slot = &outer^ when slot^.len < slot^.cap {
+    place_back(window: slot, value: move inner);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

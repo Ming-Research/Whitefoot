@@ -1,9 +1,9 @@
 alias MemoryMeter = std::process::MemoryMeter;
 
 fn counted(meter: &MemoryMeter, before: u64, expected: u64) -> result: Bool writes(meter) {
-  let held = std::process::heap_in_use(meter: meter);
-  if held >= before {
-    let bytes = held - before;
+  let observed = std::process::heap_in_use(meter: meter);
+  if observed >= before {
+    let bytes = observed - before;
     if bytes == expected {
       return True();
     } else {
@@ -49,9 +49,6 @@ fn small_owners(meter: &MemoryMeter, before: u64) -> result: u8 writes(meter) {
   let rounded = counted(meter: meter, before: before, expected: 64_u64);
   if bnot(rounded) {
     return 5_u8;
-  }
-  if p.inner.cap != 3_u64 {
-    return 6_u8;
   }
   grow_paged(cell: &p, capacity: 4_u64);
   let same_page = counted(meter: meter, before: before, expected: 64_u64);

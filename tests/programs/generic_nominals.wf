@@ -107,15 +107,12 @@ fn main() -> status: ExitStatus pure {
   let optional = Some<u8>(value: 19_u8);
   let wrapped = Wrapped<u8>(value: optional);
   let recovered_optional = wrapped.value;
-  match recovered_optional {
+  let recovered_payload = match recovered_optional {
     None() => {
       return exit_status(code: 1_u8);
     }
     Some(value: observed) => {
-      if observed == 19_u8 {
-      } else {
-        return exit_status(code: 1_u8);
-      }
+      give observed;
     }
   }
   let bytes = slots_new::<u8, 2>();
@@ -125,16 +122,10 @@ fn main() -> status: ExitStatus pure {
   let holder = Holder<Packet<2>>(value: move packet);
   let recovered_packet = move holder.value;
   let recovered_bytes = move recovered_packet.bytes;
-  let recovered_room = recovered_bytes.len;
-  let recovered_ok = 1_u64 < recovered_room;
-  if recovered_ok {
-  } else {
-    return exit_status(code: 1_u8);
-  }
   let recovered = recovered_bytes[1_u64];
   if recovered == 11_u8 {
   } else {
     return exit_status(code: 1_u8);
   }
-  return exit_status(code: 0_u8);
+  return exit_status(code: recovered_payload);
 }

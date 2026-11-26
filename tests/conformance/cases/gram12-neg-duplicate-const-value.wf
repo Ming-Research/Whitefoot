@@ -1,0 +1,21 @@
+const first: u64 = 7_u64;
+
+const alias_of_first: u64 = first;
+
+fn selected(value: u64) -> result: unit pure {
+  match value {
+    first => {
+      return unit;
+    }
+    alias_of_first => {
+      return unit;
+    }
+    else => {
+      return unit;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

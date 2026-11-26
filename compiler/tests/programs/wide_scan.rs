@@ -5,12 +5,12 @@
 //! every probe-lane boundary, an absent needle, and a bound below the run's
 //! length). The argument-selected boundary walks deliberately use loop bounds
 //! past their runs, but express exhaustion as distinct exit statuses: at the
-//! first byte of an empty run, and one past the last byte at an offset inside
-//! a would-be wide stride, with every pre-failure published effect identical
-//! to the scalar reference. Expectations are fixed input/output/status
-//! triples;
-//! the compiler has no optimizer-fact channel, so this single ordinary
-//! mode is the facts-off mode.
+//! first byte of an empty run, whose length is the number of arguments after
+//! the selector (none here) so that the checker cannot know it is empty, and
+//! one past the last byte at an offset inside a would-be wide stride, with
+//! every pre-failure published effect identical to the scalar reference.
+//! Expectations are fixed input/output/status triples; the compiler has no
+//! optimizer-fact channel, so this single ordinary mode is the facts-off mode.
 //!
 //! **THE FIXTURE IS NO LONGER ON `buffer<T>`, AND THAT IS WHAT THIS ORACLE
 //! NOW DEMANDS OF THE PROBE.** The module doc used to say the fixture was left
@@ -47,14 +47,7 @@
 
 use super::support::{build_program, compile_sources, fixture_directory};
 
-const ORACLE: &[u8] = br#"fn opaque_length(n: u64) -> result: u64 pure contract {
-  requires n <= 0_u64;
-  ensures result <= 0_u64;
-} {
-  return n;
-}
-
-fn publish_all(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], length: u64) -> result: Result<unit, std::io::IoError> reads(source), writes(factory), writes(output) waits contract {
+const ORACLE: &[u8] = br#"fn publish_all(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], length: u64) -> result: Result<unit, std::io::IoError> reads(source), writes(factory), writes(output) waits contract {
   define source_length = source^.len;
   requires length <= source_length;
 } {
@@ -84,7 +77,7 @@ fn publish_all(factory: &std::io::HandleFactory, output: &std::io::OutputStream,
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   doc "Runs three equivalence byte walks, publishes their recorded positions, then runs one argument-selected boundary walk with a typed exhaustion status.";
-  let std::process::Inputs(args: args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_err, handles: factory, stdin: unused_in, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::process::Inputs(args: args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_err, handles: factory, stdin: unused_in, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &factory, directory: move unused_cwd);
@@ -243,19 +236,19 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
   } else {
     return std::process::exit_status(code: 6_u8);
   }
-  let phase_room = found.len;
-  let phase_fits = count <= phase_room;
-  if phase_fits {
-    let phase_window = &found[0_u64..64_u64];
-    match publish_all(factory: &factory, output: &out, source: phase_window, length: count) {
-      Ok(value: published) => {
-      }
-      Err(error: problem) => {
-      }
+  let phase_window = &found[0_u64..64_u64];
+  match publish_all(factory: &factory, output: &out, source: phase_window, length: count) {
+    Ok(value: published) => {
+    }
+    Err(error: problem) => {
     }
   }
   if selector == 102_u8 {
-    let empty_length = opaque_length(n: 0_u64);
+    let given = std::text::args_count(args: &args);
+    let empty_length = 0_u64;
+    if given > 2_u64 {
+      set empty_length = given - 2_u64;
+    }
     let empty = box_array_filled::<u8>(count: empty_length, value: 0_u8);
     let empty_room = empty.inner.len;
     let empty_bound = 5_u64;

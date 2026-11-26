@@ -1,0 +1,14 @@
+fn extremes(clock: &std::time::WallClock, at: i64) -> result: i64 reads(clock) {
+  doc "PRE-2: a Some offset lies strictly between -86400 and 86400, so adding 9223372036854689408 cannot exceed the i64 maximum and subtracting 9223372036854689409 cannot fall below the i64 minimum.";
+  match std::time::local_offset_seconds(clock: clock, at: at) {
+    Some(value: offset) => {
+      let ahead = offset + 9223372036854689408_i64;
+      let behind = offset - 9223372036854689409_i64;
+      let spread = ahead -wrap behind;
+      return spread;
+    }
+    None() => {
+      return 0_i64;
+    }
+  }
+}

@@ -117,11 +117,11 @@ struct Holder {
 }
 
 struct Wrapper {
-  held: Holder;
+  observed_state: Holder;
 }
 
 fn touch(value: &Wrapper) -> result: unit reads(value) {
-  let observed = value^.held.cell.inner;
+  let observed = value^.observed_state.cell.inner;
   return unit;
 }
 
@@ -132,10 +132,10 @@ fn moved_owner(flag: Bool) -> result: u64 pure {
   let source = &holder.cell.inner;
   let v = source^;
   if flag {
-    let wrapped = Wrapper(held: move holder);
+    let wrapped = Wrapper(observed_state: move holder);
     touch(value: &wrapped);
   } else {
-    let wrapped = Wrapper(held: move holder);
+    let wrapped = Wrapper(observed_state: move holder);
     touch(value: &wrapped);
   }
   return classify(v: v);
@@ -179,88 +179,77 @@ const MAIN: &str = r#"
 fn main() -> status: std::process::ExitStatus pure {
   let values = box_slots_new::<Value>(capacity: 2_u64);
   let other = box_slots_new::<Value>(capacity: 2_u64);
-  if values.inner.len < values.inner.cap {
-    let initial = Value::Number(n: 7_u64);
-    place_back(window: &values.inner, value: initial);
+  let initial = Value::Number(n: 7_u64);
+  place_back(window: &values.inner, value: initial);
+  let empty = Value::Empty();
+  place_back(window: &other.inner, value: empty);
+  let observed_1 = prepare(values: &values, index: 0_u64);
+  if observed_1 != 14_u64 {
+    return std::process::exit_status(code: 1_u8);
   }
-  if other.inner.len < other.inner.cap {
-    let empty = Value::Empty();
-    place_back(window: &other.inner, value: empty);
+  let observed_2 = unrelated(values: &values, other: &other, index: 0_u64);
+  if observed_2 != 7_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let direct_write = unrelated_store(values: &values, other: &other, index: 0_u64);
+  if direct_write != 7_u64 {
+    return std::process::exit_status(code: 13_u8);
+  }
+  let observed_3 = mutable_argument(values: &values, index: 0_u64);
+  if observed_3 != 44_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  let observed_4 = exposed(values: &values, index: 0_u64);
+  if observed_4 != 37_u64 {
+    return std::process::exit_status(code: 4_u8);
+  }
+  let observed_5 = classify(v: values.inner[0_u64]);
+  if observed_5 != 7_u64 {
+    return std::process::exit_status(code: 5_u8);
+  }
+  let no_change = False();
+  let observed_6 = before_write(values: &values, index: 0_u64, change: no_change);
+  if observed_6 != 7_u64 {
+    return std::process::exit_status(code: 6_u8);
+  }
+  let change = True();
+  let moved_true = moved_owner(flag: change);
+  let moved_false = moved_owner(flag: no_change);
+  if moved_true != 7_u64 {
+    return std::process::exit_status(code: 14_u8);
+  }
+  if moved_false != 7_u64 {
+    return std::process::exit_status(code: 15_u8);
+  }
+  let observed_7 = before_write(values: &values, index: 0_u64, change: change);
+  if observed_7 != 7_u64 {
+    return std::process::exit_status(code: 7_u8);
+  }
+  set values.inner[0_u64] = Value::Number(n: 7_u64);
+  let observed_8 = before_call(values: &values, index: 0_u64);
+  if observed_8 != 7_u64 {
+    return std::process::exit_status(code: 8_u8);
+  }
+  set values.inner[0_u64] = Value::Number(n: 7_u64);
+  let observed_9 = before_grow(values: &values, index: 0_u64);
+  if observed_9 != 7_u64 {
+    return std::process::exit_status(code: 9_u8);
   }
   if values.inner.len > 0_u64 {
-    if other.inner.len > 0_u64 {
-      let observed_1 = prepare(values: &values, index: 0_u64);
-      if observed_1 != 14_u64 {
-        return std::process::exit_status(code: 1_u8);
+    if values.inner.len < values.inner.cap {
+      let observed_10 = before_push(values: &values, index: 0_u64);
+      if observed_10 != 7_u64 {
+        return std::process::exit_status(code: 10_u8);
       }
-      let observed_2 = unrelated(values: &values, other: &other, index: 0_u64);
-      if observed_2 != 7_u64 {
-        return std::process::exit_status(code: 2_u8);
+    }
+    if values.inner.len > 0_u64 {
+      let observed_11 = after_use(values: &values, index: 0_u64);
+      if observed_11 != 7_u64 {
+        return std::process::exit_status(code: 11_u8);
       }
-      let direct_write = unrelated_store(values: &values, other: &other, index: 0_u64);
-      if direct_write != 7_u64 {
-        return std::process::exit_status(code: 13_u8);
-      }
-      let observed_3 = mutable_argument(values: &values, index: 0_u64);
-      if observed_3 != 44_u64 {
-        return std::process::exit_status(code: 3_u8);
-      }
-      let observed_4 = exposed(values: &values, index: 0_u64);
-      if observed_4 != 37_u64 {
-        return std::process::exit_status(code: 4_u8);
-      }
-      let observed_5 = classify(v: values.inner[0_u64]);
-      if observed_5 != 7_u64 {
-        return std::process::exit_status(code: 5_u8);
-      }
-      let no_change = False();
-      let observed_6 = before_write(values: &values, index: 0_u64, change: no_change);
-      if observed_6 != 7_u64 {
-        return std::process::exit_status(code: 6_u8);
-      }
-      let change = True();
-      let moved_true = moved_owner(flag: change);
-      let moved_false = moved_owner(flag: no_change);
-      if moved_true != 7_u64 {
-        return std::process::exit_status(code: 14_u8);
-      }
-      if moved_false != 7_u64 {
-        return std::process::exit_status(code: 15_u8);
-      }
-      let observed_7 = before_write(values: &values, index: 0_u64, change: change);
-      if observed_7 != 7_u64 {
-        return std::process::exit_status(code: 7_u8);
-      }
-      set values.inner[0_u64] = Value::Number(n: 7_u64);
-      let observed_8 = before_call(values: &values, index: 0_u64);
-      if observed_8 != 7_u64 {
-        return std::process::exit_status(code: 8_u8);
-      }
-      set values.inner[0_u64] = Value::Number(n: 7_u64);
-      if values.inner.cap <= 8_u64 {
-        let observed_9 = before_grow(values: &values, index: 0_u64);
-        if observed_9 != 7_u64 {
-          return std::process::exit_status(code: 9_u8);
-        }
-      }
-      if values.inner.len > 0_u64 {
-        if values.inner.len < values.inner.cap {
-          let observed_10 = before_push(values: &values, index: 0_u64);
-          if observed_10 != 7_u64 {
-            return std::process::exit_status(code: 10_u8);
-          }
-        }
-        if values.inner.len > 0_u64 {
-          let observed_11 = after_use(values: &values, index: 0_u64);
-          if observed_11 != 7_u64 {
-            return std::process::exit_status(code: 11_u8);
-          }
-        }
-      }
-      return std::process::exit_status(code: 0_u8);
     }
   }
-  return std::process::exit_status(code: 12_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#;
 
@@ -523,51 +512,46 @@ fn overlapping_range(values: &Box<Slots<Value>>, index: u64, cold: Bool) -> resu
 
 fn main() -> status: std::process::ExitStatus pure {
   let values = box_slots_new::<Value>(capacity: 1_u64);
-  if values.inner.len < values.inner.cap {
-    let initial = Value::Number(n: 7_u64);
-    place_back(window: &values.inner, value: initial);
+  let initial = Value::Number(n: 7_u64);
+  place_back(window: &values.inner, value: initial);
+  let bytes = array_filled::<u8, 1>(value: 5_u8);
+  let name = &bytes[0_u64..1_u64];
+  let hot = False();
+  let cold = True();
+  let parameter_hot = parameter_name(values: &values, index: 0_u64, name: name, cold: hot);
+  if parameter_hot != 7_u64 {
+    return std::process::exit_status(code: 1_u8);
   }
-  if values.inner.len > 0_u64 {
-    let bytes = array_filled::<u8, 1>(value: 5_u8);
-    let name = &bytes[0_u64..1_u64];
-    let hot = False();
-    let cold = True();
-    let parameter_hot = parameter_name(values: &values, index: 0_u64, name: name, cold: hot);
-    if parameter_hot != 7_u64 {
-      return std::process::exit_status(code: 1_u8);
-    }
-    let parameter_cold = parameter_name(values: &values, index: 0_u64, name: name, cold: cold);
-    if parameter_cold != 26_u64 {
-      return std::process::exit_status(code: 2_u8);
-    }
-    let empty = &bytes[0_u64..0_u64];
-    let parameter_empty = parameter_name(values: &values, index: 0_u64, name: empty, cold: cold);
-    if parameter_empty != 21_u64 {
-      return std::process::exit_status(code: 3_u8);
-    }
-    let constant_hot = constant_name(values: &values, index: 0_u64, cold: hot);
-    if constant_hot != 7_u64 {
-      return std::process::exit_status(code: 4_u8);
-    }
-    let constant_cold = constant_name(values: &values, index: 0_u64, cold: cold);
-    if constant_cold != 116_u64 {
-      return std::process::exit_status(code: 5_u8);
-    }
-    let writing_hot = overlapping_range(values: &values, index: 0_u64, cold: hot);
-    if writing_hot != 7_u64 {
-      return std::process::exit_status(code: 6_u8);
-    }
-    let writing_cold = overlapping_range(values: &values, index: 0_u64, cold: cold);
-    if writing_cold != 21_u64 {
-      return std::process::exit_status(code: 7_u8);
-    }
-    let replacement = classify(v: values.inner[0_u64]);
-    if replacement != 99_u64 {
-      return std::process::exit_status(code: 8_u8);
-    }
-    return std::process::exit_status(code: 0_u8);
+  let parameter_cold = parameter_name(values: &values, index: 0_u64, name: name, cold: cold);
+  if parameter_cold != 26_u64 {
+    return std::process::exit_status(code: 2_u8);
   }
-  return std::process::exit_status(code: 9_u8);
+  let empty = &bytes[0_u64..0_u64];
+  let parameter_empty = parameter_name(values: &values, index: 0_u64, name: empty, cold: cold);
+  if parameter_empty != 21_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  let constant_hot = constant_name(values: &values, index: 0_u64, cold: hot);
+  if constant_hot != 7_u64 {
+    return std::process::exit_status(code: 4_u8);
+  }
+  let constant_cold = constant_name(values: &values, index: 0_u64, cold: cold);
+  if constant_cold != 116_u64 {
+    return std::process::exit_status(code: 5_u8);
+  }
+  let writing_hot = overlapping_range(values: &values, index: 0_u64, cold: hot);
+  if writing_hot != 7_u64 {
+    return std::process::exit_status(code: 6_u8);
+  }
+  let writing_cold = overlapping_range(values: &values, index: 0_u64, cold: cold);
+  if writing_cold != 21_u64 {
+    return std::process::exit_status(code: 7_u8);
+  }
+  let replacement = classify(v: values.inner[0_u64]);
+  if replacement != 99_u64 {
+    return std::process::exit_status(code: 8_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
 }
 "#
     );
@@ -722,23 +706,18 @@ fn crossing(values: &Box<Slots<Value>>, command: Command) -> result: u64 reads(v
 
 fn main() -> status: std::process::ExitStatus pure {
   let values = box_slots_new::<Value>(capacity: 1_u64);
-  if values.inner.len < values.inner.cap {
-    let initial = Value::Number(n: 7_u64);
-    place_back(window: &values.inner, value: initial);
+  let initial = Value::Number(n: 7_u64);
+  place_back(window: &values.inner, value: initial);
+  let again = Command::Again();
+  let observed_12 = local(values: &values, command: again);
+  if observed_12 != 7_u64 {
+    return std::process::exit_status(code: 1_u8);
   }
-  if values.inner.len > 0_u64 {
-    let again = Command::Again();
-    let observed_12 = local(values: &values, command: again);
-    if observed_12 != 7_u64 {
-      return std::process::exit_status(code: 1_u8);
-    }
-    let observed_13 = crossing(values: &values, command: again);
-    if observed_13 != 7_u64 {
-      return std::process::exit_status(code: 2_u8);
-    }
-    return std::process::exit_status(code: 0_u8);
+  let observed_13 = crossing(values: &values, command: again);
+  if observed_13 != 7_u64 {
+    return std::process::exit_status(code: 2_u8);
   }
-  return std::process::exit_status(code: 3_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#
     );
@@ -810,22 +789,17 @@ fn fresh(values: &Box<Slots<Value>>, index: u64) -> result: u64 writes(values.in
 
 fn main() -> status: std::process::ExitStatus pure {
   let values = box_slots_new::<Value>(capacity: 1_u64);
-  if values.inner.len < values.inner.cap {
-    let initial = Value::Number(n: 7_u64);
-    place_back(window: &values.inner, value: initial);
+  let initial = Value::Number(n: 7_u64);
+  place_back(window: &values.inner, value: initial);
+  let previous = carried(values: &values, index: 0_u64);
+  if previous != 18_u64 {
+    return std::process::exit_status(code: 1_u8);
   }
-  if values.inner.len > 0_u64 {
-    let previous = carried(values: &values, index: 0_u64);
-    if previous != 18_u64 {
-      return std::process::exit_status(code: 1_u8);
-    }
-    let current = fresh(values: &values, index: 0_u64);
-    if current != 24_u64 {
-      return std::process::exit_status(code: 2_u8);
-    }
-    return std::process::exit_status(code: 0_u8);
+  let current = fresh(values: &values, index: 0_u64);
+  if current != 24_u64 {
+    return std::process::exit_status(code: 2_u8);
   }
-  return std::process::exit_status(code: 3_u8);
+  return std::process::exit_status(code: 0_u8);
 }
 "#
     );
@@ -961,51 +935,46 @@ fn destination_argument(values: &Box<Slots<Value>>, index: u64) -> result: u64 r
 
 fn main() -> status: std::process::ExitStatus pure {
   let values = box_slots_new::<Value>(capacity: 1_u64);
-  if values.inner.len < values.inner.cap {
-    let initial = Value::Number(n: 7_u64);
-    place_back(window: &values.inner, value: initial);
+  let initial = Value::Number(n: 7_u64);
+  place_back(window: &values.inner, value: initial);
+  let hot = False();
+  let cold = True();
+  let hot_value = lazy(values: &values, index: 0_u64, cold: hot);
+  if hot_value != 1_u64 {
+    return std::process::exit_status(code: 1_u8);
   }
-  if values.inner.len > 0_u64 {
-    let hot = False();
-    let cold = True();
-    let hot_value = lazy(values: &values, index: 0_u64, cold: hot);
-    if hot_value != 1_u64 {
-      return std::process::exit_status(code: 1_u8);
-    }
-    let destination_value = destination_argument(values: &values, index: 0_u64);
-    if destination_value != 15_u64 {
-      return std::process::exit_status(code: 2_u8);
-    }
-    let returned_snapshot = return_snapshot(values: &values, index: 0_u64);
-    let returned_old = classify(v: returned_snapshot);
-    if returned_old != 7_u64 {
-      return std::process::exit_status(code: 8_u8);
-    }
-    let cold_observed = lazy(values: &values, index: 0_u64, cold: cold);
-    if cold_observed != 737_u64 {
-      return std::process::exit_status(code: 3_u8);
-    }
-    let new_value = classify(v: values.inner[0_u64]);
-    if new_value != 99_u64 {
-      return std::process::exit_status(code: 4_u8);
-    }
-    set values.inner[0_u64] = Value::Number(n: 7_u64);
-    let changed_hot = changed_before_cold(values: &values, index: 0_u64, cold: hot);
-    if changed_hot != 1_u64 {
-      return std::process::exit_status(code: 5_u8);
-    }
-    let changed_cold = changed_before_cold(values: &values, index: 0_u64, cold: cold);
-    if changed_cold != 737_u64 {
-      return std::process::exit_status(code: 6_u8);
-    }
-    set values.inner[0_u64] = Value::Number(n: 7_u64);
-    let during_call = call_boundary(values: &values, index: 0_u64);
-    if during_call != 14_u64 {
-      return std::process::exit_status(code: 9_u8);
-    }
-    return std::process::exit_status(code: 0_u8);
+  let destination_value = destination_argument(values: &values, index: 0_u64);
+  if destination_value != 15_u64 {
+    return std::process::exit_status(code: 2_u8);
   }
-  return std::process::exit_status(code: 7_u8);
+  let returned_snapshot = return_snapshot(values: &values, index: 0_u64);
+  let returned_old = classify(v: returned_snapshot);
+  if returned_old != 7_u64 {
+    return std::process::exit_status(code: 8_u8);
+  }
+  let cold_observed = lazy(values: &values, index: 0_u64, cold: cold);
+  if cold_observed != 737_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  let new_value = classify(v: values.inner[0_u64]);
+  if new_value != 99_u64 {
+    return std::process::exit_status(code: 4_u8);
+  }
+  set values.inner[0_u64] = Value::Number(n: 7_u64);
+  let changed_hot = changed_before_cold(values: &values, index: 0_u64, cold: hot);
+  if changed_hot != 1_u64 {
+    return std::process::exit_status(code: 5_u8);
+  }
+  let changed_cold = changed_before_cold(values: &values, index: 0_u64, cold: cold);
+  if changed_cold != 737_u64 {
+    return std::process::exit_status(code: 6_u8);
+  }
+  set values.inner[0_u64] = Value::Number(n: 7_u64);
+  let during_call = call_boundary(values: &values, index: 0_u64);
+  if during_call != 14_u64 {
+    return std::process::exit_status(code: 9_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
 }
 "#
     );
@@ -1524,6 +1493,11 @@ fn main() -> status: std::process::ExitStatus pure {
             IrTerminator::Match { targets, .. } => targets
                 .iter()
                 .map(|target| target.block().index())
+                .collect(),
+            IrTerminator::IntegerMatch { targets, default, .. } => targets
+                .iter()
+                .map(|target| target.block().index())
+                .chain(default.iter().map(|target| target.index()))
                 .collect(),
             IrTerminator::Return { .. } | IrTerminator::Unreachable => Vec::new(),
         };

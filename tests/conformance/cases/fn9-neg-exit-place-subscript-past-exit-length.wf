@@ -1,0 +1,17 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn shrink_claim(rows: &Slots<Slots<u8, 8>, 4>, i: u64) -> r: u64 writes(rows.last), writes(rows.len) contract {
+  requires rows^.len > 0_u64;
+  requires i + 1_u64 == rows^.len;
+  ensures r <= rows^[i].len;
+} {
+  doc "A written reference parameter's plain place is its exit state, and the removal leaves element i past the exit length.";
+  let gone = take_back(window: rows);
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The declaration alone is judged.";
+  return exit_status(code: 0_u8);
+}

@@ -1,0 +1,19 @@
+struct Cursor {
+  k: u64;
+}
+
+fn probe(rows: &[Slots<u8, 8>], s: Cursor, j: u64, k: u64) -> result: u8 writes(rows) contract {
+  requires s.k <= j;
+  requires j < rows^.len;
+  requires k < rows^[s.k].len;
+} {
+  doc "ENT-5 and OWN-7 cannot separate s.k from j using only s.k <= j. When they are equal the write replaces the supported row with an empty one, so the later inner subscript lacks its OP-4 proof.";
+  set rows^[j] = slots_new::<u8, 8>();
+  let value = rows^[s.k][k];
+  return value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Checking probe must refuse the unproved inner subscript.";
+  return std::process::exit_status(code: 0_u8);
+}

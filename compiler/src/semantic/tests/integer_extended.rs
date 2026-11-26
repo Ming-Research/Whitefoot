@@ -65,7 +65,7 @@ fn retains_the_complete_nonfloating_integer_family() {
     assert_rule(
         b"fn main() -> status: std::process::ExitStatus pure {\n  let value = ibswap(1_i8);\n  return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Op1,
-        SemanticIssueKind::InvalidOperation,
+        SemanticIssueKind::invalid_operation(),
     );
     assert_rule_kind(
         b"fn main() -> status: std::process::ExitStatus pure {\n  let value = ishl.wrap(1_i8, 1_i8);\n  return std::process::exit_status(code: 0_u8);\n}\n",

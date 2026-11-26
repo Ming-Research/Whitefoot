@@ -1,0 +1,23 @@
+fn reset(part: &[Slots<u8, 8>]) -> result: unit writes(part) contract {
+  requires part^.len >= 1_u64;
+} {
+  doc "The declared write reaches the supplied range's elements.";
+  set part^[0_u64] = slots_new::<u8, 8>();
+  return unit;
+}
+
+fn probe(rows: &[Slots<u8, 8>]) -> result: u8 writes(rows) contract {
+  requires rows^.len >= 3_u64;
+  requires rows^[0_u64].len >= 5_u64;
+} {
+  doc "ENT-5 and OWN-7 retain row zero's length across the write to the bound range 1..3. The later read of row zero needs that surviving fact.";
+  let tail = &rows^[1_u64..3_u64];
+  reset(part: tail);
+  let value = rows^[0_u64][4_u64];
+  return value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Checking probe exercises fact survival without constructing runtime rows.";
+  return std::process::exit_status(code: 0_u8);
+}

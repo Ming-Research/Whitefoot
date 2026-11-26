@@ -271,16 +271,16 @@ fn serve(connection: TcpConnection, factory: HandleFactory, store: Keyspace, clo
   let started = std::time::now(clock: &clock);
   let last = nanoseconds_from(earlier: origin, later: started);
   let polled = last;
-  let held = 0_u64;
+  let observed = 0_u64;
   loop @requests {
-    if held >= input.inner.len {
+    if observed >= input.inner.len {
       input_grow(input: &input);
-      if held >= input.inner.len {
+      if observed >= input.inner.len {
         break @requests;
       }
     }
     let ended = False();
-    let received = held;
+    let received = observed;
     let fresh = True();
     loop @receiving {
       let limit = None<Instant>();
@@ -302,7 +302,7 @@ fn serve(connection: TcpConnection, factory: HandleFactory, store: Keyspace, clo
       let window = &input.inner[0_u64..length];
       let waited = False();
       let wait_cancel_2 = std::time::cancel_never();
-      let wait_outcome_2 = receive_next(receive: &connection.receive, destination: window, start: held, end: length, deadline: limit, cancel: &wait_cancel_2);
+      let wait_outcome_2 = receive_next(receive: &connection.receive, destination: window, start: observed, end: length, deadline: limit, cancel: &wait_cancel_2);
       std::time::close_cancel_watch(watch: move wait_cancel_2);
       match wait_outcome_2 {
         Ok(value: next) => {
@@ -337,7 +337,7 @@ fn serve(connection: TcpConnection, factory: HandleFactory, store: Keyspace, clo
     if ended {
       break @requests;
     }
-    set held = received;
+    set observed = received;
     let reading = read_time(wall: &wall);
     let time = reading.time;
     set client.unix_us = reading.unix_us;
@@ -361,7 +361,7 @@ fn serve(connection: TcpConnection, factory: HandleFactory, store: Keyspace, clo
         set client.locked = demanded;
       }
       let locked = client.locked;
-      let parsed = parse_request(input: bytes, start: consumed, held: held, args: &args, locked: locked);
+      let parsed = parse_request(input: bytes, start: consumed, observed: observed, args: &args, locked: locked);
       if parsed.state == 0_u64 {
         break @commands;
       }
@@ -397,7 +397,7 @@ fn serve(connection: TcpConnection, factory: HandleFactory, store: Keyspace, clo
     if stopping {
       break @requests;
     }
-    set held = keep_rest(input: &input, from: consumed, held: held);
+    set observed = keep_rest(input: &input, from: consumed, observed: observed);
   }
   let TcpConnection(receive: closing_receive, send: closing_send) = move connection;
   close_receive(factory: &factory, receive: move closing_receive);
@@ -835,7 +835,7 @@ fn read_options(args: &std::text::Args) -> options: Options reads(args) {
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "firn, a server of Redis's protocol for the commands apps/firn/README.md lists, over TCP in RESP2 or as inline commands, with pipelining. It serves each accepted client in a context of its own over one keyspace with separate shared map, metadata and server objects. Atomic statements hold the entries of the keys a command names together with any metadata they use, or the map whole for DBSIZE, FLUSHALL, FLUSHDB and INFO. Its invocation, which read_options reads, names up to four arguments by position, the port, how many clients to accept, zero for no limit, the append-only file's name or - for none, and the idle limit, then options by name, --port, --bind, --timeout, --appendonly, --appendfilename, --requirepass and --clients; an invocation that does not read stops firn with status 1. firn listens on the address --bind names, the loopback address by default. An append-only file is replayed before firn listens and every change is appended to it, the file synced once a second. A client silent for the idle limit, when it is not zero, is closed, and while a password is required a client that has not authenticated, by giving it or by being accepted while none was required, must give it before other commands; CONFIG SET changes both while firn runs, in the server's state beside the keyspace. Expired keys are removed when a command finds them and by a context that wakes ten times a second.";
-  let Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: clock, wall_clock: wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: args, drivers: unused_driver_count, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: clock, wall_clock: wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   let options = read_options(args: &args);
   if options.valid {

@@ -43,11 +43,14 @@
  */
 #define _GNU_SOURCE
 #include <pthread.h>
+#include <signal.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
+#include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -97,6 +100,12 @@ static void hold_seen(struct wf_cmap_user *u, int closed);
 #define WF_CMAP_PATIENCE(u) patience_of(u)
 #define WF_CMAP_HOLD_QUEUED(u) hold_seen((u), 0)
 #define WF_CMAP_HOLD_CLOSED(u) hold_seen((u), 1)
+/* The control build lets the runtime's refusals go by: a request that the
+ * ordinary build stops then goes on, which shows each refusal is what stops
+ * it. */
+#ifdef WF_CMAP_REFUSAL_CONTINUES
+#define WF_CMAP_REFUSED(reason) ((void)(reason))
+#endif
 
 /* The tests a build runs: locked reads change only wf_cmap_get, which only
  * the tests of word keys call, and narrowed hashes change only entries'
@@ -169,7 +178,11 @@ static _Atomic uint64_t written_calls;
 /* The standalone map harness does not run ordinary object holds. */
 void *wf__shared_new(uint64_t bytes) { return test_take(WF_SHARED_STATE_OFFSET + bytes); }
 void wf__shared_take(void *object, uint32_t write) { (void)object; (void)write; abort(); }
+int wf__shared_acquire(void *object, uint32_t write, void *frame) {
+    (void)object; (void)write; (void)frame; abort();
+}
 void wf__shared_unlock(void *object, uint32_t write) { (void)object; (void)write; abort(); }
+void wf__shared_unlock_unwritten(void *object, uint32_t write) { (void)object; (void)write; abort(); }
 
 unsigned wf__driver_index(void) { return test_driver; }
 
@@ -3364,12 +3377,208 @@ static void tables_read_selection(void) {
         fail("read selections leaked blocks", atomic_load(&blocks_out), before);
 }
 
+/* Runs body(arg) in a child with its standard error in a pipe, an alarm and
+ * no core, and returns the child's wait status; what it wrote is in report. */
+static int child_status(int (*body)(unsigned), unsigned arg, char *report, size_t room) {
+    int fds[2];
+    if (pipe(fds) != 0) fail("a pipe for the child's report was not made", 0, 0);
+    fflush(stdout);
+    pid_t pid = fork();
+    if (pid < 0) fail("a child was not made", 0, 0);
+    if (pid == 0) {
+        struct rlimit no_core = {0, 0};
+        setrlimit(RLIMIT_CORE, &no_core);
+        alarm(2);
+        close(fds[0]);
+        dup2(fds[1], 2);
+        close(fds[1]);
+        _exit(body(arg));
+    }
+    close(fds[1]);
+    size_t length = 0;
+    for (ssize_t n; length < room - 1 && (n = read(fds[0], report + length, room - 1 - length)) > 0;)
+        length += (size_t)n;
+    report[length] = 0;
+    close(fds[0]);
+    int status = 0;
+    if (waitpid(pid, &status, 0) != pid) fail("a child was not waited for", 0, 0);
+    return status;
+}
+
+/* The child of read_hold_write_selection: a statement that only reads holds
+ * the map whole, and something asks the runtime to select an entry for
+ * write. Reaching the end of the selection means the runtime did it; the
+ * statement then ends and the next statement takes the key "a", which
+ * waits for ever on the cell the selection left locked, until the alarm.
+ * A selection of no key locks none, so that statement then goes through. */
+static int read_hold_child(unsigned kind) {
+    wf_cmap *map = wf_cmap_create_entries(16, 8, 1);
+    wf_cmap_holding hold;
+    wf__table_hold_begin(&hold, map);
+    wf__table_hold_read(&hold);
+    wf__table_hold_whole(&hold);
+    wf__table_hold_take(&hold);
+    if (kind == 0) {
+        wf__table_held_entry(map, (const unsigned char *)"a", 1, 1);
+    } else {
+        wf_key_set set;
+        wf__key_set_new(&set, 2);
+        if (kind == 1) {
+            wf__key_set_insert(&set, (const unsigned char *)"a", 1);
+            wf__key_set_insert(&set, (const unsigned char *)"b", 1);
+        }
+        uint64_t entries[3];
+        wf__table_held_entries(map, &set, entries, NULL);
+    }
+    wf__table_hold_release(&hold, 0, 4, 0);
+    wf_table_entry entry;
+    wf__table_lock_entry(map, (const unsigned char *)"a", 1, 0, &entry);
+    wf__table_unlock_entry(&entry, 1);
+    return 0;
+}
+
+/* A request to select an entry for write, by one key (kind 0), by a set of
+ * keys (kind 1) or by a set of none (kind 2), while the statement holds the
+ * map whole and only reads, stops the program at once with the runtime's
+ * internal error, whose reason the runtime writes. It must not lock the
+ * entry's cell, which the read-only release never unlocks: a cell left locked
+ * stops the next statement on that key far from the fault. The request runs
+ * in a child process, whose end the parent reads. */
+static void read_hold_write_selection(unsigned kind) {
+    char report[512];
+    int status = child_status(read_hold_child, kind, report, sizeof report);
+    if (!WIFSIGNALED(status) || WTERMSIG(status) != SIGABRT)
+        fail("a write selection under a read-only whole hold did not stop the program (kind, signal or exit status + 1000)",
+             kind, WIFSIGNALED(status) ? (unsigned)WTERMSIG(status) : 1000u + (unsigned)WEXITSTATUS(status));
+    if (strstr(report, "whitefoot runtime: write selection under a read-only whole hold") == NULL)
+        fail("the program stopped for another reason than a write selection under a read-only whole hold", kind, strlen(report));
+}
+
+/* A statement that holds the map whole and only reads: its reads of present
+ * and absent keys and its read selection go on as they did, its release
+ * leaves its key free for the next statement, and the same record, begun
+ * again as a write hold of the whole map, selects for write one key and a set
+ * of none without stopping the program. */
+static int read_then_write_child(unsigned unused) {
+    (void)unused;
+    wf_cmap *map = wf_cmap_create_entries(16, 8, 1);
+    wf_table_entry entry;
+    uint64_t *seed = wf__table_lock_entry(map, (const unsigned char *)"a", 1, 0, &entry);
+    seed[0] = 1; seed[1] = 41;
+    wf__table_unlock_entry(&entry, 1);
+    wf_cmap_holding hold;
+    wf__table_hold_begin(&hold, map);
+    wf__table_hold_read(&hold);
+    wf__table_hold_whole(&hold);
+    wf__table_hold_take(&hold);
+    uint64_t *slot = wf__table_held_entry(map, (const unsigned char *)"a", 1, 0);
+    if (slot == NULL || slot[0] != 1 || slot[1] != 41) return 10;
+    if (wf__table_held_entry(map, (const unsigned char *)"z", 1, 0) != NULL) return 11;
+    wf_key_set set;
+    wf__key_set_new(&set, 2);
+    wf__key_set_insert(&set, (const unsigned char *)"a", 1);
+    wf_cmap_holding selection;
+    uint64_t entries[3];
+    wf__table_held_entries(map, &set, entries, &selection);
+    slot = wf__table_hold_slot((void *)(uintptr_t)entries[0], 0);
+    if (entries[2] != 1 || slot[0] != 1 || slot[1] != 41) return 12;
+    wf__key_set_free(set.store);
+    wf__table_hold_release(&hold, 0, 8, 0);
+    /* The next statement on the key waits for ever if the read left it locked. */
+    uint64_t *again = wf__table_lock_entry(map, (const unsigned char *)"a", 1, 0, &entry);
+    if (again[1] != 41) return 13;
+    wf__table_unlock_entry(&entry, 1);
+    wf__table_hold_begin(&hold, map);
+    wf__table_hold_whole(&hold);
+    wf__table_hold_take(&hold);
+    slot = wf__table_held_entry(map, (const unsigned char *)"a", 1, 1);
+    if (slot[0] != 1 || slot[1] != 41) return 14;
+    wf_key_set none;
+    wf__key_set_new(&none, 1);
+    wf__table_held_entries(map, &none, entries, NULL);
+    if (entries[2] != 0) return 15;
+    wf__key_set_free(none.store);
+    slot = wf__table_held_entry(map, (const unsigned char *)"b", 1, 1);
+    slot[0] = 1; slot[1] = 7;
+    wf__table_hold_release(&hold, 0, 8, 0);
+    if (wf__keyed_table_count(map, 0, 8, 0) != 2) return 16;
+    return 0;
+}
+
+/* A group on one map that merges a target that reads the whole map with one
+ * that writes a key is a write hold: the merge keeps the mark only when every
+ * target is read-only (`primary->read &= secondary->read`). */
+static int merged_read_write_child(unsigned unused) {
+    (void)unused;
+    void *object = wf__shared_map_new(16, 8, 2);
+    wf_cmap *map = *(wf_cmap **)((char *)object + WF_SHARED_STATE_OFFSET);
+    wf_cmap_holding first, second;
+    wf_atomic_target group[2] = {{object, &first, 0}, {object, &second, 1}};
+    wf__table_hold_begin(&first, map);
+    wf__table_hold_read(&first);
+    wf__table_hold_whole(&first);
+    wf__table_hold_begin(&second, map);
+    wf__table_hold_key(&second, (const unsigned char *)"k", 1);
+    wf__atomic_group_take(group, 2);
+    uint64_t *slot = wf__table_held_entry(map, (const unsigned char *)"k", 1, 1);
+    slot[0] = 1; slot[1] = 5;
+    wf__atomic_group_release(group, 2, 0, sizeof *slot, 0);
+    if (wf_cmap_count_held(map, 0, sizeof *slot, 0) != 1) return 10;
+    return 0;
+}
+
+/* The same group of two targets that only read the map: its record is a
+ * read-only whole hold, and a write selection under it stops the program. */
+static int merged_read_read_child(unsigned unused) {
+    (void)unused;
+    void *object = wf__shared_map_new(16, 8, 2);
+    wf_cmap *map = *(wf_cmap **)((char *)object + WF_SHARED_STATE_OFFSET);
+    wf_cmap_holding first, second;
+    wf_atomic_target group[2] = {{object, &first, 0}, {object, &second, 0}};
+    wf__table_hold_begin(&first, map);
+    wf__table_hold_read(&first);
+    wf__table_hold_whole(&first);
+    wf__table_hold_begin(&second, map);
+    wf__table_hold_read(&second);
+    wf__table_hold_key(&second, (const unsigned char *)"k", 1);
+    wf__atomic_group_take(group, 2);
+    wf__table_held_entry(map, (const unsigned char *)"k", 1, 1);
+    return 0;
+}
+
+/* Refusing a write selection under a read-only whole hold must refuse
+ * nothing else: a read-only statement's own reads, its release, a later write
+ * hold in the same record, and a merged group that holds a writer all go on
+ * and end the child with status 0 [old behaviour, kept]. */
+static void read_hold_writes_still_allowed(void) {
+    int (*bodies[])(unsigned) = {read_then_write_child, merged_read_write_child};
+    for (unsigned i = 0; i < 2; i++) {
+        char report[512];
+        int status = child_status(bodies[i], i, report, sizeof report);
+        if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+            fail("a read-only hold's neighbours were stopped or did not end (case, exit status or signal + 1000)", i,
+                 WIFEXITED(status) ? (unsigned)WEXITSTATUS(status) : 1000u + (unsigned)WTERMSIG(status));
+    }
+}
+
+/* Two merged read-only targets are one read-only whole hold [merge rule]: the
+ * write selection under it stops the program with the runtime's reason. */
+static void read_hold_merged_write_selection(void) {
+    char report[512];
+    int status = child_status(merged_read_read_child, 0, report, sizeof report);
+    if (!WIFSIGNALED(status) || WTERMSIG(status) != SIGABRT)
+        fail("a write selection under a merged read-only whole hold did not stop the program (signal or exit status + 1000)",
+             WIFSIGNALED(status) ? (unsigned)WTERMSIG(status) : 1000u + (unsigned)WEXITSTATUS(status), 0);
+    if (strstr(report, "whitefoot runtime: write selection under a read-only whole hold") == NULL)
+        fail("the merged read-only group stopped for another reason than the write selection", 0, 0);
+}
+
 /* Independent observations of merge, read mode, and stable missing keys. */
 static void shared_map_groups(void) {
     void *object = wf__shared_map_new(16, 8, 2);
     wf_cmap *map = *(wf_cmap **)((char *)object + WF_SHARED_STATE_OFFSET);
     wf_cmap_holding first, second;
-    wf_atomic_target group[2] = {{object, &first}, {object, &second}};
+    wf_atomic_target group[2] = {{object, &first, 0}, {object, &second, 0}};
     for (unsigned present = 0; present < 2; ++present) {
         if (present) {
             wf_table_entry entry;
@@ -3399,7 +3608,9 @@ static void shared_map_groups(void) {
     wf__keyed_table_drain(map); wf__keyed_table_free(map); test_give(object, WF_SHARED_STATE_OFFSET + sizeof(void *));
 
     /* Only the first byte is the tag; dirty following bytes must not turn
-     * None into Some. A fixed four-byte release read fails the first round. */
+     * None into Some. A fixed four-byte release read fails the first round.
+     * The group is a statement's first, which a map group takes without
+     * parking, so its acquire needs no frame and answers 0. */
     object = wf__shared_map_new(4, 1, 2);
     map = *(wf_cmap **)((char *)object + WF_SHARED_STATE_OFFSET);
     group[0].object = object; group[1].object = object;
@@ -3407,7 +3618,8 @@ static void shared_map_groups(void) {
         wf__table_hold_begin(&first, map); wf__table_hold_begin(&second, map);
         wf__table_hold_key(&first, (const unsigned char *)"k", 1);
         wf__table_hold_key(&second, (const unsigned char *)"k", 1);
-        wf__atomic_group_take(group, 2);
+        if (wf__atomic_group_acquire(group, 2, NULL) != 0)
+            fail("a first map group parked", present, 0);
         unsigned char *slot = wf__table_hold_slot(&first, 0);
         memset(slot, 0xa5, 4);
         slot[0] = (unsigned char)present;
@@ -4564,9 +4776,19 @@ int main(int argc, char **argv) {
         puts("concurrent-map-test: retired reserve checks passed");
         return 0;
     }
+    if (argc == 3 && strcmp(argv[1], "read-hold-write") == 0) {
+        read_hold_write_selection((unsigned)atoi(argv[2]));
+        printf("concurrent-map-test: read-hold write selection %s passed\n", argv[2]);
+        return 0;
+    }
     if (argc == 2 && strcmp(argv[1], "selection") == 0) {
         tables_held_selection();
         tables_read_selection();
+        read_hold_writes_still_allowed();
+        read_hold_merged_write_selection();
+        read_hold_write_selection(0);
+        read_hold_write_selection(1);
+        read_hold_write_selection(2);
         shared_map_groups();
         if (atomic_load(&mapped_bytes_out) != 0)
             fail("selection checks leaked counted map storage", atomic_load(&mapped_bytes_out), 0);
@@ -4625,6 +4847,11 @@ int main(int argc, char **argv) {
         tables_wake_writers();
         tables_held_selection();
         tables_read_selection();
+        read_hold_writes_still_allowed();
+        read_hold_merged_write_selection();
+        read_hold_write_selection(0);
+        read_hold_write_selection(1);
+        read_hold_write_selection(2);
         shared_map_groups();
         holds_move_amounts(0, PATIENCE);
         holds_move_amounts(1, PATIENCE);

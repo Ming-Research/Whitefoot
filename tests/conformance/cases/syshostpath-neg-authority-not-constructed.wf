@@ -1,0 +1,11 @@
+alias HostPaths = std::fs::HostPaths;
+
+fn forged() -> result: u8 pure {
+  doc "HostPaths is an opaque struct, so a program cannot construct the authority from nothing, from bytes or from a directory: a constructor call naming it is refused at the complete call, and only the invocation supplies one.";
+  let paths = HostPaths();
+  return 0_u8;
+}
+
+fn main() -> result: u8 pure {
+  return forged();
+}

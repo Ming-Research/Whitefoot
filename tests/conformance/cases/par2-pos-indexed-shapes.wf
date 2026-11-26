@@ -3,15 +3,11 @@ fn slots() -> result: u64 pure {
   let initial = array_filled::<u64, 4>(value: 3_u64);
   let cells = slots_from_array::<u64, 4>(values: initial);
   let count = cells.len;
-  if 0_u64 < count {
-    for (i in 0_u64..8_u64) {
-      let bucket = i % count;
-      set cells[bucket] = cells[bucket] +wrap 1_u64;
-    }
-    return cells[0_u64];
-  } else {
-    return 0_u64;
+  for (i in 0_u64..8_u64) {
+    let bucket = i % count;
+    set cells[bucket] = cells[bucket] +wrap 1_u64;
   }
+  return cells[0_u64];
 }
 
 fn inline_array() -> result: u64 pure {

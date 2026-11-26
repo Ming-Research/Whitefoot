@@ -196,9 +196,14 @@ fn every_total_conversion_with_a_float_endpoint_executes() {
     assert!(output.stderr.is_empty());
 }
 
+/// Each pair's checked conversion, domain query and exact conversion run in
+/// generated helpers on the operand their parameter receives, so `main`
+/// observes every success and failure at run time instead of an answer the
+/// checker already knows from a literal.
 #[test]
 fn every_partial_conversion_with_a_float_endpoint_has_exact_success_and_failure() {
-    let mut source = String::from("fn main() -> status: std::process::ExitStatus pure {\n");
+    let mut helpers = String::new();
+    let mut checks = String::new();
     let mut conversion = 0;
     for source_type in NUMERIC_TYPES {
         for destination_type in NUMERIC_TYPES {
@@ -208,12 +213,15 @@ fn every_partial_conversion_with_a_float_endpoint_has_exact_success_and_failure(
             {
                 continue;
             }
-            emit_success_case(&mut source, conversion, source_type, destination_type);
-            emit_failure_case(&mut source, conversion, source_type, destination_type);
+            emit_partial_helpers(&mut helpers, source_type, destination_type);
+            emit_success_case(&mut checks, conversion, source_type, destination_type);
+            emit_failure_case(&mut checks, conversion, source_type, destination_type);
             conversion += 1;
         }
     }
-    source.push_str("  return std::process::exit_status(code: 0_u8);\n}\n");
+    let source = format!(
+        "{helpers}fn main() -> status: std::process::ExitStatus pure {{\n{checks}  return std::process::exit_status(code: 0_u8);\n}}\n"
+    );
     assert_eq!(conversion, 23);
 
     let llvm = compile(source.as_bytes());
@@ -411,8 +419,8 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(llvm.contains("@llvm.fptosi.sat.i32.f32"));
     assert!(llvm.contains("@llvm.fptoui.sat.i64.f64"));
     // These original checked-only helpers must keep total casts. The oracle
-    // helpers additionally execute raw exact casts only on their proved
-    // `.defined` branch, so those instructions now legitimately occur in the
+    // helpers additionally execute raw exact casts, a partial pair's only on
+    // its proved `.defined` branch, so those instructions legitimately occur in the
     // module; the query-only IR assertions below cover that mode separately.
     for symbol in [
         "reject_f32_i32",
@@ -583,6 +591,23 @@ fn main() -> status: std::process::ExitStatus pure {
     }
 }
 
+/// The pair's exact conversion, admitted by its `cvt.defined` requirement,
+/// its domain query and its checked conversion, each in its own body so that
+/// no observation is decided by facts another one established.
+fn emit_partial_helpers(
+    helpers: &mut String,
+    source_type: NumericType,
+    destination_type: NumericType,
+) {
+    writeln!(
+        helpers,
+        "fn exact_{source_type}_{destination}(value: {source_type}) -> result: {destination} pure contract {{\n  requires cvt.defined::<{source_type}, {destination}>(value);\n}} {{\n  return cvt::<{source_type}, {destination}>(value);\n}}\n\nfn defined_{source_type}_{destination}(value: {source_type}) -> result: Bool pure {{\n  return cvt.defined::<{source_type}, {destination}>(value);\n}}\n\nfn checked_{source_type}_{destination}(value: {source_type}) -> result: Result<{destination}, NarrowError> pure {{\n  return cvt.checked::<{source_type}, {destination}>(value);\n}}\n",
+        destination = destination_type.spelling,
+        source_type = source_type.spelling,
+    )
+    .expect("write parameterized partial conversion interfaces");
+}
+
 fn emit_success_case(
     source: &mut String,
     conversion: usize,
@@ -608,7 +633,7 @@ fn emit_success_case(
     };
     writeln!(
         source,
-        "  let success{conversion} = cvt.checked::<{source_type}, {destination}>({source_value});\n  match success{conversion} {{\n    Ok(value: success_value{conversion}) => {{\n      if {equality} {{\n      }} else {{\n        return std::process::exit_status(code: 1_u8);\n      }}\n    }}\n    Err(error: success_error{conversion}) => {{\n      return std::process::exit_status(code: 1_u8);\n    }}\n  }}",
+        "  let success{conversion} = checked_{source_type}_{destination}(value: {source_value});\n  match success{conversion} {{\n    Ok(value: success_value{conversion}) => {{\n      if {equality} {{\n      }} else {{\n        return std::process::exit_status(code: 1_u8);\n      }}\n    }}\n    Err(error: success_error{conversion}) => {{\n      return std::process::exit_status(code: 1_u8);\n    }}\n  }}",
         destination = destination_type.spelling,
         source_type = source_type.spelling,
     )
@@ -616,7 +641,7 @@ fn emit_success_case(
     let exact_equality = equality.replace("success_value", "exact_value");
     writeln!(
         source,
-        "  if cvt.defined::<{source_type}, {destination}>({source_value}) {{\n    let exact_value{conversion} = cvt::<{source_type}, {destination}>({source_value});\n    if {exact_equality} {{\n    }} else {{\n      return std::process::exit_status(code: 2_u8);\n    }}\n  }} else {{\n    return std::process::exit_status(code: 3_u8);\n  }}",
+        "  let success_domain{conversion} = defined_{source_type}_{destination}(value: {source_value});\n  if success_domain{conversion} {{\n    let exact_value{conversion} = exact_{source_type}_{destination}(value: {source_value});\n    if {exact_equality} {{\n    }} else {{\n      return std::process::exit_status(code: 2_u8);\n    }}\n  }} else {{\n    return std::process::exit_status(code: 3_u8);\n  }}",
         destination = destination_type.spelling,
         source_type = source_type.spelling,
     )
@@ -652,14 +677,14 @@ fn emit_failure_case(
     };
     writeln!(
         source,
-        "  let failure{conversion} = cvt.checked::<{source_type}, {destination}>({source_value});\n  match failure{conversion} {{\n    Ok(value: failure_value{conversion}) => {{\n      return std::process::exit_status(code: 1_u8);\n    }}\n    Err(error: failure_error{conversion}) => {{\n    }}\n  }}",
+        "  let failure{conversion} = checked_{source_type}_{destination}(value: {source_value});\n  match failure{conversion} {{\n    Ok(value: failure_value{conversion}) => {{\n      return std::process::exit_status(code: 1_u8);\n    }}\n    Err(error: failure_error{conversion}) => {{\n    }}\n  }}",
         destination = destination_type.spelling,
         source_type = source_type.spelling,
     )
     .expect("write partial failure case");
     writeln!(
         source,
-        "  if cvt.defined::<{source_type}, {destination}>({source_value}) {{\n    return std::process::exit_status(code: 4_u8);\n  }}",
+        "  let failure_domain{conversion} = defined_{source_type}_{destination}(value: {source_value});\n  if failure_domain{conversion} {{\n    return std::process::exit_status(code: 4_u8);\n  }}",
         destination = destination_type.spelling,
         source_type = source_type.spelling,
     )

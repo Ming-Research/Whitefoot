@@ -1,7 +1,7 @@
 alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
-fn clear(values: &Slots<u64, 4>) -> result: unit writes(values) {
+fn wipe(values: &Slots<u64, 4>) -> result: unit writes(values) {
   doc "Exchanges the whole referent of its reference parameter for a fresh empty window [OP-11].";
   let empty = slots_new::<u64, 4>();
   swap(first: values, second: &empty);
@@ -12,7 +12,7 @@ fn main() -> status: ExitStatus pure {
   doc "Replacing the whole referent through a written reference parameter invalidates the caller's pre-call nonempty fact [ENT-5, CALL-5]. A later take without a new check is refused at FN-8 with the residual window length requirement submitted to MSR-4, regardless of the actual argument's spelling.";
   let values = slots_new::<u64, 4>();
   place_back(window: &values, value: 7_u64);
-  clear(values: &values);
+  wipe(values: &values);
   let last = take_back(window: &values);
   return exit_status(code: 0_u8);
 }

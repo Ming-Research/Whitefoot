@@ -1,0 +1,13 @@
+fn process_id_of(inputs: &std::process::Inputs) -> result: Option<u64> reads(inputs.process_id) {
+  doc "PRE-2: process_id is an ordinary Option<u64> field readable through an ordinary field path. Before the field was added this program failed field lookup.";
+  return inputs^.process_id;
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let identity = process_id_of(inputs: &inputs);
+  let std::process::Inputs(cwd: directory, handles: factory, ..) = move inputs;
+  let std::fs::Directory(read: read_directory, write: write_directory) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move write_directory);
+  std::fs::close_directory(factory: &factory, directory: move read_directory);
+  return std::process::exit_status(code: 0_u8);
+}

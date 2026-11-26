@@ -32,6 +32,9 @@ pub(crate) struct ObligationRecord {
 /// What one record asks, and the identity its answer is found by.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ObligationSubject {
+    /// [OP-5] the source redundancy of one `if` or `value_if` condition,
+    /// recorded at its complete condition `expr`.
+    Condition,
     /// One [ENT-6] obligation of a fixed family at the site: an [OP-4]
     /// subscript, an [OP-2] exact integer operation, an [OP-6] exact
     /// conversion, one of a [REF-4] formation's two conjuncts, or a
@@ -62,6 +65,7 @@ pub(crate) enum ObligationSubject {
 /// outcome list of that kind.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RecordAnswer {
+    Condition(usize),
     Obligation(usize),
     CallGoal(usize),
     LoopInvariant(usize),
@@ -77,6 +81,11 @@ impl RecordAnswer {
     /// outcome discharges nothing.
     pub(crate) fn discharged(self, entailment: &FunctionEntailment) -> bool {
         match self {
+            // [OP-5] a condition is discharged when neither truth is decided.
+            Self::Condition(index) => entailment
+                .conditions
+                .get(index)
+                .is_some_and(|outcome| outcome.decided.is_none()),
             Self::Obligation(index) => entailment
                 .obligations
                 .get(index)
@@ -145,6 +154,8 @@ mod tests {
             declared_state_writes: Vec::new(),
             declared_state_reads: Vec::new(),
             requirements: Vec::new(),
+            held_parameters: Vec::new(),
+            held_calls: Vec::new(),
             requirement_places: Vec::new(),
             routed_requirements: Vec::new(),
             postconditions: Vec::new(),
@@ -199,6 +210,8 @@ mod tests {
             range_partitions: Vec::new(),
             written_before: Vec::new(),
             killed_by: Vec::new(),
+            lost_header: None,
+            selected_return: None,
         }
     }
 

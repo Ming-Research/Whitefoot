@@ -1,0 +1,3 @@
+fn main(inputs: std::process::Inputs) -> result: u32 {
+  return 0_u32;
+}

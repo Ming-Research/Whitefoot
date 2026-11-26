@@ -121,6 +121,7 @@ impl TerminalIssueOwner {
 pub struct TerminalIssue {
     pub(crate) token: TokenId,
     pub(crate) owner: TerminalIssueOwner,
+    pub(crate) mechanical_fix: Option<&'static str>,
 }
 
 impl TerminalIssue {
@@ -134,6 +135,12 @@ impl TerminalIssue {
     #[must_use]
     pub const fn owner(self) -> TerminalIssueOwner {
         self.owner
+    }
+
+    /// Returns a repair for the rejected token spelling, when available.
+    #[must_use]
+    pub const fn mechanical_fix(self) -> Option<&'static str> {
+        self.mechanical_fix
     }
 }
 

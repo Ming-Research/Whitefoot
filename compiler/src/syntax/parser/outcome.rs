@@ -168,6 +168,8 @@ pub enum SyntaxRule {
     Const2,
     /// EFF-1 effect-row grammar.
     Eff1,
+    /// MOD-5 qualified path written where a value stands.
+    Mod5,
 }
 
 impl SyntaxRule {
@@ -187,6 +189,7 @@ impl SyntaxRule {
             Self::Const1 => "CONST-1",
             Self::Const2 => "CONST-2",
             Self::Eff1 => "EFF-1",
+            Self::Mod5 => "MOD-5",
         }
     }
 }
@@ -298,13 +301,121 @@ impl ExpectedBuilder {
     }
 }
 
+/// The repair a grammar rejection carries [DIAG-1].
+///
+/// Most repairs are fixed by the grammar position alone. A qualified path
+/// written where a value stands is repaired by the alias that binds its final
+/// name [MOD-4, MOD-5], and a name written with a fixed grammar word is
+/// repaired by renaming it [FORM-3], so those repairs name what the source
+/// wrote and their words are formed from the source bytes when the rejection
+/// is rendered.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SyntaxRepair {
+    /// A sentence the grammar position fixes on its own.
+    Fixed(&'static str),
+    /// The alias that binds a qualified path's final name.
+    QualifiedValue(QualifiedValuePath),
+    /// The rename that frees a name written with a fixed grammar word: the
+    /// coordinate of that word, whose sentence says what in the grammar
+    /// takes it and suggests a spelling the source does not write.
+    ReservedName(SyntaxCoordinate),
+}
+
+impl SyntaxRepair {
+    /// The repair's words, reading any spelling it names from the bytes of
+    /// the source the rejection cites.
+    #[must_use]
+    pub fn sentence(self, source: &[u8]) -> Option<String> {
+        match self {
+            Self::Fixed(sentence) => Some(sentence.to_owned()),
+            Self::QualifiedValue(path) => path.sentence(source),
+            Self::ReservedName(name) => {
+                let start = usize::try_from(name.start().value()).ok()?;
+                let end = usize::try_from(name.end().value()).ok()?;
+                let spelling = core::str::from_utf8(source.get(start..end)?).ok()?;
+                crate::diagnostic_repairs::reserved_name_fix(spelling, |candidate| {
+                    crate::diagnostic_repairs::source_word(source, candidate)
+                })
+            }
+        }
+    }
+
+    /// The source whose bytes the repair's words read.
+    #[must_use]
+    pub const fn source(self) -> Option<SourceId> {
+        match self {
+            Self::Fixed(_) => None,
+            Self::QualifiedValue(path) => Some(path.source),
+            Self::ReservedName(name) => Some(name.source()),
+        }
+    }
+}
+
+/// A qualified path `("pkg" | "std" | IDENT) "::" IDENT ("::" IDENT)*` that
+/// no call's `(` or `::` follows [MOD-5].
+///
+/// It keeps the two tokens its repair names, its root and its final IDENT,
+/// and the path is the interval from the one to the other; four offsets
+/// rather than three coordinates keep a grammar rejection small.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct QualifiedValuePath {
+    source: SourceId,
+    root_start: ByteOffset,
+    root_end: ByteOffset,
+    name_start: ByteOffset,
+    name_end: ByteOffset,
+}
+
+impl QualifiedValuePath {
+    pub(crate) const fn new(root: SyntaxCoordinate, name: SyntaxCoordinate) -> Self {
+        Self {
+            source: root.source,
+            root_start: root.start,
+            root_end: root.end,
+            name_start: name.start,
+            name_end: name.end,
+        }
+    }
+
+    /// The complete path, from its root through its final IDENT.
+    #[must_use]
+    pub const fn path(self) -> SyntaxCoordinate {
+        SyntaxCoordinate::new(self.source, self.root_start, self.name_end)
+    }
+
+    /// The root: `pkg`, `std` or an IDENT.
+    #[must_use]
+    pub const fn root(self) -> SyntaxCoordinate {
+        SyntaxCoordinate::new(self.source, self.root_start, self.root_end)
+    }
+
+    /// The final IDENT, the name the repair's alias binds.
+    #[must_use]
+    pub const fn name(self) -> SyntaxCoordinate {
+        SyntaxCoordinate::new(self.source, self.name_start, self.name_end)
+    }
+
+    fn sentence(self, source: &[u8]) -> Option<String> {
+        let text = |coordinate: SyntaxCoordinate| {
+            let start = usize::try_from(coordinate.start().value()).ok()?;
+            let end = usize::try_from(coordinate.end().value()).ok()?;
+            core::str::from_utf8(source.get(start..end)?).ok()
+        };
+        Some(super::diagnostic::qualified_value_fix(
+            text(self.path())?,
+            text(self.root())?,
+            text(self.name())?,
+        ))
+    }
+}
+
 /// The first exact grammar-derivation rejection in stage order.
 #[derive(Clone, Copy)]
 pub struct SyntaxIssue {
     pub(crate) rule: SyntaxRule,
     pub(crate) coordinate: SyntaxCoordinate,
     pub(crate) expected: ExpectedTerminals,
-    pub(crate) mechanical_fix: Option<&'static str>,
+    pub(crate) mechanical_fix: Option<SyntaxRepair>,
 }
 
 /// The expectation list, plus the repair when the owning rule has one.
@@ -320,8 +431,17 @@ impl fmt::Debug for SyntaxIssue {
             .field("rule", &self.rule)
             .field("coordinate", &self.coordinate)
             .field("expected", &self.expected);
-        if let Some(fix) = self.mechanical_fix {
-            record.field("mechanical_fix", &fix);
+        match self.mechanical_fix {
+            Some(SyntaxRepair::Fixed(sentence)) => {
+                record.field("mechanical_fix", &sentence);
+            }
+            Some(SyntaxRepair::QualifiedValue(path)) => {
+                record.field("mechanical_fix", &path);
+            }
+            Some(SyntaxRepair::ReservedName(name)) => {
+                record.field("mechanical_fix", &name);
+            }
+            None => {}
         }
         record.finish()
     }
@@ -344,6 +464,12 @@ impl SyntaxIssue {
     #[must_use]
     pub const fn expected(self) -> ExpectedTerminals {
         self.expected
+    }
+
+    /// Returns the repair the rejection carries, when its rule has one.
+    #[must_use]
+    pub const fn mechanical_fix(self) -> Option<SyntaxRepair> {
+        self.mechanical_fix
     }
 }
 
@@ -393,6 +519,30 @@ impl ParsedBundle {
             } => Some(*child_count),
             _ => None,
         }
+    }
+
+    /// Returns the complete root children's token extents in reverse source
+    /// order. Skipping each child's postorder subtree visits only top-level
+    /// items or graph rows, without finalizing or copying the derivation.
+    pub(crate) fn top_level_extents(&self) -> impl Iterator<Item = SyntaxCoordinate> + '_ {
+        let mut end = self.tree.elements.len().saturating_sub(1);
+        core::iter::from_fn(move || {
+            let super::DerivationElement::Production {
+                subtree_elements,
+                extent:
+                    super::tree::DerivationExtent::Source {
+                        source,
+                        start,
+                        end: stop,
+                    },
+                ..
+            } = self.tree.elements.get(end.checked_sub(1)?)?
+            else {
+                return None;
+            };
+            end = end.checked_sub(usize::try_from(*subtree_elements).ok()?)?;
+            Some(SyntaxCoordinate::new(*source, *start, *stop))
+        })
     }
 }
 

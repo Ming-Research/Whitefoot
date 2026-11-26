@@ -54,6 +54,7 @@ pub(crate) fn prepare_dispatch_layout(
     target: TargetLayout,
     fragments: bool,
 ) -> Result<PreparedDispatch<'_>, BackendFailure> {
+    crate::toolchain::prepare_toolchain().map_err(|_| BackendFailure::Toolchain)?;
     validate_program(target, program).map_err(BackendFailure::TargetLayout)?;
     let empty = || PreparedDispatch {
         program: Cow::Borrowed(program),
@@ -98,7 +99,11 @@ pub(crate) fn prepare_dispatch_layout(
         // a target failure, including inline arrays and bounded lane frames.
         match validate_program(target, &selected) {
             Ok(()) => {}
-            Err(TargetLayoutFailure::Unrepresentable(_)) => return Ok(empty()),
+            Err(
+                TargetLayoutFailure::Unrepresentable(_) | TargetLayoutFailure::Allocation { .. },
+            ) => {
+                return Ok(empty());
+            }
             Err(failure) => return Err(BackendFailure::TargetLayout(failure)),
         }
         let actual = census(&selected, target, &plan)?;
@@ -146,6 +151,9 @@ fn census(
     };
     let frontiers = RecursiveFrontiers::new(program, &frontier_clones);
     let owner_scopes = storage_alias::OwnerScopePlan::new(program);
+    // A function with a dispatch loop belongs to no recursive group, so its
+    // planning emitter needs none (compiler/recursive-environment).
+    let environments = call_entries::EnvironmentPlan::default();
     let mut result = DispatchLayoutPlan::default();
     for (ordinal, function) in program.functions().iter().enumerate() {
         let reachable = dispatch::reachable(function)?;
@@ -166,6 +174,7 @@ fn census(
                 window_address_facts: WindowAddressFacts::Emit,
                 dispatch_layout,
                 owner_scopes: &owner_scopes,
+                environments: &environments,
             },
         )?;
         let (_, symbol, _, abi, _) = emitter.body_abi()?;

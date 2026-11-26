@@ -1,0 +1,9 @@
+fn limits_of(factory: &std::io::HandleFactory) -> result: Result<std::process::OpenFilesLimit, std::io::IoError> reads(factory) {
+  doc "PRE-2: open_files_limit reads the factory and returns Result<OpenFilesLimit, IoError>, so a wrapper declaring only reads(factory) is admitted.";
+  return std::process::open_files_limit(factory: factory);
+}
+
+fn raise_to(factory: &std::io::HandleFactory, wanted: u64) -> result: Result<std::process::OpenFilesLimit, std::io::IoError> writes(factory) {
+  doc "PRE-2: raise_open_files_limit writes the factory, whose budget a raise grows, and does not wait.";
+  return std::process::raise_open_files_limit(factory: factory, wanted: wanted);
+}

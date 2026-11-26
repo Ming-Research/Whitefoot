@@ -21,8 +21,8 @@ fn follow(code: &Box<Slots<Cell>>, pc: u64) -> r: u64 reads(code) contract {
   doc "Cell holds a Box, so it is affine and the outer match borrows the element; the inner match's scrutinee held^.inner is the Box content below that payload binder's referent, so jump_to^ is the element projection code^.inner[pc].Held.i.inner.Jump.t and targets bounds it.";
   let n = code^.inner.len;
   match &code^.inner[pc] {
-    Held(i: held) => {
-      match held^.inner {
+    Held(i: kept) => {
+      match kept^.inner {
         Jump(t: jump_to) => {
           need_below(value: jump_to^, bound: n);
           return jump_to^;

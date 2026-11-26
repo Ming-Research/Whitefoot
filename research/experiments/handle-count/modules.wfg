@@ -1,0 +1,5 @@
+pkg: [std::process, std::text, std::time, std::io, std::fs];
+
+entry handle_value = pkg::value_main;
+
+entry handle_reference = pkg::reference_main;

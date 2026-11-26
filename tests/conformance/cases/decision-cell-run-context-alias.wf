@@ -1,0 +1,25 @@
+fn decide(cell: DecisionCell) -> result: DecisionState pure waits {
+  return claim_written(cell: &cell);
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = decision_cell_new();
+  let worker = decision_cell_share(cell: &cell);
+  let observer = decision_cell_share(cell: &cell);
+  release::<DecisionCell>(value: move cell);
+  let answer = spawn decide(cell: move worker);
+  let written = Written();
+  if answer != written {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let seen = decision_cell_read(cell: &observer);
+  if seen != written {
+    return std::process::exit_status(code: 2_u8);
+  }
+  let winner = claim_killed(cell: &observer);
+  if winner != written {
+    return std::process::exit_status(code: 3_u8);
+  }
+  release::<DecisionCell>(value: move observer);
+  return std::process::exit_status(code: 0_u8);
+}

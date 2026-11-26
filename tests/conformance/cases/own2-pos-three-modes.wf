@@ -12,17 +12,15 @@ fn bump(c: &Counter) -> result: unit writes(c.value) {
 }
 
 fn main() -> return_value: ExitStatus pure {
-  doc "A bare parameter type selects value mode and & selects a reference; deref reads the storage it names, while write authority is the callee's declared row.";
+  doc "A bare parameter type selects value mode and & selects a reference; deref reads the storage it names, while write authority is the callee's declared row. The value read through the reference before the write is the exit status 5.";
   let a = Counter(value: 5_i32);
   let s = &a;
-  if s^.value == 5_i32 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
+  let before = s^.value;
   bump(c: &a);
   if a.value == 9_i32 {
   } else {
     return exit_status(code: 2_u8);
   }
-  return exit_status(code: 0_u8);
+  let code = cvt::<i32, u8>(before);
+  return exit_status(code: code);
 }

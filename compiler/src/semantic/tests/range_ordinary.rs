@@ -946,8 +946,8 @@ fn scalar_written_through_a_reference_inside_an_atomic_statement() {
   let source = 1_u64;
   let observed = observe(value: source);
   let writer = &source;
-  atomic held = &state {
-    set writer^ = held^.value;
+  atomic observed_state = &state {
+    set writer^ = observed_state^.value;
   }
   guard(left: observed, right: source);
   return unit;
@@ -962,11 +962,11 @@ fn struct_written_after_a_copy_of_it() {
     check(
         &stale(
             "fn caller() -> result: unit pure {
-  let held = Holder(value: 1_u64);
-  let twin = held;
+  let observed_state = Holder(value: 1_u64);
+  let twin = observed_state;
   let observed = observe(value: twin.value);
-  set held.value = 2_u64;
-  guard(left: observed, right: held.value);
+  set observed_state.value = 2_u64;
+  guard(left: observed, right: observed_state.value);
   return unit;
 }",
         ),
@@ -979,11 +979,11 @@ fn struct_field_written_through_a_reference() {
     check(
         &stale(
             "fn caller() -> result: unit pure {
-  let held = Holder(value: 1_u64);
-  let observed = observe(value: held.value);
-  let writer = &held;
+  let observed_state = Holder(value: 1_u64);
+  let observed = observe(value: observed_state.value);
+  let writer = &observed_state;
   set writer^.value = 2_u64;
-  guard(left: observed, right: held.value);
+  guard(left: observed, right: observed_state.value);
   return unit;
 }",
         ),

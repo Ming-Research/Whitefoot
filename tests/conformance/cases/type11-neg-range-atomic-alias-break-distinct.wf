@@ -1,0 +1,24 @@
+struct ZeroesAliasBreakDistinct {
+  cells: Array<u64, 1>;
+  invariant(c): forall zero(k in 0_u64..c^.cells.len): c^.cells[k] == 0_u64;
+}
+
+fn need_aliasbreakdistinct(z: &ZeroesAliasBreakDistinct) -> result: unit pure {
+  return unit;
+}
+
+fn update_aliasbreakdistinct(first: Shared<ZeroesAliasBreakDistinct>, second: Shared<ZeroesAliasBreakDistinct>) -> result: unit pure waits {
+  loop @leave {
+    atomic a = &first, b = &second {
+      set a^.cells[0_u64] = 1_u64;
+      set b^.cells[0_u64] = 0_u64;
+      need_aliasbreakdistinct(z: b);
+      break @leave;
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

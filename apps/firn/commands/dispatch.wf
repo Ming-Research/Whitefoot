@@ -207,986 +207,1184 @@ fn execute(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cli
   let milliseconds = False();
   let head = True();
   let tail = False();
-  if code == code_ping {
-    let any = True();
-    let go = band(any, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: any);
-    }
-    if go {
-      if count <= 2_u64 {
-        run_ping(input: input, args: args, client: client);
-      } else {
-        reply_arity(client: client, input: input, name: name);
-      }
-    }
-    return unit;
-  }
-  if code == code_echo {
-    let fits = count == 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_echo(input: input, args: args, client: client);
-    }
-    return unit;
-  }
-  if code == code_get {
-    let fits = count == 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_get(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_set {
-    let fits = count >= 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_set(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_setnx {
-    let fits = count == 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_setnx(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_setex {
-    let fits = count == 4_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_setex(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: whole_seconds, invalid: &text_expire_setex[0_u64..42_u64]);
-    }
-    return unit;
-  }
-  if code == code_psetex {
-    let fits = count == 4_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_setex(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: milliseconds, invalid: &text_expire_psetex[0_u64..43_u64]);
-    }
-    return unit;
-  }
-  if code == code_getset {
-    let fits = count == 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_getset(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_getdel {
-    let fits = count == 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_getdel(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_getex {
-    let fits = count >= 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_getex(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_append {
-    let fits = count == 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_append(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_strlen {
-    let fits = count == 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_strlen(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  let ranged = code == code_getrange;
-  let substring = code == code_substr;
-  let read_range = bor(ranged, substring);
-  if read_range {
-    let fits = count == 4_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_getrange(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_setrange {
-    let fits = count == 4_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_setrange(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_del {
-    let fits = count >= 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_del(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_unlink {
-    let fits = count >= 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_del(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_exists {
-    let fits = count >= 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_exists(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_touch {
-    let fits = count >= 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_exists(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_rename {
-    let fits = count == 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      let fresh = False();
-      run_rename(store: store, input: input, args: args, client: client, env: env, time: time, fresh: fresh);
-    }
-    return unit;
-  }
-  if code == code_renamenx {
-    let fits = count == 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      let fresh = True();
-      run_rename(store: store, input: input, args: args, client: client, env: env, time: time, fresh: fresh);
-    }
-    return unit;
-  }
-  if code == code_copy {
-    let fits = count >= 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_copy(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_type {
-    let fits = count == 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_type(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_incr {
-    let fits = count == 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_incr(store: store, input: input, args: args, client: client, env: env, time: time, delta: 1_i64);
-    }
-    return unit;
-  }
-  if code == code_decr {
-    let fits = count == 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_incr(store: store, input: input, args: args, client: client, env: env, time: time, delta: -1_i64);
-    }
-    return unit;
-  }
-  if code == code_incrby {
-    let fits = count == 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      let negate = False();
-      run_incrby(store: store, input: input, args: args, client: client, env: env, time: time, negate: negate);
-    }
-    return unit;
-  }
-  if code == code_decrby {
-    let fits = count == 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      let negate = True();
-      run_incrby(store: store, input: input, args: args, client: client, env: env, time: time, negate: negate);
-    }
-    return unit;
-  }
-  if code == code_incrbyfloat {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_incrbyfloat[0_u64..11_u64]);
-    if spelled {
-      let fits = count == 3_u64;
-      let go = band(fits, open);
+  match code {
+    code_ping => {
+      let any = True();
+      let go = band(any, open);
       if bnot(go) {
-        refused(client: client, input: input, name: name, fits: fits);
+        refused(client: client, input: input, name: name, fits: any);
       }
       if go {
-        run_incrbyfloat(store: store, input: input, args: args, client: client, env: env, time: time);
+        if count <= 2_u64 {
+          run_ping(input: input, args: args, client: client);
+        } else {
+          reply_arity(client: client, input: input, name: name);
+        }
       }
       return unit;
     }
-  }
-  if code == code_mset {
-    let fits = count >= 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      let parity = count % 2_u64;
-      if parity == 0_u64 {
-        reply_arity(client: client, input: input, name: name);
-        return unit;
-      }
-      run_mset(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_mget {
-    let fits = count >= 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_mget(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_msetnx {
-    let fits = count >= 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      let parity = count % 2_u64;
-      if parity == 0_u64 {
-        reply_arity(client: client, input: input, name: name);
-        return unit;
-      }
-      run_msetnx(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_expire {
-    let fits = count >= 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_expire(store: store, input: input, args: args, client: client, env: env, time: time, scale: 1000_u64, absolute: relative, invalid: &text_expire_expire[0_u64..43_u64]);
-    }
-    return unit;
-  }
-  if code == code_pexpire {
-    let fits = count >= 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_expire(store: store, input: input, args: args, client: client, env: env, time: time, scale: 1_u64, absolute: relative, invalid: &text_expire_pexpire[0_u64..44_u64]);
-    }
-    return unit;
-  }
-  if code == code_expireat {
-    let fits = count >= 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_expire(store: store, input: input, args: args, client: client, env: env, time: time, scale: 1000_u64, absolute: calendar, invalid: &text_expire_expireat[0_u64..45_u64]);
-    }
-    return unit;
-  }
-  if code == code_pexpireat {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_pexpireat[0_u64..9_u64]);
-    if spelled {
-      let fits = count >= 3_u64;
-      let go = band(fits, open);
-      if bnot(go) {
-        refused(client: client, input: input, name: name, fits: fits);
-      }
-      if go {
-        run_expire(store: store, input: input, args: args, client: client, env: env, time: time, scale: 1_u64, absolute: calendar, invalid: &text_expire_pexpireat[0_u64..46_u64]);
-      }
-      return unit;
-    }
-    let timed = name_is(input: input, start: name.start, length: name.length, word: &word_pexpiretime[0_u64..11_u64]);
-    if timed {
+    code_echo => {
       let fits = count == 2_u64;
       let go = band(fits, open);
       if bnot(go) {
         refused(client: client, input: input, name: name, fits: fits);
       }
       if go {
-        run_ttl(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: milliseconds, absolute: calendar);
+        run_echo(input: input, args: args, client: client);
       }
       return unit;
     }
-  }
-  if code == code_expiretime {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_expiretime[0_u64..10_u64]);
-    if spelled {
+    code_get => {
       let fits = count == 2_u64;
       let go = band(fits, open);
       if bnot(go) {
         refused(client: client, input: input, name: name, fits: fits);
       }
       if go {
-        run_ttl(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: whole_seconds, absolute: calendar);
+        run_get(store: store, input: input, args: args, client: client, env: env, time: time);
       }
       return unit;
     }
-  }
-  if code == code_ttl {
-    let fits = count == 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_ttl(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: whole_seconds, absolute: relative);
-    }
-    return unit;
-  }
-  if code == code_pttl {
-    let fits = count == 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_ttl(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: milliseconds, absolute: relative);
-    }
-    return unit;
-  }
-  if code == code_persist {
-    let fits = count == 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_persist(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_dbsize {
-    let fits = count == 1_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_dbsize(store: store, client: client);
-    }
-    return unit;
-  }
-  if code == code_config {
-    let fits = count >= 2_u64;
-    if fits {
-      run_config(store: store, input: input, args: args, client: client);
-    } else {
-      reply_arity(client: client, input: input, name: name);
-    }
-    return unit;
-  }
-  let flushing_all = code == code_flushall;
-  let flushing_one = code == code_flushdb;
-  let flushing = bor(flushing_all, flushing_one);
-  if flushing {
-    let fits = count >= 1_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_flush(store: store, input: input, args: args, client: client);
-    }
-    return unit;
-  }
-  if code == code_function {
-    let fits = count >= 2_u64;
-    if fits {
-      run_function(store: store, input: input, args: args, client: client);
-    } else {
-      reply_arity(client: client, input: input, name: name);
-    }
-    return unit;
-  }
-  if code == code_debug {
-    let fits = count >= 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_debug(input: input, args: args, client: client);
-    }
-    return unit;
-  }
-  if code == code_info {
-    let fits = count >= 1_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_info(store: store, input: input, args: args, client: client, time: time);
-    }
-    return unit;
-  }
-  if code == code_lpush {
-    let fits = count >= 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      let creating = False();
-      run_push(store: store, input: input, args: args, client: client, env: env, time: time, front: head, existing: creating);
-    }
-    return unit;
-  }
-  if code == code_rpush {
-    let fits = count >= 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      let creating = False();
-      run_push(store: store, input: input, args: args, client: client, env: env, time: time, front: tail, existing: creating);
-    }
-    return unit;
-  }
-  if code == code_lpop {
-    let fits = count >= 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      if count > 3_u64 {
-        reply_arity(client: client, input: input, name: name);
-        return unit;
-      }
-      run_pop(store: store, input: input, args: args, client: client, env: env, time: time, front: head);
-    }
-    return unit;
-  }
-  if code == code_rpop {
-    let fits = count >= 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      if count > 3_u64 {
-        reply_arity(client: client, input: input, name: name);
-        return unit;
-      }
-      run_pop(store: store, input: input, args: args, client: client, env: env, time: time, front: tail);
-    }
-    return unit;
-  }
-  if code == code_lrange {
-    let fits = count == 4_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_lrange(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_llen {
-    let fits = count == 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_llen(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_lindex {
-    let fits = count == 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_lindex(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_lset {
-    let fits = count == 4_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_lset(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_lrem {
-    let fits = count == 4_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_lrem(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_ltrim {
-    let fits = count == 4_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_ltrim(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_linsert {
-    let fits = count == 5_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_linsert(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_lpos {
-    let fits = count >= 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_lpos(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_lpushx {
-    let fits = count >= 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      let existing = True();
-      run_push(store: store, input: input, args: args, client: client, env: env, time: time, front: head, existing: existing);
-    }
-    return unit;
-  }
-  if code == code_rpushx {
-    let fits = count >= 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      let existing = True();
-      run_push(store: store, input: input, args: args, client: client, env: env, time: time, front: tail, existing: existing);
-    }
-    return unit;
-  }
-  if code == code_lmove {
-    let fits = count == 5_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_lmove_named(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_rpoplpush {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_rpoplpush[0_u64..9_u64]);
-    if spelled {
-      let fits = count == 3_u64;
-      let go = band(fits, open);
-      if bnot(go) {
-        refused(client: client, input: input, name: name, fits: fits);
-      }
-      if go {
-        run_lmove(store: store, input: input, args: args, client: client, env: env, time: time, from_head: tail, to_head: head);
-      }
-      return unit;
-    }
-  }
-  if code == code_sadd {
-    let fits = count >= 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_sadd(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_srem {
-    let fits = count >= 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_srem(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_spop {
-    let fits = count >= 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_spop(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_scard {
-    let fits = count == 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_scard(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_smembers {
-    let fits = count == 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_smembers(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return unit;
-  }
-  if code == code_sismember {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_sismember[0_u64..9_u64]);
-    if spelled {
-      let fits = count == 3_u64;
-      let go = band(fits, open);
-      if bnot(go) {
-        refused(client: client, input: input, name: name, fits: fits);
-      }
-      if go {
-        let one = False();
-        run_sismember(store: store, input: input, args: args, client: client, env: env, time: time, many: one);
-      }
-      return unit;
-    }
-  }
-  if code == code_smismember {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_smismember[0_u64..10_u64]);
-    if spelled {
+    code_set => {
       let fits = count >= 3_u64;
       let go = band(fits, open);
       if bnot(go) {
         refused(client: client, input: input, name: name, fits: fits);
       }
       if go {
-        let many = True();
-        run_sismember(store: store, input: input, args: args, client: client, env: env, time: time, many: many);
+        run_set(store: store, input: input, args: args, client: client, env: env, time: time);
       }
       return unit;
     }
-  }
-  if code == code_srandmember {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_srandmember[0_u64..11_u64]);
-    if spelled {
+    code_setnx => {
+      let fits = count == 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_setnx(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
+    }
+    code_setex => {
+      let fits = count == 4_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_setex(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: whole_seconds, invalid: &text_expire_setex[0_u64..42_u64]);
+      }
+      return unit;
+    }
+    code_psetex => {
+      let fits = count == 4_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_setex(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: milliseconds, invalid: &text_expire_psetex[0_u64..43_u64]);
+      }
+      return unit;
+    }
+    code_getset => {
+      let fits = count == 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_getset(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
+    }
+    code_getdel => {
+      let fits = count == 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_getdel(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
+    }
+    code_getex => {
       let fits = count >= 2_u64;
       let go = band(fits, open);
       if bnot(go) {
         refused(client: client, input: input, name: name, fits: fits);
       }
       if go {
-        run_srandmember(store: store, input: input, args: args, client: client, env: env, time: time);
+        run_getex(store: store, input: input, args: args, client: client, env: env, time: time);
       }
       return unit;
     }
-  }
-  if code == code_smove {
-    let fits = count == 4_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
+    code_append => {
+      let fits = count == 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_append(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
     }
-    if go {
-      run_smove(store: store, input: input, args: args, client: client, env: env, time: time);
+    code_strlen => {
+      let fits = count == 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_strlen(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
     }
-    return unit;
-  }
-  if code == code_sinter {
-    let fits = count >= 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
+    code_getrange => {
+      let fits = count == 4_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_getrange(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
     }
-    if go {
-      let reading = False();
-      run_combine(store: store, input: input, args: args, client: client, env: env, time: time, operation: operation_inter, storing: reading);
+    code_substr => {
+      let fits = count == 4_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_getrange(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
     }
-    return unit;
-  }
-  if code == code_sunion {
-    let fits = count >= 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
+    code_setrange => {
+      let fits = count == 4_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_setrange(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
     }
-    if go {
-      let reading = False();
-      run_combine(store: store, input: input, args: args, client: client, env: env, time: time, operation: operation_union, storing: reading);
+    code_del => {
+      let fits = count >= 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_del(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
     }
-    return unit;
-  }
-  if code == code_sdiff {
-    let fits = count >= 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
+    code_unlink => {
+      let fits = count >= 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_del(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
     }
-    if go {
-      let reading = False();
-      run_combine(store: store, input: input, args: args, client: client, env: env, time: time, operation: operation_diff, storing: reading);
+    code_exists => {
+      let fits = count >= 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_exists(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
     }
-    return unit;
-  }
-  if code == code_sintercard {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_sintercard[0_u64..10_u64]);
-    if spelled {
+    code_touch => {
+      let fits = count >= 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_exists(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
+    }
+    code_rename => {
+      let fits = count == 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        let fresh = False();
+        run_rename(store: store, input: input, args: args, client: client, env: env, time: time, fresh: fresh);
+      }
+      return unit;
+    }
+    code_renamenx => {
+      let fits = count == 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        let fresh = True();
+        run_rename(store: store, input: input, args: args, client: client, env: env, time: time, fresh: fresh);
+      }
+      return unit;
+    }
+    code_copy => {
       let fits = count >= 3_u64;
       let go = band(fits, open);
       if bnot(go) {
         refused(client: client, input: input, name: name, fits: fits);
       }
       if go {
-        run_sintercard(store: store, input: input, args: args, client: client, env: env, time: time);
+        run_copy(store: store, input: input, args: args, client: client, env: env, time: time);
       }
       return unit;
     }
-  }
-  if code == code_sinterstore {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_sinterstore[0_u64..11_u64]);
-    if spelled {
+    code_type => {
+      let fits = count == 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_type(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
+    }
+    code_incr => {
+      let fits = count == 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_incr(store: store, input: input, args: args, client: client, env: env, time: time, delta: 1_i64);
+      }
+      return unit;
+    }
+    code_decr => {
+      let fits = count == 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_incr(store: store, input: input, args: args, client: client, env: env, time: time, delta: -1_i64);
+      }
+      return unit;
+    }
+    code_incrby => {
+      let fits = count == 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        let negate = False();
+        run_incrby(store: store, input: input, args: args, client: client, env: env, time: time, negate: negate);
+      }
+      return unit;
+    }
+    code_decrby => {
+      let fits = count == 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        let negate = True();
+        run_incrby(store: store, input: input, args: args, client: client, env: env, time: time, negate: negate);
+      }
+      return unit;
+    }
+    code_incrbyfloat => {
+      let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_incrbyfloat[0_u64..11_u64]);
+      if spelled {
+        let fits = count == 3_u64;
+        let go = band(fits, open);
+        if bnot(go) {
+          refused(client: client, input: input, name: name, fits: fits);
+        }
+        if go {
+          run_incrbyfloat(store: store, input: input, args: args, client: client, env: env, time: time);
+        }
+        return unit;
+      }
+    }
+    code_mset => {
       let fits = count >= 3_u64;
       let go = band(fits, open);
       if bnot(go) {
         refused(client: client, input: input, name: name, fits: fits);
       }
       if go {
-        let storing = True();
-        run_combine(store: store, input: input, args: args, client: client, env: env, time: time, operation: operation_inter, storing: storing);
+        let parity = count % 2_u64;
+        if parity == 0_u64 {
+          reply_arity(client: client, input: input, name: name);
+          return unit;
+        }
+        run_mset(store: store, input: input, args: args, client: client, env: env, time: time);
       }
       return unit;
     }
-  }
-  if code == code_sunionstore {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_sunionstore[0_u64..11_u64]);
-    if spelled {
+    code_mget => {
+      let fits = count >= 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_mget(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
+    }
+    code_msetnx => {
       let fits = count >= 3_u64;
       let go = band(fits, open);
       if bnot(go) {
         refused(client: client, input: input, name: name, fits: fits);
       }
       if go {
-        let storing = True();
-        run_combine(store: store, input: input, args: args, client: client, env: env, time: time, operation: operation_union, storing: storing);
+        let parity = count % 2_u64;
+        if parity == 0_u64 {
+          reply_arity(client: client, input: input, name: name);
+          return unit;
+        }
+        run_msetnx(store: store, input: input, args: args, client: client, env: env, time: time);
       }
       return unit;
     }
-  }
-  if code == code_sdiffstore {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_sdiffstore[0_u64..10_u64]);
-    if spelled {
+    code_expire => {
       let fits = count >= 3_u64;
       let go = band(fits, open);
       if bnot(go) {
         refused(client: client, input: input, name: name, fits: fits);
       }
       if go {
-        let storing = True();
-        run_combine(store: store, input: input, args: args, client: client, env: env, time: time, operation: operation_diff, storing: storing);
+        run_expire(store: store, input: input, args: args, client: client, env: env, time: time, scale: 1000_u64, absolute: relative, invalid: &text_expire_expire[0_u64..43_u64]);
       }
       return unit;
     }
-  }
-  if code == code_auth {
-    let fits = count >= 2_u64;
-    if fits {
-      run_auth(store: store, input: input, args: args, client: client);
-    } else {
-      reply_arity(client: client, input: input, name: name);
+    code_pexpire => {
+      let fits = count >= 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_expire(store: store, input: input, args: args, client: client, env: env, time: time, scale: 1_u64, absolute: relative, invalid: &text_expire_pexpire[0_u64..44_u64]);
+      }
+      return unit;
     }
-    return unit;
-  }
-  if code == code_hello {
-    run_hello(store: store, input: input, args: args, client: client);
-    return unit;
-  }
-  if code == code_quit {
-    run_quit(client: client);
-    return unit;
-  }
-  if code == code_client {
-    let fits = count >= 2_u64;
-    if fits {
-      run_client(input: input, args: args, client: client);
-    } else {
-      reply_arity(client: client, input: input, name: name);
+    code_expireat => {
+      let fits = count >= 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_expire(store: store, input: input, args: args, client: client, env: env, time: time, scale: 1000_u64, absolute: calendar, invalid: &text_expire_expireat[0_u64..45_u64]);
+      }
+      return unit;
     }
-    return unit;
-  }
-  if code == code_select {
-    let fits = count == 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
+    code_pexpireat => {
+      let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_pexpireat[0_u64..9_u64]);
+      if spelled {
+        let fits = count >= 3_u64;
+        let go = band(fits, open);
+        if bnot(go) {
+          refused(client: client, input: input, name: name, fits: fits);
+        }
+        if go {
+          run_expire(store: store, input: input, args: args, client: client, env: env, time: time, scale: 1_u64, absolute: calendar, invalid: &text_expire_pexpireat[0_u64..46_u64]);
+        }
+        return unit;
+      }
+      let timed = name_is(input: input, start: name.start, length: name.length, word: &word_pexpiretime[0_u64..11_u64]);
+      if timed {
+        let fits = count == 2_u64;
+        let go = band(fits, open);
+        if bnot(go) {
+          refused(client: client, input: input, name: name, fits: fits);
+        }
+        if go {
+          run_ttl(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: milliseconds, absolute: calendar);
+        }
+        return unit;
+      }
     }
-    if go {
-      run_select(input: input, args: args, client: client);
+    code_expiretime => {
+      let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_expiretime[0_u64..10_u64]);
+      if spelled {
+        let fits = count == 2_u64;
+        let go = band(fits, open);
+        if bnot(go) {
+          refused(client: client, input: input, name: name, fits: fits);
+        }
+        if go {
+          run_ttl(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: whole_seconds, absolute: calendar);
+        }
+        return unit;
+      }
     }
-    return unit;
-  }
-  if code == code_time {
-    let fits = count == 1_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
+    code_ttl => {
+      let fits = count == 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_ttl(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: whole_seconds, absolute: relative);
+      }
+      return unit;
     }
-    if go {
-      run_time(client: client);
+    code_pttl => {
+      let fits = count == 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_ttl(store: store, input: input, args: args, client: client, env: env, time: time, in_seconds: milliseconds, absolute: relative);
+      }
+      return unit;
     }
-    return unit;
-  }
-  if code == code_command {
-    run_command(input: input, args: args, client: client);
-    return unit;
-  }
-  let hashed = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
-  if hashed {
-    return unit;
-  }
-  let ranked = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
-  if ranked {
-    return unit;
+    code_persist => {
+      let fits = count == 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_persist(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
+    }
+    code_dbsize => {
+      let fits = count == 1_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_dbsize(store: store, client: client);
+      }
+      return unit;
+    }
+    code_config => {
+      let fits = count >= 2_u64;
+      if fits {
+        run_config(store: store, input: input, args: args, client: client);
+      } else {
+        reply_arity(client: client, input: input, name: name);
+      }
+      return unit;
+    }
+    code_flushall => {
+      let fits = count >= 1_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_flush(store: store, input: input, args: args, client: client);
+      }
+      return unit;
+    }
+    code_flushdb => {
+      let fits = count >= 1_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_flush(store: store, input: input, args: args, client: client);
+      }
+      return unit;
+    }
+    code_function => {
+      let fits = count >= 2_u64;
+      if fits {
+        run_function(store: store, input: input, args: args, client: client);
+      } else {
+        reply_arity(client: client, input: input, name: name);
+      }
+      return unit;
+    }
+    code_debug => {
+      let fits = count >= 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_debug(input: input, args: args, client: client);
+      }
+      return unit;
+    }
+    code_info => {
+      let fits = count >= 1_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_info(store: store, input: input, args: args, client: client, time: time);
+      }
+      return unit;
+    }
+    code_lpush => {
+      let fits = count >= 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        let creating = False();
+        run_push(store: store, input: input, args: args, client: client, env: env, time: time, front: head, existing: creating);
+      }
+      return unit;
+    }
+    code_rpush => {
+      let fits = count >= 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        let creating = False();
+        run_push(store: store, input: input, args: args, client: client, env: env, time: time, front: tail, existing: creating);
+      }
+      return unit;
+    }
+    code_lpop => {
+      let fits = count >= 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        if count > 3_u64 {
+          reply_arity(client: client, input: input, name: name);
+          return unit;
+        }
+        run_pop(store: store, input: input, args: args, client: client, env: env, time: time, front: head);
+      }
+      return unit;
+    }
+    code_rpop => {
+      let fits = count >= 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        if count > 3_u64 {
+          reply_arity(client: client, input: input, name: name);
+          return unit;
+        }
+        run_pop(store: store, input: input, args: args, client: client, env: env, time: time, front: tail);
+      }
+      return unit;
+    }
+    code_lrange => {
+      let fits = count == 4_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_lrange(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
+    }
+    code_llen => {
+      let fits = count == 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_llen(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
+    }
+    code_lindex => {
+      let fits = count == 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_lindex(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
+    }
+    code_lset => {
+      let fits = count == 4_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_lset(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
+    }
+    code_lrem => {
+      let fits = count == 4_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_lrem(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
+    }
+    code_ltrim => {
+      let fits = count == 4_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_ltrim(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
+    }
+    code_linsert => {
+      let fits = count == 5_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_linsert(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
+    }
+    code_lpos => {
+      let fits = count >= 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_lpos(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
+    }
+    code_lpushx => {
+      let fits = count >= 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        let existing = True();
+        run_push(store: store, input: input, args: args, client: client, env: env, time: time, front: head, existing: existing);
+      }
+      return unit;
+    }
+    code_rpushx => {
+      let fits = count >= 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        let existing = True();
+        run_push(store: store, input: input, args: args, client: client, env: env, time: time, front: tail, existing: existing);
+      }
+      return unit;
+    }
+    code_lmove => {
+      let fits = count == 5_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_lmove_named(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
+    }
+    code_rpoplpush => {
+      let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_rpoplpush[0_u64..9_u64]);
+      if spelled {
+        let fits = count == 3_u64;
+        let go = band(fits, open);
+        if bnot(go) {
+          refused(client: client, input: input, name: name, fits: fits);
+        }
+        if go {
+          run_lmove(store: store, input: input, args: args, client: client, env: env, time: time, from_head: tail, to_head: head);
+        }
+        return unit;
+      }
+    }
+    code_sadd => {
+      let fits = count >= 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_sadd(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
+    }
+    code_srem => {
+      let fits = count >= 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_srem(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
+    }
+    code_spop => {
+      let fits = count >= 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_spop(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
+    }
+    code_scard => {
+      let fits = count == 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_scard(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
+    }
+    code_smembers => {
+      let fits = count == 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_smembers(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
+    }
+    code_sismember => {
+      let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_sismember[0_u64..9_u64]);
+      if spelled {
+        let fits = count == 3_u64;
+        let go = band(fits, open);
+        if bnot(go) {
+          refused(client: client, input: input, name: name, fits: fits);
+        }
+        if go {
+          let one = False();
+          run_sismember(store: store, input: input, args: args, client: client, env: env, time: time, many: one);
+        }
+        return unit;
+      }
+    }
+    code_smismember => {
+      let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_smismember[0_u64..10_u64]);
+      if spelled {
+        let fits = count >= 3_u64;
+        let go = band(fits, open);
+        if bnot(go) {
+          refused(client: client, input: input, name: name, fits: fits);
+        }
+        if go {
+          let many = True();
+          run_sismember(store: store, input: input, args: args, client: client, env: env, time: time, many: many);
+        }
+        return unit;
+      }
+    }
+    code_srandmember => {
+      let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_srandmember[0_u64..11_u64]);
+      if spelled {
+        let fits = count >= 2_u64;
+        let go = band(fits, open);
+        if bnot(go) {
+          refused(client: client, input: input, name: name, fits: fits);
+        }
+        if go {
+          run_srandmember(store: store, input: input, args: args, client: client, env: env, time: time);
+        }
+        return unit;
+      }
+    }
+    code_smove => {
+      let fits = count == 4_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_smove(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return unit;
+    }
+    code_sinter => {
+      let fits = count >= 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        let reading = False();
+        run_combine(store: store, input: input, args: args, client: client, env: env, time: time, operation: operation_inter, storing: reading);
+      }
+      return unit;
+    }
+    code_sunion => {
+      let fits = count >= 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        let reading = False();
+        run_combine(store: store, input: input, args: args, client: client, env: env, time: time, operation: operation_union, storing: reading);
+      }
+      return unit;
+    }
+    code_sdiff => {
+      let fits = count >= 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        let reading = False();
+        run_combine(store: store, input: input, args: args, client: client, env: env, time: time, operation: operation_diff, storing: reading);
+      }
+      return unit;
+    }
+    code_sintercard => {
+      let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_sintercard[0_u64..10_u64]);
+      if spelled {
+        let fits = count >= 3_u64;
+        let go = band(fits, open);
+        if bnot(go) {
+          refused(client: client, input: input, name: name, fits: fits);
+        }
+        if go {
+          run_sintercard(store: store, input: input, args: args, client: client, env: env, time: time);
+        }
+        return unit;
+      }
+    }
+    code_sinterstore => {
+      let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_sinterstore[0_u64..11_u64]);
+      if spelled {
+        let fits = count >= 3_u64;
+        let go = band(fits, open);
+        if bnot(go) {
+          refused(client: client, input: input, name: name, fits: fits);
+        }
+        if go {
+          let storing = True();
+          run_combine(store: store, input: input, args: args, client: client, env: env, time: time, operation: operation_inter, storing: storing);
+        }
+        return unit;
+      }
+    }
+    code_sunionstore => {
+      let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_sunionstore[0_u64..11_u64]);
+      if spelled {
+        let fits = count >= 3_u64;
+        let go = band(fits, open);
+        if bnot(go) {
+          refused(client: client, input: input, name: name, fits: fits);
+        }
+        if go {
+          let storing = True();
+          run_combine(store: store, input: input, args: args, client: client, env: env, time: time, operation: operation_union, storing: storing);
+        }
+        return unit;
+      }
+    }
+    code_sdiffstore => {
+      let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_sdiffstore[0_u64..10_u64]);
+      if spelled {
+        let fits = count >= 3_u64;
+        let go = band(fits, open);
+        if bnot(go) {
+          refused(client: client, input: input, name: name, fits: fits);
+        }
+        if go {
+          let storing = True();
+          run_combine(store: store, input: input, args: args, client: client, env: env, time: time, operation: operation_diff, storing: storing);
+        }
+        return unit;
+      }
+    }
+    code_auth => {
+      let fits = count >= 2_u64;
+      if fits {
+        run_auth(store: store, input: input, args: args, client: client);
+      } else {
+        reply_arity(client: client, input: input, name: name);
+      }
+      return unit;
+    }
+    code_hello => {
+      run_hello(store: store, input: input, args: args, client: client);
+      return unit;
+    }
+    code_quit => {
+      run_quit(client: client);
+      return unit;
+    }
+    code_client => {
+      let fits = count >= 2_u64;
+      if fits {
+        run_client(input: input, args: args, client: client);
+      } else {
+        reply_arity(client: client, input: input, name: name);
+      }
+      return unit;
+    }
+    code_select => {
+      let fits = count == 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_select(input: input, args: args, client: client);
+      }
+      return unit;
+    }
+    code_time => {
+      let fits = count == 1_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_time(client: client);
+      }
+      return unit;
+    }
+    code_command => {
+      run_command(input: input, args: args, client: client);
+      return unit;
+    }
+    code_hset => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_hmset => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_hsetnx => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_hget => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_hmget => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_hdel => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_hexists => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_hstrlen => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_hlen => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_hgetall => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_hkeys => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_hvals => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_hincrby => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_hincrbyfloat => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_hrandfield => {
+      let handled = hash_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zadd => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zincrby => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zcard => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zscore => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zmscore => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zpopmin => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zpopmax => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zrem => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zrank => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zrevrank => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zcount => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zrange => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zrevrang => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zrangeby => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zremrang => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    code_zlexcount => {
+      let handled = sorted_command(store: store, input: input, args: args, client: client, env: env, time: time, code: code, name: name);
+      if handled {
+        return unit;
+      }
+    }
+    else => {
+    }
   }
   reply_unknown(client: client, input: input, args: args);
   return unit;

@@ -1,7 +1,7 @@
 alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
-fn clear(part: &[u64]) -> result: unit writes(part) {
+fn wipe(part: &[u64]) -> result: unit writes(part) {
   doc "Writes 9 to every element of the range part names.";
   let i = 0_u64;
   loop {
@@ -22,7 +22,7 @@ fn write_run(window: &Slots<u64, 4>, lo: u64, hi: u64) -> result: unit writes(wi
   let part = &window^[lo..hi];
   let n = 0_u64;
   loop {
-    clear(part: part);
+    wipe(part: part);
     if 1_u64 <= n {
       break;
     }

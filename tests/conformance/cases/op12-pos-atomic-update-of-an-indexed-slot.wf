@@ -1,0 +1,26 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn bumped(current: Box<u64>) -> result: Box<u64> pure {
+  doc "Increments the boxed value and hands the same box back.";
+  set current.inner = current.inner +wrap 1_u64;
+  return move current;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "OP-12: the first argument is the target slot itself, spelled with the same subscript, so the update reads slot 1 out and commits the result there; a move out of a slot outside such an update is refused.";
+  let v = slots_new::<Box<u64>, 2>();
+  let first = box_new::<u64>(value: 1_u64);
+  place_back(window: &v, value: move first);
+  let second = box_new::<u64>(value: 2_u64);
+  place_back(window: &v, value: move second);
+  let i = 1_u64;
+  set v[i] = bumped(current: move v[i]);
+  if v[1_u64].inner != 3_u64 {
+    return exit_status(code: 2_u8);
+  }
+  if v[0_u64].inner != 1_u64 {
+    return exit_status(code: 3_u8);
+  }
+  return exit_status(code: 0_u8);
+}

@@ -79,27 +79,9 @@ fn main() -> status: ExitStatus pure {
   let long_value = long[4_u64];
   let typed_bytes = filled_array::<u8, 2>(value: 13_u8);
   let typed_words = filled_array::<i64, 3>(value: -17_i64);
-  let typed_bytes_room = typed_bytes.len;
-  let typed_bytes_ok = 1_u64 < typed_bytes_room;
-  if typed_bytes_ok {
-  } else {
-    return exit_status(code: 1_u8);
-  }
   let typed_byte = typed_bytes[1_u64];
-  let typed_words_room = typed_words.len;
-  let typed_words_ok = 2_u64 < typed_words_room;
-  if typed_words_ok {
-  } else {
-    return exit_status(code: 1_u8);
-  }
   let typed_word = typed_words[2_u64];
   let storage = filled_buffer::<u16>(length: 2_u64, value: 19_u16);
-  let storage_room = storage.inner.len;
-  let storage_ok = 1_u64 < storage_room;
-  if storage_ok {
-  } else {
-    return exit_status(code: 1_u8);
-  }
   let stored = storage.inner[1_u64];
   if small_maximum == 9_u8 {
   } else {

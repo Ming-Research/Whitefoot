@@ -22,3 +22,11 @@ spec/kernel-spec-v*.md linguist-generated=true
 # branches that each add one conflict only textually: the union driver keeps
 # both blocks, and design lint rejects a heading the union kept twice.
 design/log.md merge=union
+
+# The specification change log merges like the design log: each entry is a
+# whole block inserted at the top and never edited, so the union driver keeps
+# both branches' entries, the merging branch's first. Its version is derived
+# from the entry's place (`.github/spec-version.sh`), and the check that reads
+# the entries does not depend on the blank line the union driver may drop
+# between them.
+spec/log.md merge=union

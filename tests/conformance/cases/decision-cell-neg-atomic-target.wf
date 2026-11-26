@@ -1,0 +1,7 @@
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = decision_cell_new();
+  atomic verdict = &cell {
+    let seen = verdict^;
+  }
+  return std::process::exit_status(code: 0_u8);
+}

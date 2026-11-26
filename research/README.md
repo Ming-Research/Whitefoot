@@ -64,6 +64,9 @@ the work-branch and merge boundary.
 - [Range facts for ordinary obligations](investigations/ordinary-range-obligations/DESIGN.md):
   how a bounds, overflow or invariant obligation uses a range fact, comparing
   deferral to the range judgment with range facts inside ordinary entailment.
+- [Window references across calls](investigations/window-call-references/DESIGN.md):
+  current prefix and named-removal invalidation, the post-call range-bound
+  repair, and a proposed surviving-slot rule for direct removals.
 - [Range type invariants](investigations/range-type-invariants/DESIGN.md):
   a struct's range fact over its own stores, kept by its module's writers and
   assumed by every function that receives the struct.
@@ -115,6 +118,10 @@ the work-branch and merge boundary.
   rules. A [complete source demo](investigations/modular-compilation/demo/README.md)
   follows a queue through shared libraries, a no-heap entry and a heap-using
   tool.
+- [Echo-server scaling with core count](investigations/echo-scaling/DESIGN.md):
+  whether a Whitefoot echo server, one context per connection, gets at least
+  1.6 times faster each time its cores double from 1 to 8 on Linux, against an
+  io_uring and an epoll server in C, with the criteria fixed before measuring.
 - [Concurrent hash index](investigations/concurrent-map/DESIGN.md): a
   keyed concurrent index in the trusted runtime under atomic statements on one
   key, its standalone measurement against other languages' concurrent maps,
@@ -129,6 +136,13 @@ the work-branch and merge boundary.
   a keyed table as a field whose entries are named in the statement's header,
   locking by parts as an implementation liberty with its order, taking and
   release, and the forms it replaced.
+- [Atomic targets as one form](investigations/atomic-targets/DESIGN.md): the
+  target forms of the atomic statement designed together, present and
+  pending (entries, key sets, shards, the atomic value, a target held only
+  when a condition holds, a guard wait with a deadline), with three ways to
+  place the condition, Firn's programs under each, other languages' designs
+  and failures, and the recommendation of a per-target condition in the
+  header.
 - [Meta commit](investigations/meta-commit/README.md): whether two atomic
   statements on different keys of a shared map compute at the same time and
   meet only when each takes the next sequence number from a shared Meta object
@@ -157,6 +171,16 @@ the work-branch and merge boundary.
   attribution, Q155 comparison of join reduction, affine-index reuse and
   backward proof queries, the lazy-index differentials, historical M5 reuse results, and the
   manual base/twin/head timing panel on the CI 14900K runner.
+- [Machine-checked soundness of the specification](investigations/spec-proof/DESIGN.md):
+  the rule-level defects that motivate a proof, which rules carry each safety
+  claim, three proof assistants and five modeling approaches compared, the
+  same-work check that keeps a Lean model in step with the specification, the
+  first phase's fragment, theorem and cost.
+- [Specification version churn](investigations/spec-version-churn/README.md):
+  why open amendments of the specification renumbered, re-archived and
+  repaired the change log each time another merged (112 of 307 merges of main
+  over 62 amendments), the alternatives compared, and what would reject the
+  version derived from the log.
 
 Open research questions and evidence links are in [ideas](../docs/ideas.md);
 known compiler defects and implementation costs are on the

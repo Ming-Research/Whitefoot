@@ -18,14 +18,11 @@ fn main() -> status: ExitStatus pure {
   let filled = fill_and_count(destination: window, value: 200_u8);
   let published = &window^[0_u64..filled];
   let seen = published^.len;
-  if seen == 2_u64 {
-  } else {
-    return exit_status(code: 201_u8);
-  }
   let first = published^[0_u64];
   if first == 200_u8 {
   } else {
     return exit_status(code: 202_u8);
   }
-  return exit_status(code: 0_u8);
+  let status_code = cvt::<u64, u8>(seen);
+  return exit_status(code: status_code);
 }

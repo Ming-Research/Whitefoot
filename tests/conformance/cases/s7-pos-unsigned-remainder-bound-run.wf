@@ -5,13 +5,9 @@ const values: Array<u8, 4> =[10_u8, 20_u8, 30_u8, 40_u8];
 
 fn main() -> status: ExitStatus pure {
   doc "An unsigned remainder publishes its strict divisor bound, so the following table read is proved before lowering.";
-  let unexpected = False();
   let seed = 7_u64;
   let bounded = seed % 4_u64;
   let selected = values[bounded];
-  if unexpected {
-    return exit_status(code: 1_u8);
-  }
   let expected = selected == 40_u8;
   if expected {
     return exit_status(code: 0_u8);

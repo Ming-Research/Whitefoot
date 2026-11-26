@@ -1,0 +1,28 @@
+fn fail(value: u64) -> result: Result<u64, u64> pure contract {
+  requires value <= 7_u64;
+  ensures when Err(error: payload): payload <= 7_u64;
+} {
+  return Err<u64, u64>(error: value);
+}
+
+fn forward(value: u64) -> result: Result<u32, u64> pure contract {
+  requires value <= 7_u64;
+  ensures when Err(error: payload): payload <= 7_u64;
+} {
+  let got = propagate fail(value: value);
+  let small = cvt.wrap::<u64, u32>(got);
+  return Ok<u32, u64>(value: small);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let made = forward(value: 7_u64);
+  match made {
+    Ok(value: success) => {
+      return std::process::exit_status(code: 99_u8);
+    }
+    Err(error: value) => {
+      let code = cvt::<u64, u8>(value);
+      return std::process::exit_status(code: code);
+    }
+  }
+}

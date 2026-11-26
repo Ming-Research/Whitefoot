@@ -16,12 +16,6 @@ fn decode_length(state: &InflateState, input: &[u8], symbol: u64) -> result: Res
     return Err<u64, InflateError>(error: error);
   }
   let length_index = symbol -wrap 257_u64;
-  let length_in_tables = length_index < 29_u64;
-  if length_in_tables {
-  } else {
-    let error = InflateError::InvalidHuffmanCode();
-    return Err<u64, InflateError>(error: error);
-  }
   let length_base_word = length_bases[length_index];
   let length_base = cvt::<u16, u64>(length_base_word);
   let length_extra_byte = length_extras[length_index];

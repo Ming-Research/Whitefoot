@@ -10,7 +10,7 @@ fn need(order: &[Flow]) -> result: unit pure contract {
 }
 
 fn forward(order: &[Flow]) -> result: unit reads(order) contract {
-  requires forall held(k in 0_u64..order^.len): order^[k].Open.block == 0_u64;
+  requires forall observed(k in 0_u64..order^.len): order^[k].Open.block == 0_u64;
 } {
   if 0_u64 < order^.len {
     let r = &order^[0_u64];

@@ -1,4 +1,6 @@
-//! [TYPE-2, PRE-1] prelude opaque repairs use forming and access functions.
+//! [TYPE-2, PRE-1, PRE-2] opaque struct repairs use forming and access
+//! functions: the prelude handles use theirs, and a host module's value is
+//! read through its module's functions.
 //! Keep these pairs wired to the shared acceptance and contradiction checks;
 //! retire a pair when its repair or distinct observation retires.
 use super::RepairPair;
@@ -213,5 +215,29 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 "#,
         ],
+    },
+    RepairPair {
+        name: "instant-taken-apart.wf",
+        rejected: include_bytes!(
+            "../../../../tests/conformance/cases/opaque-instant-neg-destructuring-let.wf"
+        ),
+        rule: "TYPE-2",
+        sentences: &[
+            "\n  mechanical_fix: a host module's opaque value keeps its fields private to its module [PRE-2, MOD-6]: read it through the functions of its module instead of taking it apart\n",
+        ],
+        repaired: &[br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias Instant = std::time::Instant;
+alias nanoseconds_from = std::time::nanoseconds_from;
+
+fn taking_apart(instant: Instant) -> result: u64 pure {
+  let elapsed = nanoseconds_from(earlier: instant, later: instant);
+  return elapsed;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}
+"#],
     },
 ];

@@ -5,13 +5,13 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let keys = key_set_new(capacity: 1_u64);
   key_set_insert(keys: &keys, key: &names[0_u64..1_u64]);
   let boxed = box_new::<u8>(value: 3_u8);
-  let held = Some<Box<u8>>(value: move boxed);
+  let observed = Some<Box<u8>>(value: move boxed);
   atomic entries = &store[keys] {
     if entries^.len > 0_u64 {
-      swap(first: &entries^[0_u64], second: &held);
+      swap(first: &entries^[0_u64], second: &observed);
     }
   }
-  match move held {
+  match move observed {
     Some(value: left) => {
       let code = left.inner +wrap 20_u8;
       return std::process::exit_status(code: code);

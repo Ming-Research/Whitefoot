@@ -9,15 +9,8 @@ fn hold(meter: &MemoryMeter, before: u64) -> result: u8 writes(meter) {
   if empty != before {
     return 1_u8;
   }
-  if slots.inner.cap != 0_u64 {
-    return 2_u8;
-  }
-  if ring.inner.head != 0_u64 {
-    return 3_u8;
-  }
-  if array.inner.len != 0_u64 {
-    return 4_u8;
-  }
+  let shape = slots.inner.cap + ring.inner.head;
+  let empty_shape = shape + array.inner.len;
   grow(cell: &slots, capacity: 4_u64);
   place_back(window: &slots.inner, value: 9_u64);
   let grown = std::process::heap_in_use(meter: meter);
@@ -27,7 +20,7 @@ fn hold(meter: &MemoryMeter, before: u64) -> result: u8 writes(meter) {
   if slots.inner[0_u64] != 9_u64 {
     return 6_u8;
   }
-  return 0_u8;
+  return cvt::<u64, u8>(empty_shape);
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {

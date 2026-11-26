@@ -1,0 +1,25 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn choose<const n: u64>(x: u64) -> r: u64 pure {
+  doc "The generic body needs both branches even when n equals zero in one instance.";
+  if x < n {
+    return 1_u64;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Concrete zero and nonzero specializations retain the generic source judgment.";
+  let zero = choose::<0>(x: 1_u64);
+  let nonzero = choose::<8>(x: zero);
+  let code = cvt.checked::<u64, u8>(nonzero);
+  match code {
+    Ok(value: byte) => {
+      return exit_status(code: byte);
+    }
+    Err(error: failure) => {
+      return exit_status(code: 2_u8);
+    }
+  }
+}

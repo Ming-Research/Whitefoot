@@ -116,7 +116,7 @@ fn float_literal_and_operation_failures_keep_their_rule_owners() {
     assert_rule(
         b"fn main() -> status: std::process::ExitStatus pure {\n  let value = fadd.strict(1_i32, 2_i32);\n  return std::process::exit_status(code: 0_u8);\n}\n",
         SemanticRule::Op1,
-        SemanticIssueKind::InvalidOperation,
+        SemanticIssueKind::invalid_operation(),
     );
     assert_rule_kind(
         b"fn main() -> status: std::process::ExitStatus pure {\n  let value = fadd.strict(1.0_f64, 2_i32);\n  return std::process::exit_status(code: 0_u8);\n}\n",

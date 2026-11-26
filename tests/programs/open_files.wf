@@ -1,0 +1,162 @@
+alias DirectoryRead = std::fs::DirectoryRead;
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias Inputs = std::process::Inputs;
+alias OutputStream = std::io::OutputStream;
+alias exit_status = std::process::exit_status;
+
+const held_name: Array<u8, 4> =[104_u8, 101_u8, 108_u8, 100_u8];
+
+fn open_files_send(factory: &HandleFactory, output: &OutputStream, number: u64) -> result: u8 writes(factory), writes(output) waits {
+  doc "Prints a decimal number and a newline.";
+  let digits = array_filled::<u8, 20>(value: 0_u8);
+  let count = 0_u64;
+  let rest = number;
+  loop @digits {
+    let low = rest % 10_u64;
+    let narrow = cvt.wrap::<u64, u8>(low);
+    let glyph = narrow +wrap 48_u8;
+    if count < 20_u64 {
+      set digits[count] = glyph;
+      set count = count +wrap 1_u64;
+    }
+    set rest = rest / 10_u64;
+    if rest == 0_u64 {
+      break @digits;
+    }
+  }
+  let line = slots_new::<u8, 24>();
+  for @emit (index in 0_u64..count) {
+    let back = count -wrap index;
+    let from = back -wrap 1_u64;
+    let glyph = 48_u8;
+    if from < 20_u64 {
+      set glyph = digits[from];
+    }
+    if line.len < line.cap {
+      place_back(window: &line, value: glyph);
+    }
+  }
+  if line.len < line.cap {
+    place_back(window: &line, value: 10_u8);
+  }
+  let length = line.len;
+  let source = &line[0_u64..length];
+  let sent = 0_u64;
+  let unbounded = None<std::time::Instant>();
+  let cancel = std::time::cancel_never();
+  loop @publish {
+    if sent < length {
+    } else {
+      break @publish;
+    }
+    match std::io::write_once(factory: factory, output: output, source: source, start: sent, end: length, deadline: unbounded, cancel: &cancel) {
+      Ok(value: endpoint) => {
+        set sent = endpoint;
+      }
+      Err(error: failure) => {
+        std::time::close_cancel_watch(watch: move cancel);
+        return 12_u8;
+      }
+    }
+  }
+  std::time::close_cancel_watch(watch: move cancel);
+  return 0_u8;
+}
+
+fn open_files_hold(factory: &HandleFactory, root: &DirectoryRead, remaining: u64) -> result: u8 reads(root), writes(factory) waits {
+  doc "Opens the file named held once in each of remaining nested calls and closes it only after every deeper call has returned, so remaining files are open at once.";
+  if remaining == 0_u64 {
+    return 0_u8;
+  }
+  let outcome = 0_u8;
+  match std::fs::open_file(factory: factory, root: root, name: &held_name[0_u64..4_u64], start: 0_u64, end: 4_u64) {
+    Ok(value: file) => {
+      let deeper = remaining -wrap 1_u64;
+      let below = open_files_hold(factory: factory, root: root, remaining: deeper);
+      set outcome = below;
+      std::fs::close_read(factory: factory, file: move file);
+    }
+    Err(error: problem) => {
+      set outcome = 40_u8;
+    }
+  }
+  return outcome;
+}
+
+fn open_files_run(factory: &HandleFactory, output: &OutputStream, root: &DirectoryRead) -> result: u8 reads(root), writes(factory), writes(output) waits {
+  doc "Prints the soft and hard open-files limits, asks for one more than the hard limit and requires a refusal, prints the soft limit again, raises it to 512 and prints both limits, then holds 300 files open at once.";
+  let soft = 0_u64;
+  let hard = 0_u64;
+  match std::process::open_files_limit(factory: factory) {
+    Ok(value: limits) => {
+      set soft = limits.soft;
+      set hard = limits.hard;
+    }
+    Err(error: problem) => {
+      return 20_u8;
+    }
+  }
+  let first = open_files_send(factory: factory, output: output, number: soft);
+  if first != 0_u8 {
+    return first;
+  }
+  let second = open_files_send(factory: factory, output: output, number: hard);
+  if second != 0_u8 {
+    return second;
+  }
+  if hard < 18446744073709551615_u64 {
+    let above = hard + 1_u64;
+    match std::process::raise_open_files_limit(factory: factory, wanted: above) {
+      Ok(value: limits) => {
+        return 21_u8;
+      }
+      Err(error: problem) => {
+      }
+    }
+  }
+  let current_soft = 0_u64;
+  match std::process::open_files_limit(factory: factory) {
+    Ok(value: limits) => {
+      set current_soft = limits.soft;
+    }
+    Err(error: problem) => {
+      return 22_u8;
+    }
+  }
+  let third = open_files_send(factory: factory, output: output, number: current_soft);
+  if third != 0_u8 {
+    return third;
+  }
+  let raised_soft = 0_u64;
+  let raised_hard = 0_u64;
+  match std::process::raise_open_files_limit(factory: factory, wanted: 512_u64) {
+    Ok(value: limits) => {
+      set raised_soft = limits.soft;
+      set raised_hard = limits.hard;
+    }
+    Err(error: problem) => {
+      return 23_u8;
+    }
+  }
+  let fourth = open_files_send(factory: factory, output: output, number: raised_soft);
+  if fourth != 0_u8 {
+    return fourth;
+  }
+  let fifth = open_files_send(factory: factory, output: output, number: raised_hard);
+  if fifth != 0_u8 {
+    return fifth;
+  }
+  let kept_open = open_files_hold(factory: factory, root: root, remaining: 300_u64);
+  return kept_open;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "Runs the open-files limit witness in the working directory, which holds a file named held.";
+  let Inputs(cwd: directory, stdout: output, handles: factory, ..) = move inputs;
+  let std::fs::Directory(read: directory_read, write: directory_write) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move directory_write);
+  let outcome = open_files_run(factory: &factory, output: &output, root: &directory_read);
+  std::fs::close_directory(factory: &factory, directory: move directory_read);
+  return exit_status(code: outcome);
+}

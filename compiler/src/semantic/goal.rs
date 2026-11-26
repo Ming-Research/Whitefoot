@@ -392,6 +392,18 @@ pub(crate) enum GoalProjection {
     FormalPage {
         ordinal: u32,
     },
+    /// A clause (a) offset retaining its parameter ordinal and complete
+    /// typed projection until substitution at a call or body entry.
+    FormalPlaceSubscript {
+        ordinal: u32,
+        place: super::places::FormalOffsetId,
+        ty: CheckedType,
+    },
+    FormalPlacePage {
+        ordinal: u32,
+        place: super::places::FormalOffsetId,
+        ty: CheckedType,
+    },
 }
 
 impl GoalProjection {
@@ -407,10 +419,131 @@ impl GoalProjection {
             Self::Subscript(offset) => PlaceStep::Index(offset),
             Self::Page(offset) => PlaceStep::Page(offset),
             Self::Range(range) => PlaceStep::Range(range),
-            Self::FormalSubscript { .. } => PlaceStep::Index(CapturedValue::unknown()),
-            Self::FormalPage { .. } => PlaceStep::Page(CapturedValue::unknown()),
+            Self::FormalSubscript { .. } | Self::FormalPlaceSubscript { .. } => {
+                PlaceStep::Index(CapturedValue::unknown())
+            }
+            Self::FormalPage { .. } | Self::FormalPlacePage { .. } => {
+                PlaceStep::Page(CapturedValue::unknown())
+            }
         }
     }
+
+    /// This projection with a formal-valued offset replaced by the offset
+    /// `offset` gives that formal's ordinal, and `None` when it gives none:
+    /// a place whose offset no [ENT-2] term names is no term.
+    pub(crate) fn instantiate_formal(
+        self,
+        offset: impl FnOnce(
+            u32,
+            Option<(super::places::FormalOffsetId, CheckedType)>,
+        ) -> Option<super::places::CapturedValue>,
+    ) -> Option<Self> {
+        match self {
+            Self::FormalSubscript { ordinal } => offset(ordinal, None).map(Self::Subscript),
+            Self::FormalPage { ordinal } => offset(ordinal, None).map(Self::Page),
+            Self::FormalPlaceSubscript { ordinal, place, ty } => {
+                offset(ordinal, Some((place, ty))).map(Self::Subscript)
+            }
+            Self::FormalPlacePage { ordinal, place, ty } => {
+                offset(ordinal, Some((place, ty))).map(Self::Page)
+            }
+            other => Some(other),
+        }
+    }
+}
+
+/// [ENT-2, FN-8] the offset one written actual supplies for a formal-valued
+/// subscript of a declaration template: a written integer literal, an
+/// integer named const, whose value `named` gives, an in-scope const
+/// generic, or a clause (a) integer place, each with the identity its body
+/// spelling carries. Any other actual names no offset term.
+pub(crate) fn actual_offset(
+    argument: &GoalExpression,
+    places: &super::places::CapturedPlaceTable,
+    named: &dyn Fn(DeclarationId) -> Option<u64>,
+) -> Option<super::places::CapturedValue> {
+    use super::places::{CapturedTerm, CapturedValue};
+    let GoalExpression::Datum(datum) = argument else {
+        return None;
+    };
+    let term = match datum {
+        GoalDatum::Literal(CheckedValue::Integer { bits, .. }) => CapturedTerm::Literal(*bits),
+        GoalDatum::Literal(CheckedValue::ConstGeneric { declaration, .. }) => {
+            CapturedTerm::Const(*declaration)
+        }
+        GoalDatum::Place {
+            root, projections, ..
+        } if projections.is_empty() => CapturedTerm::Binding(*root),
+        GoalDatum::Place {
+            root,
+            projections,
+            ty,
+            ..
+        } if matches!(ty, CheckedType::Integer(_))
+            && projections.iter().all(|projection| {
+                matches!(
+                    projection,
+                    GoalProjection::Deref
+                        | GoalProjection::Field(_)
+                        | GoalProjection::Payload { .. }
+                )
+            }) =>
+        {
+            CapturedTerm::Place(
+                places.intern(super::places::ResolvedPlace {
+                    atomic_aliases: Vec::new(),
+                    root: super::places::PlaceRoot::Binding(*root),
+                    path: projections
+                        .iter()
+                        .map(|projection| projection.place_step())
+                        .collect(),
+                }),
+            )
+        }
+        GoalDatum::NamedConst {
+            declaration,
+            projections,
+            ..
+        } if projections.is_empty() => CapturedTerm::Literal(named(*declaration)?),
+        _ => return None,
+    };
+    Some(CapturedValue::new(CapturedValue::unknown().capture, term).goal_identity())
+}
+
+/// Substitute a projected formal offset over the actual's referent identity.
+/// The stored suffix excludes the reference formal's leading caret.
+pub(crate) fn projected_actual_offset(
+    argument: &GoalExpression,
+    formal: super::places::FormalOffsetId,
+    ty: CheckedType,
+    places: &super::places::CapturedPlaceTable,
+    named: &dyn Fn(DeclarationId) -> Option<u64>,
+) -> Option<super::places::CapturedValue> {
+    let mut image = argument.clone();
+    for projection in formal_offset_projections(formal, places)? {
+        image = image.with_projection(projection, ty)?;
+    }
+    actual_offset(&image, places, named)
+}
+
+/// The relative projection of a formal offset, without its reference caret.
+pub(crate) fn formal_offset_projections(
+    formal: super::places::FormalOffsetId,
+    places: &super::places::CapturedPlaceTable,
+) -> Option<Vec<GoalProjection>> {
+    places
+        .formal(formal)
+        .iter()
+        .map(|step| match step {
+            super::places::PlaceStep::Deref => Some(GoalProjection::Deref),
+            super::places::PlaceStep::Field(field) => Some(GoalProjection::Field(*field)),
+            super::places::PlaceStep::Payload { variant, field } => Some(GoalProjection::Payload {
+                variant: *variant,
+                field: *field,
+            }),
+            _ => None,
+        })
+        .collect()
 }
 
 /// [ENT-2] whether one row is a widening conversion: a bare `cvt::<S, D>`

@@ -245,6 +245,32 @@ pub struct CanonicalIssue {
     pub(crate) expected: String,
     /// The exact trivia bytes the source carries there instead.
     pub(crate) found: String,
+    /// The gaps of the rejected source whose bytes differ from FORM-2's, in
+    /// byte order and starting with the one this rejection names. Empty when
+    /// the walk that finds them reached an audit ceiling.
+    pub(crate) differences: Vec<LayoutDifference>,
+    /// How many gaps of the rejected source differ in all, of which
+    /// `differences` holds the first few.
+    pub(crate) difference_count: u64,
+}
+
+/// One terminal gap of a rejected source whose bytes are not FORM-2's.
+///
+/// The rejection reports the first such gap only [DIAG-1]; a repair that
+/// lists the others names each by the terminals around it, so a writer finds
+/// it without counting bytes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LayoutDifference {
+    /// The one-based line the gap begins on.
+    pub(crate) line: u64,
+    /// The spelling of the terminal before the gap; `None` at source start.
+    pub(crate) before: Option<String>,
+    /// The spelling of the terminal after the gap; `None` at source end.
+    pub(crate) after: Option<String>,
+    /// The exact trivia bytes FORM-2 requires in the gap.
+    pub(crate) expected: String,
+    /// The exact trivia bytes the source carries there instead.
+    pub(crate) found: String,
 }
 
 impl CanonicalIssue {
@@ -258,6 +284,18 @@ impl CanonicalIssue {
     #[must_use]
     pub const fn location(&self) -> &CanonicalLocation {
         &self.location
+    }
+
+    /// Returns the repair for the rejected source: every gap that differs
+    /// from FORM-2's, when the walk that lists them completed.
+    #[must_use]
+    pub fn mechanical_fix(&self) -> Option<String> {
+        (!self.differences.is_empty()).then(|| {
+            crate::diagnostic_repairs::canonical_layout_fix(
+                self.difference_count,
+                &self.differences,
+            )
+        })
     }
 }
 

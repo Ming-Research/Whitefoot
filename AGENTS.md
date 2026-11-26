@@ -32,9 +32,10 @@ of those is probably not the next work.
 
 The active specification `spec/kernel-spec.md`, including its normative worked
 example, defines the language and toolchain judgments, and the conformance
-results state what the compiler implements. Compiler behavior, tests,
-archived code and design prose do not define the language.
-`docs/constitution.md` owns purpose, objectives, tradeoffs and conditional
+results state what the compiler implements. Compiler behavior, tests, the
+Lean model under `proof/`, archived code and design prose do not define the
+language.
+`design/constitution.md` owns purpose, objectives, tradeoffs and conditional
 design principles.
 
 The research record is `research/investigations/<name>/` and
@@ -50,7 +51,7 @@ describe evidence, not a workflow step.
 
 - Before a material choice, also read the relevant constitutional aims; the
   constitution's
-  [compatibility clause](docs/constitution.md#compatibility-and-evolution)
+  [compatibility clause](design/constitution.md#article-6-evolve-everything-here-may-change-as-the-grounds-change)
   decides when compatibility starts to count.
 - `research/README.md` holds the method for attributing a performance loss or
   proof cost and for agent writer trials.
@@ -58,14 +59,15 @@ describe evidence, not a workflow step.
   with its before and after behavior and the card that selected it or why it
   needed none.
 - Programs in this repository were written to exercise the compiler
-  (`design/language.md`): a program that fails still witnesses a gap, and
-  measuring a change's effect on them is still evidence.
+  (decision `language-choices-are-made-on-merits` in
+  `design/decisions/language.md`): a program that fails still witnesses a
+  gap, and measuring a change's effect on them is still evidence.
 - **Fix or record what you notice**, and list each item in the PR's *Found
   along the way* section. `make static` requires every Rust source file under
   `compiler/src/` over 4,000 lines to be listed in
   `.github/oversized-sources.txt` with the key of the status board item that
   records its split.
-- `make design-ready` also requires an approved `spec/log.md` entry for a
+- `make design-ready` also requires a new `spec/log.md` entry for a
   changed specification.
 
 ## Branch and main boundary
@@ -79,13 +81,19 @@ Whitefoot's extra merge preconditions:
    commands, performance comparison has its own workflow, and research is
    never a gate dependency. `make check-groups` lists the groups and
    [Checks](#checks) says where each runs.
-2. Specification approvals are recorded in `spec/log.md`.
+2. Each specification change is recorded in `spec/log.md`.
 3. When the merge changes the concurrent map's runtime or its test,
    `map-sanitizers.yml` passes on the exact revision being merged.
-4. If the merge changes `spec/kernel-spec.md` or conformance evidence, the
+4. `sanitizers.yml` passes on the exact revision being merged: no sanitizer
+   reports on an accepted program
+   ([sanitized builds](design/decisions/compiler/command-line/sanitized-builds.md), decision
+   `sanitizers-run-in-their-own-workflow`).
+5. If the merge changes `spec/kernel-spec.md` or conformance evidence, the
    pull request states what changed and its selection ground, answered
    against the exact revision being merged. The specification's bytes are its
    identity, the released archives are immutable, and git is the history.
+6. When the merge changes `spec/kernel-spec.md`, `proof/` or the conformance
+   cases, `proof.yml` passes on the exact revision being merged.
 
 **Conformance evidence** is `tests/conformance` case source and manifest
 content, its runner and adapter, gate-integrity tests, and any collection or
@@ -96,24 +104,29 @@ read.
 
 - The active specification `spec/kernel-spec.md` is editable on a work branch;
   released `spec/kernel-spec-vN.md` archives are immutable, and
-  `compiler/build.rs` derives the active identity from its bytes. A branch's
-  amendment lands as one change:
-  1. Archive once per branch: with the local `main` current, copy the base's
-     active bytes to the archive named by their title token, for a base
-     titled `# Kernel Specification v0.69`
-     `git show "$(git merge-base main HEAD)":spec/kernel-spec.md > spec/kernel-spec-v0.69.md`.
-  2. Retitle the active file to the next version, `v0.70`, or `v1.0` for a
-     major revision.
-  3. Edit the rules under the bullets below.
-  4. If `main` advanced the version meanwhile, merging it conflicts on the
-     title: keep main's text, reapply this branch's rule changes, archive
-     main's active bytes under main's version and retitle to the next one.
-  5. After the owner approves, add the `spec/log.md` entry naming every rule
-     added, changed or retired.
+  `compiler/build.rs` derives the active identity from its bytes. The file
+  carries no version and an amendment adds no archive, so two branches never
+  write the same line to claim a version. A branch's amendment lands as one
+  change:
+  1. Edit the rules under the bullets below.
+  2. In the same change, add the `spec/log.md` entry at the top, headed
+     `## <date> <title>` with no version, naming every rule added, changed or
+     retired. Existing entries stay as written, and merging `main` keeps both
+     branches' entries (`spec/log.md` merges with git's union driver), the
+     branch's first.
 
-  `make static` verifies the archive and title, and `make design-ready`
-  requires the approval entry. A spec/compiler discrepancy is a technical
-  defect; implementation convenience never selects language behavior.
+  An entry's version is derived from its place in the log:
+  `sh .github/spec-version.sh` prints the active version and `--list` every
+  entry's, counting up from the nearest entry below that names one (an entry
+  names a version only to start a major version such as `v1.0`). Cite a new
+  amendment by its date and title until it merges and by its version after.
+  A milestone is archived by a separate change that edits no rule and adds
+  `spec/kernel-spec-<version>.md`, a copy of the active file.
+
+  `make static` verifies the title, the log's entries and the archives, and
+  `make design-ready` requires the new entry. A spec/compiler discrepancy is
+  a technical defect; implementation convenience never selects language
+  behavior.
 - State each normative fact once; use rule-ID cross-references elsewhere.
   Rule IDs have one definition and bracketed references resolve. Express
   conditions as total positive rules or table data, without exception clauses.
@@ -122,7 +135,8 @@ read.
   comparing and recording semantic differences, and only when meanings match.
 - When the spec changes, bring everything derived from it to the newest version
   in the same work: conformance cases and verdicts, the lexer/parser and
-  generated syntax data, tests and docs.
+  generated syntax data, tests and docs, and the Lean model under `proof/` with
+  its coverage list and proofs.
 - Conformance verdicts and evidence change only with the specification;
   editing a verdict or regenerating evidence to go green is a governance
   breach. A compiler limitation, internal error, timeout or unimplemented
@@ -149,20 +163,26 @@ read.
 
 ### Document roles
 
-- `README.md`: introduction, getting started and navigation.
+- `README.md`: introduction and navigation; points to the user guide.
+- `docs/guide/`: user documents for readers outside the project;
+  `docs/guide/README.md` indexes the guides and owns the checked example
+  convention.
 - `AGENTS.md`: Whitefoot's goal, authority, process additions, approval and
   merge rules, integrity rules, checks and review.
 - `docs/review-checklist.md`: the items a reviewer answers from the diff.
-- `docs/constitution.md`: complete statements of purpose, objectives,
+- `design/constitution.md`: complete statements of purpose, objectives,
   obligations, prohibitions, tradeoffs and their conditions; not
   conversations, progress, maintenance instructions, abbreviated labels,
   per-clause usage checklists or a selected mechanism presented as an
   inevitable consequence of the purpose.
 - `spec/kernel-spec.md`: normative syntax, semantics, judgments, boundaries
   and examples; not compiler convenience presented as law or editing history.
-  `spec/log.md` holds its approvals.
-- `docs/patterns.md`: writer problems, usable forms, examples, applicability
-  and costs; not acceptance rules or universal performance claims.
+  `spec/log.md` holds its change log.
+- Whitefoot-kit's [writing guide](https://github.com/Ming-Research/Whitefoot-kit/blob/main/docs/writing.md): writer
+  problems, usable forms, examples, applicability and costs, for agents.
+- `docs/safety-claims.md`: each safety claim with the specification rules and
+  conformance cases it rests on, what the specification does not promise, and
+  the trusted base; not a claim the specification does not state.
 - `docs/ideas.md` and `docs/why-whitefoot.md`: candidate mechanisms and
   explanatory essays; not a work queue or invented measurements.
 - `docs/articles/`: one idea each for readers outside the project, every
@@ -177,63 +197,109 @@ read.
 
 - Technical claims point to the specification, source and cases, a relevant
   design, or reproducible evidence.
-- The constitution, specification, writer patterns and essays stand without
-  the design trees: they do not link to `design/` or use it as authority.
+- The constitution, specification and essays stand without
+  the design tree's decisions: they do not link to `design/decisions/` or use
+  it as authority.
 - Maintainer navigation (README, this file, the research index) may point to
-  the design trees. Research records and PRs may cite decisions as historical
+  the design tree. Research records and PRs may cite decisions as historical
   rationale, not as language definitions or proof of an empirical claim.
 - Historical references may name their historical versions; current guidance
   uses the active specification's stable path.
 
 ## Compiler rules
 
-The compiler's implementation rules are its design decisions in
-`design/compiler`. Exploratory timing runs only when requested; measure
-build time apart from test and program execution.
+The compiler's implementation rules are its design decisions under
+`design/decisions/compiler/` and `design/decisions/runtime/`. Exploratory
+timing runs only when requested; measure build time apart from test and
+program execution.
 
 ## Checks
 
 - `make static`, run by the static group of `gate.yml`, which adds the
   conformance structure, the performance instrument and the compiler's
-  format and lint checks: repository invariants, the specification
+  lint check: repository invariants, the specification
   archives, the README and its translation changed together, prose
   integrity, guidance references, Rust sources under `compiler/src/` over
-  4,000 lines listed in `.github/oversized-sources.txt`, and the design
-  tree's form, read through the `design/skill` submodule.
+  4,000 lines listed in `.github/oversized-sources.txt`, the safety claims
+  page against the specification and the conformance manifest, and the
+  `design/skill` submodule's own tests. The wf-agents engine checks the design
+  tree's form before it merges a work.
 - `make check`, on the revision to merge: the static group plus the compiler
-  build, tests, the conformance adapter and the runtime; `make check-groups`
+  build, tests, the conformance adapter and the runtime. Its corpus group
+  compiles the example programs in `docs/guide/` and both READMEs under the
+  [guide's convention](docs/guide/README.md#writing-examples). `make check-groups`
   lists the groups. `gate.yml` and `io-hosts.yml` check a push to `main`, a
-  push to a branch with an open pull request, draft or ready, the opening or
-  reopening of a pull request and a manual run; any other push, to a branch
-  with no open pull request, skips their checks, so work that needs CI opens
-  its Draft pull request first. `gate.yml` runs the groups on Linux, and on
-  macOS as well for a pull request marked ready, the event of marking one
-  ready, `main` and a manual run; its job `Gate on both platforms` passes
-  only when every group is green on both for the revision. That job's
-  success on the exact revision to be merged, a head current with `main`, is
-  that revision's `make check`. It needs `python3`, `jq`, LLD on Linux
-  (`ld.lld`) and the `time` utility.
+  push to a branch with an open ready pull request, the opening or reopening
+  of a ready pull request, the event of marking one ready and a manual run;
+  any other push, a draft pull request's included, skips their checks, and
+  the event of marking a pull request ready skips them when its head already
+  has a successful manual run of the same workflow. `gate.yml` runs the groups
+  on Linux only while macOS is off (wf-gate-no-macos), and on macOS as well in
+  a manual run started with `-f macos=true`, which a compiler release requires
+  of its commit; its job `Gate on both platforms` passes only when every group
+  is green on each platform the run was asked for, for the revision,
+  and its job `No temporary workflow` fails while a `tmp-` workflow file
+  exists in the checked head, and while it fails the correctness groups and
+  `Gate on both platforms` do not run. The success of `Gate on both platforms`
+  on the exact revision to be merged, a head current with `main`, is that
+  revision's `make check`. It needs `python3`, `jq`, LLD on Linux (`ld.lld`)
+  and the `time` utility.
+- Writing and the full check: a push to a draft pull request starts no gate,
+  so the result for what a change touches comes from a temporary workflow
+  (below). Once the review has passed, delete the `tmp-` file, merge `main`
+  into the branch, push, and start the full check on that head by hand:
+  `gh workflow run gate.yml --ref <branch>`, `gh workflow run io-hosts.yml
+  --ref <branch>` and `gh workflow run sanitizers.yml --ref <branch>`. Green
+  on that head is the last run: marking the pull request ready then starts no
+  second gate, I/O or sanitizer run for it. A red is fixed
+  with a temporary workflow again, and the full check is started again once
+  the review has seen the fix; a push after a green needs its own run.
+  `compute-regression.yml` runs when the pull request is marked ready and
+  skips no earlier hand-started run.
 - `make design-ready` runs in `design-readiness.yml`.
 - CI only: `io-hosts.yml`, on the same revisions as the gate (Linux io_uring
   and Windows IOCP),
+  `sanitizers.yml` on the same revisions as the gate (the corpus target's
+  programs and running conformance cases, the cases also with `--par`, under
+  AddressSanitizer with UndefinedBehaviorSanitizer and under ThreadSanitizer;
+  any report fails it),
   `map-sanitizers.yml` on every push to a PR that changes the concurrent
   map's runtime or its test (that test under AddressSanitizer and
   ThreadSanitizer, on the PR's head),
-  `compute-regression.yml` on PRs that touch measured inputs (paired WF-to-WF
-  timing), and `io-bench.yml` and `compute-bench.yml` on request, which are
-  experiments and never a gate.
+  `proof.yml` on every push to a PR that changes the specification, `proof/`,
+  the conformance cases or that workflow, drafts included, and on such a push
+  to `main` (the Lean model's sentence coverage, its proofs and its run over
+  the conformance cases in its fragment, on the PR's head),
+  `compute-regression.yml` on ready PRs that touch measured inputs (paired
+  WF-to-WF timing; a draft shows it skipped; each push to `main` there only
+  builds and caches that commit's compiler for later PRs' merge-base
+  baselines), and `io-bench.yml`, `compute-bench.yml` and
+  `firn-check-time.yml` (Firn's check on the 14900K runner) on request, which
+  are experiments and never a gate.
+- The wf-agents engine (`wf-agents.toml`) starts `fast.yml` by hand to run
+  the Rust tests an agent names, and the `static` and `runtime` groups when
+  named. Before it merges a work, it starts `gate.yml`, `io-hosts.yml`,
+  `sanitizers.yml`, `proof.yml`, `map-sanitizers.yml` and
+  `design-readiness.yml` by hand on the commit to merge. Each such run reports
+  its results as JUnit XML (`.github/junit.py`); each file's header says how.
 - Compiler releases: `compiler-release.yml`, dispatched when a downstream
-  project needs a main commit, publishes that commit's compiler as release
-  `wf-<12 hex digits>`, or an unmerged commit's as experiment release
-  `wf-exp-<12 hex digits>`, and `compiler-release-cleanup.yml` removes
-  releases older than 30 days each week, keeping the newest of main; each
-  file's header gives the commands and contents
-  ([downstream releases](design/compiler/downstream-releases.md)).
+  project needs a main commit that has a successful gate run with macOS jobs
+  (started by `gh workflow run gate.yml --ref <branch whose tip is the commit>
+  -f macos=true`), publishes that commit's compiler as release
+  `wf-<12 hex digits>`, with `bundle_toolchain` as
+  `wf-<12 hex digits>-bundled`, which carries clang and lld, or an unmerged
+  commit's as experiment release `wf-exp-<12 hex digits>`, and
+  `compiler-release-cleanup.yml` removes releases older than 30 days each
+  week, keeping the newest lightweight release of main and every bundled
+  release of main; each file's header gives the commands and contents
+  ([downstream releases](design/decisions/development/releases.md), decisions
+  `releases-are-made-by-hand-and-expire` and `bundled-main-releases-never-expire`).
 Every build, check, test and measurement runs in CI, never on a
 contributor's workstation. A focused result the existing workflows do not
 give, such as one test filter or a compiler probe over a set of cases, comes
-from a temporary workflow on the work branch, removed before the branch is
-ready; such a step runs its command under `perl .github/run-check.pl`, for
+from a temporary workflow on the work branch: a file named `tmp-<name>.yml`
+that a push triggers, removed before the full check, which fails while one
+exists; such a step runs its command under `perl .github/run-check.pl`, for
 example `perl .github/run-check.pl <label> cargo test --manifest-path
 compiler/Cargo.toml --profile gate --locked --offline --lib <filter>`.
 
@@ -244,20 +310,28 @@ leaves Cargo and the test harness at every available processor unless
 system time every 30 seconds, and stops a command after 30 minutes unless
 `WHITEFOOT_CHECK_TIMEOUT` gives another limit in seconds. It compares each
 labeled stage with its budget in `.github/time-budgets.txt` without changing
-the command's status: CI fails the job in a final verdict step. On a
-self-hosted runner, inspect an existing lock owner's PID instead of starting
-another heavy command, and after an uncatchable stop inspect the recorded
-PID and command before removing a stale lock.
+the command's status. Linux budgets are per CPU model: the maximum of at least
+its 20 most recent recorded runs plus 10%, rounded up to 5 s, with a 10 s floor.
+Models with fewer runs have no column unless the owner adds one; unknown models
+use the stage's largest Linux budget, with a note. macOS overruns are
+report-only, and so are the stages named in `WHITEFOOT_BUDGET_REPORT_ONLY`
+(comma-separated labels; the merge-base compiler build uses it, since its cache
+misses after a runner image change); Windows rows keep their rule.
+The final CI verdict fails on Linux and Windows overruns and on a missing row
+for any host. On a self-hosted runner, inspect an existing lock owner's PID
+instead of starting another heavy command, and after an uncatchable stop
+inspect the recorded PID and command before removing a stale lock.
 
 When a stage exceeds its budget, look at what the change adds to it and at the
 job's slowest cases and host; fix a cause you find or bring the raise to the
 owner, and re-run once when you cannot tell; an overrun the change plainly
-cannot cause is reported as runner variance and cleared by a passing re-run.
-A raise is the owner's decision and adds 10 s to the stage and to its group
-stage, if any; lower a budget when a change makes its stage much faster, and
-give a new labeled stage a budget. The `gate` Cargo profile builds the Rust
-compiler with optimization, debug assertions and overflow checks; it does
-not change how WF source is compiled. `WHITEFOOT_TEST_TIMINGS=<scratch TSV>`
+cannot cause is reported as runner variance, and an enforced overrun is
+cleared by a passing re-run. A raise is the owner's decision; recompute Linux
+values by the rule above; Windows raises add 10 s to the stage and its group,
+if any. Lower a budget when a change makes its stage much faster, and give a
+new labeled stage a budget. The `gate` Cargo profile builds the Rust compiler
+with optimization, debug assertions and overflow checks; it does not change
+how WF source is compiled. `WHITEFOOT_TEST_TIMINGS=<scratch TSV>`
 records the phases of the shared test helpers for a slow compiler test.
 
 `WHITEFOOT_CHECK_WORK=<scratch TSV>` appends the checker's per-join,

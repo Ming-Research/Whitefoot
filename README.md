@@ -55,6 +55,10 @@ It still can:
   definitions, libc and the operating system
   ([SCOPE-3](spec/kernel-spec.md#1-scope-and-conformance)).
 
+[Safety claims](docs/safety-claims.md) states each claim above with the
+specification rules and conformance cases it rests on, quotes what the
+specification does not promise, and sizes the trusted base.
+
 Other systems prove the same absence of runtime errors in other ways. SPARK,
 a subset of Ada for high-integrity software, uses SMT solvers in an analysis
 separate from compilation: the Ada compiler builds a program whether or not it
@@ -120,7 +124,7 @@ The compiler proves it before the first iteration and after every iteration,
 and with `i < buf.len` concludes `kept < buf.len`, so the store compiles to a
 plain store:
 
-```
+```whitefoot
 fn squeeze(buf: &[u8]) -> kept: u64 writes(buf) {
   let kept = 0_u64;
   for (
@@ -155,7 +159,7 @@ knows what memory each call touches, and when it proves that two calls touch
 different memory, it may run them at the same time. Nothing in this source
 asks for parallelism:
 
-```
+```text
 fn quicksort(v: &[u64]) -> result: unit writes(v) {
   let n = v^.len;
   if n <= 1_u64 {
@@ -204,7 +208,7 @@ Whitefoot keeps C's simple structure and borrows some of Rust's syntax. A
 program is made of functions, structs, enums and arrays. This function returns
 the next byte of a buffer and advances a cursor:
 
-```
+```whitefoot
 struct Cursor {
   position: u64;
 }
@@ -414,9 +418,14 @@ article is published.
 
 ## Try it
 
+Start with the [getting started guide](docs/guide/getting-started.md) to
+install the compiler and run your first program.
+
 You need Rust stable, at least the `rust-version` in
 [compiler/Cargo.toml](compiler/Cargo.toml), and clang: `/usr/bin/clang` on
-Linux and macOS, or `clang` on `PATH` on Windows.
+Linux and macOS, or on Windows the `clang` on `PATH` of an
+[llvm-mingw](https://github.com/mstorsjo/llvm-mingw) release, since the
+compiler targets `x86_64-w64-windows-gnu`.
 
 ```sh
 git clone https://github.com/Ming-Research/Whitefoot.git && cd Whitefoot
@@ -449,6 +458,13 @@ Other options:
 - `--stack-ledger` reports each function's frame and how many levels each
   recursive cycle fits;
 - `--emit-llvm` prints the LLVM IR;
+- `--sanitize address` builds the program and its runtime under
+  AddressSanitizer with UndefinedBehaviorSanitizer, and `--sanitize thread`
+  under ThreadSanitizer, on Linux and macOS. They need clang's sanitizer
+  runtimes: Apple's clang has them, and on Linux they come in their own
+  package, such as `libclang-rt-22-dev` for clang 22 on Debian and Ubuntu.
+  An accepted program should never make them report, so a report is a bug
+  in the compiler or its runtime;
 - `--diagnostic-format json` prints each rejection as one JSON object per
   line;
 - `whitefootc --help` lists the rest.

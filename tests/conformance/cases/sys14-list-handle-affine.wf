@@ -118,21 +118,21 @@ fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus re
   let window = &entries[0_u64..1024_u64];
   match open_directory_source(factory: files, directory: cwd) {
     Ok(value: list) => {
-      let held = move list;
+      let observed = move list;
       let (list_result_1, bytes, reported) = directory_next(source: &list, destination: window, start: 0_u64, end: 1024_u64);
       match list_result_1 {
         Ok(value: done) => {
-          close_directory_source(factory: files, source: move held);
+          close_directory_source(factory: files, source: move observed);
           return exit_status(code: 0_u8);
         }
         Err(error: list_stop_1) => {
           match list_stop_1 {
             ListEnd() => {
-              close_directory_source(factory: files, source: move held);
+              close_directory_source(factory: files, source: move observed);
               return exit_status(code: 0_u8);
             }
             ListFailed(error: problem) => {
-              close_directory_source(factory: files, source: move held);
+              close_directory_source(factory: files, source: move observed);
               return exit_status(code: 3_u8);
             }
           }
@@ -150,7 +150,7 @@ fn exercise(cwd: &DirectoryRead, files: &HandleFactory) -> status: ExitStatus re
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   doc "PRE-2 ordinary Inputs are destructured once; the borrowed operation chain returns before the initial directory is explicitly closed on every exit.";
-  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: files, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: files, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &files, directory: move cwd_write);
   let outcome = exercise(cwd: &cwd, files: &files);

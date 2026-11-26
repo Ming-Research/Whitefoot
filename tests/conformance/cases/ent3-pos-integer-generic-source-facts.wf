@@ -1,0 +1,38 @@
+fn zero<N: Int>(value: N) -> result: unit pure contract {
+  requires value == 0_N;
+} {
+  return unit;
+}
+
+fn one<N: Int>(value: N) -> result: unit pure contract {
+  requires value == 1_N;
+} {
+  return unit;
+}
+
+fn nonzero<N: Int>(value: N) -> result: unit pure contract {
+  requires value != 0_N;
+} {
+  return unit;
+}
+
+fn selected<N: Int>(value: N) -> result: u8 pure {
+  match value {
+    0_N => {
+      zero::<N>(value: value);
+      return 0_u8;
+    }
+    1_N => {
+      one::<N>(value: value);
+      return 1_u8;
+    }
+    else => {
+      nonzero::<N>(value: value);
+      return 2_u8;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

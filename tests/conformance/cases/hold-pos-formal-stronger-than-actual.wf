@@ -1,0 +1,13 @@
+interface HeldRead {
+  fn read(value: &u64) -> result: u64 reads(value) contract {
+    requires held(value);
+  };
+}
+
+fn unrestricted(input: &u64) -> result: u64 reads(input) {
+  return input^;
+}
+
+binding Reader : HeldRead {
+  read = unrestricted;
+}

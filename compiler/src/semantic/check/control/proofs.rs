@@ -524,7 +524,7 @@ impl<'unit> Checker<'_, 'unit> {
             .direct_token_with(atom, crate::syntax::terminal::TerminalPredicate::Literal)?
         {
             let bytes = self.types.declarations.tree.token_bytes(literal)?;
-            if matches!(bytes, b"0_T" | b"1_T") {
+            if crate::syntax::terminal::is_generic_numeric_literal(bytes) {
                 return self.types.declarations.invalid_affine_proof(
                     owner,
                     node,

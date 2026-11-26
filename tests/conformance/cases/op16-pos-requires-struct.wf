@@ -8,13 +8,19 @@ fn guarded(left: EqContract, right: EqContract) -> result: unit pure contract {
   return unit;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
-  let left = EqContract(value: 9_u32);
-  let right = EqContract(value: 9_u32);
+fn call_when_equal(left: EqContract, right: EqContract) -> code: u8 pure {
+  doc "Calls guarded under the struct equality its condition establishes, returning 0 when the operands are equal and 1 otherwise.";
   if left == right {
     guarded(left: left, right: right);
   } else {
-    return std::process::exit_status(code: 1_u8);
+    return 1_u8;
   }
-  return std::process::exit_status(code: 0_u8);
+  return 0_u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let left = EqContract(value: 9_u32);
+  let right = EqContract(value: 9_u32);
+  let code = call_when_equal(left: left, right: right);
+  return std::process::exit_status(code: code);
 }

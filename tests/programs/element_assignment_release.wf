@@ -120,11 +120,8 @@ fn direct_slots(meter: &MemoryMeter, capacity: u64, mode: u64) -> result: Bool w
   let slots = box_slots_new::<Cell>(capacity: 1_u64);
   let initial = make_cell(capacity: capacity);
   place_back(window: &slots.inner, value: move initial);
-  let held = std::process::heap_in_use(meter: meter);
+  let observed = std::process::heap_in_use(meter: meter);
   for (iteration in 0_u64..4_u64) {
-    if slots.inner.len != 1_u64 {
-      return False();
-    }
     if mode == 1_u64 {
       let buffer = box_slots_new::<u32>(capacity: capacity);
       set slots.inner[0_u64].payload.upvals = move buffer;
@@ -136,7 +133,7 @@ fn direct_slots(meter: &MemoryMeter, capacity: u64, mode: u64) -> result: Bool w
       set slots.inner[0_u64] = move replacement;
     }
     let after = std::process::heap_in_use(meter: meter);
-    if after != held {
+    if after != observed {
       return False();
     }
     if slots.inner[0_u64].payload.upvals.inner.cap != capacity {
@@ -154,7 +151,7 @@ fn indirect_slots(meter: &MemoryMeter, capacity: u64, mode: u64) -> result: Bool
   let storage = Heap(closures: move slots);
   let machine = Vm(heap: move storage);
   let environment = Calls(count: 0_u64);
-  let held = std::process::heap_in_use(meter: meter);
+  let observed = std::process::heap_in_use(meter: meter);
   for (iteration in 0_u64..4_u64) {
     let replaced = False();
     if mode <= 6_u64 {
@@ -167,7 +164,7 @@ fn indirect_slots(meter: &MemoryMeter, capacity: u64, mode: u64) -> result: Bool
       return False();
     }
     let after = std::process::heap_in_use(meter: meter);
-    if after != held {
+    if after != observed {
       return False();
     }
     if machine.heap.closures.inner.len != 1_u64 {
@@ -259,7 +256,7 @@ fn enum_slots(meter: &MemoryMeter, capacity: u64, mode: u64) -> result: Bool wri
   let slots = box_slots_new::<EnumCell>(capacity: 1_u64);
   let initial = make_enum_cell(capacity: capacity, tag: 4_u64);
   place_back(window: &slots.inner, value: move initial);
-  let held = std::process::heap_in_use(meter: meter);
+  let observed = std::process::heap_in_use(meter: meter);
   for (iteration in 0_u64..4_u64) {
     if slots.inner.len != 1_u64 {
       return False();
@@ -275,7 +272,7 @@ fn enum_slots(meter: &MemoryMeter, capacity: u64, mode: u64) -> result: Bool wri
       }
     }
     let after = std::process::heap_in_use(meter: meter);
-    if after != held {
+    if after != observed {
       return False();
     }
     if slots.inner.len != 1_u64 {
@@ -309,7 +306,7 @@ fn holder_slots(meter: &MemoryMeter, capacity: u64, mode: u64) -> result: Bool w
   let slots = box_slots_new::<Holder<Payload>>(capacity: 1_u64);
   let initial = make_holder(capacity: capacity, tag: 4_u64);
   place_back(window: &slots.inner, value: move initial);
-  let held = std::process::heap_in_use(meter: meter);
+  let observed = std::process::heap_in_use(meter: meter);
   for (iteration in 0_u64..4_u64) {
     if slots.inner.len != 1_u64 {
       return False();
@@ -325,7 +322,7 @@ fn holder_slots(meter: &MemoryMeter, capacity: u64, mode: u64) -> result: Bool w
       }
     }
     let after = std::process::heap_in_use(meter: meter);
-    if after != held {
+    if after != observed {
       return False();
     }
     if slots.inner.len != 1_u64 {
@@ -368,7 +365,7 @@ fn filled_slots(meter: &MemoryMeter, capacity: u64, mode: u64) -> result: Bool w
   let slots = box_slots_new::<FilledCell>(capacity: 1_u64);
   let initial = make_filled_cell(capacity: capacity, tag: 4_u64);
   place_back(window: &slots.inner, value: move initial);
-  let held = std::process::heap_in_use(meter: meter);
+  let observed = std::process::heap_in_use(meter: meter);
   for (iteration in 0_u64..4_u64) {
     if slots.inner.len != 1_u64 {
       return False();
@@ -387,7 +384,7 @@ fn filled_slots(meter: &MemoryMeter, capacity: u64, mode: u64) -> result: Bool w
       }
     }
     let after = std::process::heap_in_use(meter: meter);
-    if after != held {
+    if after != observed {
       return False();
     }
     if slots.inner.len != 1_u64 {
@@ -421,7 +418,7 @@ fn paged_cells(meter: &MemoryMeter, capacity: u64, mode: u64) -> result: Bool wr
   let pages = box_paged_new::<Cell>(capacity: 1_u64);
   let initial = make_cell(capacity: capacity);
   place_back(window: &pages.inner, value: move initial);
-  let held = std::process::heap_in_use(meter: meter);
+  let observed = std::process::heap_in_use(meter: meter);
   for (iteration in 0_u64..4_u64) {
     if pages.inner.len != 1_u64 {
       return False();
@@ -437,7 +434,7 @@ fn paged_cells(meter: &MemoryMeter, capacity: u64, mode: u64) -> result: Bool wr
       }
     }
     let after = std::process::heap_in_use(meter: meter);
-    if after != held {
+    if after != observed {
       return False();
     }
     if pages.inner.len != 1_u64 {

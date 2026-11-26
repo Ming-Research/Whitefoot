@@ -1,0 +1,37 @@
+enum RoutedMember {
+  Found(index: u64);
+}
+
+interface Source {
+  fn produce(value: u64) -> result: RoutedMember pure contract {
+    requires value <= 7_u64;
+    ensures when Found(index: payload): payload <= 7_u64;
+  };
+}
+
+fn make(value: u64) -> result: RoutedMember pure contract {
+  requires value <= 7_u64;
+  ensures when Found(index: payload): payload <= 7_u64;
+} {
+  return RoutedMember::Found(index: value);
+}
+
+binding Fresh : Source {
+  produce = make;
+}
+
+fn through<interface Source>(value: u64) -> result: u8 pure contract {
+  requires value <= 7_u64;
+} {
+  let made = Source::produce(value: value);
+  match made {
+    Found(index: selected) => {
+      return cvt::<u64, u8>(selected);
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let code = through::<Fresh>(value: 7_u64);
+  return std::process::exit_status(code: code);
+}

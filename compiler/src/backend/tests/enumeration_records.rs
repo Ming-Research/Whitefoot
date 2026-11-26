@@ -141,14 +141,17 @@ const fn component_limit() -> u16 {
     if cfg!(target_os = "macos") { 1023 } else { 255 }
 }
 
-/// The host translation unit answering the enumeration facility with one
-/// scripted batch.
-fn scripted_batch_unit(entries: &[ScriptedEntry]) -> String {
-    let table = entries
+/// The host translation unit answering the enumeration facility with
+/// scripted batches: the facility's first call reports the first batch, its
+/// second call the second, and every call after the last reports no bytes.
+fn scripted_batch_unit(batches: &[&[ScriptedEntry]]) -> String {
+    let table = batches
         .iter()
-        .map(|entry| {
+        .enumerate()
+        .flat_map(|(batch, entries)| entries.iter().map(move |entry| (batch, entry)))
+        .map(|(batch, entry)| {
             format!(
-                "    {{ {byte}u, {length}u, {kind}u, {defect}u }},\n",
+                "    {{ {byte}u, {length}u, {kind}u, {defect}u, {batch}u }},\n",
                 byte = entry.byte,
                 length = entry.length,
                 kind = entry.native_kind,
@@ -190,13 +193,15 @@ fn scripted_batch_unit(entries: &[ScriptedEntry]) -> String {
          unsigned char byte;\n    \
          unsigned short name_length;\n    \
          unsigned char native_kind;\n    \
-         unsigned char defect;\n\
+         unsigned char defect;\n    \
+         unsigned batch;\n\
          }};\n\n\
          static const struct wf_scripted_entry wf_scripted[] = {{\n\
          {table}    \
-         {{ 0u, 0u, 0u, 0u }}\n\
+         {{ 0u, 0u, 0u, 0u, 0u }}\n\
          }};\n\n\
-         static const size_t wf_scripted_count = {count}u;\n\n\
+         static const size_t wf_scripted_count = {count}u;\n\
+         static unsigned wf_scripted_call;\n\n\
          /* One record holds its header, the name, the terminator, and the\n   \
          padding both families round a record up to. */\n\
          static size_t wf_record_extent(size_t name_length) {{\n    \
@@ -212,6 +217,7 @@ fn scripted_batch_unit(entries: &[ScriptedEntry]) -> String {
          unsigned char *cursor = (unsigned char *)buffer;\n    \
          size_t offset = 0u;\n    \
          size_t index;\n    \
+         unsigned call = wf_scripted_call++;\n    \
          (void)descriptor;\n\
          {position}    \
          for (index = 0u; index < wf_scripted_count; ++index) {{\n        \
@@ -219,6 +225,9 @@ fn scripted_batch_unit(entries: &[ScriptedEntry]) -> String {
          size_t extent = wf_record_extent(name_length);\n        \
          unsigned char defect = wf_scripted[index].defect;\n        \
          size_t stated = extent;\n        \
+         if (wf_scripted[index].batch != call) {{\n            \
+         continue;\n        \
+         }}\n        \
          if (offset + extent > count) {{\n            \
          break;\n        \
          }}\n        \
@@ -241,7 +250,7 @@ fn scripted_batch_unit(entries: &[ScriptedEntry]) -> String {
          return (ssize_t)offset;\n\
          }}\n",
         layout = record_layout(),
-        count = entries.len(),
+        count = batches.iter().map(|entries| entries.len()).sum::<usize>(),
     )
 }
 
@@ -308,7 +317,7 @@ const PUBLISH_ONE_BATCH: &[u8] = br#"fn exercise(cwd: &std::fs::DirectoryRead, o
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: unused_stderr, handles: files, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: cwd_directory, stdout: out, stderr: unused_stderr, handles: files, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &files, directory: move cwd_write);
   let outcome = exercise(cwd: &cwd, out: &out, files: &files);
@@ -319,10 +328,16 @@ fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure w
 
 /// Runs the publishing program against one scripted batch.
 fn published_records(entries: &[ScriptedEntry]) -> std::process::Output {
+    published_batches(&[entries])
+}
+
+/// Runs the publishing program against scripted batches, of which its one
+/// `directory_next` call reads as many as the runtime asks the host for.
+fn published_batches(batches: &[&[ScriptedEntry]]) -> std::process::Output {
     let llvm = compile(PUBLISH_ONE_BATCH);
     compile_link_and_run_with(
         &llvm,
-        Some(&scripted_batch_unit(entries)),
+        Some(&scripted_batch_unit(batches)),
         &scripted_facility_defines(),
         &[],
     )
@@ -469,4 +484,51 @@ fn a_record_that_contradicts_its_family_layout_ends_the_walk() {
             "{defect:?} must reach the defect arm's abort rather than a status"
         );
     }
+}
+
+/// `.` and `..` never reach source, while a name that only begins with dots
+/// does [PRE-2]: the self and parent records are left out of the portable
+/// prefix and of the entry count.
+#[test]
+fn the_self_and_parent_entries_are_left_out() {
+    let dots = ScriptedEntry::kinded(b'.', 1, 4);
+    let parent = ScriptedEntry::kinded(b'.', 2, 4);
+    let kept = [ScriptedEntry::regular(b'a', 3), ScriptedEntry::regular(b'.', 3)];
+    let output = published_records(&[dots, kept[0], parent, kept[1]]);
+    assert!(
+        output.status.success(),
+        "enumeration exited {:?}: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, expected_records(&kept));
+}
+
+/// A host batch holding only `.` and `..` is not a successful batch with no
+/// entry: the file engine reads again within the same operation and returns
+/// the next batch's entries, or `ListEnd` when the host has none (PRE-2: a
+/// successful batch over a nonempty window holds an entry). The library's
+/// decoder aborts on a nonempty batch with no entry, so an engine that did
+/// not read again fails here.
+#[test]
+fn a_batch_of_only_self_and_parent_entries_asks_the_host_again() {
+    let only_dots = [ScriptedEntry::kinded(b'.', 1, 4), ScriptedEntry::kinded(b'.', 2, 4)];
+    let next = [ScriptedEntry::regular(b'z', 4)];
+    let output = published_batches(&[&only_dots, &next]);
+    assert!(
+        output.status.success(),
+        "enumeration exited {:?}: {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, expected_records(&next));
+
+    let ended = published_batches(&[&only_dots]);
+    assert_eq!(
+        ended.status.code(),
+        Some(3),
+        "a directory holding only its self and parent entries must reach ListEnd: {}",
+        String::from_utf8_lossy(&ended.stderr)
+    );
+    assert!(ended.stdout.is_empty());
 }

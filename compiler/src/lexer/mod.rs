@@ -6,6 +6,7 @@
 //! normative diagnostics remain separate stages.
 
 mod outcome;
+mod repairs;
 mod scanner;
 mod token;
 

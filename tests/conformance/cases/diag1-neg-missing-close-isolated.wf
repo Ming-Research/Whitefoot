@@ -1,0 +1,6 @@
+fn first(a: u64) -> r: u64 pure {
+  return a;
+
+fn second(a: u64) -> r: u64 pure {
+  return a;
+}

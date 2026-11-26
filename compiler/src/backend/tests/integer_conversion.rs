@@ -101,24 +101,46 @@ fn executes_exact_domain_edges_and_every_integer_wrapping_pair() {
     // Extend this existing native construction with wrapping's previously
     // unobservable out-of-domain integer values, including negative widening.
     // Its expected values use mathematical modulo, not host numeric casts.
+    // Every conversion, domain query and checked conversion runs in a
+    // generated helper on the operand its parameter receives, so `main`
+    // observes each result at run time instead of a value the checker already
+    // knows from a literal; the helpers are separate so that no observation
+    // in one body is decided by facts another observation established.
     let (mut source, wrapping_observations) = wrapping_sources();
-    source.push_str("fn main() -> status: std::process::ExitStatus pure {\n");
+    let mut checks = String::new();
     let mut total_count = 0;
     let mut checked_count = 0;
     for (source_type, destination_type) in CONVERSION_CLASSES {
-        if converts_totally(source_type, destination_type) {
+        let total = converts_totally(source_type, destination_type);
+        let name = format!("{}_{}", source_type.spelling, destination_type.spelling);
+        let contract = if total {
+            String::new()
+        } else {
+            format!(
+                " contract {{\n  requires cvt.defined::<{source_type}, {destination}>(value);\n}}",
+                destination = destination_type.spelling,
+                source_type = source_type.spelling,
+            )
+        };
+        writeln!(
+            source,
+            "fn exact_{name}(value: {source_type}) -> result: {destination} pure{contract} {{\n  return cvt::<{source_type}, {destination}>(value);\n}}\n\nfn defined_{name}(value: {source_type}) -> result: Bool pure {{\n  return cvt.defined::<{source_type}, {destination}>(value);\n}}\n\nfn checked_{name}(value: {source_type}) -> result: Result<{destination}, NarrowError> pure {{\n  return cvt.checked::<{source_type}, {destination}>(value);\n}}\n",
+            destination = destination_type.spelling,
+            source_type = source_type.spelling,
+        )
+        .expect("write parameterized conversion interfaces");
+        if total {
             let value = total_value(source_type);
             writeln!(
-                source,
-                "  let total{total_count} = cvt::<{source_type}, {destination}>({value}_{source_type});\n  if total{total_count} == {value}_{destination} {{\n  }} else {{\n    return std::process::exit_status(code: 1_u8);\n  }}",
+                checks,
+                "  let total{total_count} = exact_{name}(value: {value}_{source_type});\n  if total{total_count} == {value}_{destination} {{\n  }} else {{\n    return std::process::exit_status(code: 1_u8);\n  }}",
                 destination = destination_type.spelling,
                 source_type = source_type.spelling,
             )
             .expect("write total conversion");
             writeln!(
-                source,
-                "  if cvt.defined::<{source_type}, {destination}>({value}_{source_type}) {{\n  }} else {{\n    return std::process::exit_status(code: 2_u8);\n  }}\n  match cvt.checked::<{source_type}, {destination}>({value}_{source_type}) {{\n    Ok(value: checked_total{total_count}) => {{\n      if checked_total{total_count} == total{total_count} {{\n      }} else {{\n        return std::process::exit_status(code: 3_u8);\n      }}\n    }}\n    Err(error: refused_total{total_count}) => {{\n      return std::process::exit_status(code: 4_u8);\n    }}\n  }}",
-                destination = destination_type.spelling,
+                checks,
+                "  let total_domain{total_count} = defined_{name}(value: {value}_{source_type});\n  if total_domain{total_count} {{\n  }} else {{\n    return std::process::exit_status(code: 2_u8);\n  }}\n  let total_result{total_count} = checked_{name}(value: {value}_{source_type});\n  match total_result{total_count} {{\n    Ok(value: checked_total{total_count}) => {{\n      if checked_total{total_count} == total{total_count} {{\n      }} else {{\n        return std::process::exit_status(code: 3_u8);\n      }}\n    }}\n    Err(error: refused_total{total_count}) => {{\n      return std::process::exit_status(code: 4_u8);\n    }}\n  }}",
                 source_type = source_type.spelling,
             )
             .expect("write uniform total interfaces");
@@ -128,21 +150,23 @@ fn executes_exact_domain_edges_and_every_integer_wrapping_pair() {
 
         let failure = failing_value(source_type, destination_type);
         writeln!(
-            source,
-            "  let success{checked_count} = cvt.checked::<{source_type}, {destination}>(1_{source_type});\n  match success{checked_count} {{\n    Ok(value: success_value{checked_count}) => {{\n      if success_value{checked_count} == 1_{destination} {{\n      }} else {{\n        return std::process::exit_status(code: 1_u8);\n      }}\n    }}\n    Err(error: success_error{checked_count}) => {{\n      return std::process::exit_status(code: 1_u8);\n    }}\n  }}\n  let failure{checked_count} = cvt.checked::<{source_type}, {destination}>({failure}_{source_type});\n  match failure{checked_count} {{\n    Ok(value: failure_value{checked_count}) => {{\n      return std::process::exit_status(code: 1_u8);\n    }}\n    Err(error: failure_error{checked_count}) => {{\n      match failure_error{checked_count} {{\n        NarrowError() => {{\n        }}\n      }}\n    }}\n  }}",
+            checks,
+            "  let success{checked_count} = checked_{name}(value: 1_{source_type});\n  match success{checked_count} {{\n    Ok(value: success_value{checked_count}) => {{\n      if success_value{checked_count} == 1_{destination} {{\n      }} else {{\n        return std::process::exit_status(code: 1_u8);\n      }}\n    }}\n    Err(error: success_error{checked_count}) => {{\n      return std::process::exit_status(code: 1_u8);\n    }}\n  }}\n  let failure{checked_count} = checked_{name}(value: {failure}_{source_type});\n  match failure{checked_count} {{\n    Ok(value: failure_value{checked_count}) => {{\n      return std::process::exit_status(code: 1_u8);\n    }}\n    Err(error: failure_error{checked_count}) => {{\n      match failure_error{checked_count} {{\n        NarrowError() => {{\n        }}\n      }}\n    }}\n  }}",
             destination = destination_type.spelling,
             source_type = source_type.spelling,
         )
         .expect("write checked conversion");
         writeln!(
-            source,
-            "  if cvt.defined::<{source_type}, {destination}>(1_{source_type}) {{\n    let exact{checked_count} = cvt::<{source_type}, {destination}>(1_{source_type});\n    if exact{checked_count} == 1_{destination} {{\n    }} else {{\n      return std::process::exit_status(code: 5_u8);\n    }}\n  }} else {{\n    return std::process::exit_status(code: 6_u8);\n  }}\n  if cvt.defined::<{source_type}, {destination}>({failure}_{source_type}) {{\n    return std::process::exit_status(code: 7_u8);\n  }}",
+            checks,
+            "  let success_domain{checked_count} = defined_{name}(value: 1_{source_type});\n  if success_domain{checked_count} {{\n    let exact{checked_count} = exact_{name}(value: 1_{source_type});\n    if exact{checked_count} == 1_{destination} {{\n    }} else {{\n      return std::process::exit_status(code: 5_u8);\n    }}\n  }} else {{\n    return std::process::exit_status(code: 6_u8);\n  }}\n  let failure_domain{checked_count} = defined_{name}(value: {failure}_{source_type});\n  if failure_domain{checked_count} {{\n    return std::process::exit_status(code: 7_u8);\n  }}",
             destination = destination_type.spelling,
             source_type = source_type.spelling,
         )
         .expect("write conversion domain agreement");
         checked_count += 1;
     }
+    source.push_str("fn main() -> status: std::process::ExitStatus pure {\n");
+    source.push_str(&checks);
     source.push_str(&wrapping_observations);
     source.push_str("  return std::process::exit_status(code: 0_u8);\n}\n");
     assert_eq!(total_count, 5);

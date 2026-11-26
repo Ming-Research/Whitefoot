@@ -23,9 +23,6 @@ fn relay(outer: i32, replacement: i32) -> result: i32 pure contract {
 
 fn main() -> status: ExitStatus pure {
   let observed = relay(outer: 0_i32, replacement: 7_i32);
-  if observed == 7_i32 {
-  } else {
-    return exit_status(code: 201_u8);
-  }
-  return exit_status(code: 0_u8);
+  let code = cvt::<i32, u8>(observed);
+  return exit_status(code: code);
 }

@@ -309,7 +309,24 @@ impl<'unit> Checker<'_, 'unit> {
                         )?;
                     }
                 }
-                self.instantiate_function_signature(check_context, template, value.substitution)
+                let snapshot_site = if self.is_snapshot_export(value.declaration)? {
+                    let (key, _) = value.substitution.entries().first()
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    Some(self.types.behavior_binding_site(
+                        self.types.function_templates[template].node,
+                        *key,
+                        &value.substitution,
+                    )?)
+                } else {
+                    None
+                };
+                let id = self.instantiate_function_signature(check_context, template, value.substitution)?;
+                if let Some(site) = snapshot_site {
+                    let selected = self.types.signatures.get(id.0 as usize)
+                        .ok_or(SemanticCompilerFailure::InvalidResolution)?;
+                    self.qualify_snapshot_selection(site, selected.declaration, &selected.substitution)?;
+                }
+                Ok(id)
             }
             FunctionArgument::Parameter(key) => {
                 let context = self.types.symbolic_formal_context(check_context, key)?;
@@ -429,6 +446,10 @@ impl<'unit> Checker<'_, 'unit> {
                     SemanticRule::Fn2,
                     0,
                 )?;
+                if self.is_snapshot_export(declaration)? {
+                    self.ensure_nominals_in_function(check_context, source, &substitution)?;
+                    self.qualify_snapshot_selection(node, declaration, &substitution)?;
+                }
                 self.types
                     .intern_function_reference(declaration, &substitution)
             }
@@ -689,6 +710,13 @@ impl<'unit> Checker<'_, 'unit> {
         CheckStop,
     > {
         let bound_actual = actual.clone();
+        if actual.held_parameters.iter().any(|ordinal| !formal.held_parameters.contains(ordinal)) {
+            return self.types.declarations.behavior_mismatch(
+                SemanticRule::Fn4,
+                node,
+                "the actual held requirement is a subset of the formal held requirement",
+            );
+        }
         if formal.parameters.len() != actual.parameters.len()
             || formal.results.len() != actual.results.len()
         {

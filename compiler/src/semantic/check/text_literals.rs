@@ -40,13 +40,7 @@ impl DeclarationInventory<'_> {
         let value = u32::from(scalar);
         if ty == IntegerType::U8 && value > ASCII_MAXIMUM {
             let character = format!("'{}'_u32", canonical_spelling(scalar, CHARACTER_QUOTE));
-            let mechanical_fix = if value <= u32::from(u8::MAX) {
-                format!(
-                    "a `u8` character is ASCII, at most 0x7F: write `{character}` for the character, or `{value}_u8` for the byte"
-                )
-            } else {
-                format!("a `u8` character is ASCII, at most 0x7F: write `{character}`")
-            };
+            let mechanical_fix = super::repairs::ascii_byte_character_repair(&character, value);
             return self.issue_node(
                 SemanticRule::Form7,
                 node,
@@ -86,8 +80,9 @@ impl DeclarationInventory<'_> {
                 SemanticIssueKind::TextLengthMismatch {
                     declared_length,
                     byte_length,
-                    mechanical_fix: format!(
-                        "this text is {byte_length} bytes in UTF-8: write `Array<u8, {byte_length}>` where this array's type is declared, or change the text to {declared_length} bytes"
+                    mechanical_fix: super::repairs::text_length_repair(
+                        byte_length,
+                        declared_length,
                     ),
                 },
             );

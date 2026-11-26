@@ -24,6 +24,15 @@ pub(crate) enum ConditionalAlternative {
     Chain(NodeId),
 }
 
+/// [GRAM-4, GRAM-12] the written arm header, before resolution or typing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MatchArmHeader {
+    Variant(usize),
+    Constant(usize),
+    Literal(usize),
+    Else,
+}
+
 pub(crate) struct SyntaxView<'unit> {
     syntax: &'unit CanonicalSyntaxUnit,
     paths: OnceLock<Result<Vec<NodePath>, SyntaxViewFailure>>,
@@ -529,6 +538,28 @@ impl<'unit> SyntaxView<'unit> {
             terminal.start(),
             terminal.end(),
         ))
+    }
+
+    pub(crate) fn match_arm_header(
+        &self,
+        node: NodeId,
+    ) -> Result<MatchArmHeader, SyntaxViewFailure> {
+        if self.production(node)? != Production::Arm {
+            return Err(SyntaxViewFailure::InvalidCanonicalTree);
+        }
+        if let Some(token) = self.direct_token_with(node, TerminalPredicate::TypeIdentifier)? {
+            return Ok(MatchArmHeader::Variant(token));
+        }
+        if let Some(token) = self.direct_token_with(node, TerminalPredicate::Identifier)? {
+            return Ok(MatchArmHeader::Constant(token));
+        }
+        if let Some(token) = self.direct_token_with(node, TerminalPredicate::Literal)? {
+            return Ok(MatchArmHeader::Literal(token));
+        }
+        if self.has_fixed(node, crate::FixedTerminal::Else)? {
+            return Ok(MatchArmHeader::Else);
+        }
+        Err(SyntaxViewFailure::InvalidCanonicalTree)
     }
 
     pub(crate) fn direct_token_indices(&self, node: NodeId) -> Result<&[usize], SyntaxViewFailure> {

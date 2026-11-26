@@ -6,7 +6,7 @@ struct Node {
   next: Option<Box<Node>>;
 }
 
-fn clear(root: &Node, spare: &Node) -> result: unit writes(root.next) {
+fn wipe(root: &Node, spare: &Node) -> result: unit writes(root.next) {
   set root^.next = None<Box<Node>>();
   return unit;
 }
@@ -23,7 +23,7 @@ fn inspect(root: &Node) -> result: u64 writes(root) {
       }
     }
   }
-  clear(root: root, spare: cursor);
+  wipe(root: root, spare: cursor);
   return cursor^.value;
 }
 

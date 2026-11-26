@@ -755,14 +755,18 @@ fn classify_node(
         }
         // [TYPE-6] an arm label resolves against the scrutinee's already
         // known enum type, so it waits for the checker.
-        Production::Arm => add_single(
-            classified,
-            owner,
-            &names,
-            RawRoleKind::DeferredUse(DeferredUseRole::ArmVariant),
-            roles,
-            complete_counts,
-        )?,
+        Production::Arm if !names.is_empty() => {
+            let kind = match name_predicate(classified, names[0]) {
+                Some(TerminalPredicate::TypeIdentifier) => {
+                    RawRoleKind::DeferredUse(DeferredUseRole::ArmVariant)
+                }
+                Some(TerminalPredicate::Identifier) => {
+                    RawRoleKind::LexicalUse(LexicalUseRole::IntegerMatchValue)
+                }
+                _ => return Err(ResolutionCompilerFailure::InvalidRoleShape),
+            };
+            add_single(classified, owner, &names, kind, roles, complete_counts)?;
+        }
         // [EFF-1] `epbase := IDENT`: the reference parameter is the row's
         // root, with no source `^` suffix.
         Production::Epbase => add_single(
@@ -987,6 +991,14 @@ fn classify_node(
         // type [DIAG-1]; the subscript alternative owns only bracket
         // punctuation, its offset and endpoint atoms classifying through the
         // `atom` productions below it.
+        Production::HeldClause => add_all(
+            classified,
+            owner,
+            &names,
+            RawRoleKind::DeferredUse(DeferredUseRole::HeldParameter),
+            roles,
+            complete_counts,
+        )?,
         Production::Psuffix if !names.is_empty() => classify_projection_names(
             classified,
             owner,
@@ -999,7 +1011,10 @@ fn classify_node(
         )?,
         _ => {}
     }
-    if matches!(production, Production::Atom | Production::Cvalue) {
+    if matches!(
+        production,
+        Production::Atom | Production::Cvalue | Production::Arm
+    ) {
         for terminal in direct {
             add_generic_suffix(classified, owner, *terminal, roles)?;
         }
@@ -1601,18 +1616,11 @@ fn add_generic_suffix(
     let bytes = classified
         .token_bytes(token)
         .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?;
-    if bytes.len() < 3 || !matches!(&bytes[..2], b"0_" | b"1_") {
+    if !crate::syntax::terminal::is_generic_numeric_literal(bytes) {
         return Ok(());
     }
     let suffix = std::str::from_utf8(&bytes[2..])
         .map_err(|_| ResolutionCompilerFailure::InvalidNameEncoding)?;
-    if !suffix
-        .as_bytes()
-        .first()
-        .is_some_and(u8::is_ascii_uppercase)
-    {
-        return Ok(());
-    }
     let start = token
         .id()
         .start()

@@ -66,7 +66,7 @@ pub(super) fn keeps_context_group(function: &IrFunction) -> bool {
             matches!(
                 instruction,
                 IrInstruction::Define {
-                    operation: IrOperation::ContextStart { .. } | IrOperation::ContextJoin,
+                    operation: IrOperation::ContextStart { .. } | IrOperation::ContextJoin { .. },
                     ..
                 }
             )

@@ -1,0 +1,22 @@
+struct Pair {
+  left: u64;
+  right: u64;
+}
+
+interface CopyField {
+  fn copy_field(pair: &Pair) -> result: unit writes(pair) contract {
+    ensures pair^.right == entry(pair)^.left;
+  };
+}
+
+fn stay(actual_pair: &Pair) -> stayed: unit pure {
+  return unit;
+}
+
+binding NoCopy : CopyField {
+  copy_field = stay;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

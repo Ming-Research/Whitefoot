@@ -1,16 +1,15 @@
 alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
-fn main() -> status: ExitStatus pure {
-  let flag = True();
-  let other = False();
+fn conditionals(flag: Bool, other: Bool) -> code: u8 pure {
+  doc "Runs each conditional form on flag and other and returns 0 when every form selects the branch and delivers the value the conditions call for, or the code of the first form that did not.";
   let seen = False();
   if flag {
     set seen = True();
   }
   if seen {
   } else {
-    return exit_status(code: 1_u8);
+    return 1_u8;
   }
   let untouched = True();
   if other {
@@ -18,7 +17,7 @@ fn main() -> status: ExitStatus pure {
   }
   if untouched {
   } else {
-    return exit_status(code: 2_u8);
+    return 2_u8;
   }
   let taken = if flag {
     give True();
@@ -27,7 +26,7 @@ fn main() -> status: ExitStatus pure {
   }
   if taken {
   } else {
-    return exit_status(code: 3_u8);
+    return 3_u8;
   }
   let chained = if other {
     give False();
@@ -38,7 +37,14 @@ fn main() -> status: ExitStatus pure {
   }
   if chained {
   } else {
-    return exit_status(code: 4_u8);
+    return 4_u8;
   }
-  return exit_status(code: 0_u8);
+  return 0_u8;
+}
+
+fn main() -> status: ExitStatus pure {
+  let flag = True();
+  let other = False();
+  let code = conditionals(flag: flag, other: other);
+  return exit_status(code: code);
 }

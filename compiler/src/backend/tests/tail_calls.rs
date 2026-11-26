@@ -160,6 +160,16 @@ fn ineligible_unmarked_calls_keep_their_ordinary_lowering() {
             "walk",
         ),
         (
+            include_str!("../../../../tests/conformance/cases/fn10-neg-key-set-release.wf"),
+            "walk",
+            "walk",
+        ),
+        (
+            include_str!("../../../../tests/conformance/cases/fn10-neg-shared-release.wf"),
+            "walk",
+            "walk",
+        ),
+        (
             include_str!("../../../../tests/conformance/cases/fn10-neg-pending-release.wf"),
             "walk",
             "walk",
@@ -256,4 +266,72 @@ fn main() -> status: std::process::ExitStatus pure {
     assert!(output.status.success(), "{output:?}");
     assert!(output.stdout.is_empty(), "{output:?}");
     assert!(output.stderr.is_empty(), "{output:?}");
+}
+
+#[test]
+fn tail_release_rejections_name_the_live_reference_condition() {
+    for source in [
+        include_bytes!("../../../../tests/conformance/cases/fn10-neg-key-set-release.wf")
+            .as_slice(),
+        include_bytes!("../../../../tests/conformance/cases/fn10-neg-shared-release.wf").as_slice(),
+    ] {
+        let failure = compile_rejection(source);
+        assert_eq!(failure.rule_id(), Some("FN-10"));
+        assert!(
+            failure.to_string().contains(
+                "a live reference prevents releasing this owner before the musttail transfer"
+            ),
+            "{failure}"
+        );
+    }
+}
+
+#[test]
+fn unborrowed_key_set_is_released_before_the_tail_backedge() {
+    let source = include_bytes!("../../../../tests/conformance/cases/fn10-pos-key-set-release.wf");
+    for overlap in [OverlapLowering::Off, OverlapLowering::On] {
+        with_mutated_ir_lowering(source, overlap, |program| {
+            let walk = program
+                .functions()
+                .iter()
+                .find(|function| function.name() == "walk")
+                .expect("walk function");
+            let IrTerminator::Jump { target: entry, .. } = walk.blocks()[0].terminator() else {
+                panic!("prologue must enter the parameterized body");
+            };
+            let transfers = walk
+                .blocks()
+                .iter()
+                .skip(1)
+                .filter_map(|block| match block.terminator() {
+                    IrTerminator::Jump { target, drops, .. } if target == entry => Some(drops),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(transfers.len(), 1);
+            assert_eq!(
+                transfers[0]
+                    .iter()
+                    .filter(|drop| drop.ty() == IrType::KeySet)
+                    .count(),
+                1
+            );
+            let module = emit_llvm(program)
+                .expect("tail cleanup emits")
+                .into_string();
+            let body = emitted_function(&module, "walk");
+            let (_, following) = body
+                .split_once("call void @wf__key_set_free(")
+                .expect("the key set runtime store is released");
+            let branch = format!("br label %bb{}", entry.ordinal());
+            assert!(
+                following
+                    .lines()
+                    .skip(1)
+                    .take_while(|line| !line.ends_with(':'))
+                    .any(|line| line.trim() == branch),
+                "release must precede the tail backedge in the same block: {body}"
+            );
+        });
+    }
 }

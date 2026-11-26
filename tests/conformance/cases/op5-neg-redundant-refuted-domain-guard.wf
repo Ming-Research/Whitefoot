@@ -1,0 +1,9 @@
+fn main() -> status: std::process::ExitStatus pure {
+  doc "A guard around a refuted domain selects only its else edge.";
+  let x = 255_u8;
+  if x +defined 1_u8 {
+    let y = x + 1_u8;
+    return std::process::exit_status(code: y);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

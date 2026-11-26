@@ -1,0 +1,10 @@
+fn count_of(rows: &[Paged<u8>], index: u64) -> result: u64 reads(rows) contract {
+  requires index < rows^.len;
+} {
+  let n = &rows^[index].pages.len;
+  return n^;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

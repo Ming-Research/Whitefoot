@@ -1,0 +1,25 @@
+struct NumberState {
+  number: u64;
+}
+
+fn update_state(env: &NumberState) -> result: u64 writes(env) {
+  doc "The right-hand-side call changes the existing inline field through a whole-owner write row.";
+  set env^.number = 41_u64;
+  return 11_u64;
+}
+
+fn set_outer(env: &NumberState) -> result: unit writes(env) {
+  doc "An ordinary inline field target is evaluated after its right-hand side writes the owner contents.";
+  set env^.number = update_state(env: env);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "The field target, evaluated after the right-hand-side call stores 41, must commit 11.";
+  let env = NumberState(number: 7_u64);
+  let changed = set_outer(env: &env);
+  if env.number == 11_u64 {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}

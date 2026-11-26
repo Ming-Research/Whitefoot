@@ -173,6 +173,99 @@ fn an_entry_build_is_reused_across_spellings_of_the_same_paths() {
     assert_eq!(refused.kind(), driver::CompilationFailureKind::Source);
 }
 
+/// Real host spellings reuse a waiting entry's code while its wait constants
+/// and lock comments name the path each invocation used to read the record.
+#[test]
+fn a_waiting_entry_reuses_code_and_rebinds_each_host_spelling() {
+    let tree = SourceTree::new("waiting-build");
+    let root = tree.0.clone();
+    let directory = CacheDirectory::new("waiting-spellings-build");
+    let cache = directory.open();
+    write_tree(
+        &root,
+        &[
+            (
+                "app/modules.wfg",
+                "pkg: [std::process];\n\nentry app = pkg::main;\n",
+            ),
+            (
+                "app/module.wfm",
+                "public fn main() -> status: std::process::ExitStatus pure waits doc \"Waits on its guard.\";\n",
+            ),
+            (
+                "app/main.wf",
+                "fn main() -> status: std::process::ExitStatus pure waits {\n  let cell = shared_new::<u64>(value: 0_u64);\n  atomic value = &cell when value^ != 0_u64 {\n    set value^ = 2_u64;\n  }\n  return std::process::exit_status(code: 0_u8);\n}\n",
+            ),
+        ],
+    );
+    let absolute = root.join("app/modules.wfg");
+    let mut spellings = vec![
+        relative_to_working_directory(&absolute),
+        absolute.clone(),
+        root.join("app/../app/modules.wfg"),
+    ];
+    spellings.extend(symlinked_spelling(&root));
+    let build = |graph_path: &std::path::Path, cached| {
+        let (graph, sources) = spelled_program(graph_path);
+        let inputs = sources
+            .iter()
+            .map(|source| {
+                SourceInput::from_host_path(
+                    &source.logical_path,
+                    &source.display_path,
+                    &source.bytes,
+                )
+                .in_module(source.module, source.role)
+            })
+            .collect::<Vec<_>>();
+        let (module, reused) = driver::build_module_entry(
+            &graph,
+            &inputs,
+            driver::ModuleEntry::Named("app"),
+            CompilerLimits::default(),
+            OverlapLowering::Off,
+            cached,
+        )
+        .expect("the waiting entry builds");
+        (module.into_string(), reused, display_of(&sources, "main.wf"))
+    };
+    let mut counts = None;
+    let mut previous = Vec::new();
+    for (index, spelling) in spellings.iter().enumerate() {
+        let (module, reused, display) = build(spelling, Some(&cache));
+        assert_eq!(reused, index != 0, "{spelling:?}");
+        assert_eq!(module, build(spelling, None).0, "{spelling:?}");
+        let description = format!(
+            "waits for the guard of the atomic statement at {display}:3:3\0"
+        );
+        let literal = description
+            .bytes()
+            .map(|byte| format!("\\{byte:02X}"))
+            .collect::<String>();
+        assert!(module.contains(&literal), "{spelling:?}: {module}");
+        assert!(
+            module.contains(&format!("{display}:3:3")),
+            "the lock comment also relocates: {module}"
+        );
+        for earlier in &previous {
+            let old_description = format!(
+                "waits for the guard of the atomic statement at {earlier}:3:3\0"
+            );
+            let old_literal = old_description
+                .bytes()
+                .map(|byte| format!("\\{byte:02X}"))
+                .collect::<String>();
+            assert!(
+                !module.contains(&old_literal),
+                "a former wait path remains: {module}"
+            );
+        }
+        previous.push(display);
+        let first_counts = counts.get_or_insert(cache.receipt_counts());
+        assert_eq!(cache.receipt_counts(), *first_counts, "no frontend reruns");
+    }
+}
+
 /// [MOD-8, DIAG-1] a rejection prints the paths the invocation names its
 /// records by, never the paths of the invocation that recorded it: the same
 /// rejected graph checked through a relative path, an absolute path, an

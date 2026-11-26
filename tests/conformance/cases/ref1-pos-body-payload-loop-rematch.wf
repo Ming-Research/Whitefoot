@@ -1,0 +1,73 @@
+fn rematch_counted(cell: &Option<u64>) -> result: unit writes(cell) {
+  doc "Each counted iteration establishes its own variant before a fresh payload read and an overlapping write.";
+  for (round in 0_u64..2_u64) {
+    match &cell^ {
+      None() => {
+        return unit;
+      }
+      Some(..) => {
+        let direct = cell^.Some.value;
+        let next = direct +wrap 1_u64;
+        set cell^.Some.value = next;
+      }
+    }
+  }
+  return unit;
+}
+
+fn rematch_ordinary(cell: &Option<u64>) -> result: u64 writes(cell) {
+  doc "A labeled continue reaches another fresh match, while the selected read survives only as copied result data.";
+  let round = 0_u64;
+  let observed = 0_u64;
+  loop @repeat {
+    match &cell^ {
+      None() => {
+        return 0_u64;
+      }
+      Some(..) => {
+        let direct = cell^.Some.value;
+        let next = direct +wrap 1_u64;
+        set cell^.Some.value = next;
+        set observed = direct;
+      }
+    }
+    set round = round +wrap 1_u64;
+    if round == 1_u64 {
+      continue @repeat;
+    }
+    break @repeat;
+  }
+  return observed;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Two fresh matches in each loop must read 7 then 8 and leave 9 in the selected payload.";
+  let counted = Some<u64>(value: 7_u64);
+  let changed = rematch_counted(cell: &counted);
+  match &counted {
+    None() => {
+      return std::process::exit_status(code: 1_u8);
+    }
+    Some(value: observed) => {
+      if observed^ != 9_u64 {
+        return std::process::exit_status(code: 2_u8);
+      }
+    }
+  }
+  let ordinary = Some<u64>(value: 7_u64);
+  let last = rematch_ordinary(cell: &ordinary);
+  if last != 8_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  match &ordinary {
+    None() => {
+      return std::process::exit_status(code: 4_u8);
+    }
+    Some(value: observed) => {
+      if observed^ == 9_u64 {
+        return std::process::exit_status(code: 0_u8);
+      }
+      return std::process::exit_status(code: 5_u8);
+    }
+  }
+}

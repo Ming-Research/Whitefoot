@@ -1,0 +1,52 @@
+alias Reserve = std::snapshot::Reserve;
+alias Job = std::snapshot::Job;
+alias CreateError = std::snapshot::CreateError;
+
+fn preparation(scratch: u64, output: u64) -> result: unit pure waits {
+  let prepared = std::snapshot::prepare(scratch_bytes: scratch, output_bytes: output);
+  match move prepared {
+    Ok(value: reserved) => {
+      std::snapshot::discard(reserve: move reserved);
+    }
+    Err(error: preparation_error) => {
+    }
+  }
+  return unit;
+}
+
+fn collect(job: Job) -> result: std::snapshot::Outcome pure waits {
+  let bytes = array_filled::<u8, 1>(value: 0_u8);
+  let deadline = None<std::time::Instant>();
+  let watch = std::time::cancel_never();
+  let read_result = std::snapshot::read(job: &job, out: &bytes[0_u64..1_u64], deadline: deadline, cancel: &watch);
+  match read_result {
+    Ok(value: count) => {
+    }
+    Err(error: read_error) => {
+      match read_error {
+        SnapshotReadFailed() => {
+        }
+        DeadlinePassed() => {
+        }
+        Cancelled() => {
+        }
+      }
+    }
+  }
+  return std::snapshot::finish(job: move job);
+}
+
+fn cancel(job: Job) -> result: std::snapshot::Outcome pure waits {
+  return std::snapshot::abort(job: move job);
+}
+
+fn creation(created: Result<Job, CreateError>) -> result: unit pure waits {
+  match move created {
+    Ok(value: running) => {
+      let outcome = std::snapshot::abort(job: move running);
+    }
+    Err(error: creation_error) => {
+    }
+  }
+  return unit;
+}

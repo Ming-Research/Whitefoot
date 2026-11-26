@@ -1,0 +1,13 @@
+nocopy struct Holder {
+  value: u8;
+}
+
+fn twice<T: copy>(value: T) -> (first: T, second: T) pure {
+  return value, value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let holder = Holder(value: 3_u8);
+  let (first, second) = twice::<Holder>(value: move holder);
+  return std::process::exit_status(code: 0_u8);
+}

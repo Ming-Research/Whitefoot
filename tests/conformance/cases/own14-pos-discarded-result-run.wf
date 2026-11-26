@@ -7,12 +7,10 @@ fn source(x: &i32) -> result: i32 reads(x) {
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "Discarding the returned owned copy leaves the underlying scalar unchanged and permits its later ordinary read.";
+  doc "Discarding the returned owned copy leaves the underlying scalar unchanged and permits its later ordinary read, which is the exit status 5.";
   let v = 5_i32;
   let h = &v;
   source(x: h);
-  if v != 5_i32 {
-    return exit_status(code: 1_u8);
-  }
-  return exit_status(code: 0_u8);
+  let code = cvt::<i32, u8>(v);
+  return exit_status(code: code);
 }

@@ -1,5 +1,5 @@
 fn main() -> status: std::process::ExitStatus pure {
-  doc "Zero capacity, unchanged capacity and growth preserve the Slots window contract; contents are checked after growth across page boundaries.";
+  doc "Zero capacity, unchanged capacity and growth preserve the Slots window contract; contents are checked after growth across page boundaries, and the final capacity 8193 less 8151 is the exit status 42.";
   let p = box_paged_new::<u64>(capacity: 0_u64);
   grow_paged(cell: &p, capacity: 0_u64);
   grow_paged(cell: &p, capacity: 1_u64);
@@ -14,9 +14,8 @@ fn main() -> status: std::process::ExitStatus pure {
   }
   grow_paged(cell: &p, capacity: 8193_u64);
   invariant kept: p.inner.len == 1025_u64;
-  if p.inner.cap != 8193_u64 {
-    return std::process::exit_status(code: 1_u8);
-  }
+  let capacity = p.inner.cap;
+  let capacity_code = capacity - 8151_u64;
   if p.inner[0_u64] != 7_u64 {
     return std::process::exit_status(code: 2_u8);
   }
@@ -37,5 +36,6 @@ fn main() -> status: std::process::ExitStatus pure {
   if p.inner[0_u64] != 19_u64 {
     return std::process::exit_status(code: 6_u8);
   }
-  return std::process::exit_status(code: 0_u8);
+  let code = cvt::<u64, u8>(capacity_code);
+  return std::process::exit_status(code: code);
 }

@@ -1,0 +1,30 @@
+fn replace_box(cell: &Option<Box<u64>>) -> result: u64 reads(cell), writes(cell.Some.value) {
+  doc "The right-hand-side call replaces the Box payload and frees its old cell.";
+  match &cell^ {
+    None() => {
+      return 0_u64;
+    }
+    Some(value: boxed) => {
+      let replacement = box_new::<u64>(value: 41_u64);
+      set boxed^ = move replacement;
+      return 11_u64;
+    }
+  }
+}
+
+fn write_after_box_replacement(cell: &Option<Box<u64>>) -> result: unit writes(cell) {
+  doc "SET-1 evaluates the target below Box.inner after the right-hand side, whose payload write ends the arm's variant fact, so the payload selection is refused.";
+  match &cell^ {
+    None() => {
+      return unit;
+    }
+    Some(..) => {
+      set cell^.Some.value.inner = replace_box(cell: cell);
+      return unit;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

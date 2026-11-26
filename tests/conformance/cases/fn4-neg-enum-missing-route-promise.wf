@@ -1,0 +1,31 @@
+enum RefinementFields {
+  Pair(left: u64, right: u64);
+}
+
+interface Provider {
+  fn produce(value: u64) -> result: RefinementFields pure contract {
+    ensures when Pair(left: payload): payload <= 7_u64;
+  };
+}
+
+fn choose(value: u64) -> result: RefinementFields pure {
+  return RefinementFields::Pair(left: value, right: 7_u64);
+}
+
+binding Wrong : Provider {
+  produce = choose;
+}
+
+fn through<interface Provider>(value: u64) -> result: u8 pure {
+  let made = Provider::produce(value: value);
+  match made {
+    Pair(left: selected, right: other) => {
+      return cvt::<u64, u8>(selected);
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let code = through::<Wrong>(value: 300_u64);
+  return std::process::exit_status(code: code);
+}

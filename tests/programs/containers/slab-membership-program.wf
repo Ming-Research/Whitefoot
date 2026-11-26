@@ -69,14 +69,14 @@ fn membership_read(slab: &Slab<Box<MembershipValue>, 1, 1>, handle: SlabHandle) 
 fn membership_try_delete(store: &MembershipStore, handle: SlabHandle) -> outcome: Result<Option<Box<MembershipValue>>, unit> reads(store.first), reads(store.second), writes(store.objects) {
   doc "This one-object composite owns both indexes and refuses deletion while either membership remains. Its ordinary fields and constructors are not unforgeable; the fixture verifies this protocol, not every separately authored mutation of MembershipStore.";
   match store^.first {
-    Some(value: held) => {
+    Some(value: observed_state) => {
       return Err<Option<Box<MembershipValue>>, unit>(error: unit);
     }
     None() => {
     }
   }
   match store^.second {
-    Some(value: held) => {
+    Some(value: observed_state) => {
       return Err<Option<Box<MembershipValue>>, unit>(error: unit);
     }
     None() => {

@@ -1,0 +1,4 @@
+pkg::relay: [];
+pkg: [pkg::relay, std::process];
+
+entry main = pkg::main;

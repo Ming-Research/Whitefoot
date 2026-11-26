@@ -2,13 +2,11 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn main() -> status: ExitStatus pure {
-  doc "The other half of the same sentence. A window operation's own relations are what the caller holds afterwards, so the second placement's requirement is discharged from what the first published rather than from a stale extent, and the cap - len value the writer computes is the free capacity the two placements left.";
+  doc "The other half of the same sentence. A window operation's own relations are what the caller holds afterwards, so the second placement's requirement is discharged from what the first published rather than from a stale extent, and the cap - len value the writer computes is the free capacity the two placements left, which the program returns as its exit status.";
   let run = slots_new::<u8, 8>();
   place_back(window: &run, value: 1_u8);
   place_back(window: &run, value: 2_u8);
   let left = run.cap - run.len;
-  if left == 6_u64 {
-    return exit_status(code: 0_u8);
-  }
-  return exit_status(code: 1_u8);
+  let code = cvt::<u64, u8>(left);
+  return exit_status(code: code);
 }

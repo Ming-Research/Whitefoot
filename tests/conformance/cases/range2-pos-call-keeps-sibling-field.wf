@@ -1,0 +1,30 @@
+struct Pair {
+  f: u64;
+  g: u64;
+}
+
+fn set_g(row: &Pair) -> result: unit writes(row.g) {
+  doc "Writes only g; EFF-5 substitutes that field below the element actual.";
+  set row^.g = 1_u64;
+  return unit;
+}
+
+fn need_small(rows: &[Pair]) -> result: unit pure contract {
+  requires forall small(k in 0_u64..rows^.len): rows^[k].f <= 7_u64;
+} {
+  return unit;
+}
+
+fn probe(rows: &[Pair]) -> result: unit writes(rows) contract {
+  requires forall held_f(k in 0_u64..rows^.len): rows^[k].f <= 7_u64;
+  requires 1_u64 <= rows^.len;
+} {
+  doc "RANGE-2 keeps each f projection after the call writes rows[0].g, so RANGE-3 proves need_small's requirement.";
+  set_g(row: &rows^[0_u64]);
+  need_small(rows: rows);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -38,14 +38,19 @@ use super::*;
 use std::rc::Rc;
 /// Which term one evaluated value's [ENT-3] image is established on: the
 /// place a `let` binder introduces, the compiler-owned commit value of one
-/// `set` or `give` occurrence, or a checked integer conversion's private success
-/// payload [ENT-2, ENT-5].
+/// `set` or `give` occurrence, the compiler-owned returned value of one
+/// result ordinal at a `return`, or a checked integer conversion's private
+/// success payload [ENT-2, ENT-5, FN-9].
 /// These destinations use the same admitted source image; a conditional
 /// payload interprets it only inside its own success context.
 #[derive(Clone, Copy)]
 pub(super) enum ValueImage<'a> {
     Binding(BindingId),
     Commit(&'a crate::NodePath),
+    Returned {
+        statement: &'a crate::NodePath,
+        ordinal: u32,
+    },
     ResultPayload(TermId),
 }
 
@@ -294,8 +299,8 @@ impl Judging<'_, '_, '_> {
 
     /// [ENT-3] one body goal entering as a positive opaque fact, with its
     /// exact comparison-root projection and its signed decomposition: a
-    /// requirement at body entry [ENT-3.S4], and a type invariant at an
-    /// atomic block's entry [TYPE-11].
+    /// requirement at body entry [ENT-3.S4], a type invariant at an
+    /// atomic block's entry [TYPE-11], or a selected integer value [ENT-3.S17].
     pub(super) fn establish_body_goal(
         &mut self,
         goal: GoalExpression,
@@ -511,6 +516,10 @@ impl Vocabulary {
         match destination {
             ValueImage::Binding(binding) => self.writable_place_term(binding, &[], value.ty()),
             ValueImage::Commit(node_path) => self.commit_value_term(node_path, value),
+            ValueImage::Returned { statement, ordinal } => {
+                let ty = fragment_type(value.ty())?;
+                Some(self.returned_value_term(statement, ordinal, ty))
+            }
             ValueImage::ResultPayload(payload) => Some(payload),
         }
     }
@@ -538,6 +547,41 @@ impl Vocabulary {
     ) -> Option<TermId> {
         self.terms.interned(&commit_value_kind(node_path, value)?)
     }
+
+    /// [ENT-2, FN-9] the returned value of one result ordinal at one
+    /// `return`, interned on first use. A return whose expression formed no
+    /// image still names this fresh term, which then carries only its type's
+    /// standing bounds.
+    pub(super) fn returned_value_term(
+        &mut self,
+        statement: &crate::NodePath,
+        ordinal: u32,
+        ty: IntegerType,
+    ) -> TermId {
+        self.terms.intern(TermKind::ReturnedValue {
+            return_path: statement.components().to_vec(),
+            ordinal,
+            ty,
+        })
+    }
+}
+
+/// [ENT-3] whether one fragment-integer expression is a computed value that
+/// an ordinary `let` relates to its operands: an exact integer conversion
+/// [ENT-3.S5] or one row of the [ENT-3.S7] table. A `give` binds such an
+/// expression to its given value [GIVE-1] and a `return` to its returned
+/// value [FN-9]; a place, literal or named const is handled as itself.
+pub(crate) fn computed_integer_image(value: &CheckedExpression) -> bool {
+    fragment_type(value.ty()).is_some()
+        && (matches!(
+            value,
+            CheckedExpression::NumericConversion {
+                mode: CheckedConversionMode::Exact,
+                source: CheckedNumericType::Integer(_),
+                destination: CheckedNumericType::Integer(_),
+                ..
+            }
+        ) || operation_shape(value).is_some())
 }
 
 fn commit_value_kind(node_path: &crate::NodePath, value: &CheckedExpression) -> Option<TermKind> {
@@ -626,12 +670,14 @@ impl Reasoning<'_, '_, '_> {
         state: &mut ProofFlowState,
     ) -> Option<MeasureCarry> {
         let source = self.input.placement_source_place(value)?;
+        let source_consumed = self.input.placement_consumes_source(value, &source);
         self.mint_measure_datums(
             node_path,
             ordinal,
             MeasurePlacement::Rebind,
             source,
             value.ty(),
+            source_consumed,
             state,
         )
     }
@@ -702,6 +748,21 @@ impl Input<'_, '_> {
         }))
         .then_some(source)
     }
+
+    /// Only an actual root consume makes a placement's source unavailable
+    /// to later comparisons. Copies and checked read wrappers keep it live.
+    fn placement_consumes_source(
+        &self,
+        value: &CheckedExpression,
+        source: &ResolvedPlace,
+    ) -> bool {
+        let mut kills = Vec::new();
+        self.collect_expression_kills(value, &mut kills);
+        kills.iter().any(|kill| {
+            matches!(kill, KillEvent::Consume { binding, .. }
+                if source.root == PlaceRoot::Binding(*binding))
+        })
+    }
 }
 
 impl Reasoning<'_, '_, '_> {
@@ -718,8 +779,8 @@ impl Reasoning<'_, '_, '_> {
     /// the source.
     ///
     /// `ordinal` separates the placements one statement carries — a
-    /// construct's field, a destructuring's binder, a target list's target,
-    /// the displaced and the stored halves of one `replace`.
+    /// construct's field, a destructuring's binder, or a target list's target.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn mint_measure_datums(
         &mut self,
         node_path: &crate::NodePath,
@@ -727,6 +788,7 @@ impl Reasoning<'_, '_, '_> {
         placement: MeasurePlacement,
         source: ResolvedPlace,
         ty: CheckedType,
+        source_consumed: bool,
         state: &mut ProofFlowState,
     ) -> Option<MeasureCarry> {
         let mut carried = Vec::new();
@@ -737,6 +799,29 @@ impl Reasoning<'_, '_, '_> {
             let constant = super::type_constant(measured_type);
             let mut place = source.clone();
             place.path.extend(path.iter().copied());
+            // [MSR-3] an unmentioned descendant of a consumed source has
+            // only standing facts, which hold at its destination without
+            // transport. A surviving source still needs its equality to the
+            // destination, including when its extent has no standing term.
+            // Any tracked family member retains the whole family's transport.
+            if source_consumed
+                && ![
+                    CheckedMeasure::Length,
+                    CheckedMeasure::Capacity,
+                    CheckedMeasure::Head,
+                    CheckedMeasure::Pages,
+                    CheckedMeasure::Bytes,
+                ]
+                .into_iter()
+                .any(|measure| {
+                    self.vocabulary
+                        .terms
+                        .interned(&TermKind::Measure(measure, place.clone()))
+                        .is_some()
+                })
+            {
+                continue;
+            }
             let event = self
                 .vocabulary
                 .proof_event(FlowEventKind::S5, Some(node_path));
@@ -1521,9 +1606,9 @@ impl Analyzer<'_, '_> {
                     .establish_operation_fact(state, term, result, low, event, &parents);
             }
         }
-        // [ENT-3.S7] an unsigned exact division or right shift at a binding
-        // or commit also captures its value images; a conditional payload
-        // captures none.
+        // [ENT-3.S7] an unsigned exact division or right shift at a binding,
+        // commit or returned value also captures its value images; a
+        // conditional payload captures none.
         if !matches!(shape.row, Row::Divide | Row::ShiftRight { wrap: false })
             || shape.operand.signed()
             || matches!(destination, ValueImage::ResultPayload(_))
@@ -1667,6 +1752,54 @@ impl Reasoning<'_, '_, '_> {
     /// relation and goal origins of a `Bool` match. A checked row's success
     /// facts reach its `Ok` arm through the scrutinee's conditional Result
     /// context instead [ENT-5].
+    pub(super) fn match_arm_facts(
+        &mut self,
+        scrutinee: &CheckedExpression,
+        match_type: CheckedMatchType,
+        arms: &[CheckedMatchArm],
+        state: &FactState,
+    ) -> ArmFacts {
+        if let CheckedMatchType::Enum(enum_type) = match_type {
+            return self.arm_facts(scrutinee, enum_type, state);
+        }
+        let Some(expression) = self.input.admitted_value_goal_expression(scrutinee) else {
+            return ArmFacts::default();
+        };
+        let mut values = arms
+            .iter()
+            .filter_map(|arm| match arm.selection {
+                CheckedMatchSelection::Integer(value) => Some(value),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        values.sort_unstable();
+        values.dedup();
+        ArmFacts {
+            integer: Some((expression, values.into())),
+            node_path: expression_node_path(scrutinee).cloned(),
+            ..ArmFacts::default()
+        }
+    }
+
+    /// An exclusion projects only a term (including a widening view), never
+    /// a general affine spelling such as `x + 1` [ENT-4].
+    pub(super) fn exclusion_projection(
+        &mut self,
+        expression: &GoalExpression,
+    ) -> Option<(TermId, i128)> {
+        if let Some(value) = self.input.goal_integer_constant(expression) {
+            return Some((ZERO, value));
+        }
+        if let GoalExpression::Operation { row, arguments, .. } = expression
+            && super::super::super::goal::widening_integer_conversion(row)
+            && let [argument] = arguments.as_slice()
+        {
+            return self.exclusion_projection(argument);
+        }
+        let term = self.goal_operand(expression)?;
+        Some(self.vocabulary.terms.constant_part(term))
+    }
+
     pub(super) fn arm_facts(
         &mut self,
         scrutinee: &CheckedExpression,
@@ -1676,12 +1809,14 @@ impl Reasoning<'_, '_, '_> {
         let node_path = expression_node_path(scrutinee).cloned();
         if enum_type != CheckedEnumType::Bool {
             return ArmFacts {
+                integer: None,
                 node_path,
                 comparison: None,
                 goals: Vec::new(),
             };
         }
         ArmFacts {
+            integer: None,
             node_path,
             comparison: self.scrutinee_relation(scrutinee, state),
             goals: self.goal_origin_set(scrutinee, state),
@@ -1803,13 +1938,7 @@ impl Vocabulary {
                 value: CheckedValue::Integer { .. },
                 ..
             } => DeliveryCarrier::Evaluated,
-            CheckedExpression::NumericConversion {
-                mode: CheckedConversionMode::Exact,
-                source: CheckedNumericType::Integer(_),
-                destination: CheckedNumericType::Integer(_),
-                ..
-            } => DeliveryCarrier::Evaluated,
-            _ if operation_shape(value).is_some() => DeliveryCarrier::Evaluated,
+            _ if computed_integer_image(value) => DeliveryCarrier::Evaluated,
             _ => return None,
         };
         Some((carrier, fragment))
@@ -2015,8 +2144,7 @@ impl Vocabulary {
         let mut image = FactState::new();
         for (relation, parent) in carried {
             if let Relation::Bound { left, right, bound } = relation {
-                let through_zero = if receiver_term(&self.terms, left, receiver) && right != ZERO
-                {
+                let through_zero = if receiver_term(&self.terms, left, receiver) && right != ZERO {
                     zero_bounds
                         .get(&(left, ZERO))
                         .copied()
@@ -2851,7 +2979,16 @@ impl Reasoning<'_, '_, '_> {
         } else {
             MeasurePlacement::Rebind
         };
-        self.mint_measure_datums(node_path, ordinal, placement, source, value.ty(), state)
+        let source_consumed = self.input.placement_consumes_source(value, &source);
+        self.mint_measure_datums(
+            node_path,
+            ordinal,
+            placement,
+            source,
+            value.ty(),
+            source_consumed,
+            state,
+        )
     }
 
     /// [MSR-3] the construct placement: the datums one `construct`'s field
@@ -2938,12 +3075,14 @@ impl Reasoning<'_, '_, '_> {
             let Some(source) = self.input.placement_source_place(field) else {
                 continue;
             };
+            let source_consumed = self.input.placement_consumes_source(field, &source);
             if let Some(carry) = self.mint_measure_datums(
                 node_path,
                 ordinal,
                 MeasurePlacement::Construct,
                 source,
                 field.ty(),
+                source_consumed,
                 state,
             ) {
                 carried.push((destination, carry));
@@ -2975,10 +3114,9 @@ impl Reasoning<'_, '_, '_> {
     /// [MSR-3] the payload placement: the datums a `match` over an own enum
     /// place carries out of that place's payload.
     ///
-    /// The `match` consumes the scrutinee, so a measure of the payload dies
-    /// with it; the datum minted here is the value that measure had
-    /// immediately before the consume, and the arm binder that names the
-    /// payload receives it on its own arm.
+    /// A consuming `match` kills the payload's source measures; a copying
+    /// `match` keeps them. The datum retains the measure's pre-transfer value,
+    /// and the arm binder receives it on its own arm in either case.
     pub(super) fn mint_payload_placements(
         &mut self,
         scrutinee: &CheckedExpression,
@@ -2988,6 +3126,7 @@ impl Reasoning<'_, '_, '_> {
         let Some(base) = self.input.placement_source_place(scrutinee) else {
             return Vec::new();
         };
+        let source_consumed = self.input.placement_consumes_source(scrutinee, &base);
         let Some(node_path) = scrutinee.carrier() else {
             return Vec::new();
         };
@@ -3023,6 +3162,7 @@ impl Reasoning<'_, '_, '_> {
                     MeasurePlacement::Payload,
                     source,
                     field.ty,
+                    source_consumed,
                     state,
                 ) {
                     carried.push((field_ordinal, carry));
@@ -3058,6 +3198,7 @@ impl Reasoning<'_, '_, '_> {
         let Some(base) = self.input.placement_source_place(value) else {
             return Vec::new();
         };
+        let source_consumed = self.input.placement_consumes_source(value, &base);
         let mut carried = Vec::new();
         // [MSR-3] the destructuring placement's source is the field the
         // binder names, which the rest marker makes a written ordinal rather
@@ -3072,6 +3213,7 @@ impl Reasoning<'_, '_, '_> {
                 MeasurePlacement::Destructuring,
                 source,
                 *ty,
+                source_consumed,
                 state,
             ) {
                 carried.push((ordinal, carry));
@@ -3252,6 +3394,7 @@ impl Analyzer<'_, '_> {
             affine: AffineFlowState::default(),
             written: source.written.clone(),
             measure_kills: source.measure_kills.clone(),
+            lost_headers: source.lost_headers.clone(),
             continuing: Vec::new(),
         };
         // The forward substitution happens above before the ordinary edge
@@ -3337,9 +3480,12 @@ impl Analyzer<'_, '_> {
                 &self.vocabulary.goals,
                 &mut self.vocabulary.derivations,
             );
-            let fallback =
-                self.vocabulary
-                    .receiver_delivery_state(&ordinary, context.statement, receiver, event);
+            let fallback = self.vocabulary.receiver_delivery_state(
+                &ordinary,
+                context.statement,
+                receiver,
+                event,
+            );
             delivered.merge_relation_candidates_from(&fallback, &self.vocabulary.derivations);
         }
         let mut image = ProofFlowState {
@@ -3350,6 +3496,7 @@ impl Analyzer<'_, '_> {
             affine: AffineFlowState::default(),
             written: source.written.clone(),
             measure_kills: source.measure_kills.clone(),
+            lost_headers: source.lost_headers.clone(),
             continuing: Vec::new(),
         };
         self.kill_scopes_to(&mut image, context.scope_depth);

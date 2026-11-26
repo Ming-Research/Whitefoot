@@ -1,0 +1,13 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn main() -> status: ExitStatus pure {
+  doc "SET-1, OP-4: the right-hand side runs first. remove_at leaves one element, so the target v[1_u64], evaluated after it, is out of bounds and its subscript is refused. Evaluating the target first, as before, wrote slot 1 beyond the new length and released the stale copy of the box remove_at moved to slot 0, a double free.";
+  let v = slots_new::<Box<u64>, 4>();
+  let first = box_new::<u64>(value: 1_u64);
+  place_back(window: &v, value: move first);
+  let second = box_new::<u64>(value: 2_u64);
+  place_back(window: &v, value: move second);
+  set v[1_u64] = remove_at(window: &v, index: 0_u64);
+  return exit_status(code: 0_u8);
+}

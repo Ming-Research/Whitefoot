@@ -1,0 +1,7 @@
+struct VerdictHolder {
+  verdict: DecisionCell;
+}
+
+fn freeze(holder: VerdictHolder) -> result: Frozen<VerdictHolder> pure {
+  return frozen_new::<VerdictHolder>(value: move holder);
+}

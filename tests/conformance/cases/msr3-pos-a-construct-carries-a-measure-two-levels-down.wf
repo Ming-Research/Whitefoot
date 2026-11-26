@@ -15,11 +15,6 @@ fn main() -> status: ExitStatus pure {
   place_back(window: &made, value: 1_u32);
   let inner = Inner(samples: move made);
   let outer = Outer(inner: move inner);
-  let size = outer.inner.samples.len;
-  if size == 1_u64 {
-  } else {
-    return exit_status(code: 2_u8);
-  }
   let first = outer.inner.samples[0_u64];
   if first == 1_u32 {
   } else {

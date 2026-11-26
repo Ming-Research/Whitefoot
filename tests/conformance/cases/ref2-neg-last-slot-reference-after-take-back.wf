@@ -1,0 +1,16 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn probe(window: &Slots<u64, 8>) -> result: u64 writes(window) contract {
+  requires window^.len >= 1_u64;
+} {
+  doc "The direct take_back call invalidates the last-slot reference under OP-10; the captured index also lies outside the decreased filled window.";
+  let last_index = window^.len - 1_u64;
+  let last = &window^[last_index];
+  let taken = take_back(window: window);
+  return last^;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

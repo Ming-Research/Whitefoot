@@ -31,14 +31,6 @@ fn main() -> status: ExitStatus pure {
   let node = Node(len: 3_u64, next: 4_u64);
   let filled = node.len;
   let last = node.next;
-  if filled == 3_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
-  if last == 4_u64 {
-  } else {
-    return exit_status(code: 2_u8);
-  }
   let inner = Inner(len: 7_u64);
   let outer = Outer(next: inner);
   let seen = read_nested(value: &outer);
@@ -51,9 +43,10 @@ fn main() -> status: ExitStatus pure {
   let windows = Windows(filled: move field);
   place_back(window: &windows.filled.len, value: 9_u64);
   let count = windows.filled.len.len;
-  if count == 1_u64 {
-  } else {
-    return exit_status(code: 4_u8);
-  }
-  return exit_status(code: 0_u8);
+  let last_tens = last * 10_u64;
+  let count_hundreds = count * 100_u64;
+  let partial = filled + last_tens;
+  let code = partial + count_hundreds;
+  let status_code = cvt::<u64, u8>(code);
+  return exit_status(code: status_code);
 }

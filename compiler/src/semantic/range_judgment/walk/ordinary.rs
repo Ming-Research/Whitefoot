@@ -6,6 +6,27 @@ use super::*;
 type WrittenInstance = (FactId, Vec<Linear>, Vec<Linear>);
 type Written = Vec<WrittenInstance>;
 
+/// Each comparison's read origins, kept outside the solver's atom identity.
+pub(super) struct GoalProof {
+    pub(super) literals: Vec<Literal>,
+    pub(super) reads: Vec<Vec<facts::ReadProvenance>>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum GoalReads<'a> {
+    Shared(&'a [facts::ReadProvenance]),
+    PerComparison(&'a [Vec<facts::ReadProvenance>]),
+}
+
+impl GoalReads<'_> {
+    fn is_empty(self) -> bool {
+        match self {
+            Self::Shared(reads) => reads.is_empty(),
+            Self::PerComparison(reads) => reads.iter().all(Vec::is_empty),
+        }
+    }
+}
+
 /// Forming a selected goal can fail before the solver sees it.
 #[derive(Clone, Copy)]
 pub(super) enum GoalFailure {
@@ -29,6 +50,7 @@ impl Walker<'_> {
         use super::super::super::places::CapturedTerm;
         let parameter = function.parameters.get(ordinal)?;
         let mut value = values.get(ordinal)?.clone();
+        self.read_goal_argument(ordinal);
         let mut selected_type = parameter.ty;
         let mut range_referent = parameter.mode.is_range();
         // Only the formal reference's first dereference selects the actual
@@ -51,6 +73,7 @@ impl Walker<'_> {
         for projection in projections {
             let index = match projection {
                 GoalProjection::FormalSubscript { ordinal } => {
+                    self.read_goal_argument(*ordinal as usize);
                     match values.get(*ordinal as usize)? {
                         Value::Int(value) => Some(value.clone()),
                         _ => return None,
@@ -63,6 +86,7 @@ impl Walker<'_> {
                             .parameters
                             .iter()
                             .position(|parameter| parameter.binding == binding)?;
+                        self.read_goal_argument(ordinal);
                         let Value::Int(value) = values.get(ordinal)? else {
                             return None;
                         };
@@ -79,7 +103,10 @@ impl Walker<'_> {
                         };
                         value
                     }
-                    CapturedTerm::Superseded(_) | CapturedTerm::Opaque => return None,
+                    CapturedTerm::Superseded(_)
+                    | CapturedTerm::Place(_)
+                    | CapturedTerm::SupersededPlace(_)
+                    | CapturedTerm::Opaque => return None,
                 }),
                 _ => None,
             };
@@ -148,6 +175,7 @@ impl Walker<'_> {
                         container,
                         indices,
                         projection: Some(mut projection),
+                        barrier,
                     }),
                     step,
                 ) => {
@@ -169,6 +197,7 @@ impl Walker<'_> {
                         container,
                         indices,
                         projection: Some(projection),
+                        barrier,
                     })
                 }
                 (Value::Owned(location), step) => Value::Owned(location.child(step)),
@@ -195,16 +224,14 @@ impl Walker<'_> {
                     container,
                     indices,
                     projection: Some(projection),
+                    barrier,
                 }),
                 CheckedType::Integer(ty),
             ) => {
                 let version = state.version(&mut self.world, container);
-                Some(Value::Int(self.world.read(
-                    version,
-                    indices,
-                    projection,
-                    Some(ty),
-                )))
+                let value = self.world.read(version, indices, projection, Some(ty));
+                self.record_read_provenance(&value, barrier.as_ref());
+                Some(Value::Int(value))
             }
             (value, _) => Some(value),
         }
@@ -231,6 +258,7 @@ impl Walker<'_> {
                     container,
                     indices,
                     projection,
+                    ..
                 }) => Some(Target::Element {
                     container: *container,
                     indices: indices.clone(),
@@ -247,19 +275,23 @@ impl Walker<'_> {
                 container,
                 mut prefix,
                 offset,
+                barrier,
+                projection,
                 ..
             }) => {
                 prefix.push(offset.plus(&index)?);
                 Value::Ref(View::Element {
                     container,
                     indices: prefix,
-                    projection: Some(Vec::new()),
+                    projection: Some(projection),
+                    barrier,
                 })
             }
             Value::Ref(View::Element {
                 container,
                 mut indices,
                 projection: Some(mut projection),
+                barrier,
             }) => {
                 projection.push(CheckedRangeProjection::Index(indices.len() as u32));
                 indices.push(index);
@@ -267,6 +299,7 @@ impl Walker<'_> {
                     container,
                     indices,
                     projection: Some(projection),
+                    barrier,
                 })
             }
             Value::Owned(location) | Value::Ref(View::Place(location)) => {
@@ -285,12 +318,15 @@ impl Walker<'_> {
                         prefix: vec![index],
                         offset: Linear::constant(0),
                         length,
+                        barrier: None,
+                        projection: Vec::new(),
                     })
                 } else {
                     Value::Ref(View::Element {
                         container,
                         indices: vec![index],
                         projection: Some(Vec::new()),
+                        barrier: None,
                     })
                 }
             }
@@ -307,7 +343,43 @@ impl Walker<'_> {
         expression: &super::super::super::goal::GoalExpression,
         function: &CheckedFunction,
         values: &[Value],
-    ) -> Result<Vec<Literal>, GoalFailure> {
+        argument_reads: &[Vec<facts::ReadProvenance>],
+    ) -> Result<GoalProof, GoalFailure> {
+        let previous_arguments = self.goal_argument_reads.replace(argument_reads.to_vec());
+        let goal = self.form_goal_comparisons_with(state, expression, function, values);
+        self.goal_argument_reads = previous_arguments;
+        goal
+    }
+
+    fn read_goal_argument(&mut self, ordinal: usize) {
+        if let Some(reads) = &mut self.goal_reads
+            && let Some(arguments) = &self.goal_argument_reads
+            && let Some(argument) = arguments.get(ordinal)
+        {
+            reads.extend(argument.iter().cloned());
+        }
+    }
+
+    pub(super) fn record_read_provenance(
+        &mut self,
+        value: &Linear,
+        barrier: Option<&RangeBarrier>,
+    ) {
+        if let Some(reads) = &mut self.goal_reads {
+            reads.extend(value.terms.iter().map(|(atom, _)| facts::ReadProvenance {
+                atom: *atom,
+                frames: barrier.map_or_else(Vec::new, |barrier| barrier.frames.clone()),
+            }));
+        }
+    }
+
+    fn form_goal_comparisons_with(
+        &mut self,
+        state: &mut State,
+        expression: &super::super::super::goal::GoalExpression,
+        function: &CheckedFunction,
+        values: &[Value],
+    ) -> Result<GoalProof, GoalFailure> {
         use super::super::super::goal::{GoalExpression, GoalOperation};
         match expression {
             GoalExpression::Operation {
@@ -315,15 +387,28 @@ impl Walker<'_> {
                 arguments,
                 ..
             } if arguments.len() == 2 => {
-                let mut goals = Vec::new();
+                let mut goals = GoalProof {
+                    literals: Vec::new(),
+                    reads: Vec::new(),
+                };
                 for argument in arguments {
-                    goals.extend(self.goal_comparisons_with(state, argument, function, values)?);
+                    let comparison =
+                        self.form_goal_comparisons_with(state, argument, function, values)?;
+                    goals.literals.extend(comparison.literals);
+                    goals.reads.extend(comparison.reads);
                 }
                 Ok(goals)
             }
-            _ => self
-                .goal_literal_with(state, expression, function, values)
-                .map(|goal| vec![goal]),
+            _ => {
+                let previous = self.goal_reads.replace(Vec::new());
+                let literal = self.goal_literal_with(state, expression, function, values);
+                let reads = self.goal_reads.take().unwrap_or_default();
+                self.goal_reads = previous;
+                literal.map(|literal| GoalProof {
+                    literals: vec![literal],
+                    reads: vec![reads],
+                })
+            }
         }
     }
 
@@ -344,6 +429,27 @@ impl Walker<'_> {
         goals: Result<&[Literal], GoalFailure>,
         written: Option<&[WrittenInstance]>,
     ) {
+        let reads = self.goal_reads.clone().unwrap_or_default();
+        self.ordinary_goal_with_reads(
+            state,
+            site,
+            subject,
+            goals,
+            written,
+            GoalReads::Shared(&reads),
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn ordinary_goal_with_reads(
+        &mut self,
+        state: &State,
+        site: &NodePath,
+        subject: &ObligationSubject,
+        goals: Result<&[Literal], GoalFailure>,
+        written: Option<&[WrittenInstance]>,
+        reads: GoalReads<'_>,
+    ) {
         if !self.has_ordinary(site, subject) {
             return;
         }
@@ -357,7 +463,15 @@ impl Walker<'_> {
         };
         let counterexamples =
             goals.map(|goals| goals.iter().map(|goal| vec![negated(goal)]).collect());
-        self.ordinary_counterexamples(state, site, subject, counterexamples, written);
+        self.ordinary_counterexamples_with_reads(
+            state,
+            site,
+            subject,
+            counterexamples,
+            written,
+            reads,
+            goals.unwrap_or_default(),
+        );
     }
 
     pub(super) fn ordinary_counterexamples(
@@ -368,11 +482,43 @@ impl Walker<'_> {
         counterexamples: Option<Vec<Vec<Literal>>>,
         written: Option<&[WrittenInstance]>,
     ) {
+        let reads = self.goal_reads.clone().unwrap_or_default();
+        self.ordinary_counterexamples_with_reads(
+            state,
+            site,
+            subject,
+            counterexamples,
+            written,
+            GoalReads::Shared(&reads),
+            &[],
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn ordinary_counterexamples_with_reads(
+        &mut self,
+        state: &State,
+        site: &NodePath,
+        subject: &ObligationSubject,
+        counterexamples: Option<Vec<Vec<Literal>>>,
+        written: Option<&[WrittenInstance]>,
+        reads: GoalReads<'_>,
+        owed: &[Literal],
+    ) {
         if !self.has_ordinary(site, subject) {
             return;
         }
         let proved = match (counterexamples, written) {
             (Some(counterexamples), Some(written)) => {
+                let owed = if owed.is_empty() {
+                    counterexamples
+                        .iter()
+                        .flatten()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                } else {
+                    owed.to_vec()
+                };
                 let (units, mut choices) = state.premises(&self.world);
                 choices.push(counterexamples);
                 let query = Query {
@@ -380,17 +526,41 @@ impl Walker<'_> {
                     choices,
                     ..Query::default()
                 };
-                match facts::judge(
+                let counterfactual = (!reads.is_empty()).then(|| query.clone());
+                let verdict = facts::judge(
                     &mut self.world,
                     &self.facts,
                     &state.facts,
                     &state.guarded,
                     written,
                     query,
-                ) {
-                    Ok(Verdict::Refuted) => DeferredAnswer::Proved,
-                    Ok(Verdict::Open) if self.imprecise.is_some() => DeferredAnswer::Inconclusive,
-                    Ok(Verdict::Open) => DeferredAnswer::Unproved,
+                );
+                let verdict = match verdict {
+                    Ok(Verdict::Open) => Ok((
+                        Verdict::Open,
+                        self.ordinary_footprint_losses(
+                            state,
+                            written,
+                            reads,
+                            &owed,
+                            counterfactual,
+                        ),
+                    )),
+                    other => other.map(|verdict| (verdict, false)),
+                };
+                match verdict {
+                    Ok((_, true)) => {
+                        self.issues.push(RangeIssue::Unsupported {
+                            node: site.clone(),
+                            feature: UnsupportedSemanticFeature::RangeCallFootprint,
+                        });
+                        DeferredAnswer::Inconclusive
+                    }
+                    Ok((Verdict::Refuted, false)) => DeferredAnswer::Proved,
+                    Ok((Verdict::Open, false)) if self.imprecise.is_some() => {
+                        DeferredAnswer::Inconclusive
+                    }
+                    Ok((Verdict::Open, false)) => DeferredAnswer::Unproved,
                     Err(Capacity::Arithmetic) => {
                         self.issues.push(RangeIssue::Unsupported {
                             node: site.clone(),
@@ -419,6 +589,92 @@ impl Walker<'_> {
             }
         };
         self.answer_ordinary(site, subject, proved);
+    }
+
+    fn ordinary_footprint_losses(
+        &mut self,
+        state: &State,
+        written: &[WrittenInstance],
+        reads: GoalReads<'_>,
+        owed: &[Literal],
+        query: Option<Query>,
+    ) -> bool {
+        let Some(mut query) = query else {
+            return false;
+        };
+        let reads = match reads {
+            GoalReads::Shared(reads) => {
+                return self.ordinary_footprint_loss(state, written, reads, owed, Some(query));
+            }
+            GoalReads::PerComparison(reads) => reads,
+        };
+        // The last choice is the OR of the negated comparisons. Keep the
+        // accepting query intact; only diagnostic queries isolate its arms.
+        let Some(counterexamples) = query.choices.pop() else {
+            return false;
+        };
+        if counterexamples.len() != reads.len() || owed.len() != reads.len() {
+            return false;
+        }
+        let mut restored = false;
+        for ((counterexample, reads), goal) in counterexamples.into_iter().zip(reads).zip(owed) {
+            let mut comparison = query.clone();
+            comparison.support.extend(owed.iter().cloned());
+            comparison.choices.push(vec![counterexample]);
+            match facts::judge(
+                &mut self.world,
+                &self.facts,
+                &state.facts,
+                &state.guarded,
+                written,
+                comparison.clone(),
+            ) {
+                Ok(Verdict::Refuted) => continue,
+                Ok(Verdict::Open) => {
+                    if !self.ordinary_footprint_loss(
+                        state,
+                        written,
+                        reads,
+                        std::slice::from_ref(goal),
+                        Some(comparison),
+                    ) {
+                        return false;
+                    }
+                    restored = true;
+                }
+                Err(_) => return false,
+            }
+        }
+        restored
+    }
+
+    fn ordinary_footprint_loss(
+        &mut self,
+        state: &State,
+        written: &[WrittenInstance],
+        reads: &[facts::ReadProvenance],
+        owed: &[Literal],
+        query: Option<Query>,
+    ) -> bool {
+        let Some(mut query) = query else {
+            return false;
+        };
+        if !query.restore_call_footprints(&mut self.world, reads, owed) {
+            return false;
+        }
+        // Only this diagnostic query receives restored read definitions.
+        // Its capacity is not the source obligation's normative ceiling.
+        !matches!(
+            facts::judge(
+                &mut self.world,
+                &self.facts,
+                &state.facts,
+                &state.guarded,
+                written,
+                query,
+            ),
+            Ok(Verdict::Open)
+        )
     }
 
     /// A selected goal can have the right source shape and still exceed the
@@ -601,13 +857,14 @@ impl Walker<'_> {
                 .then(|| record.subject.clone())
             });
             if let Some(subject) = subject {
-                let goals = self.affine_relation(state, &invariant.relation);
-                self.ordinary_goal(
+                let (goals, reads) = self.affine_with_provenance(state, &invariant.relation);
+                self.ordinary_goal_with_reads(
                     state,
                     &invariant.relation.node_path,
                     &subject,
                     goals.as_deref().map_err(|failure| *failure),
                     Some(&[]),
+                    GoalReads::Shared(&reads),
                 );
             }
         }

@@ -1,0 +1,17 @@
+interface Keep {
+  fn keep(table: &Array<Slots<u8, 2>, 2>) -> result: unit writes(table) contract {
+    ensures table^[0_u64].len == entry(table)^[0_u64].len;
+  };
+}
+
+fn stay(actual_table: &Array<Slots<u8, 2>, 2>) -> stayed: unit pure {
+  return unit;
+}
+
+binding Unchanged : Keep {
+  keep = stay;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

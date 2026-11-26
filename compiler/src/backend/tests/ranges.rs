@@ -155,6 +155,7 @@ fn bind_compute_host_adapter(module: &str, adapter: &str) -> String {
     let host = directory.join("adapter.ll");
     std::fs::write(&input, module).expect("write adapter module");
     std::fs::write(&host, adapter).expect("write host adapter");
+    #[allow(clippy::disallowed_methods, reason = "host tool, not a test program")]
     let output = Command::new("awk")
         .arg("-f")
         .arg(concat!(
@@ -862,17 +863,18 @@ fn fill(values: &STORAGE) -> result: unit writes(values) contract {
   return unit;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
+  std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
   let initial = array_filled::<u64, 8>(value: 7_u64);
   let values = INITIAL;
   let packet = Packet(before: 53_u64, values: TRANSFER, after: 59_u64);
   let done = fill(values: &packet.values);
-  if packet.before != 53_u64 {
-    return std::process::exit_status(code: 1_u8);
-  }
-  if packet.after != 59_u64 {
-    return std::process::exit_status(code: 2_u8);
-  }
+  let report = array_filled::<u8, 2>(value: 255_u8);
+  set report[0_u64] = cvt::<u64, u8>(packet.before);
+  set report[1_u64] = cvt::<u64, u8>(packet.after);
   if packet.values[0_u64] != 11_u64 {
     return std::process::exit_status(code: 3_u8);
   }
@@ -891,7 +893,19 @@ fn main() -> status: std::process::ExitStatus pure {
   if packet.values[6_u64] != 7_u64 {
     return std::process::exit_status(code: 8_u8);
   }
-  return std::process::exit_status(code: 0_u8);
+  let report_bytes = &report[0_u64..2_u64];
+  let no_deadline = None<std::time::Instant>();
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::io::write_once(factory: &entry_factory, output: &out, source: report_bytes, start: 0_u64, end: 2_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
+    Ok(value: accepted) => {
+      return std::process::exit_status(code: 0_u8);
+    }
+    Err(error: problem) => {
+      return std::process::exit_status(code: 1_u8);
+    }
+  }
 }
 "#;
     for (storage, initial, transfer) in [
@@ -915,7 +929,9 @@ fn main() -> status: std::process::ExitStatus pure {
                     Some(0),
                     "{storage}: {overlap:?}: {output:?}"
                 );
-                assert!(output.stdout.is_empty(), "{output:?}");
+                // The packet's `before` and `after` fields beside the written
+                // storage, one byte each, still the constructed 53 and 59.
+                assert_eq!(output.stdout, [53_u8, 59], "{output:?}");
                 assert!(output.stderr.is_empty(), "{output:?}");
             }
         }
@@ -1199,7 +1215,11 @@ fn overwrite(view: &[u64], index: u64, value: u64) -> result: unit writes(view) 
   return unit;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
+  std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
   let values = array_filled::<u64, 4>(value: 7_u64);
   let before0 = values[0_u64];
   let before2 = values[2_u64];
@@ -1228,12 +1248,9 @@ fn main() -> status: std::process::ExitStatus pure {
   let packet = Packet(before: 53_u64, bytes: bytes, after: 59_u64);
   let field = &packet.bytes[0_u64..4_u64];
   let written = overwrite(view: field, index: 1_u64, value: 41_u64);
-  if packet.before != 53_u64 {
-    return std::process::exit_status(code: 7_u8);
-  }
-  if packet.after != 59_u64 {
-    return std::process::exit_status(code: 8_u8);
-  }
+  let report = array_filled::<u8, 3>(value: 255_u8);
+  set report[0_u64] = cvt::<u64, u8>(packet.before);
+  set report[1_u64] = cvt::<u64, u8>(packet.after);
   if packet.bytes[0_u64] != 13_u64 {
     return std::process::exit_status(code: 9_u8);
   }
@@ -1253,11 +1270,20 @@ fn main() -> status: std::process::ExitStatus pure {
   }
   let empty = array_filled::<u64, 0>(value: 0_u64);
   let nothing = &empty[0_u64..0_u64];
-  let length = nothing^.len;
-  if length != 0_u64 {
-    return std::process::exit_status(code: 14_u8);
+  set report[2_u64] = cvt::<u64, u8>(nothing^.len);
+  let report_bytes = &report[0_u64..3_u64];
+  let no_deadline = None<std::time::Instant>();
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::io::write_once(factory: &entry_factory, output: &out, source: report_bytes, start: 0_u64, end: 3_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
+    Ok(value: accepted) => {
+      return std::process::exit_status(code: 0_u8);
+    }
+    Err(error: problem) => {
+      return std::process::exit_status(code: 7_u8);
+    }
   }
-  return std::process::exit_status(code: 0_u8);
 }
 "#;
     for overlap in [OverlapLowering::Off, OverlapLowering::On] {
@@ -1265,7 +1291,10 @@ fn main() -> status: std::process::ExitStatus pure {
         for module in [&module, &super::owned_places::retain_calls(&module)] {
             let output = compile_and_run(module);
             assert_eq!(output.status.code(), Some(0), "{overlap:?}: {output:?}");
-            assert!(output.stdout.is_empty(), "{output:?}");
+            // The packet's `before` and `after` beside the field written
+            // through the range reference (53, 59), then the empty range
+            // reference's carried length (0), one byte each.
+            assert_eq!(output.stdout, [53_u8, 59, 0], "{output:?}");
             assert!(output.stderr.is_empty(), "{output:?}");
         }
     }
@@ -1845,7 +1874,7 @@ fn an_out_of_bounds_range_reference_read_is_an_op4_compile_rejection() {
 fn a_range_reference_over_a_frame_resident_window_reaches_its_own_slots() {
     let source = br#"fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   doc "Publishes a frame-resident window through a range reference held until the linked write returns.";
-  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);

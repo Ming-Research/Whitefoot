@@ -112,7 +112,10 @@ fn signed_struct_reconstruction_uses_all_positive_or_any_negative_field() {
             "{TYPES}fn need(a: FieldRoot, b: FieldRoot) -> result: unit pure contract {{\n{requirement}\n}} {{\n  return unit;\n}}\n\nfn probe(a: FieldRoot, b: FieldRoot) -> result: unit pure {{\n  if a.first.count == b.first.count {{\n    if a.first.ready == b.first.ready {{\n      if a.tail == b.tail {{\n        need(a: a, b: b);\n      }}\n    }}\n  }}\n  return unit;\n}}\n\n{MAIN}"
         );
         summary(&source, "probe");
-        let missing = source.replace("if a.tail == b.tail", "if a.first.count == b.first.count");
+        let missing = source.replace(
+            "      if a.tail == b.tail {\n        need(a: a, b: b);\n      }\n",
+            "      need(a: a, b: b);\n",
+        );
         assert_rule_at(
             missing.as_bytes(),
             crate::SemanticRule::Fn8,

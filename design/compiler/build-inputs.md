@@ -1,7 +1,0 @@
-Decision: The specification identity and parser grammar tables are derived from the active specification during Cargo construction and kept as build outputs, with the version read from the title and the active path identifying the current specification, because separately maintained versions, status declarations and generated-table copies introduce synchronization work without another source of truth in the [test-system investigation](../../research/investigations/test-economy/redesign.md), instead of a duplicate Status field, manually committed parser tables and regeneration-comparison gates. Parser and diagnostic correctness still require behavioral tests; generation alone proves neither.
-
-Decision: Compiler-independent specification-document integrity is checked directly from Markdown by the existing Python conformance tooling, because duplicate definitions and unresolved rule references need no compiler execution or native artifact, instead of building and running a Rust specification-checker binary and repeating same-source identity comparisons. Build-derived identity used by the compiler remains; auxiliary queries are retained only for an identified consumer.
-
-Rejected:
-- Removing the grammar generator while retaining only a frozen table: rejected because grammar amendments still need a reproducible path from the normative productions to the parser's data.
-- Treating fewer Rust test executables as proof of nonredundant coverage: rejected because packaging does not establish that assertions protect distinct properties.

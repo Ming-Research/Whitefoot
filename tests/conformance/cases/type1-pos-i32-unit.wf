@@ -5,9 +5,6 @@ fn main() -> status: ExitStatus pure {
   doc "Primitive types i32 and unit are in-language [TYPE-1].";
   let a = 7_i32;
   let b = a + 35_i32;
-  if b == 42_i32 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
-  return exit_status(code: 0_u8);
+  let status_code = cvt::<i32, u8>(b);
+  return exit_status(code: status_code);
 }

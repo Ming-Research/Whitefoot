@@ -12,7 +12,7 @@ fn walk(n: u64, target: &Cell) -> result: u64 writes(target) {
   let next = n - 1_u64;
   let initial = Cell(value: 0_u64);
   let owner = box_new::<Cell>(value: initial);
-  let held = &owner.inner.value;
+  let observed = &owner.inner.value;
   let cursor = target;
   let done = False();
   loop {

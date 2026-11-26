@@ -1,0 +1,14 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+nodrop struct Token {
+  id: u64;
+}
+
+const token: Token = Token(id: 3_u64);
+
+fn main() -> status: ExitStatus pure {
+  doc "A const of a nodrop struct is admitted, and a scalar field reads a copy out of it; no owned Token exists, so no scope must consume one.";
+  let id = token.id;
+  return exit_status(code: 0_u8);
+}

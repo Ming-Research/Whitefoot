@@ -5,8 +5,8 @@ struct Progress {
 fn over(meter: &std::process::MemoryMeter, limit: u64) -> result: Bool reads(meter) {
   doc "Reports whether the program heap exceeds limit, reading it through a meter of its own so the row only reads meter.";
   let own = std::process::meter_share(meter: meter);
-  let held = std::process::heap_in_use(meter: &own);
-  let exceeded = held > limit;
+  let kept = std::process::heap_in_use(meter: &own);
+  let exceeded = kept > limit;
   return exceeded;
 }
 

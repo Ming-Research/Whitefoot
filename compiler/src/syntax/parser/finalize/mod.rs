@@ -10,8 +10,8 @@ pub use outcome::{
     BundleSourceExtent, CanonicalCompilerFailure, CanonicalIssue, CanonicalLimit, CanonicalLimits,
     CanonicalLocation, CanonicalOutcome, CanonicalResourceFailure, CanonicalStorage,
     CanonicalSyntaxUnit, FinalizeCompilerFailure, FinalizeLimit, FinalizeLimits, FinalizeOutcome,
-    FinalizeResourceFailure, FinalizeStorage, FinalizedBundle, NodePath, RenderOutcome,
-    RenderedSource,
+    FinalizeResourceFailure, FinalizeStorage, FinalizedBundle, LayoutDifference, NodePath,
+    RenderOutcome, RenderedSource,
 };
 
 #[cfg(test)]

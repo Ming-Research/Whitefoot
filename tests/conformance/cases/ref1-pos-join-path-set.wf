@@ -1,18 +1,23 @@
 alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
-fn main() -> status: ExitStatus pure {
-  doc "REF-1: a let binder whose initializer is a value_if every branch of which delivers a reference is itself a reference variable, and at the join its target is the union of the path sets the incoming edges may name.";
+fn pick_cell(pick: u64) -> result: u64 pure {
+  doc "Reads the cell the pick selects through a reference delivered by a value_if.";
   let a = array_filled::<u64, 4>(value: 0_u64);
   set a[0_u64] = 3_u64;
   set a[2_u64] = 3_u64;
-  let pick = 1_u64;
   let p = if pick == 1_u64 {
     give &a[0_u64];
   } else {
     give &a[2_u64];
   }
   let seen = p^;
+  return seen;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "REF-1: a let binder whose initializer is a value_if every branch of which delivers a reference is itself a reference variable, and at the join its target is the union of the path sets the incoming edges may name.";
+  let seen = pick_cell(pick: 1_u64);
   if seen == 3_u64 {
   } else {
     return exit_status(code: 1_u8);

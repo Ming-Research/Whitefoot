@@ -56,12 +56,6 @@ fn build(left: &[u64], right: &[u64], cursor: &Cursor, depth: u32) -> function_r
         if parents_done {
           break @parents;
         } else {
-          let parent_halvable = parent <= 9223372036854775807_u64;
-          if parent_halvable {
-          } else {
-            let error = PoolError::ArithmeticOverflow();
-            return Err<u64, PoolError>(error: error);
-          }
           let doubled = parent * 2_u64;
           let left_child_defined = start +defined doubled;
           let left_child = if left_child_defined {

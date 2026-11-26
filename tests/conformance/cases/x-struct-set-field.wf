@@ -6,13 +6,10 @@ struct Counter {
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "TYPE-5: mutate a struct field with `set place.f = atom`, use the machine-derived S5 post-write equality to discharge the following exact addition, and control-check the expected result.";
+  doc "TYPE-5: mutate a struct field with `set place.f = atom`, use the machine-derived S5 post-write equality to discharge the following exact addition, and return the result as the exit status.";
   let c = Counter(n: 1_i32);
   set c.n = 41_i32;
   let v = c.n + 1_i32;
-  if v == 42_i32 {
-  } else {
-    return exit_status(code: 201_u8);
-  }
-  return exit_status(code: 0_u8);
+  let status_code = cvt::<i32, u8>(v);
+  return exit_status(code: status_code);
 }

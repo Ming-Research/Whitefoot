@@ -1,0 +1,18 @@
+fn probe(r: &[u64], s: &[u64]) -> result: u64 reads(r), reads(s) contract {
+  requires r^.len >= 2_u64;
+} {
+  doc "ENT-2, OP-4: a set anywhere in the body that rebinds q makes q no range alias, also at a read before the rebinding, so that read is identified through q and undischarged.";
+  let q = r;
+  let first = q^[1_u64];
+  set q = s;
+  if 1_u64 < q^.len {
+    let second = q^[1_u64];
+    return first +wrap second;
+  }
+  return first;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "No call is needed to exercise the proof identity.";
+  return std::process::exit_status(code: 0_u8);
+}

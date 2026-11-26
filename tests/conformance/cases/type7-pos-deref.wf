@@ -6,7 +6,7 @@ fn deref(value: i32) -> result: i32 pure {
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "Reaching a referent is explicit via place^ [TYPE-7]; a reference variable denotes the reference [REF-1], so the stored 42 is read back through postfix access and the program runs to exit 0.";
+  doc "Reaching a referent is explicit via place^ [TYPE-7]; a reference variable denotes the reference [REF-1], so the stored 42 is read back through postfix access and the product read through the caret is the exit status 42.";
   let a = 42_i32;
   let p = &a;
   let v = deref(value: p^);
@@ -15,9 +15,6 @@ fn main() -> status: ExitStatus pure {
   } else {
     return exit_status(code: 1_u8);
   }
-  if product == 42_i32 {
-  } else {
-    return exit_status(code: 2_u8);
-  }
-  return exit_status(code: 0_u8);
+  let status_code = cvt::<i32, u8>(product);
+  return exit_status(code: status_code);
 }

@@ -1,0 +1,13 @@
+fn probe(r: &[u64]) -> result: u64 reads(r) contract {
+  requires r^.len >= 2_u64;
+} {
+  doc "ENT-2, REF-4: q is a range alias of r, bound to it by let with neither rebound, so q^.len is the term r^.len and the requirement discharges the element read through q.";
+  let q = r;
+  let first = q^[0_u64];
+  return first;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "No call is needed to exercise the proof identity.";
+  return std::process::exit_status(code: 0_u8);
+}

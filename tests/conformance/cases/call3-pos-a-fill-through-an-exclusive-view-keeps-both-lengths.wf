@@ -12,17 +12,13 @@ fn fill(destination: &[u8], value: u8) -> written: u64 writes(destination) contr
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "A projected callee write through a range reference reaches the range's element storage and no measure term over the origin place nor over the range reference. The helper fills its &[u8] destination; after the call the caller still holds window^.len and table.len, so the length check and both subscripts of the origin are discharged, and the bytes the callee wrote are the ones the caller reads back. A reference that is itself an argument is the thing being accessed and does not invalidate itself.";
+  doc "A projected callee write through a range reference reaches the range's element storage and no measure term over the origin place nor over the range reference. The helper fills its &[u8] destination; after the call the caller still holds window^.len and table.len, so the conversion of the length it returns and both subscripts of the origin are discharged, and the bytes the callee wrote are the ones the caller reads back. A reference that is itself an argument is the thing being accessed and does not invalidate itself.";
   let table = slots_new::<u8, 4>();
   place_back(window: &table, value: 3_u8);
   place_back(window: &table, value: 3_u8);
   let window = &table[0_u64..2_u64];
   let count = fill(destination: window, value: 200_u8);
   let seen = window^.len;
-  if seen == 2_u64 {
-  } else {
-    return exit_status(code: 201_u8);
-  }
   let first = table[0_u64];
   let second = table[1_u64];
   if first == 200_u8 {
@@ -33,5 +29,6 @@ fn main() -> status: ExitStatus pure {
   } else {
     return exit_status(code: 203_u8);
   }
-  return exit_status(code: 0_u8);
+  let code = cvt::<u64, u8>(seen);
+  return exit_status(code: code);
 }

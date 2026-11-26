@@ -1,0 +1,27 @@
+fn nonzero(value: u64) -> result: unit pure contract {
+  requires value != 0_u64;
+} {
+  return unit;
+}
+
+fn wipe(value: &u64) -> result: unit writes(value) {
+  set value^ = 0_u64;
+  return unit;
+}
+
+fn selected(value: u64) -> result: unit pure {
+  match value {
+    0_u64 => {
+      return unit;
+    }
+    else => {
+      wipe(value: &value);
+      nonzero(value: value);
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

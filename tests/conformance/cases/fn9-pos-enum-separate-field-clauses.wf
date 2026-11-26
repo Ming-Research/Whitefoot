@@ -1,0 +1,29 @@
+enum RoutedPair {
+  Pair(first: u64, second: u64);
+  Empty();
+}
+
+fn pair(flag: Bool) -> result: RoutedPair pure contract {
+  ensures when result is Pair(first: a): a == 1_u64;
+  ensures when Pair(second: b): b == 2_u64;
+} {
+  if flag {
+    return RoutedPair::Pair(first: 1_u64, second: 2_u64);
+  }
+  return RoutedPair::Empty();
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let yes = True();
+  let made = pair(flag: yes);
+  match made {
+    Pair(first: a, second: b) => {
+      let total = a + b;
+      let code = cvt::<u64, u8>(total);
+      return std::process::exit_status(code: code);
+    }
+    Empty() => {
+      return std::process::exit_status(code: 99_u8);
+    }
+  }
+}

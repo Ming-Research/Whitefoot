@@ -1,0 +1,16 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn span(rows: &[Slots<u8, 8>], other: &[Slots<u8, 8>], i: u64) -> r: u64 pure contract {
+  requires i < other^.len;
+  ensures r <= rows^[i].len;
+} {
+  doc "rows is only read, so the place rows^[i] denotes the range rows received; rebinding rows to other leaves that range's length, which nothing bounds i below.";
+  set rows = other;
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The declaration alone is judged.";
+  return exit_status(code: 0_u8);
+}

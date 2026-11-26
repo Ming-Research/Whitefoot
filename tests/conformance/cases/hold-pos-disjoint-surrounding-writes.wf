@@ -1,0 +1,25 @@
+struct Pair {
+  left: u64;
+  right: u64;
+}
+
+fn observe(left: &u64, right: &u64) -> result: Pair reads(left), reads(right) contract {
+  requires held(left, right);
+} {
+  return Pair(left: left^, right: right^);
+}
+
+struct State {
+  left: u64;
+  right: u64;
+  visits: u64;
+}
+
+fn sample(state: &Shared<State>) -> result: Pair reads(state) waits {
+  atomic current = &state^ {
+    set current^.visits = 1_u64;
+    let seen = observe(left: &current^.left, right: &current^.right);
+    set current^.visits = 2_u64;
+    return seen;
+  }
+}

@@ -18,11 +18,6 @@ fn count_to(limit: u64) -> reached: u64 pure {
       if big_fits {
         set cursor = candidate;
       } else {
-        let small_defined = cursor +defined 1_u64;
-        if small_defined {
-        } else {
-          break;
-        }
         set cursor = cursor + 1_u64;
       }
     } else {

@@ -1,4 +1,4 @@
-//! Mutation targets captured before right-hand-side evaluation [SET-1, SET-2].
+//! Mutation targets evaluated after the right-hand side [SET-1, SET-2].
 //!
 //! A prepared target carries only evaluated addresses, descriptors and offsets.
 //! Its commit never evaluates a source expression again. Plain SSA field paths

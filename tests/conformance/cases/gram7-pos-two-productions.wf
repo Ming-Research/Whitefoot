@@ -11,14 +11,19 @@ fn classify(x: i32) -> return_value: Sign pure {
   return Sign::Pos();
 }
 
-fn main() -> return_value: ExitStatus pure {
-  doc "GRAM-7: match as a let-initializer (value, give) AND as a statement (effect); one arm shape, two distinct node kinds.";
-  let v = 21_i32;
+fn scale(v: i32) -> return_value: i32 pure {
   let d = if v > 0_i32 {
     give 42_i32;
   } else {
     give 0_i32;
   }
+  return d;
+}
+
+fn main() -> return_value: ExitStatus pure {
+  doc "GRAM-7: match as a let-initializer (value, give) AND as a statement (effect); one arm shape, two distinct node kinds.";
+  let v = 21_i32;
+  let d = scale(v: v);
   let s = classify(x: d);
   match s {
     Neg() => {

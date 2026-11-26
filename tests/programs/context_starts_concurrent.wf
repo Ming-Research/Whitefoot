@@ -1,0 +1,55 @@
+struct StartTotals {
+  ready: u64;
+  sum: u64;
+  completed: u64;
+}
+
+fn concurrent_tick(value: u64) -> result: u64 pure waits {
+  return value;
+}
+
+fn concurrent_worker(totals: Shared<StartTotals>) -> result: unit pure waits {
+  atomic state = &totals {
+    set state^.ready = state^.ready +wrap 1_u64;
+  }
+  atomic state = &totals when state^.ready == 16_u64 {
+    let all_started = state^.ready;
+  }
+  let sum = 0_u64;
+  for @joined (index in 0_u64..10000_u64) {
+    let pending = spawn concurrent_tick(value: index);
+    set sum = sum +wrap pending;
+  }
+  atomic state = &totals {
+    set state^.sum = state^.sum +wrap sum;
+    set state^.completed = state^.completed +wrap 1_u64;
+  }
+  return unit;
+}
+
+fn start_concurrent_workers(totals: &Shared<StartTotals>) -> result: unit reads(totals) waits {
+  for @start (index in 0_u64..16_u64) {
+    let handle = shared_share::<StartTotals>(shared: totals);
+    spawn concurrent_worker(totals: move handle);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let initial = StartTotals(ready: 0_u64, sum: 0_u64, completed: 0_u64);
+  let totals = shared_new::<StartTotals>(value: initial);
+  start_concurrent_workers(totals: &totals);
+  let sum = 0_u64;
+  let completed = 0_u64;
+  atomic state = &totals {
+    set sum = state^.sum;
+    set completed = state^.completed;
+  }
+  if sum != 799920000_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  if completed != 16_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

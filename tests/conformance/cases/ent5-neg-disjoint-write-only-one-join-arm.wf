@@ -1,0 +1,18 @@
+fn probe(rows: &[Slots<u8, 8>], flag: Bool) -> result: u8 writes(rows) contract {
+  requires rows^.len >= 2_u64;
+  requires rows^[0_u64].len >= 5_u64;
+} {
+  doc "ENT-5 keeps row zero's length only on the arm writing row one. The other arm replaces row zero with an empty row, so the join cannot retain the inner subscript's OP-4 bound.";
+  if flag {
+    set rows^[1_u64] = slots_new::<u8, 8>();
+  } else {
+    set rows^[0_u64] = slots_new::<u8, 8>();
+  }
+  let value = rows^[0_u64][4_u64];
+  return value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Checking probe must refuse a fact present on only one reaching arm.";
+  return std::process::exit_status(code: 0_u8);
+}

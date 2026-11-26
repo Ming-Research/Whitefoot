@@ -8,8 +8,8 @@ fn fill(m: &ConcurrentHashMap<u8>, ks: &KeySet, k: &[u8]) -> result: u8 reads(ks
   }
   set m^[k] = Some<u8>(value: 9_u8);
   match m^[k] {
-    Some(value: held) => {
-      return held^;
+    Some(value: observed) => {
+      return observed^;
     }
     None() => {
       return 0_u8;
@@ -28,8 +28,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
   atomic t = &store {
     set seen = fill(m: t, ks: &ks, k: first);
     match t^[second] {
-      Some(value: held) => {
-        set seen = seen +wrap held^;
+      Some(value: observed) => {
+        set seen = seen +wrap observed^;
       }
       None() => {
       }

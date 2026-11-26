@@ -2,6 +2,6 @@ fn walk(n: u64) -> result: u64 pure contract {
   requires n < 10_u64;
 } {
   let owner = box_new::<u64>(value: n);
-  let held = &owner.inner;
+  let observed = &owner.inner;
   return musttail walk(n: 10_u64);
 }

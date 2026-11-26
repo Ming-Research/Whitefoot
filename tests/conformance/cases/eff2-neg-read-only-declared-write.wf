@@ -1,0 +1,7 @@
+fn peek(h: &u64) -> result: u64 writes(h) {
+  return h^;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -34,8 +34,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let seen = 0_u8;
   atomic slot = &counts[name] {
     match slot^ {
-      Some(value: held) => {
-        set seen = held^;
+      Some(value: observed) => {
+        set seen = observed^;
       }
       None() => {
       }

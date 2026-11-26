@@ -8,10 +8,6 @@ fn main() -> status: ExitStatus pure {
   place_back(window: &two, value: 4_u8);
   let window = &two[0_u64..2_u64];
   let width = window^.len;
-  if width == 2_u64 {
-  } else {
-    return exit_status(code: 21_u8);
-  }
   let second_view = &two[0_u64..2_u64];
   let first = window^[0_u64];
   let second = second_view^[1_u64];
@@ -28,5 +24,6 @@ fn main() -> status: ExitStatus pure {
   } else {
     return exit_status(code: 23_u8);
   }
-  return exit_status(code: 0_u8);
+  let status_code = cvt::<u64, u8>(width);
+  return exit_status(code: status_code);
 }

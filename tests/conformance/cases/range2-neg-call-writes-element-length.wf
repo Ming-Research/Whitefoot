@@ -1,0 +1,28 @@
+fn append_one(row: &Slots<u8, 8>) -> result: unit writes(row.next), writes(row.len) contract {
+  requires row^.len < row^.cap;
+} {
+  doc "The user helper's row includes the length descriptor word changed by place_back.";
+  place_back(window: row, value: 0_u8);
+  return unit;
+}
+
+fn need_short(rows: &[Slots<u8, 8>]) -> result: unit pure contract {
+  requires forall short(k in 0_u64..rows^.len): rows^[k].len <= 4_u64;
+} {
+  return unit;
+}
+
+fn probe(rows: &[Slots<u8, 8>]) -> result: unit writes(rows) contract {
+  requires forall held_length(k in 0_u64..rows^.len): rows^[k].len <= 4_u64;
+  requires 1_u64 <= rows^.len;
+  requires rows^[0_u64].len < rows^[0_u64].cap;
+} {
+  doc "RANGE-2 must forget rows[0].len after the descriptor write; appending to an allowed length-four row disproves need_short's RANGE-3 requirement.";
+  append_one(row: &rows^[0_u64]);
+  need_short(rows: rows);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

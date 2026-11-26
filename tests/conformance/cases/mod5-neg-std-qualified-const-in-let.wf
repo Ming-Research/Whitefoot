@@ -1,0 +1,6 @@
+fn main() -> status: std::process::ExitStatus pure {
+  doc "MOD-5, DIAG-1: a let initializer written as the std-rooted path std::process::marker continues no call, so the rejection cites MOD-5 over the whole path rather than at the next statement; no name lookup participates.";
+  let wanted = std::process::marker;
+  let other = 1_u32;
+  return std::process::exit_status(code: 0_u8);
+}

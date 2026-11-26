@@ -22,9 +22,10 @@ use crate::conformance::corpus as conformance_manifest;
 use conformance_manifest::Expectation;
 
 use whitefoot::{
-    ACTIVE_KERNEL_SPEC_HASH, CanonicalOutcome, CompilerLimits, FinalizeOutcome, LexOutcome,
-    ParseOutcome, RenderOutcome, SourceBundle, SourceInput, TerminalOutcome, audit_canonical,
-    classify_terminals, finalize, lex, parse, parse_graph, render_canonical,
+    ACTIVE_KERNEL_SPEC_HASH, CanonicalOutcome, CompilerLimits, FinalizeOutcome, FormatGrammar,
+    LexOutcome, ParseOutcome, RenderOutcome, SourceBundle, SourceInput, TerminalOutcome,
+    audit_canonical, canonical_format, classify_terminals, finalize, lex, parse, parse_graph,
+    render_canonical,
 };
 
 /// The three corpus roots, reached from the compiler package: the
@@ -179,8 +180,14 @@ enum Exclusion {
 /// source.
 fn manifest_allows_exclusion(exclusion: Exclusion, expectation: Option<&Expectation>) -> bool {
     match (exclusion, expectation) {
-        (Exclusion::Underived, Some(Expectation::Reject(_))) => true,
+        (
+            Exclusion::Underived,
+            Some(Expectation::Reject(_) | Expectation::RejectDiagnostics(_)),
+        ) => true,
         (Exclusion::Noncanonical, Some(Expectation::Reject(rule))) => rule.starts_with("FORM-"),
+        (Exclusion::Noncanonical, Some(Expectation::RejectDiagnostics(diagnostics))) => {
+            diagnostics.iter().all(|diagnostic| diagnostic.rule.starts_with("FORM-"))
+        }
         _ => false,
     }
 }
@@ -211,6 +218,30 @@ fn manifest_exclusions_cover_only_the_declared_failure_edges() {
     assert!(!manifest_allows_exclusion(
         Exclusion::Noncanonical,
         Some(&semantic_reject)
+    ));
+    let diagnostic = |rule: &str| conformance_manifest::DiagnosticExpectation {
+        rule: rule.to_owned(),
+        coordinate: conformance_manifest::DiagnosticCoordinate {
+            source_ordinal: 0,
+            byte_start: 0,
+            byte_end: 0,
+        },
+        expected: None,
+    };
+    let form_list = Expectation::RejectDiagnostics(vec![diagnostic("FORM-2")]);
+    let mixed_list =
+        Expectation::RejectDiagnostics(vec![diagnostic("FORM-2"), diagnostic("GRAM-3")]);
+    assert!(manifest_allows_exclusion(
+        Exclusion::Underived,
+        Some(&mixed_list)
+    ));
+    assert!(manifest_allows_exclusion(
+        Exclusion::Noncanonical,
+        Some(&form_list)
+    ));
+    assert!(!manifest_allows_exclusion(
+        Exclusion::Noncanonical,
+        Some(&mixed_list)
     ));
     assert!(!manifest_allows_exclusion(Exclusion::Underived, None));
     assert!(!manifest_allows_exclusion(Exclusion::Noncanonical, None));
@@ -270,6 +301,27 @@ fn every_canonical_corpus_file_re_renders_to_itself() {
         );
 
         if reading.canonical {
+            let formatted = canonical_format(
+                &[SourceInput::new(&name, &source)],
+                if name.ends_with(".wfg") {
+                    FormatGrammar::Graph
+                } else {
+                    FormatGrammar::Program
+                },
+                CompilerLimits::default(),
+            )
+            .unwrap_or_else(|failure| panic!("{name}: canonical input must format: {failure}"));
+            let [formatted] = <[_; 1]>::try_from(formatted)
+                .unwrap_or_else(|_| panic!("{name}: one input formats one source"));
+            assert_eq!(
+                formatted.source.ordinal(),
+                0,
+                "{name}: input order is retained"
+            );
+            assert_eq!(
+                formatted.bytes, source,
+                "{name}: the public formatter must preserve canonical bytes"
+            );
             assert_eq!(
                 String::from_utf8_lossy(&reading.rendered),
                 String::from_utf8_lossy(&source),

@@ -5,8 +5,8 @@ fn bump(counts: Shared<ConcurrentHashMap<u8>>, tally: Shared<u8>) -> result: uni
   for @round (index in 0_u64..20_u64) {
     atomic slot = &counts[name], c = &tally {
       match slot^ {
-        Some(value: held) => {
-          let next = held^ +wrap 1_u8;
+        Some(value: observed) => {
+          let next = observed^ +wrap 1_u8;
           set slot^ = Some<u8>(value: next);
         }
         None() => {
@@ -37,8 +37,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let total = 1_u8;
   atomic slot = &counts[name], c = &tally {
     match slot^ {
-      Some(value: held) => {
-        set value = held^;
+      Some(value: observed) => {
+        set value = observed^;
       }
       None() => {
       }

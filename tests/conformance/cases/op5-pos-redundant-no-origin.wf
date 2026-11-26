@@ -1,0 +1,20 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn ready(x: u64) -> result: Bool pure {
+  doc "The result has no published relation.";
+  return x < 8_u64;
+}
+
+fn choose(x: u64) -> r: u64 pure {
+  doc "A call result has neither a goal origin nor a comparison origin, so the test is admitted.";
+  if ready(x: x) {
+    return 1_u64;
+  }
+  return 2_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The checker judges every body.";
+  return exit_status(code: 0_u8);
+}

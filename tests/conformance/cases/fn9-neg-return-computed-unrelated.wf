@@ -1,0 +1,14 @@
+fn product(a: u64, b: u64) -> result: u64 pure contract {
+  requires a >= 1_u64;
+  requires a <= 10_u64;
+  requires b >= 1_u64;
+  requires b <= 10_u64;
+  ensures result >= a;
+} {
+  doc "The product is a computed integer expression, but its ENT-3.S7 row relates the result to neither operand, so the returned value carries only its bounds and the clause is unproved, as after a let of it.";
+  return a * b;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

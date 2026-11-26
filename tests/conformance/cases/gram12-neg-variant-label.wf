@@ -1,0 +1,18 @@
+enum Marker {
+  Mark();
+}
+
+fn selected(value: u64) -> result: unit pure {
+  match value {
+    Mark() => {
+      return unit;
+    }
+    else => {
+      return unit;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

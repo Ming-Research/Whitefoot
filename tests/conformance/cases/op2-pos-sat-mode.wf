@@ -2,11 +2,9 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn main() -> return_value: ExitStatus pure {
-  doc "OP-2: add/sub carry the sat mode; unsigned clamps to the type ceiling (OP-8).";
+  doc "OP-2: add/sub carry the sat mode; unsigned clamps to the type ceiling (OP-8). The clamped sum less 18446744073709551573 is the exit status 42.";
   let a = 18446744073709551615_u64 +sat 1_u64;
-  if a == 18446744073709551615_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
-  return exit_status(code: 0_u8);
+  let offset = a - 18446744073709551573_u64;
+  let code = cvt::<u64, u8>(offset);
+  return exit_status(code: code);
 }

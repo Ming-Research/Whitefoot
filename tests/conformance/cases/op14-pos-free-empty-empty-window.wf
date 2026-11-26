@@ -8,11 +8,6 @@ nodrop struct Token {
 fn main() -> status: ExitStatus pure {
   doc "OP-14: free_empty consumes a window whose element type is linear, under the contract requires window.len == 0_u64; the type stays linear and the proof is about the runtime length.";
   let r = slots_new::<Token, 2>();
-  let n = r.len;
   free_empty(window: move r);
-  if n == 0_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
   return exit_status(code: 0_u8);
 }

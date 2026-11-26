@@ -1,0 +1,30 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct Table {
+  rows: Slots<Box<u64>, 4>;
+  count: u64;
+}
+
+fn bump(counter: &u64) -> result: Box<u64> writes(counter) {
+  doc "Writes the counter field beside the window and returns a new box.";
+  set counter^ = 1_u64;
+  let fresh = box_new::<u64>(value: 7_u64);
+  return move fresh;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "SET-1: the right-hand side writes the sibling field count, which kills no fact about the window in field rows, so the target t.rows[0_u64], evaluated after it, is in bounds and the commit replaces the first box.";
+  let first = box_new::<u64>(value: 1_u64);
+  let rows = slots_new::<Box<u64>, 4>();
+  place_back(window: &rows, value: move first);
+  let t = Table(rows: move rows, count: 0_u64);
+  set t.rows[0_u64] = bump(counter: &t.count);
+  if t.count != 1_u64 {
+    return exit_status(code: 1_u8);
+  }
+  if t.rows[0_u64].inner != 7_u64 {
+    return exit_status(code: 2_u8);
+  }
+  return exit_status(code: 0_u8);
+}

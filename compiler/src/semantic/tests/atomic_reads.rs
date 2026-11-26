@@ -68,8 +68,8 @@ fn bump(value: &u8) -> result: unit writes(value) {
   return unit;
 }
 
-fn clear(held: &Option<u8>) -> result: unit writes(held) {
-  set held^ = None<u8>();
+fn wipe(observed: &Option<u8>) -> result: unit writes(observed) {
+  set observed^ = None<u8>();
   return unit;
 }
 
@@ -90,16 +90,16 @@ fn a_statement_that_writes_through_its_binder_holds_its_entry_alone() {
         "{PRELUDE}{}",
         r#"
 fn replaces(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit reads(store) waits {
-  let held = &key[0_u64..2_u64];
-  atomic slot = &store^[held] {
+  let observed = &key[0_u64..2_u64];
+  atomic slot = &store^[observed] {
     set slot^ = Some<u8>(value: 1_u8);
   }
   return unit;
 }
 
 fn writes_a_payload(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit reads(store) waits {
-  let held = &key[0_u64..2_u64];
-  atomic slot = &store^[held] {
+  let observed = &key[0_u64..2_u64];
+  atomic slot = &store^[observed] {
     match slot^ {
       Some(value: seen) => {
         set seen^ = 2_u8;
@@ -112,8 +112,8 @@ fn writes_a_payload(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit reads
 }
 
 fn calls_a_payload_writer(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit reads(store) waits {
-  let held = &key[0_u64..2_u64];
-  atomic slot = &store^[held] {
+  let observed = &key[0_u64..2_u64];
+  atomic slot = &store^[observed] {
     match slot^ {
       Some(value: seen) => {
         bump(value: seen);
@@ -126,16 +126,16 @@ fn calls_a_payload_writer(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit
 }
 
 fn calls_an_entry_writer(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit reads(store) waits {
-  let held = &key[0_u64..2_u64];
-  atomic slot = &store^[held] {
-    clear(held: slot);
+  let observed = &key[0_u64..2_u64];
+  atomic slot = &store^[observed] {
+    wipe(observed: slot);
   }
   return unit;
 }
 
 fn writes_on_one_branch(store: &Shared<ConcurrentHashMap<u8>>, flag: Bool) -> result: unit reads(store) waits {
-  let held = &key[0_u64..2_u64];
-  atomic slot = &store^[held] {
+  let observed = &key[0_u64..2_u64];
+  atomic slot = &store^[observed] {
     if flag {
       set slot^ = None<u8>();
     }
@@ -144,8 +144,8 @@ fn writes_on_one_branch(store: &Shared<ConcurrentHashMap<u8>>, flag: Bool) -> re
 }
 
 fn writes_in_a_loop(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit reads(store) waits {
-  let held = &key[0_u64..2_u64];
-  atomic slot = &store^[held] {
+  let observed = &key[0_u64..2_u64];
+  atomic slot = &store^[observed] {
     for (i in 0_u64..3_u64) {
       match slot^ {
         Some(value: seen) => {
@@ -160,8 +160,8 @@ fn writes_in_a_loop(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit reads
 }
 
 fn writes_a_field(store: &Shared<ConcurrentHashMap<Pair>>) -> result: unit reads(store) waits {
-  let held = &key[0_u64..2_u64];
-  atomic slot = &store^[held] {
+  let observed = &key[0_u64..2_u64];
+  atomic slot = &store^[observed] {
     match slot^ {
       Some(value: pair) => {
         set pair^.right = 3_u8;
@@ -174,8 +174,8 @@ fn writes_a_field(store: &Shared<ConcurrentHashMap<Pair>>) -> result: unit reads
 }
 
 fn writes_through_a_copy(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit reads(store) waits {
-  let held = &key[0_u64..2_u64];
-  atomic slot = &store^[held] {
+  let observed = &key[0_u64..2_u64];
+  atomic slot = &store^[observed] {
     let same = slot;
     set same^ = Some<u8>(value: 1_u8);
   }
@@ -183,8 +183,8 @@ fn writes_through_a_copy(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit 
 }
 
 fn writes_through_a_copied_payload(store: &Shared<ConcurrentHashMap<u8>>) -> result: unit reads(store) waits {
-  let held = &key[0_u64..2_u64];
-  atomic slot = &store^[held] {
+  let observed = &key[0_u64..2_u64];
+  atomic slot = &store^[observed] {
     match slot^ {
       Some(value: seen) => {
         let same = seen;
@@ -228,8 +228,8 @@ fn a_statement_that_writes_only_other_places_reads_its_entry() {
         "{PRELUDE}{}",
         r#"
 fn copies_out(store: &Shared<ConcurrentHashMap<u8>>, out: &u8) -> result: unit reads(store), writes(out) waits {
-  let held = &key[0_u64..2_u64];
-  atomic slot = &store^[held] {
+  let observed = &key[0_u64..2_u64];
+  atomic slot = &store^[observed] {
     match slot^ {
       Some(value: seen) => {
         set out^ = seen^;
@@ -243,8 +243,8 @@ fn copies_out(store: &Shared<ConcurrentHashMap<u8>>, out: &u8) -> result: unit r
 
 fn calls_a_reader(store: &Shared<ConcurrentHashMap<u8>>) -> result: u8 reads(store) waits {
   let total = 0_u8;
-  let held = &key[0_u64..2_u64];
-  atomic slot = &store^[held] {
+  let observed = &key[0_u64..2_u64];
+  atomic slot = &store^[observed] {
     match slot^ {
       Some(value: seen) => {
         set total = peek(value: seen);
@@ -258,8 +258,8 @@ fn calls_a_reader(store: &Shared<ConcurrentHashMap<u8>>) -> result: u8 reads(sto
 
 fn reads_a_field(store: &Shared<ConcurrentHashMap<Pair>>) -> result: u8 reads(store) waits {
   let right = 0_u8;
-  let held = &key[0_u64..2_u64];
-  atomic slot = &store^[held] {
+  let observed = &key[0_u64..2_u64];
+  atomic slot = &store^[observed] {
     match slot^ {
       Some(value: pair) => {
         set right = pair^.right;

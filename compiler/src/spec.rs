@@ -37,10 +37,6 @@ impl fmt::Display for SpecHash {
     }
 }
 
-/// Version label of the active kernel specification, from the generated
-/// identity module.
-pub const ACTIVE_KERNEL_SPEC_VERSION: &str = crate::spec_identity::SPEC_VERSION;
-
 /// Repository-relative stable path of the active kernel specification.
 pub const ACTIVE_KERNEL_SPEC_PATH: &str = "spec/kernel-spec.md";
 

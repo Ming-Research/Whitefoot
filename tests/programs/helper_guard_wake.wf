@@ -1,0 +1,90 @@
+struct Progress {
+  written: u64;
+  unrelated: u64;
+  requested: u64;
+  acknowledged: u64;
+  notice: Option<u64>;
+  stopping: Bool;
+}
+
+fn reply_is_ready(progress: &Progress, sequence: u64) -> ready: Bool reads(progress.written), reads(progress.notice) {
+  let written = progress^.written >= sequence;
+  if written {
+    return True();
+  }
+  match progress^.notice {
+    None() => {
+      return False();
+    }
+    Some(..) => {
+      return True();
+    }
+  }
+}
+
+fn rebuild_is_ready(progress: &Progress, sequence: u64) -> ready: Bool reads(progress.stopping), reads(progress.written), reads(progress.notice) {
+  let stopping = progress^.stopping;
+  if stopping {
+    return True();
+  }
+  return reply_is_ready(progress: progress, sequence: sequence);
+}
+
+fn await_progress(state: Shared<Progress>) -> result: u8 pure waits {
+  for @wait (sequence in 1_u64..33_u64) {
+    atomic progress = &state {
+      set progress^.requested = sequence;
+    }
+    let observed = 0_u64;
+    atomic progress = &state when rebuild_is_ready(progress: progress, sequence: sequence) {
+      set observed = progress^.written;
+      set progress^.acknowledged = sequence;
+    }
+    if observed != sequence {
+      return 1_u8;
+    }
+  }
+  return 0_u8;
+}
+
+fn write_progress(state: Shared<Progress>) -> result: unit pure waits {
+  for @write (sequence in 1_u64..33_u64) {
+    atomic progress = &state when progress^.requested == sequence {
+      set progress^.unrelated = sequence;
+    }
+    atomic progress = &state {
+      set progress^.written = sequence;
+    }
+    atomic progress = &state when progress^.acknowledged == sequence {
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let clear = None<u64>();
+  let no = False();
+  let initial = Progress(written: 0_u64, unrelated: 0_u64, requested: 0_u64, acknowledged: 0_u64, notice: clear, stopping: no);
+  let state = shared_new::<Progress>(value: initial);
+  let waiting = shared_share::<Progress>(shared: &state);
+  let writing = shared_share::<Progress>(shared: &state);
+  let waiter = spawn await_progress(state: move waiting);
+  spawn write_progress(state: move writing);
+  let result = waiter;
+  if result != 0_u8 {
+    return std::process::exit_status(code: result);
+  }
+  let final_written = 0_u64;
+  let final_acknowledged = 0_u64;
+  atomic progress = &state {
+    set final_written = progress^.written;
+    set final_acknowledged = progress^.acknowledged;
+  }
+  if final_written != 32_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  if final_acknowledged != 32_u64 {
+    return std::process::exit_status(code: 3_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

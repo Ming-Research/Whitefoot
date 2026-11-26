@@ -4,15 +4,15 @@ fn make_view(value: u8) -> result: SharedRead<u8> pure {
 }
 
 fn early(view: &SharedRead<u8>) -> result: u8 reads(view) waits {
-  atomic held = &view^ {
-    return held^;
+  atomic observed = &view^ {
+    return observed^;
   }
 }
 
 fn given(view: &SharedRead<u8>, flag: Bool) -> result: u8 reads(view) waits {
   let answer = if flag {
-    atomic held = &view^ {
-      give held^;
+    atomic observed = &view^ {
+      give observed^;
     }
   } else {
     give 0_u8;
@@ -21,9 +21,9 @@ fn given(view: &SharedRead<u8>, flag: Bool) -> result: u8 reads(view) waits {
 }
 
 fn tried(view: &SharedRead<u8>, outcome: Result<u8, unit>) -> result: Result<u8, unit> reads(view) waits {
-  atomic held = &view^ {
+  atomic observed = &view^ {
     let item = propagate outcome;
-    let value = held^;
+    let value = observed^;
     return Ok<u8, unit>(value: value);
   }
 }
@@ -37,12 +37,12 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let propagated = tried(view: &view, outcome: failure);
   let count = 0_u8;
   loop @again {
-    atomic held = &view {
+    atomic observed = &view {
       if count == 0_u8 {
         set count = 1_u8;
         continue @again;
       }
-      if held^ == first {
+      if observed^ == first {
         break @again;
       }
     }

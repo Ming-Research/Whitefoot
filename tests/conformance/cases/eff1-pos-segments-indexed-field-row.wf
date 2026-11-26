@@ -16,10 +16,8 @@ fn read_byte(s: &Segments<Item>, segment: u64, offset: u64) -> result: u8 reads(
 fn main() -> status: std::process::ExitStatus pure {
   let item = Item(byte: 7_u8);
   let segments = box_segments_filled::<Item>(lengths: &lengths[0_u64..2_u64], value: item);
-  if 1_u64 < segments.inner.len {
-    if 1_u64 < segments.inner[1_u64].len {
-      set segments.inner[1_u64][1_u64].byte = 21_u8;
-    }
+  if 1_u64 < segments.inner[1_u64].len {
+    set segments.inner[1_u64][1_u64].byte = 21_u8;
   }
   let byte = read_byte(s: &segments.inner, segment: 1_u64, offset: 1_u64);
   if byte != 21_u8 {

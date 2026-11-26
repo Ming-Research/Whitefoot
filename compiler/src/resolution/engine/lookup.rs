@@ -412,13 +412,18 @@ pub(super) fn resolve_uses_deferred(
                             role: use_record.role,
                             admissible,
                             origins: invisible,
-                            mechanical_fix: (use_record.role == LexicalUseRole::InvariantFact
-                                && invisible_headers_only)
-                                .then(|| {
-                                    crate::semantic::header_invariant_scope_repair(
-                                        &use_record.spelling,
-                                    )
-                                }),
+                            mechanical_fix: if use_record.role == LexicalUseRole::IntegerMatchValue
+                            {
+                                Some("write an in-scope named const or integer literal of the scrutinee's exact integer type".to_owned())
+                            } else {
+                                (use_record.role == LexicalUseRole::InvariantFact
+                                    && invisible_headers_only)
+                                    .then(|| {
+                                        crate::semantic::header_invariant_scope_repair(
+                                            &use_record.spelling,
+                                        )
+                                    })
+                            },
                         },
                     }),
                 ));
@@ -524,10 +529,51 @@ fn resolve_qualified(
                 spelling: use_record.spelling.clone(),
                 module: modules.name(module),
                 role: use_record.role,
+                mechanical_fix: qualified_name_fix(
+                    declarations,
+                    metas,
+                    inventory,
+                    module,
+                    &modules.name(module),
+                    use_record,
+                ),
             },
         })),
         _ => Err(ResolutionCompilerFailure::AmbiguousResolution),
     }
+}
+
+/// Keep inventory hints short: list at most eight unique spellings, in lexical
+/// order, without selecting by similarity to the rejected spelling. This cap
+/// affects only repair text, never resolution or source acceptance.
+const QUALIFIED_NAME_HINT_LIMIT: usize = 8;
+
+fn qualified_name_fix(
+    declarations: &[DeclarationRecord],
+    metas: &[DeclarationMeta],
+    inventory: super::super::ScopeId,
+    module: crate::ModuleId,
+    module_name: &str,
+    use_record: &UseMeta,
+) -> String {
+    let mut names = Vec::new();
+    for meta in metas.iter().filter(|meta| {
+        meta.scope == inventory
+            && !meta.type_owned
+            && !defers_to_definition(meta)
+            && (!use_record.interface || !meta.implementation_only)
+            && (module == use_record.module || meta.public)
+    }) {
+        let spelling = &declarations[meta.record_index].spelling;
+        let admissible = admissible_classes(use_record.role, spelling);
+        if meta.entries.iter().any(|class| admissible.contains(class)) {
+            names.push(spelling.as_str());
+        }
+    }
+    names.sort_unstable();
+    names.dedup();
+    names.truncate(QUALIFIED_NAME_HINT_LIMIT);
+    crate::diagnostic_repairs::qualified_name(&use_record.spelling, module_name, &names)
 }
 
 /// Resolves the member TYPEID of a type-owned variant construction among
@@ -613,7 +659,9 @@ fn admissible_classes(role: LexicalUseRole, spelling: &str) -> Vec<DeclarationCl
         LexicalUseRole::Const => {
             vec![DeclarationClass::NamedConst, DeclarationClass::ConstGeneric]
         }
-        LexicalUseRole::ConstValue => vec![DeclarationClass::NamedConst],
+        LexicalUseRole::ConstValue | LexicalUseRole::IntegerMatchValue => {
+            vec![DeclarationClass::NamedConst]
+        }
         LexicalUseRole::PlaceBase => {
             // [MSR-6] a `pbase` admits an in-scope const generic beside a
             // named const: a const generic is a monomorphization-time
@@ -690,6 +738,7 @@ fn universe_classes(role: LexicalUseRole) -> Vec<DeclarationClass> {
         LexicalUseRole::BreakLabel => vec![DeclarationClass::Label],
         LexicalUseRole::Const
         | LexicalUseRole::ConstValue
+        | LexicalUseRole::IntegerMatchValue
         | LexicalUseRole::PlaceBase
         | LexicalUseRole::FunctionBinding => vec![
             DeclarationClass::Function,
@@ -735,6 +784,7 @@ fn use_rule(role: LexicalUseRole) -> ResolutionRule {
         LexicalUseRole::EffectRoot | LexicalUseRole::EffectIndex => ResolutionRule::Eff1,
         LexicalUseRole::Const => ResolutionRule::Const1,
         LexicalUseRole::ConstValue => ResolutionRule::Const2,
+        LexicalUseRole::IntegerMatchValue => ResolutionRule::Gram12,
         LexicalUseRole::IdentifierCallee | LexicalUseRole::OperationCallee => ResolutionRule::Op1,
         // FN-3 selects the function named by a binding group's member;
         // FN-4 checks its compatibility after resolution.

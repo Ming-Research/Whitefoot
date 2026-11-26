@@ -1,0 +1,21 @@
+fn certify(first: u64, second: u64, third: u64, first_limit: u64, second_limit: u64, third_limit: u64) -> result: u8 pure waits contract {
+  requires first <= 2_u64 * first_limit;
+  requires second <= 2_u64 * second_limit;
+  requires third <= 2_u64 * third_limit;
+} {
+  let store = shared_map_new::<u8>(capacity: 1_u64);
+  let keys = key_set_new(capacity: 1_u64);
+  atomic es = &store[keys] {
+    invariant combined: first + second + third <= 2_u64 * first_limit + 2_u64 * second_limit + 2_u64 * third_limit {
+      use (first <= 2_u64 * first_limit);
+      use (second <= 2_u64 * second_limit);
+      use (third + es^.len <= 2_u64 * third_limit + es^.len);
+    }
+  }
+  return 0_u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let answer = certify(first: 1_u64, second: 2_u64, third: 3_u64, first_limit: 1_u64, second_limit: 1_u64, third_limit: 2_u64);
+  return std::process::exit_status(code: answer);
+}

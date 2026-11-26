@@ -220,7 +220,7 @@ fn whole_referent_assignment_kills_the_old_window_facts() {
     // v0.59 wrote this as `let old = replace deref(values) = move empty;`.
     // [SET-1] with [WIN-3]'s disposition is the successor: the assignment
     // releases the displaced affine window instead of reading it out.
-    let source = r#"fn clear(values: &Slots<u64, 4>) -> result: unit writes(values) {
+    let source = r#"fn wipe(values: &Slots<u64, 4>) -> result: unit writes(values) {
   let empty = slots_new::<u64, 4>();
   set values^ = move empty;
   return unit;
@@ -229,7 +229,7 @@ fn whole_referent_assignment_kills_the_old_window_facts() {
 fn main() -> status: std::process::ExitStatus pure {
   let values = slots_new::<u64, 4>();
   place_back(window: &values, value: 7_u64);
-  clear(values: &values);
+  wipe(values: &values);
   let last = take_back(window: &values);
   return std::process::exit_status(code: 0_u8);
 }
@@ -402,8 +402,8 @@ fn a_boxed_window_publishes_to_the_typed_referent() {
   if filled < 4_u64 {
     push(values: &owner.inner, value: 7_u64);
     invariant changed: owner.inner.len >= 1_u64;
-    let held = &owner.inner[0_u64];
-    let observed = held^;
+    let observed_state = &owner.inner[0_u64];
+    let observed = observed_state^;
     return std::process::exit_status(code: 0_u8);
   }
   return std::process::exit_status(code: 1_u8);
@@ -415,8 +415,8 @@ fn a_boxed_window_publishes_to_the_typed_referent() {
     // prefix of the element reference's path, so the reference is invalid at
     // its next use [REF-2].
     let surviving = source.replace(
-        "    let held = &owner.inner[0_u64];\n    let observed = held^;",
-        "    let held = &owner.inner[0_u64];\n    let fresh = slots_new::<u64, 4>();\n    set owner.inner = move fresh;\n    let observed = held^;",
+        "    let observed_state = &owner.inner[0_u64];\n    let observed = observed_state^;",
+        "    let observed_state = &owner.inner[0_u64];\n    let fresh = slots_new::<u64, 4>();\n    set owner.inner = move fresh;\n    let observed = observed_state^;",
     );
     assert_rule(surviving.as_bytes(), SemanticRule::Ref2);
 }

@@ -1,8 +1,14 @@
 alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
+fn same(left: u64, right: u64) -> result: unit pure contract {
+  requires left == right;
+} {
+  return unit;
+}
+
 fn main() -> status: ExitStatus pure {
-  doc "OP-10: place_front and take_front admit Ring alone and shift every logical index of the ring, and a ring position is a logical index whose wrap is the storage's business.";
+  doc "OP-10: place_front and take_front admit Ring alone and shift every logical index of the ring, and a ring position is a logical index whose wrap is the storage's business. The call to same states the derived length as a requirement.";
   let r = ring_new::<u64, 4>();
   place_back(window: &r, value: 2_u64);
   place_front(window: &r, value: 1_u64);
@@ -12,9 +18,6 @@ fn main() -> status: ExitStatus pure {
   } else {
     return exit_status(code: 1_u8);
   }
-  if n == 1_u64 {
-  } else {
-    return exit_status(code: 2_u8);
-  }
+  same(left: n, right: 1_u64);
   return exit_status(code: 0_u8);
 }

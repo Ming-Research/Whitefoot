@@ -197,9 +197,9 @@ pub(crate) struct Synthesis {
 }
 
 impl Synthesis {
-    /// A run and the adjacent-pair recovery can reach the same boundary.
-    /// Report that source conflict once, also across physical instances.
-    pub(super) fn note_storage_conflict(&mut self, line: String) {
+    /// Report a placement or storage boundary once, including when adjacent
+    /// pair recovery or another physical instance reaches the same boundary.
+    pub(super) fn note_narrowing(&mut self, line: String) {
         if !self.ledger.contains(&line) {
             self.ledger.push(line);
         }
@@ -294,6 +294,28 @@ impl<'program> IrBuilder<'program> {
         let Some(actualization) = permission.actualization else {
             return Ok(false);
         };
+        // IrIndexedRoot retains only struct-field projections. A payload
+        // root uses the complete ordinary CFG until indexed blocks carry
+        // enum projections as well; no source acceptance depends on a split.
+        if permission
+            .indexed
+            .iter()
+            .chain(self.indexed_roots.iter().map(|(family, _, _)| family))
+            .chain(&self.indexed_block_families)
+            .any(|family| {
+                family
+                    .root
+                    .path
+                    .iter()
+                    .any(|step| matches!(step, crate::semantic::CheckedPlaceStep::Payload { .. }))
+            })
+        {
+            self.note(
+                node_path,
+                "declined: indexed private blocks require a struct-field root path",
+            );
+            return Ok(false);
+        }
         let accumulator = match actualization {
             LoopActualization::IndependentMap => None,
             LoopActualization::Reduction { accumulator, .. } => Some(accumulator),
@@ -1156,6 +1178,20 @@ impl<'program> IrBuilder<'program> {
                         targets,
                     }
                 }
+                IrTerminator::IntegerMatch {
+                    scrutinee,
+                    mut targets,
+                    default,
+                } => {
+                    for target in &mut targets {
+                        target.block = block(target.block);
+                    }
+                    IrTerminator::IntegerMatch {
+                        scrutinee,
+                        targets,
+                        default: default.map(block),
+                    }
+                }
                 IrTerminator::Return { value, drops } => IrTerminator::Jump {
                     target: continuation,
                     arguments: vec![value],
@@ -1795,6 +1831,13 @@ fn reachable_without(blocks: &[IrBlock], removed: usize, goal: usize) -> bool {
                 .iter()
                 .map(|target| target.block().index())
                 .collect(),
+            IrTerminator::IntegerMatch {
+                targets, default, ..
+            } => targets
+                .iter()
+                .map(|target| target.block().index())
+                .chain(default.iter().map(|target| target.index()))
+                .collect(),
             IrTerminator::Return { .. } | IrTerminator::Unreachable => Vec::new(),
         };
         for successor in successors {
@@ -1851,6 +1894,7 @@ mod tests {
             box_keeping_reference_parameters: Vec::new(),
             source_signature: None,
             source_calls: Vec::new(),
+            lock_ledger: Vec::new(),
             result: U64,
             values: types.clone(),
             counted_ranges: Vec::new(),

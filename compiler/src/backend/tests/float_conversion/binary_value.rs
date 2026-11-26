@@ -260,11 +260,28 @@ pub(super) fn extend_program(original: &str) -> String {
             } else {
                 String::new()
             };
+            // A total pair's domain holds at every input, so its body asks no
+            // `cvt.defined` question the checker has already answered: every
+            // input must be wanted, the exact conversion runs unguarded, and
+            // the checked conversion must succeed with the same bits.
+            let body = if source.spelling == destination.spelling
+                || super::converts_totally(source, destination)
+            {
+                format!(
+                    "  if wanted {{\n  }} else {{\n    return False();\n  }}\n  let converted_exact = cvt::<{source}, {destination}>(value);\n  let exact_observed = {exact_observation};\n  if exact_observed == expected {{\n  }} else {{\n    return False();\n  }}\n  match cvt.checked::<{source}, {destination}>(value) {{\n    Ok(value: actual) => {{\n      let observed = {actual};\n      return observed == expected;\n    }}\n    Err(error: refused) => {{\n      return False();\n    }}\n  }}\n",
+                    source = source.spelling,
+                    destination = destination.spelling,
+                )
+            } else {
+                format!(
+                    "  let permitted = cvt.defined::<{source}, {destination}>(value);\n  if permitted {{\n    if wanted {{\n    }} else {{\n      return False();\n    }}\n    let converted_exact = cvt::<{source}, {destination}>(value);\n    let exact_observed = {exact_observation};\n    if exact_observed == expected {{\n    }} else {{\n      return False();\n    }}\n  }} else if wanted {{\n    return False();\n  }}\n  match cvt.checked::<{source}, {destination}>(value) {{\n    Ok(value: actual) => {{\n      if wanted {{\n        let observed = {actual};\n        return observed == expected;\n      }} else {{\n        return False();\n      }}\n    }}\n    Err(error: refused) => {{\n      if wanted {{\n        return False();\n      }} else {{\n        return True();\n      }}\n    }}\n  }}\n",
+                    source = source.spelling,
+                    destination = destination.spelling,
+                )
+            };
             writeln!(
                 helpers,
-                "fn {name}(input: {input_type}, expected: {expected_type}, wanted: Bool) -> result: Bool pure {{\n  let value = {input};\n{identity}  let permitted = cvt.defined::<{source}, {destination}>(value);\n  if permitted {{\n    if wanted {{\n    }} else {{\n      return False();\n    }}\n    let converted_exact = cvt::<{source}, {destination}>(value);\n    let exact_observed = {exact_observation};\n    if exact_observed == expected {{\n    }} else {{\n      return False();\n    }}\n  }} else if wanted {{\n    return False();\n  }}\n  match cvt.checked::<{source}, {destination}>(value) {{\n    Ok(value: actual) => {{\n      if wanted {{\n        let observed = {actual};\n        return observed == expected;\n      }} else {{\n        return False();\n      }}\n    }}\n    Err(error: refused) => {{\n      if wanted {{\n        return False();\n      }} else {{\n        return True();\n      }}\n    }}\n  }}\n}}\n",
-                source = source.spelling,
-                destination = destination.spelling,
+                "fn {name}(input: {input_type}, expected: {expected_type}, wanted: Bool) -> result: Bool pure {{\n  let value = {input};\n{identity}{body}}}\n",
             )
             .expect("write numeric boundary helper");
             let observations = if source.kind == NumericKind::Float {

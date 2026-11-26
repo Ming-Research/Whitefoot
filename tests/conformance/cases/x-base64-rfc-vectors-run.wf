@@ -175,11 +175,6 @@ fn main() -> status: ExitStatus pure {
   let man_required_input_length = man_source^.len;
   let man_required_out_groups = ishr.wrap(man_required_out_length, 2_u32);
   let man_required_covered_input = man_required_out_groups *wrap 3_u64;
-  let man_capacity = man_required_input_length <= man_required_covered_input;
-  if man_capacity {
-  } else {
-    return exit_status(code: 216_u8);
-  }
   let man_length_ok = False();
   match encode(out: man_window, input: man_source) {
     Ok(value: man_length) => {
@@ -205,11 +200,6 @@ fn main() -> status: ExitStatus pure {
   let m_required_input_length = m_source^.len;
   let m_required_out_groups = ishr.wrap(m_required_out_length, 2_u32);
   let m_required_covered_input = m_required_out_groups *wrap 3_u64;
-  let m_capacity = m_required_input_length <= m_required_covered_input;
-  if m_capacity {
-  } else {
-    return exit_status(code: 217_u8);
-  }
   let m_length_ok = False();
   match encode(out: m_window, input: m_source) {
     Ok(value: m_length) => {
@@ -237,11 +227,6 @@ fn main() -> status: ExitStatus pure {
   let ma_required_input_length = ma_source^.len;
   let ma_required_out_groups = ishr.wrap(ma_required_out_length, 2_u32);
   let ma_required_covered_input = ma_required_out_groups *wrap 3_u64;
-  let ma_capacity = ma_required_input_length <= ma_required_covered_input;
-  if ma_capacity {
-  } else {
-    return exit_status(code: 218_u8);
-  }
   let ma_length_ok = False();
   match encode(out: ma_window, input: ma_source) {
     Ok(value: ma_length) => {

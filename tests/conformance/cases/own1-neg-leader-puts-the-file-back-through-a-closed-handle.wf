@@ -1,0 +1,24 @@
+alias HandleFactory = std::io::HandleFactory;
+alias WriteFile = std::fs::WriteFile;
+
+fn retire(desk: Shared<Slots<WriteFile, 1>>, factory: &HandleFactory, file: WriteFile) -> result: unit writes(factory) waits {
+  match shared_close::<Slots<WriteFile, 1>>(shared: move desk) {
+    Some(value: slot) => {
+      if slot.len > 0_u64 {
+        let parked = take_back(window: &slot);
+        std::fs::close_write(factory: factory, file: move parked);
+      }
+      free_empty(window: move slot);
+    }
+    None() => {
+    }
+  }
+  atomic home = &desk when home^.len < home^.cap {
+    place_back(window: home, value: move file);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

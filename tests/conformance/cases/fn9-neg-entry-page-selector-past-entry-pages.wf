@@ -1,0 +1,17 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn f(p: &Paged<Slots<u8, 8>>, k: u64, i: u64) -> r: u64 writes(p) contract {
+  requires k == p^.pages.len;
+  requires p^.len > 0_u64;
+  ensures r <= entry(p)^.pages[k][i].len;
+} {
+  doc "k is the page count at entry, so the page entry(p)^.pages[k] did not exist then.";
+  let last = take_back(window: p);
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The declaration alone is judged.";
+  return exit_status(code: 0_u8);
+}

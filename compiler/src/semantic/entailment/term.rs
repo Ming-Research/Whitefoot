@@ -91,6 +91,16 @@ pub(crate) enum TermKind {
         commit_path: Vec<u32>,
         ty: IntegerType,
     },
+    /// One immutable compiler-owned returned value [ENT-2, FN-9]: the value
+    /// one result ordinal's computed expression evaluated to at one
+    /// `return_stmt`. The statement's finalized NodePath, the ordinal and the
+    /// value's fragment type are its complete function-local identity; like a
+    /// commit value it denotes the statement's one abstract evaluation.
+    ReturnedValue {
+        return_path: Vec<u32>,
+        ordinal: u32,
+        ty: IntegerType,
+    },
     /// One immutable compiler-owned call datum [ENT-3.S13, MSR-3]: the value
     /// one `own` operand of a declared relation had at that call's
     /// pre-transfer point, or one measure of it. The call's finalized
@@ -202,6 +212,7 @@ pub(crate) const ZERO: TermId = TermId(0);
 /// constant length term), so any derivation hopping through a later term's
 /// implicit bounds factors through Z, and no other fact mentions an
 /// unregistered term.
+#[derive(Clone)]
 pub(crate) struct TermTable {
     terms: Vec<TermKind>,
     sums: Vec<TermId>,

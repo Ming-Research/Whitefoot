@@ -112,9 +112,8 @@ narrowed to `writes(context.fragments)`,
   [MSR-2]. `writes(context)` therefore kills `at < context^.blocks.inner.len`
   whatever the callee's body does: the row, not the body, is the boundary
   ([design: effects](../../../design/language/effects.md)).
-- A row may be coarser than the body. An entry is exhibited when the body
-  accesses storage at or below its path [EFF-2], so `writes(context)` is a
-  valid row for a body that writes only `context.width`. EFF-2's two-way
+- A row may be coarser than the body: a body that writes only
+  `context.width` exhibits `writes(context)` under [EFF-2]. EFF-2's two-way
   exactness forbids an entry nothing exhibits; it does not ask for the
   narrowest entry.
 - A callee that writes elements at a computed index has no row narrower than

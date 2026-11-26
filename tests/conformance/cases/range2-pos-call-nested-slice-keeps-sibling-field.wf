@@ -1,0 +1,32 @@
+struct Row {
+  values: Slots<u64, 4>;
+  marker: u64;
+}
+
+fn fill(part: &[u64]) -> result: unit writes(part) {
+  for (k in 0_u64..part^.len) {
+    set part^[k] = 9_u64;
+  }
+  return unit;
+}
+
+fn need_markers(rows: &[Row]) -> result: unit pure contract {
+  requires forall small(k in 0_u64..rows^.len): rows^[k].marker <= 7_u64;
+} {
+  return unit;
+}
+
+fn probe(rows: &[Row]) -> result: unit writes(rows) contract {
+  requires forall held_markers(k in 0_u64..rows^.len): rows^[k].marker <= 7_u64;
+  requires 1_u64 <= rows^.len;
+  requires 2_u64 <= rows^[0_u64].values.len;
+} {
+  doc "RANGE-2 retains the marker field when a nested partial-slice write selects values; OWN-7 separates the fields before reaching the range step.";
+  fill(part: &rows^[0_u64].values[1_u64..2_u64]);
+  need_markers(rows: rows);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

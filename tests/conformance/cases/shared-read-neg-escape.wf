@@ -9,8 +9,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let view = shared_read::<State>(shared: &owner);
   let local = initial;
   let escaped = &local;
-  atomic held = &view {
-    set escaped = &held^;
+  atomic observed = &view {
+    set escaped = &observed^;
   }
   let read = escaped^.ready;
   return std::process::exit_status(code: 0_u8);

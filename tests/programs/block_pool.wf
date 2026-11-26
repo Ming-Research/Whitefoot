@@ -166,8 +166,8 @@ fn boxed_block_round_trip() -> code: u8 pure {
 fn main() -> status: ExitStatus pure {
   doc "Runs the block pool: eight runs carved into one run of runs, a lease taken off the back boundary and returned to a free list the caller proved had room, then the two round trips over a frame-resident and a heap-cell element type.";
   let pool = pool_new();
-  let held = pool.free.len;
-  if held == 8_u64 {
+  let observed = pool.free.len;
+  if observed == 8_u64 {
   } else {
     return exit_status(code: 2_u8);
   }

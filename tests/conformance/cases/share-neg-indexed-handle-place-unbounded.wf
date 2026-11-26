@@ -1,6 +1,6 @@
 fn bump(shards: &Array<Shared<u64>, 4>, slot: u64) -> result: unit reads(shards) waits {
-  atomic held = &shards^[slot] {
-    set held^ = held^ +wrap 1_u64;
+  atomic kept = &shards^[slot] {
+    set kept^ = kept^ +wrap 1_u64;
   }
   return unit;
 }

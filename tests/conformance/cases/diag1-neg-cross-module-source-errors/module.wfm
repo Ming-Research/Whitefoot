@@ -1,0 +1,1 @@
+public fn second(a: u64) -> r: u64 pure doc "Returns its input.";

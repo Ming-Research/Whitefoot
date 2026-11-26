@@ -1,0 +1,21 @@
+fn need_choice(x: &u64) -> result: u64 reads(x) contract {
+  define first = x^ == 1_u64;
+  define second = x^ == 3_u64;
+  requires bor(first, second);
+} {
+  let value = x^;
+  return value;
+}
+
+fn pick_choice(a: &u64, b: &u64) -> result: u64 reads(a) {
+  let q = &a^;
+  let first = a^ == 1_u64;
+  let second = a^ == 3_u64;
+  let either = bor(first, second);
+  if either {
+    set q = &b^;
+    let r = need_choice(x: a);
+    return r;
+  }
+  return 0_u64;
+}

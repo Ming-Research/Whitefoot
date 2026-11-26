@@ -4,7 +4,7 @@ enum Phase {
 }
 
 fn borrow_only(phase: &Phase) -> result: unit pure {
-  let held = &phase^;
+  let observed = &phase^;
   return unit;
 }
 

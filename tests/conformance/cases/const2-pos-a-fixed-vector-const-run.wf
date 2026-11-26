@@ -4,22 +4,19 @@ alias exit_status = std::process::exit_status;
 const table: Array<u8, 4> =[10_u8, 20_u8, 30_u8, 40_u8];
 
 fn main() -> status: ExitStatus pure {
-  doc "The const form of the inline run: an Array<T, N> of const-eligible T with exactly N literal entries is const-eligible read-only static rodata. It lowers to element storage only and stores no length, capacity or head, so the three measures its row has read the type's own constants, a subscript discharges from len == N, and the const is the immutable origin of a range reference.";
+  doc "The const form of the inline run: an Array<T, N> of const-eligible T with exactly N literal entries is const-eligible read-only static rodata. It lowers to element storage only and stores no length, capacity or head, so the three measures its row has read the type's own constants, a subscript discharges from len == N, and the const is the immutable origin of a range reference. The length read is the exit status.";
   let v = table[2_u64];
   if v == 30_u8 {
   } else {
     return exit_status(code: 201_u8);
   }
   let n = table.len;
-  if n == 4_u64 {
-  } else {
-    return exit_status(code: 202_u8);
-  }
   let window = &table[1_u64..2_u64];
   let seen = window^[0_u64];
   if seen == 20_u8 {
   } else {
     return exit_status(code: 206_u8);
   }
-  return exit_status(code: 0_u8);
+  let code = cvt::<u64, u8>(n);
+  return exit_status(code: code);
 }

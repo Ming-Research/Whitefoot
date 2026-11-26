@@ -1,0 +1,605 @@
+# The model's sentence coverage of the specification, checked by
+# `lake exe coverage` in this directory on every change to the specification
+# or the model.
+#
+# `rule ID` covers a rule: every line of its text must be marked as modeled by
+# a `-- spec ID HASH` comment above the Lean definition that formalizes it, or
+# be listed here as `outside ID HASH reason`. `family P` requires every rule
+# whose ID starts with `P-` to have a `rule` or a `skip ID reason` entry, so a
+# new rule in a covered family is classified before it merges. HASH is the
+# 64-bit FNV-1a hash of the line's bytes in hexadecimal; blank lines and
+# code-fence lines carry none. `lake exe coverage --show ID` prints a rule's
+# lines with their hashes and dispositions. `WhitefootProof.lean` must import
+# every source file under `WhitefootProof/`, so that each mark sits in a module
+# that is built and whose declarations the axiom check reads.
+#
+# A change that edits a covered line changes its hash: the check then names
+# the line, and the change updates the model, its proofs and this list.
+
+family OP
+
+rule OP-2
+outside OP-2 581b23ecd26b70ea lowering, which the model does not describe
+outside OP-2 d8bc430a003e7a41 shifts: a later slice
+outside OP-2 6a3110d2c5591b4f shifts: a later slice
+outside OP-2 3f9bef0e3d501db9 shifts: a later slice
+outside OP-2 0ecb9a64671c58f9 shifts: a later slice
+outside OP-2 4a071fa752dfc467 checked division and remainder return Result: outside the first phase
+outside OP-2 8453dd7dc1abe6ca saturating forms belong to OP-8
+outside OP-2 91e0542de1499705 shifts: a later slice
+outside OP-2 fd96f44324d288c6 effect rows: a later phase; no fragment operation has an effect
+
+rule OP-4
+outside OP-4 05c9c1145cdb13d6 named consts: outside the first phase
+outside OP-4 12df3ab77b3bf635 run selectors: outside the first phase
+outside OP-4 e06348a505fb4d3a run selectors: outside the first phase
+outside OP-4 289220d54d46656f run selectors: outside the first phase
+outside OP-4 3a8dfb7783938ef2 concurrent maps: outside the first phase
+outside OP-4 c64f316138920ce9 capacity and storage, which the model does not describe
+outside OP-4 a73aa9d4653c60b0 runtime-capacity shapes: outside the first phase
+outside OP-4 4feea15f046b6f9c narrowing and address formation, which the model does not describe
+
+rule OP-5
+outside OP-5 32dca883ef6e7071 references: a later phase
+outside OP-5 5191a008f7d4fec4 the judgment adds no runtime step
+outside OP-5 cdd39b0eb433e0e5 a consequence stated for the reader; it adds no condition
+
+skip OP-1 the operation table and operator resolution: the fragment's parser and checker
+skip OP-3 floats: outside the first phase
+skip OP-6 conversions: outside the first phase
+skip OP-7 naming convention, which carries no semantics
+skip OP-8 bit, saturating and float edge semantics: outside the first phase
+skip OP-9 allocation sizes: outside the first phase
+skip OP-10 window operations: outside the first phase
+skip OP-11 swap: outside the first phase
+skip OP-12 the atomic in-place update: outside the first phase
+skip OP-13 construction: outside the first phase
+skip OP-14 free_empty: outside the first phase
+skip OP-15 measure reads: a later slice of the first phase
+skip OP-16 value equality: a later slice of the first phase
+
+rule GRAM-1
+outside GRAM-1 3cf00e6fdf942a50 grammar determinism, a property of the grammar the parser relies on rather than a step
+outside GRAM-1 a75c5828d413c362 retained float and character candidates: outside the first phase
+outside GRAM-1 ccc6d16a630d46b5 how EBNF atoms denote tokens, which the parser reads directly
+outside GRAM-1 7a65eec20a3ca5a0 how EBNF atoms denote tokens, which the parser reads directly
+outside GRAM-1 e28106508ebff63f how EBNF atoms denote tokens, which the parser reads directly
+outside GRAM-1 ae08a60addfae9a2 how EBNF atoms denote tokens, which the parser reads directly
+outside GRAM-1 a22e0658f6676ae8 how EBNF atoms denote tokens, which the parser reads directly
+outside GRAM-1 4895112d66185995 terminal membership, which the parser checks at each production instead
+outside GRAM-1 7507b7234c0dfeb5 terminal membership, which the parser checks at each production instead
+outside GRAM-1 c54158b8b427318e terminal membership, which the parser checks at each production instead
+outside GRAM-1 188da7aa8b3e7132 terminal membership, which the parser checks at each production instead
+outside GRAM-1 7be2b7cf57584842 grammar determinism, a property of the grammar the parser relies on rather than a step
+outside GRAM-1 5cec0bcf4950d04c grammar determinism, a property of the grammar the parser relies on rather than a step
+outside GRAM-1 5d04902fbf269dcf field, payload and reference steps: outside the first phase
+outside GRAM-1 1c4e135f9a53c8e3 node kinds, which the syntax tree follows
+outside GRAM-1 bacc8e6d5fd3390d interface and binding groups: outside the first phase
+
+rule GRAM-2
+outside GRAM-2 cc56565c9233b845 heading of the rule; its productions are marked or listed
+outside GRAM-2 059f14e4fcb91e69 public items: outside the first phase
+outside GRAM-2 433bdca321ecba8a public items: outside the first phase
+outside GRAM-2 e74c0f4ee8ce03d0 the no-heap declaration: outside the first phase
+outside GRAM-2 a5512aeec80a4310 the no-heap declaration: outside the first phase
+outside GRAM-2 8eb2b0e700572429 nominal type declarations: outside the first phase
+outside GRAM-2 34f2f2a8b92cc769 nominal type declarations: outside the first phase
+outside GRAM-2 1f9f907cb58ad108 nominal type declarations: outside the first phase
+outside GRAM-2 146082d327cb6209 nominal type declarations: outside the first phase
+outside GRAM-2 14577cba19ad6282 nominal type declarations: outside the first phase
+outside GRAM-2 6e09f55fab310c68 nominal type declarations: outside the first phase
+outside GRAM-2 6e911f367bae8664 nominal type declarations: outside the first phase
+outside GRAM-2 356302f22b8e2e20 contract definitions: outside the first phase
+outside GRAM-2 77280b6c5385fa72 held requirements: outside the first phase
+outside GRAM-2 b81b2b8e6e8cd4b8 routed postconditions: outside the first phase
+outside GRAM-2 82a4ef0520dbb57e interfaces and bindings: outside the first phase
+outside GRAM-2 0c2449703028ac5d interfaces and bindings: outside the first phase
+outside GRAM-2 89b1426b075812d8 interfaces and bindings: outside the first phase
+outside GRAM-2 125ac304fa39b007 interfaces and bindings: outside the first phase
+outside GRAM-2 2df2e6861e3169e5 interfaces and bindings: outside the first phase
+outside GRAM-2 62487280d5635718 interfaces and bindings: outside the first phase
+outside GRAM-2 2ba01b1564eabb3c interfaces and bindings: outside the first phase
+outside GRAM-2 8c4d9199861cedcd named consts: outside the first phase
+outside GRAM-2 7a768fe2b813b059 interfaces and bindings: outside the first phase
+outside GRAM-2 9839fb5249d52ddc doc entries, which carry no meaning; the parser skips a body doc entry
+outside GRAM-2 3e7153c1a59d5dc5 generics: outside the first phase
+outside GRAM-2 ada5b9551b624ce8 generics: outside the first phase
+outside GRAM-2 5a317ece950e5e3f generics: outside the first phase
+outside GRAM-2 a4561ce8b1fb5797 generics: outside the first phase
+outside GRAM-2 ed2f50561a99a5e3 module graphs: outside the first phase
+outside GRAM-2 42d6cfb3b2a05662 module graphs: outside the first phase
+outside GRAM-2 c7abf0f40c268c00 module graphs: outside the first phase
+outside GRAM-2 a2a53dcf9bd00ba5 module graphs: outside the first phase
+outside GRAM-2 232ea3becfbf1213 module graphs: outside the first phase
+outside GRAM-2 2d2935d4121e0aaf module graphs: outside the first phase
+outside GRAM-2 1de97f0bdccbcf8e module graphs: outside the first phase
+outside GRAM-2 43dd07f944ec80f4 the no-heap declaration: outside the first phase
+outside GRAM-2 c1d1ea9b9230dda1 the no-heap declaration: outside the first phase
+outside GRAM-2 f5e47168942e69e1 the no-heap declaration: outside the first phase
+
+rule GRAM-3
+outside GRAM-3 bc0a4fd5804a6cc6 heading of the rule; its productions are marked or listed
+outside GRAM-3 a1443418ac24e337 reference parameters: a later phase
+outside GRAM-3 eaf74d495fbbc78e result modes: the fragment's grammar writes only value results, and a mode and type pair is no source form
+
+rule GRAM-4
+outside GRAM-4 fb59a1476466b47b heading of the rule; its productions are marked or listed
+outside GRAM-4 61793cf5b70af7f6 result-list bindings: outside the first phase
+outside GRAM-4 64e08a43096a4a3c destructuring and match: outside the first phase
+outside GRAM-4 102b094f601780f4 value initializers and match: outside the first phase
+outside GRAM-4 367503ed93235c5e propagate: outside the first phase
+outside GRAM-4 6ee4560e991cd2a9 counted loops: outside the first phase
+outside GRAM-4 0462d51e954c9416 counted loops: outside the first phase
+outside GRAM-4 cb56b0f46d1fa54b type invariants: outside the first phase
+outside GRAM-4 ce987551e18cff81 proof uses: outside the first phase
+outside GRAM-4 ea005b6d44a528da proof uses: outside the first phase
+outside GRAM-4 ecbdaf89e28baa21 value initializers and match: outside the first phase
+outside GRAM-4 1a819cb68024a651 atomic statements: outside the first phase
+outside GRAM-4 e876ad3f20735251 value initializers and match: outside the first phase
+outside GRAM-4 6d4baf9c031e8ae4 value initializers and match: outside the first phase
+outside GRAM-4 dd085985a1bd1dca destructuring and match: outside the first phase
+outside GRAM-4 05c90a72ed8e38b5 destructuring and match: outside the first phase
+outside GRAM-4 ae7ae89960a13a8b destructuring and match: outside the first phase
+outside GRAM-4 dcbd7e6e7a424193 destructuring and match: outside the first phase
+outside GRAM-4 d15799abdf5b3d1d apart clauses: outside the first phase
+
+rule GRAM-5
+outside GRAM-5 8e538f9700f46a72 heading of the rule; its productions are marked or listed
+outside GRAM-5 4a6648118a715166 borrows: a later phase
+outside GRAM-5 cbb7547caab9a3a9 range clauses: outside the first phase
+outside GRAM-5 50b6542c9a05cb9f range clauses: outside the first phase
+outside GRAM-5 c07ad5fa9c3eefad range clauses: outside the first phase
+outside GRAM-5 f652f35bb00815ca range clauses: outside the first phase
+outside GRAM-5 c1022aa670a3d4c2 range clauses: outside the first phase
+outside GRAM-5 885578cd5601476f field and payload steps: outside the first phase
+outside GRAM-5 27a8ea38f2a86a26 field and payload steps: outside the first phase
+outside GRAM-5 6923589cba8dba91 range steps: outside the first phase
+outside GRAM-5 3d02fe48c2550a1c references: a later phase
+outside GRAM-5 21456137d6975b13 borrows: a later phase
+
+rule GRAM-6
+outside GRAM-6 9438af921dc50b5f no precedence, which the expression tree has by its shape
+outside GRAM-6 1ee159cfb4b8b959 value equality beyond integers and Bool: outside the first phase
+outside GRAM-6 f9620e7d21788c6d statements of fact about forms the grammar lacks
+outside GRAM-6 5dd40d5532542ce1 statements of fact about forms the grammar lacks
+outside GRAM-6 d3971e0102fcd591 counted loops: outside the first phase
+outside GRAM-6 7e71cef463610d6f range and payload steps: outside the first phase
+outside GRAM-6 ab87cf0f3b1f5664 clause shape: the parser reads the comparison form; Bool-valued and unchanged clauses are outside the first phase
+outside GRAM-6 6ec7d0fa7e6f2dc4 clause shape: the parser reads the comparison form; Bool-valued and unchanged clauses are outside the first phase
+outside GRAM-6 6356e595f80c46cd no precedence, which the expression tree has by its shape
+
+rule FORM-5
+outside FORM-5 0467dd965ce5adaf float literals: outside the first phase
+outside FORM-5 7259928ac8d4214a float literals: outside the first phase
+outside FORM-5 c8c2b5412ddc3deb float literals: outside the first phase
+outside FORM-5 702b02b4909e745c float literals: outside the first phase
+outside FORM-5 a7ca80c6fe589b23 float literals: outside the first phase
+outside FORM-5 7709523ba9ff8617 float literals: outside the first phase
+outside FORM-5 c9bc2b23dceb3041 float literals: outside the first phase
+outside FORM-5 20b8846ae1f4716a character literals: outside the first phase
+outside FORM-5 23b4157ec39b2e5a STRING appears only in doc entries, which carry no meaning
+outside FORM-5 1af90ea7202494fa Bool is the prelude enum; its constructors are calls
+outside FORM-5 de508f63e4809a1a generics: outside the first phase
+outside FORM-5 45e4898f8b66e80c floats: outside the first phase
+
+rule FORM-7
+outside FORM-7 983e1f4bea7b257b heading of the rule; its sentences are marked or listed
+outside FORM-7 37f0214b8c7ad209 float literals: outside the first phase
+outside FORM-7 67f2efc8512cc158 character literals: outside the first phase
+
+rule TYPE-4
+outside TYPE-4 1666cfe22586c731 conversions: outside the first phase
+
+rule SET-1
+outside SET-1 d50330fd7cb1986d heading of the rule; its sentences are marked or listed
+outside SET-1 5bd83a8b0015bb7c field steps: outside the first phase
+outside SET-1 f8fc0867505c636a references: a later phase
+outside SET-1 badcc6a1dc981fbb references: a later phase
+outside SET-1 34c1bdf23df85cbd writable roots: every binding in scope in the fragment is a live own-mode value; references and shared objects are a later phase
+outside SET-1 a2b537b71c7c25f1 writable roots: every binding in scope in the fragment is a live own-mode value; references and shared objects are a later phase
+outside SET-1 8858bb8689793518 named consts and readonly fields: outside the first phase
+outside SET-1 90a3bb40be364db6 counted loops: outside the first phase
+outside SET-1 9e7b031d31973ba2 writable roots: every binding in scope in the fragment is a live own-mode value; references and shared objects are a later phase
+outside SET-1 7582c01f12f8706a writable roots: every binding in scope in the fragment is a live own-mode value; references and shared objects are a later phase
+outside SET-1 b6063d961df1f1fe old-value disposition: integer values have none; a later phase
+outside SET-1 230959a1123ad547 old-value disposition: integer values have none; a later phase
+outside SET-1 63ce5d8e73bf0e13 the atomic in-place update: outside the first phase
+outside SET-1 7b0b517b489c158a lowering, which the model does not describe
+
+rule FN-1
+outside FN-1 8fa1bfe5d4a4ecee result modes: the fragment's grammar writes only value results
+outside FN-1 1ef98a79f8623542 callable-signature equality: the fragment has no function values or interfaces that compare signatures
+outside FN-1 107e54b1d169cdf6 result lists: outside the first phase
+outside FN-1 2d0bf2b2021c3f54 result lists: outside the first phase
+outside FN-1 222bef66dbca6a44 result lists: outside the first phase
+outside FN-1 3ca7190dbfa2a95b result lists: outside the first phase
+outside FN-1 970516b319e4a27c effect rows: a later phase
+outside FN-1 9133f68ff8b54ac6 interface evolution, which no one program's acceptance reads
+outside FN-1 d400489f19fc2e7e generics: outside the first phase
+outside FN-1 b061b4b8c4ea7e74 interfaces: outside the first phase
+outside FN-1 22c0a14ec34fd988 modules: the fragment has one module, where every function is visible
+outside FN-1 2d9057aa327e6135 result counts: the fragment's grammar writes one result
+outside FN-1 87a82b7f0ee8b03f references: a later phase
+outside FN-1 61c1f8dac6f0d3b2 references: a later phase
+outside FN-1 934958bd075aeeda counted loops: outside the first phase
+outside FN-1 17110915c17a2414 counted loops: outside the first phase
+outside FN-1 5f5433ada1f078fe counted loops: outside the first phase
+outside FN-1 844d42772257a41d counted loops: outside the first phase
+outside FN-1 843aee00ad46f905 counted loops: outside the first phase
+outside FN-1 ce94bb0f0eff0d9c counted loops: outside the first phase
+outside FN-1 0b15027e8952c774 counted loops: outside the first phase
+outside FN-1 501c1ff890720e39 counted loops: outside the first phase
+outside FN-1 57f58a193d988e19 counted loops: outside the first phase
+outside FN-1 6b29d92aa0c70c99 counted loops: outside the first phase
+outside FN-1 589d06fe6921d9cd match and value initializers: outside the first phase
+outside FN-1 e3298281138640fa match and value initializers: outside the first phase
+outside FN-1 155fef9a66a4cd58 match and value initializers: outside the first phase
+outside FN-1 5958cd29709bc1a7 propagate: outside the first phase
+outside FN-1 7e2bbd5393c576f2 atomic blocks: outside the first phase
+outside FN-1 2df6e8408a127e8f counted loops: outside the first phase
+outside FN-1 5e8c840013257636 counted loops: outside the first phase
+outside FN-1 3ee7c38f4aa6b381 counted loops: outside the first phase
+outside FN-1 fbd70627bf2d723e counted loops: outside the first phase
+outside FN-1 2278d23015f3415e diagnostic selection among several rejections, and `give`: a later phase
+outside FN-1 2e415bb872ad1bea source audit, which no acceptance judgment reads
+outside FN-1 afe40545c4a4d569 source audit and lowering authority, which no acceptance judgment reads
+
+rule FN-8
+outside FN-8 43f74a33590533ec `define` and held requirements: a later phase; the parser fixes the clause order
+outside FN-8 55e196344c2ca74a `define`: a later phase
+outside FN-8 07ba50f6f2011cab conversions: outside the first phase
+outside FN-8 5fcf479b4f6c0409 clause forms beyond affine relations: a later phase
+outside FN-8 e8c0bc85e6b97169 `define`: a later phase
+outside FN-8 de13346cc282f2b1 `define`: a later phase
+outside FN-8 7b4e1f801d1ca0b5 requirement occurrences identify diagnostics; no acceptance judgment reads them
+outside FN-8 c30ad84fdc78262a lowering, which the model does not describe
+outside FN-8 bd429417ccd4b071 recursion: outside the first phase
+outside FN-8 93ddf63627e1b739 the disposition's name and derivation are success metadata, which acceptance does not read
+outside FN-8 39e2672579943d11 an uninhabited callee's callers are contradictory wherever they call it, so its summary adds nothing there
+outside FN-8 bd7aae2cfeed141b lowering, which the model does not describe
+
+rule FN-9
+outside FN-9 e861436901d2c04c erasure and lowering, which the model does not describe; the model checks a postcondition at a return only to name the state the rules give no meaning
+outside FN-9 09728ec657155fa1 routed postconditions over enums: outside the first phase
+outside FN-9 8401f2395c5a94c3 routed postconditions over enums: outside the first phase
+outside FN-9 903ccc0ece2c8640 routed postconditions over enums: outside the first phase
+outside FN-9 f71ac214e6dd8536 routed postconditions over enums: outside the first phase
+outside FN-9 887d0e960cdd2fa4 reference parameters: a later phase
+outside FN-9 32b614b09122efe9 subscript offsets of clause places: clause places are a later phase
+outside FN-9 903102ec2e8de773 occurrences identify diagnostics; no acceptance judgment reads them
+outside FN-9 398955aa87c8be23 routed postconditions over enums: outside the first phase
+outside FN-9 d93b4d3e3058b88d routed postconditions over enums: outside the first phase
+outside FN-9 b75f9fad506cae82 reference parameters: a later phase
+outside FN-9 c639d08527a3b262 descriptor words and call-write reach: references and measures are a later phase
+outside FN-9 d018eb8b893cc5f8 recursion and call-graph components: outside the first phase
+outside FN-9 9c620ec951bb2f40 recursion and call-graph components: outside the first phase
+outside FN-9 5236fc5257b7f8eb recursion and call-graph components: outside the first phase
+outside FN-9 bd9cdaa3f86aecca recursion and call-graph components: outside the first phase
+outside FN-9 03aada107ba3286c recursion and call-graph components: outside the first phase
+outside FN-9 d5d1a57e8dbc1aa0 recursion and call-graph components: outside the first phase
+outside FN-9 42161730f5272ce5 derivation parents, which acceptance does not read
+outside FN-9 189f03389dda115b destructuring `let`: the fragment's grammar writes one binder
+outside FN-9 45da585ff5749c55 routed postconditions over enums: outside the first phase
+outside FN-9 f1fd3f60ec9c8fb6 routed postconditions over enums: outside the first phase
+outside FN-9 9858b064e9cc6a77 the derivation DAG, which acceptance does not read
+outside FN-9 989f102840251c89 erasure and lowering, which the model does not describe; the model checks a postcondition at a return only to name the state the rules give no meaning
+
+rule PROG-3
+outside PROG-3 61ec8f74918d2143 entries with parameters: outside the first phase
+outside PROG-3 b2e38e0ef4b82218 the no-heap declaration: outside the first phase
+outside PROG-3 f26b7ce99796df4d resource unavailability, outside the language [SCOPE-3]
+
+rule TYPE-5
+outside TYPE-5 64f0bb280197882c heading of the rule; its sentences are marked or listed
+outside TYPE-5 4840ef950f265527 construction: nominal types are a later phase
+outside TYPE-5 3de0d2644a8c06d1 references: a later phase
+outside TYPE-5 b9a2630b681a9eb1 generic nominals: a later phase
+outside TYPE-5 4fe1fd7d52210a13 constructors: a later phase
+outside TYPE-5 6d082e33556ea960 prelude nominals: a later phase
+outside TYPE-5 8d8c385baff4c6d0 destructuring `let`: the fragment's grammar writes one binder
+outside TYPE-5 971adee7c3dccdab the grammar's mandatory boundary forms, which the parser reads
+outside TYPE-5 3eebf0bc209c2668 the grammar's mandatory boundary forms, which the parser reads
+outside TYPE-5 f89e684b6286a2dd `define`: a later phase
+outside TYPE-5 a8359c82bfc99316 `define`: a later phase
+outside TYPE-5 db790ee22aeea8ea `define`: a later phase
+outside TYPE-5 b705b35f8713f0e2 counted loops: a later phase
+outside TYPE-5 462fdd682ee012f4 counted loops: a later phase
+
+rule GRAM-11
+outside GRAM-11 b70ade5b61f87602 heading of the rule; its sentences are marked or listed
+
+rule INV-1
+outside INV-1 c19400c5b8c4dea2 range invariants: a later phase
+outside INV-1 c6878c9da37c1ea8 a reading note; it adds no condition
+outside INV-1 1477835160d540a3 `use_premise`: a later phase
+outside INV-1 eb4e7c75bd97ea65 counted loops: a later phase
+outside INV-1 62cb3ae7a2363a60 const generics: a later phase
+outside INV-1 bd4bd89470712da1 measures and tracked field places: a later phase
+outside INV-1 28a46ccece7bc26c measures and tracked field places: a later phase
+outside INV-1 40820665ffb26e04 measures and tracked field places: a later phase
+outside INV-1 d389130b59e5451d measures and tracked field places: a later phase
+outside INV-1 f08203d51f0e351b measures and tracked field places: a later phase
+outside INV-1 a3e2e992e11b5674 measures and tracked field places: a later phase
+outside INV-1 c712f77bfb6e8eb4 measures and tracked field places: a later phase
+outside INV-1 bb906e453e59f188 const generics: a later phase
+outside INV-1 3ab925fb16538cc8 the i128 formation limit and the structural ceilings: no fragment case reaches them; a later slice
+outside INV-1 1cf218bada31d9ad the i128 formation limit and the structural ceilings: no fragment case reaches them; a later slice
+outside INV-1 4f48c817ec9f1cc2 counted loops: a later phase
+outside INV-1 436bc4240d4177e2 the grammar of the header list, which the parser reads [GRAM-4]
+outside INV-1 3ff660d8789cb2bb proof blocks and `proof_use`: a later phase
+outside INV-1 8eedd0f645b1e132 measures and tracked field places: a later phase
+outside INV-1 4c6eeb4c6901fd24 measures and tracked field places: a later phase
+outside INV-1 55c31c0364f6567d counted loops: a later phase
+outside INV-1 acaecff8265dbab1 counted loops: a later phase
+outside INV-1 c09ed1a680b3b14e measures and tracked field places: a later phase
+outside INV-1 458b14626d571f7c diagnostic content, which acceptance does not read
+outside INV-1 4a7160231659e216 diagnostic content, which acceptance does not read
+outside INV-1 e8f1bbb85f355dc0 diagnostic content, which acceptance does not read
+outside INV-1 63fc1fa0d6d1eb99 diagnostic content, which acceptance does not read
+outside INV-1 2089f15bddd6164a diagnostic content, which acceptance does not read
+outside INV-1 f809a5214d8b3471 diagnostic content, which acceptance does not read
+outside INV-1 4ef887e32e3ef366 proof blocks: a later phase
+outside INV-1 86e07fdcfe1529f0 counted loops: a later phase
+outside INV-1 1374bbdde42a9981 counted loops: a later phase
+outside INV-1 7224b9f4e178b3fe counted loops: a later phase
+outside INV-1 372f7fafb711e091 counted loops: a later phase
+outside INV-1 6b71af820f7f8e6d counted loops: a later phase
+outside INV-1 8dfd13c5f6114216 lowering, which the model does not describe
+outside INV-1 a164b6fef7872512 runtime meaning, which the interpreter gives: an invariant does nothing there
+
+rule ENT-2
+outside ENT-2 8b038ddf4c1f0649 conversions: a later phase
+outside ENT-2 89167d815a26a32b conditional contexts: a later phase
+outside ENT-2 8b024bcf3d57c4f9 target-instance measure terms of counted loops: a later phase
+outside ENT-2 506040f0fdaf0e90 target-instance measure terms of counted loops: a later phase
+outside ENT-2 3f31bf16ea3a8238 target-instance measure terms of counted loops: a later phase
+outside ENT-2 2d081885e7ce1428 target-instance measure terms of counted loops: a later phase
+outside ENT-2 42cc2f3f7f177fdb target-instance measure terms of counted loops: a later phase
+outside ENT-2 3f36e49a4bd08258 target-instance measure terms of counted loops: a later phase
+outside ENT-2 5a8fdf84cdaa92a5 references and range references: a later phase
+outside ENT-2 4c8e57252233e31f target-instance measure terms of counted loops: a later phase
+outside ENT-2 9c0e5704cfafc8db target-instance measure terms of counted loops: a later phase
+outside ENT-2 cc5d50451a29c163 target-instance measure terms of counted loops: a later phase
+outside ENT-2 f9a8f4965fb8887b target-instance measure terms of counted loops: a later phase
+outside ENT-2 159f19bcf5b84e7f target-instance measure terms of counted loops: a later phase
+outside ENT-2 23cd759cfb48f838 target-instance measure terms of counted loops: a later phase
+outside ENT-2 502092b494b38384 target-instance measure terms of counted loops: a later phase
+outside ENT-2 358393b6dbf40f01 target-instance measure terms of counted loops: a later phase
+outside ENT-2 1c6b51640b6f402e target-instance measure terms of counted loops: a later phase
+outside ENT-2 4fd62e453b881146 target-instance measure terms of counted loops: a later phase
+outside ENT-2 52d059d866b63af6 target-instance measure terms of counted loops: a later phase
+outside ENT-2 221af93483810669 target-instance measure terms of counted loops: a later phase
+outside ENT-2 1e61a87444ca6378 references and range references: a later phase
+outside ENT-2 54f4679908d34cd3 references and range references: a later phase
+outside ENT-2 3d5ace94062081a6 references and range references: a later phase
+outside ENT-2 5792a65c042b36f5 references and range references: a later phase
+outside ENT-2 3ca5b70b0e09c252 references and range references: a later phase
+outside ENT-2 ec05a928f7cbe060 fields and subscripted clause places: a later phase
+outside ENT-2 e8b9e1a0fdeb4480 fields and subscripted clause places: a later phase
+outside ENT-2 eaaf2968301d681c fields and subscripted clause places: a later phase
+outside ENT-2 6b32290e6d83142f fields and subscripted clause places: a later phase
+outside ENT-2 42c2c6b516ebc9e2 fields and subscripted clause places: a later phase
+outside ENT-2 b38da69bb4899e3e fields and subscripted clause places: a later phase
+outside ENT-2 728897769ba60118 fields and subscripted clause places: a later phase
+outside ENT-2 37041d2cb1428fc2 fields and subscripted clause places: a later phase
+outside ENT-2 5e61007973811c58 counted loops: a later phase
+outside ENT-2 81d52e42b33f8620 counted loops: a later phase
+outside ENT-2 63b2894b8a3ad25f counted loops: a later phase
+outside ENT-2 f57414eb75f3954d counted loops: a later phase
+outside ENT-2 b5ed510932436a5b counted loops: a later phase
+outside ENT-2 67111e722c661a71 counted loops: a later phase
+outside ENT-2 9f614eed60779be5 counted loops: a later phase
+outside ENT-2 dcb4526cdc767d7b integer exclusions of `match`: a later phase
+outside ENT-2 36596a6f1c412054 integer exclusions of `match`: a later phase
+outside ENT-2 45e84314c7c10864 integer exclusions of `match`: a later phase
+outside ENT-2 2f7f3fd710f89129 integer exclusions of `match`: a later phase
+
+rule ENT-3
+outside ENT-3 e7033f0666a7b5ad a sentence for the reader; it adds no condition
+outside ENT-3 2b13f91ad75ad746 S11's counted operations: a later phase; S12 is marked where calls publish
+outside ENT-3 73ea5406e9634ba5 derivation identity, which acceptance does not read
+outside ENT-3 5c876a4a819528ef writes through references and call effects: a later phase
+outside ENT-3 f8e96cef412148ff a sentence for the reader; it adds no condition
+outside ENT-3 670af2762e24ba0a `define`: a later phase
+outside ENT-3 d9ca4f0bdaa17882 a sentence for the reader; it adds no condition
+
+rule ENT-3.S1
+outside ENT-3.S1 3355e816079f40d2 heading of the rule; its sentences are marked or listed
+outside ENT-3.S1 43b3ac540e41f8f4 heading of the rule; its sentences are marked or listed
+outside ENT-3.S1 55fd811baf73d7d4 atomic blocks: a later phase
+
+rule ENT-3.S4
+outside ENT-3.S4 335fa41607a721cb heading of the rule; its sentences are marked or listed
+outside ENT-3.S4 a4d01541979080d7 heading of the rule; its sentences are marked or listed
+
+rule ENT-3.S5
+outside ENT-3.S5 3363a81607ab116e heading of the rule; its sentences are marked or listed
+outside ENT-3.S5 cc2a14e0ba458e23 heading of the rule; its sentences are marked or listed
+outside ENT-3.S5 ac80ac6080bfdda4 measures: a later phase
+
+rule ENT-3.S7
+outside ENT-3.S7 3369e41607afe310 heading of the rule; its sentences are marked or listed
+outside ENT-3.S7 7b6440ead90761d3 heading of the rule; its sentences are marked or listed
+outside ENT-3.S7 a2a35119e7b8d519 the table's heading rows
+outside ENT-3.S7 c67fd6b8a925b16b the table's heading rows
+outside ENT-3.S7 fffe0819661a8a10 saturating operations: a later phase
+outside ENT-3.S7 3ee27045e2283a7c bit, shift, minimum, maximum and high-multiply operations: a later phase
+outside ENT-3.S7 e3d38a7a91fa2274 bit, shift, minimum, maximum and high-multiply operations: a later phase
+outside ENT-3.S7 ec3c90570237a073 bit, shift, minimum, maximum and high-multiply operations: a later phase
+outside ENT-3.S7 8b01c480a7efca47 bit, shift, minimum, maximum and high-multiply operations: a later phase
+outside ENT-3.S7 2d39310758c4e8a0 bit, shift, minimum, maximum and high-multiply operations: a later phase
+outside ENT-3.S7 75f8dabd7c108ee9 bit, shift, minimum, maximum and high-multiply operations: a later phase
+outside ENT-3.S7 bfbfbd79b6f42bf7 bit, shift, minimum, maximum and high-multiply operations: a later phase
+outside ENT-3.S7 54d3822243dad1a3 bit, shift, minimum, maximum and high-multiply operations: a later phase
+outside ENT-3.S7 f13de058a36696a1 bit, shift, minimum, maximum and high-multiply operations: a later phase
+outside ENT-3.S7 0f5385256e6fa400 bit, shift, minimum, maximum and high-multiply operations: a later phase
+outside ENT-3.S7 9712bd216b2e4712 bit, shift, minimum, maximum and high-multiply operations: a later phase
+outside ENT-3.S7 daad259d0de9540a bit, shift, minimum, maximum and high-multiply operations: a later phase
+outside ENT-3.S7 e2be5f2e1773a693 bit, shift, minimum, maximum and high-multiply operations: a later phase
+outside ENT-3.S7 d84aaf54b70903c9 bit, shift, minimum, maximum and high-multiply operations: a later phase
+outside ENT-3.S7 dad2c579a8f56c40 bit, shift, minimum, maximum and high-multiply operations: a later phase
+outside ENT-3.S7 3cfe2408b7520e21 bit, shift, minimum, maximum and high-multiply operations: a later phase
+outside ENT-3.S7 d99bb10ad204e64a `reinterpret`: a later phase
+outside ENT-3.S7 f7aaf956ec8594ac `reinterpret`: a later phase
+outside ENT-3.S7 73fb8f58dc0a6c41 `reinterpret`: a later phase
+outside ENT-3.S7 da96bb800664557a a justification of the table; it adds no condition
+
+rule ENT-3.S16
+outside ENT-3.S16 d90bec6ef29a823e heading of the rule; its sentences are marked or listed
+outside ENT-3.S16 dbf4a6e85097dccf heading of the rule; its sentences are marked or listed
+
+rule CALL-6
+outside CALL-6 3ea5374181fdb256 heading of the rule; its sentences are marked or listed
+outside CALL-6 aaa67374adfc884b a sentence for the reader; it adds no condition
+outside CALL-6 4e12d33771c05f7d routed relations: a later phase
+outside CALL-6 c41ebbb59a443d0d a sentence for the reader; it adds no condition
+outside CALL-6 8071f3ba3d2e2d77 a sentence for the reader; it adds no condition
+outside CALL-6 9f78d79ae6dfd94c a sentence for the reader; it adds no condition
+
+rule ENT-3.S12
+outside ENT-3.S12 d8fdec6ef28e44e2 heading of the rule; its sentences are marked or listed
+outside ENT-3.S12 4634352b3ee2ab7c heading of the rule; its sentences are marked or listed
+outside ENT-3.S12 33d560fb6713f885 the failure-atomic entry into the checked program, which acceptance does not read
+outside ENT-3.S12 24904ed1990a5a0d the failure-atomic entry into the checked program, which acceptance does not read
+outside ENT-3.S12 ecd6b4d24d2bc32d the failure-atomic entry into the checked program, which acceptance does not read
+outside ENT-3.S12 0814139b28485ba6 destructuring `let` and reference parameters: a later phase
+
+rule ENT-3.S13
+outside ENT-3.S13 d8fae86ef28c083f heading of the rule; its sentences are marked or listed
+outside ENT-3.S13 eb5b464dca4ef4c8 heading of the rule; its sentences are marked or listed
+outside ENT-3.S13 7fbd2d63f5d8a909 reference parameters and prelude summaries: a later phase
+outside ENT-3.S13 d5e0166f07a0a3ca a sentence for the reader; it adds no condition
+
+rule ENT-4
+outside ENT-4 f17d626e75daa576 integer exclusions of `match`: a later phase
+outside ENT-4 84fe8cb19875d71d integer exclusions of `match`: a later phase
+outside ENT-4 ae127d0274374160 integer exclusions of `match`: a later phase
+outside ENT-4 7b3d19aab1f49769 integer exclusions of `match`: a later phase
+outside ENT-4 0ebd5439e6eb06c4 integer exclusions of `match`: a later phase
+outside ENT-4 e7bad86a90457935 integer exclusions of `match`: a later phase
+outside ENT-4 912faf0355a3b2b9 the selection of a retained proof, which acceptance does not read
+outside ENT-4 c062c3dc52a21f89 a sentence for the reader; it adds no condition
+outside ENT-4 4ba3a1646816df8f a sentence for the reader; it adds no condition
+
+rule ENT-5
+outside ENT-5 c6586c19d3b3e96a counted loops: a later phase
+outside ENT-5 cbecdf95c250ff58 offsets proved distinct or apart: the model takes every index write of a binding as overlapping each of its indexes, stricter than the rule
+outside ENT-5 d12b98eb0171f552 integer exclusions of `match`: a later phase
+outside ENT-5 5699bcde9b489fbb measures and subscripted operands: a later phase
+outside ENT-5 7bfd450aa207e67a clause places: a later phase
+outside ENT-5 4b32a7dd1130a3f5 references and `Box`: a later phase
+outside ENT-5 ba18386f1244e4b4 a sentence for the reader; it adds no condition
+outside ENT-5 c2255b25bac77276 a sentence for the reader; it adds no condition
+outside ENT-5 00c6f3b95d228340 the table heading rows
+outside ENT-5 af858b76a8c02f23 the table heading rows
+outside ENT-5 ed1fbda79f3dac5b relocation writes of `grow`: a later phase
+outside ENT-5 e1f3451be4d621d8 relocation writes of `grow`: a later phase
+outside ENT-5 d637b1c20617366b references and `Box`: a later phase
+outside ENT-5 2e024b62a7aec6bc integer exclusions of `match`: a later phase
+outside ENT-5 c8ead8b6c716abf9 integer exclusions of `match`: a later phase
+outside ENT-5 783f90370c9ed2f8 conditional payload contexts of `enum` values and `checked` operations: a later phase
+outside ENT-5 a8fceb320c95b461 conditional payload contexts of `enum` values and `checked` operations: a later phase
+outside ENT-5 a9ae9373f338f462 conditional payload contexts of `enum` values and `checked` operations: a later phase
+outside ENT-5 66a36e9d83b6e095 conditional payload contexts of `enum` values and `checked` operations: a later phase
+outside ENT-5 acf07550b7ce8270 conditional payload contexts of `enum` values and `checked` operations: a later phase
+outside ENT-5 70413bfa32f9b0ad conditional payload contexts of `enum` values and `checked` operations: a later phase
+outside ENT-5 05fb227a1613de71 conditional payload contexts of `enum` values and `checked` operations: a later phase
+outside ENT-5 aaabb7571a05774f value delivery by `give`: a later phase
+outside ENT-5 91ba57c5dacc2654 value delivery by `give`: a later phase
+outside ENT-5 b2c003fde7d65c60 value delivery by `give`: a later phase
+outside ENT-5 25561baf3bc79de3 value delivery by `give`: a later phase
+outside ENT-5 a78696562f9319be value delivery by `give`: a later phase
+outside ENT-5 b96b3d8a7709b3cb value delivery by `give`: a later phase
+outside ENT-5 80f88584d6ec3438 value delivery by `give`: a later phase
+outside ENT-5 33194b41c2cc5d18 value delivery by `give`: a later phase
+outside ENT-5 7955ddeea99e51ee value delivery by `give`: a later phase
+outside ENT-5 dc404743d6d2c3c5 value delivery by `give`: a later phase
+outside ENT-5 7c8386794067d2a3 value delivery by `give`: a later phase
+outside ENT-5 7f8fb86c72f590bd value delivery by `give`: a later phase
+outside ENT-5 b6d198668781514e value delivery by `give`: a later phase
+outside ENT-5 3115929e0bf536d5 value delivery by `give`: a later phase
+outside ENT-5 3c9f8aa060c8cc97 value delivery by `give`: a later phase
+outside ENT-5 dfb67086ac6e5dbd value delivery by `give`: a later phase
+outside ENT-5 f96d3b8f6173830b value delivery by `give`: a later phase
+outside ENT-5 439ffa6a53bfafa7 value delivery by `give`: a later phase
+outside ENT-5 8540fbcc7602b626 value delivery by `give`: a later phase
+outside ENT-5 4b09acd823b2d0e4 value delivery by `give`: a later phase
+outside ENT-5 fe6d662f798f9370 value delivery by `give`: a later phase
+outside ENT-5 38fd55ca948d82e3 value delivery by `give`: a later phase
+outside ENT-5 7713badb2d086ced measures and subscripted operands: a later phase
+outside ENT-5 fbf0abf14bb7ad1b measures and subscripted operands: a later phase
+outside ENT-5 1823de7a6c893772 the i128 formation limit and the structural ceilings: no fragment case reaches them; a later slice
+outside ENT-5 a923eab9114e1132 a sentence for the reader; it adds no condition
+outside ENT-5 f55f34943cae1065 `match`: a later phase
+outside ENT-5 7a3afe2cae3cb53b integer exclusions of `match`: a later phase
+outside ENT-5 72ac8bbf16567592 integer exclusions of `match`: a later phase
+outside ENT-5 08ac0b67b6d27dc3 `propagate`: a later phase
+outside ENT-5 ff2178f17b37de52 counted loops: a later phase
+outside ENT-5 445ea9ae6da0ba09 counted loops: a later phase
+outside ENT-5 a52d4240f0ec3a79 counted loops: a later phase
+outside ENT-5 362ed56c45e958d5 counted loops: a later phase
+outside ENT-5 7b4aed3ac5a4b6ce counted loops: a later phase
+outside ENT-5 f8f24bbe08b98176 counted loops: a later phase
+outside ENT-5 cae4eb1cc430dc7c counted loops: a later phase
+outside ENT-5 7fde0ecc7d99f35d counted loops: a later phase
+outside ENT-5 22c6bc2116754f57 counted loops: a later phase
+outside ENT-5 57c01a0d1af1b95d counted loops: a later phase
+outside ENT-5 7065ea74ac0030f6 counted loops: a later phase
+outside ENT-5 a7cfdf278b612331 counted loops: a later phase
+outside ENT-5 45bf809d601bb7f8 counted loops: a later phase
+outside ENT-5 999e557b1b520349 counted loops: a later phase
+outside ENT-5 079fcb5a8717e44a counted loops: a later phase
+outside ENT-5 80f60d70a333eee1 counted loops: a later phase
+outside ENT-5 975cd5bb4101d0d2 counted loops: a later phase
+outside ENT-5 2a478fccba44e620 counted loops: a later phase
+
+rule ENT-6
+outside ENT-6 c1bd8f89b4815b28 a sentence for the reader; it adds no condition
+outside ENT-6 e6117d681343483f a sentence for the reader; it adds no condition
+outside ENT-6 84ac53303156a4d9 a sentence for the reader; it adds no condition
+outside ENT-6 f19c99c979a05b27 measures: a later phase
+outside ENT-6 c753b30f5461892e range references: a later phase
+outside ENT-6 37066aa91d48063a the power atom of shifts: a later phase
+outside ENT-6 a0245206d7407b68 the power atom of shifts: a later phase
+outside ENT-6 bcc5a3338b54a824 the power atom of shifts: a later phase
+outside ENT-6 db06c8ca9aef35e0 the power atom of shifts: a later phase
+outside ENT-6 dc851461161959e6 counted loops: a later phase
+outside ENT-6 c2179e45401b228d the i128 formation limit and the structural ceilings: no fragment case reaches them; a later slice
+outside ENT-6 8cecea0d2f52bc73 measures: a later phase
+outside ENT-6 c827313f940ed400 measures: a later phase
+outside ENT-6 bfefbfa979a7126d measures: a later phase
+outside ENT-6 a231f4838e926639 measures: a later phase
+outside ENT-6 9c59fcfb56f4674b measures: a later phase
+outside ENT-6 6ab83aa4d795068c measures: a later phase
+outside ENT-6 94227b1eb3653ca6 tracked field places: a later phase
+outside ENT-6 ef1b29d779782ba1 tracked field places: a later phase
+outside ENT-6 6aac3c375217a67a tracked field places: a later phase
+outside ENT-6 304282ebd285288b tracked field places: a later phase
+outside ENT-6 92d0c8ae3efc2a1b tracked field places: a later phase
+outside ENT-6 b992a158dfaf9888 a sentence for the reader; it adds no condition
+outside ENT-6 043446e17e3aa7d6 a sentence for the reader; it adds no condition
+
+rule MSR-4
+outside MSR-4 b5f644e5038fadf0 heading of the rule; its sentences are marked or listed
+outside MSR-4 16fb87227f7f44fe a sentence for the reader; it adds no condition
+outside MSR-4 51909284b653b341 a sentence for the reader; it adds no condition
+outside MSR-4 12d111e46dc352e2 diagnostic content, which acceptance does not read
+outside MSR-4 d2131e2793d851e1 a sentence for the reader; it adds no condition
+outside MSR-4 cfbfa2df542cad9d a sentence for the reader; it adds no condition
+outside MSR-4 343f55fc7c715644 a sentence for the reader; it adds no condition
+outside MSR-4 9f78e0bf4ee8208c derivation roots, which acceptance does not read
+outside MSR-4 e830819be64e4eb5 shifts: a later slice
+outside MSR-4 f0273c5642ee8cea conversions: a later phase
+outside MSR-4 d316ce408af0ecaa conversions: a later phase
+outside MSR-4 a81ff1ac34e9d2b6 conversions: a later phase
+outside MSR-4 d7f834e3aeca9227 conversions: a later phase
+outside MSR-4 b24f4c213baba1ea conversions: a later phase
+outside MSR-4 20cf9bb81c67777a conversions: a later phase
+outside MSR-4 f508d7d7cb07729c a sentence for the reader; it adds no condition
+outside MSR-4 5d42c6f3e60acd02 a sentence for the reader; it adds no condition
+outside MSR-4 d4af897419539432 obligation identities, which acceptance does not read
+outside MSR-4 201e4d6677fee5de obligation identities, which acceptance does not read
+outside MSR-4 67354492fae8e558 obligation identities, which acceptance does not read
+outside MSR-4 05f56e634523832f obligation identities, which acceptance does not read
+outside MSR-4 6fe0173b022db79c the retained derivation, which acceptance does not read
+outside MSR-4 8e18768fb5ddd358 the retained derivation, which acceptance does not read

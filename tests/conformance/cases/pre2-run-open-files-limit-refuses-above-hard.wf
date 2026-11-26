@@ -1,0 +1,54 @@
+alias ExitStatus = std::process::ExitStatus;
+alias HandleFactory = std::io::HandleFactory;
+alias Inputs = std::process::Inputs;
+alias exit_status = std::process::exit_status;
+
+fn check_limits(factory: &HandleFactory) -> result: u8 writes(factory) {
+  match std::process::open_files_limit(factory: factory) {
+    Ok(value: limits) => {
+      let current_soft = limits.soft;
+      match std::process::raise_open_files_limit(factory: factory, wanted: current_soft) {
+        Ok(value: after) => {
+          if after.soft != current_soft {
+            return 1_u8;
+          }
+          if after.hard != limits.hard {
+            return 2_u8;
+          }
+        }
+        Err(error: problem) => {
+          return 3_u8;
+        }
+      }
+      if limits.hard < 18446744073709551615_u64 {
+        let above = limits.hard + 1_u64;
+        match std::process::raise_open_files_limit(factory: factory, wanted: above) {
+          Ok(value: after) => {
+            return 4_u8;
+          }
+          Err(error: problem) => {
+          }
+        }
+      }
+    }
+    Err(error: problem) => {
+      match std::process::raise_open_files_limit(factory: factory, wanted: 1_u64) {
+        Ok(value: after) => {
+          return 5_u8;
+        }
+        Err(error: refusal) => {
+        }
+      }
+    }
+  }
+  return 0_u8;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(cwd: directory, handles: factory, ..) = move inputs;
+  let std::fs::Directory(read: read_directory, write: write_directory) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move write_directory);
+  std::fs::close_directory(factory: &factory, directory: move read_directory);
+  let outcome = check_limits(factory: &factory);
+  return exit_status(code: outcome);
+}

@@ -18,9 +18,9 @@ fn main() -> status: ExitStatus pure {
   set pair.low = small;
   set pair.high = large;
   let total = 0_u8;
-  let held = 0_u8;
+  let observed = 0_u8;
   let (other_small, other_large) = two_bytes(bound: 4_u64);
   set total = other_small;
-  set held = other_large;
+  set observed = other_large;
   return exit_status(code: pair.high);
 }

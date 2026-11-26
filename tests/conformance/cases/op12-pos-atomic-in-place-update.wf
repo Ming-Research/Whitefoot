@@ -13,17 +13,23 @@ fn bumped(current: Counter, step: u64) -> result: Counter pure contract {
   return Counter(value: raised);
 }
 
-fn main() -> status: ExitStatus pure {
-  doc "OP-12: set p = f(p, args...), where the first argument of the call is the target place itself, is the atomic in-place update: the old value enters f by value and the result is committed with no program point between. A constructor publishes no field-value fact, so the exact +defined guard establishes the callee requirement.";
-  let total = Counter(value: 5_u64);
+fn advance(total: Counter) -> seen: u64 pure {
+  doc "OP-12: set p = f(p, args...), where the first argument of the call is the target place itself, is the atomic in-place update: the old value enters f by value and the result is committed with no program point between. The parameter's field value is unknown here, so the exact +defined guard establishes the callee requirement.";
   if total.value +defined 3_u64 {
     set total = bumped(current: total, step: 3_u64);
-    let seen = total.value;
-    if seen == 8_u64 {
-    } else {
-      return exit_status(code: 1_u8);
-    }
-    return exit_status(code: 0_u8);
+    let raised = total.value;
+    return raised;
   }
-  return exit_status(code: 2_u8);
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Runs the in-place update on a counter holding five and expects eight.";
+  let total = Counter(value: 5_u64);
+  let seen = advance(total: total);
+  if seen == 8_u64 {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
 }

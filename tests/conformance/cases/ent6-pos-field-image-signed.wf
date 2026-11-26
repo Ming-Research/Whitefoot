@@ -18,30 +18,14 @@ fn shift(reading: &Reading, step: i32) -> result: unit writes(reading) contract 
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "Shifts -5 up by 10 and then down by 20 after checking the room each time.";
+  doc "Shifts -5 up by 10 and then down by 20; the initial field and the observed first result prove the room.";
   let reading = Reading(value: -5_i32);
-  let held = reading.value;
-  if held <= 990_i32 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
-  if -990_i32 <= held {
-  } else {
-    return exit_status(code: 2_u8);
-  }
+  let kept = reading.value;
   shift(reading: &reading, step: 10_i32);
   let first = reading.value;
   if first == 5_i32 {
   } else {
     return exit_status(code: 3_u8);
-  }
-  if first <= 990_i32 {
-  } else {
-    return exit_status(code: 4_u8);
-  }
-  if -980_i32 <= first {
-  } else {
-    return exit_status(code: 5_u8);
   }
   shift(reading: &reading, step: -20_i32);
   let second = reading.value;

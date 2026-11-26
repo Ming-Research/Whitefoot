@@ -1,1 +1,0 @@
-Decision: The kernel has no function values and no dynamic dispatch, exhaustive match over closed sum types being its only dispatch, because every call site must have a statically known callee for its exact effect row, its ownership discipline, and its per-call proof obligations to be checked, instead of trait objects, vtables, or closures with captured environments.

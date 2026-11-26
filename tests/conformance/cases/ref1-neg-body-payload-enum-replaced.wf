@@ -1,0 +1,17 @@
+fn broken(cell: &Option<u64>) -> result: u64 writes(cell) {
+  doc "Replacing the matched enum kills the current Some fact even though the reference to the enum remains valid.";
+  match &cell^ {
+    None() => {
+      return 0_u64;
+    }
+    Some(value: inner) => {
+      set cell^ = None<u64>();
+      let direct = cell^.Some.value;
+      return direct;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -437,7 +437,8 @@ fn domain(
 fn source_offset_term(expression: &CheckedExpression, aliases: &Aliases) -> bool {
     match expression {
         CheckedExpression::BorrowSegment { root, segment, .. } => {
-            root.offsets().all(|offset| source_offset_term(offset, aliases))
+            root.offsets()
+                .all(|offset| source_offset_term(offset, aliases))
                 && segment.offset().is_none_or(|offset| term(offset, aliases))
         }
         _ => term(expression, aliases),
@@ -553,6 +554,7 @@ fn offsets(path: &[CheckedPlaceStep]) -> impl Iterator<Item = &CheckedExpression
     path.iter().filter_map(|step| match step {
         CheckedPlaceStep::Subscript(index) => Some(&index.offset),
         CheckedPlaceStep::Field(_)
+        | CheckedPlaceStep::Payload { .. }
         | CheckedPlaceStep::BoxReferent(_)
         | CheckedPlaceStep::Measure(_) => None,
     })
@@ -587,6 +589,7 @@ fn range_path(path: &[CheckedPlaceStep], mut below_element: bool, aliases: &Alia
             admitted
         }
         CheckedPlaceStep::Field(_)
+        | CheckedPlaceStep::Payload { .. }
         | CheckedPlaceStep::BoxReferent(_)
         | CheckedPlaceStep::Measure(_) => true,
     })

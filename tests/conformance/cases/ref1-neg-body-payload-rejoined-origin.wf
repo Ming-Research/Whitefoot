@@ -1,0 +1,27 @@
+fn read_rejoined_origin(first: &Option<u64>, second: &Option<u64>, flag: Bool, replacement_flag: Bool) -> result: u64 reads(first), reads(second) {
+  doc "Rebinding an origin along two branches creates a new selected target, even when its possible path set equals the earlier alias's set.";
+  let selected = if flag {
+    give first;
+  } else {
+    give second;
+  }
+  let kept = selected;
+  match &kept^ {
+    None() => {
+      return 0_u64;
+    }
+    Some(..) => {
+      if replacement_flag {
+        set selected = &first^;
+      } else {
+        set selected = &second^;
+      }
+      let direct = selected^.Some.value;
+      return direct;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

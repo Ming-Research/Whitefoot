@@ -352,7 +352,7 @@ fn a_range_element_measure_dies_on_a_write_through_an_alias() {
   return unit;
 }
 
-fn clear(window: &Slots<u64, 2>) -> result: unit writes(window) {
+fn wipe(window: &Slots<u64, 2>) -> result: unit writes(window) {
   let empty = slots_new::<u64, 2>();
   set window^ = move empty;
   return unit;
@@ -366,7 +366,7 @@ fn main() -> status: std::process::ExitStatus pure {
   let items = &outer[0_u64..1_u64];
   if items^[0_u64].len == 1_u64 {
     let aliased = &items^[0_u64];
-    let cleared = clear(window: aliased);
+    let cleared = wipe(window: aliased);
     let invalid = needs_one(value: items^[0_u64].len);
   }
   return std::process::exit_status(code: 0_u8);
@@ -471,12 +471,10 @@ fn main() -> status: std::process::ExitStatus pure {{
   place_back(window: &rows, value: move third);
   let cells = array_filled::<u64, 3>(value: 7_u64);
   let total = 0_u64;
-  if rows.len == 3_u64 {{
-    if rows[1_u64].len <= cells.len {{
-{call}      for (c in 0_u64..rows[1_u64].len) {{
-        let cell = cells[c];
-        set total = total +wrap cell;
-      }}
+  if rows[1_u64].len <= cells.len {{
+{call}    for (c in 0_u64..rows[1_u64].len) {{
+      let cell = cells[c];
+      set total = total +wrap cell;
     }}
   }}
   return std::process::exit_status(code: 0_u8);
@@ -484,13 +482,13 @@ fn main() -> status: std::process::ExitStatus pure {{
 "
         )
     };
-    assert_accepts(body("      refill(part: &rows[2_u64..3_u64], at: 0_u64);\n").as_bytes());
+    assert_accepts(body("    refill(part: &rows[2_u64..3_u64], at: 0_u64);\n").as_bytes());
     assert_accepts(
-        body("      let tail = &rows[2_u64..3_u64];\n      refill(part: tail, at: 0_u64);\n")
+        body("    let tail = &rows[2_u64..3_u64];\n    refill(part: tail, at: 0_u64);\n")
             .as_bytes(),
     );
     assert_cells_read_unproved(
-        body("      refill(part: &rows[1_u64..3_u64], at: 0_u64);\n").as_bytes(),
+        body("    refill(part: &rows[1_u64..3_u64], at: 0_u64);\n").as_bytes(),
     );
     // Control: with no write the guard discharges the read.
     assert_accepts(body("").as_bytes());
@@ -540,12 +538,12 @@ const CONDITIONAL_RANGE_SEPARATION_HELPERS: &str = r#"fn touch(left: &[Slots<u64
   requires 0_u64 < left^.len;
   requires 0_u64 < right^.len;
 } {
-  clear(window: &left^[0_u64]);
-  clear(window: &right^[0_u64]);
+  wipe(window: &left^[0_u64]);
+  wipe(window: &right^[0_u64]);
   return unit;
 }
 
-fn clear(window: &Slots<u64, 2>) -> result: unit writes(window) {
+fn wipe(window: &Slots<u64, 2>) -> result: unit writes(window) {
   let empty = slots_new::<u64, 2>();
   set window^ = move empty;
   return unit;
@@ -599,7 +597,7 @@ fn inspect(values: &Array<Slots<u64, 2>, 2>, hi: u64, lo: u64) -> result: u64 wr
   }}
   let selected = &left^[0_u64];
   if selected^.len == 1_u64 {{
-    clear(window: &right^[0_u64]);
+    wipe(window: &right^[0_u64]);
     return selected^[0_u64];
   }}
   return 0_u64;
@@ -631,7 +629,7 @@ fn inspect(values: &Array<Slots<u64, 2>, 2>, hi: u64, lo: u64) -> result: u64 wr
   }} else {{
     let selected = &left^[0_u64];
     if selected^.len == 1_u64 {{
-      clear(window: &right^[0_u64]);
+      wipe(window: &right^[0_u64]);
       return selected^[0_u64];
     }}
   }}
@@ -666,7 +664,7 @@ fn inspect(values: &Array<Slots<u64, 2>, 2>, hi: u64, lo: u64, count: u64) -> re
   }}
   let selected = &left^[0_u64];
   if selected^.len == 1_u64 {{
-    clear(window: &right^[0_u64]);
+    wipe(window: &right^[0_u64]);
     return selected^[0_u64];
   }}
   return 0_u64;
@@ -697,7 +695,8 @@ fn growing_the_backing_window_preserves_a_formed_range_length() {
     assert_accepts(source);
 }
 
-/// [CALL-1] through a reference the callee only reads, every fact survives.
+/// [CALL-1] a reference parameter the callee only reads contributes no write,
+/// so with no other writing argument every fact survives.
 #[test]
 fn a_read_only_reference_argument_keeps_every_fact() {
     assert_accepts(include_bytes!(
@@ -780,7 +779,7 @@ fn main() -> status: std::process::ExitStatus pure {{
     assert_call_goal(
         body("3_u64").as_bytes(),
         CallRequirementDisposition::Refuted,
-        "3_u64 < a[2..4].len",
+        "3_u64 < a[2_u64..4_u64].len",
     );
 }
 
@@ -886,13 +885,17 @@ fn dynamic_inline_range_length_discharge_uses_its_endpoint_ordering() {
   return part^.len;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
+fn examine(lo: u64) -> result: unit pure {
   let a = array_filled::<u8, 4>(value: 0_u8);
-  let lo = 1_u64;
   let hi = 3_u64;
   if lo < hi {
     let n = nonempty(part: &a[lo..hi]);
   }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  examine(lo: 1_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#;
@@ -1022,9 +1025,9 @@ fn run(values: &Array<Pair, 8>, lo: u64, hi: u64, k: u64) -> result: u64 writes(
   requires {bound};
   requires k < 8_u64;
 }} {{
-  let held = &values^[k].x;
+  let observed_state = &values^[k].x;
   zero(part: &values^[lo..hi], at: 0_u64);
-  let seen = held^;
+  let seen = observed_state^;
   return seen;
 }}
 
@@ -1311,7 +1314,7 @@ fn direct_page_length_fact_dies_after_place_back() {
             "../../../../tests/conformance/cases/msr2-neg-direct-page-length-after-append.wf"
         ),
         CallRequirementDisposition::Unproved,
-        "p^.pages[0].len == 1_u64",
+        "p^.pages[0_u64].len == 1_u64",
     );
 }
 
@@ -1333,7 +1336,7 @@ fn borrowed_page_length_does_not_identify_a_direct_read_after_append() {
             "../../../../tests/conformance/cases/ent2-neg-borrowed-page-length-as-current.wf"
         ),
         CallRequirementDisposition::Unproved,
-        "p^.pages[0].len == 1_u64",
+        "p^.pages[0_u64].len == 1_u64",
     );
 }
 
@@ -1364,7 +1367,7 @@ fn direct_page_element_bound_dies_after_take_back() {
             else {
                 panic!("expected the element's bounds obligation: {issue:?}");
             };
-            assert_eq!(residual, "1_u64 < values^.pages[0].len");
+            assert_eq!(residual, "1_u64 < values^.pages[0_u64].len");
         },
     );
 }
@@ -1491,4 +1494,432 @@ fn direct_run_elements_report_the_undischarged_inner_bound() {
             matches!(kind, SemanticIssueKind::UndischargedBoundsObligation { .. })
         });
     }
+}
+
+/// The scalar stored by `let` retains the diagnostic origin of this read;
+/// the source program is valid, but the canonical store lacks this frame's
+/// suffix precision. That limitation must not become an OP-4 rejection.
+#[test]
+fn a_same_range_field_loss_is_explicit_for_a_deferred_bound() {
+    for read_index in [
+        "let index = part^[0_u64].f;",
+        "let index = part^[0_u64].f;\n    if 1_u64 < rows^.len {\n    }",
+    ] {
+        let source = same_frame_projection_program(read_index);
+        super::assert_unsupported(
+            source.as_bytes(),
+            crate::UnsupportedSemanticFeature::RangeCallFootprint,
+        );
+    }
+}
+
+/// Two occurrences can intern the same mathematical read while only one
+/// comes through the captured range. An unused slice read must not change
+/// the root read's normative OP-4 failure into a capability result.
+#[test]
+fn an_unused_same_range_read_does_not_taint_a_root_bound() {
+    let source = same_frame_projection_program(
+        "let ignored = part^[0_u64].f;\n    let index = rows^[0_u64].f;",
+    );
+    assert_rule_kind(source.as_bytes(), SemanticRule::Op4, |kind| {
+        matches!(kind, SemanticIssueKind::UndischargedBoundsObligation { .. })
+    });
+}
+
+/// Restoring a forgotten sibling relationship is not evidence for a bound
+/// that never held. The diagnostic must prove the original failed query.
+#[test]
+fn a_same_range_write_does_not_hide_a_missing_entry_fact() {
+    let source = r#"struct Pair {
+  f: u64;
+  g: u64;
+}
+
+fn set_g(row: &Pair) -> result: unit writes(row.g) {
+  set row^.g = 9_u64;
+  return unit;
+}
+
+fn need_small(part: &[Pair]) -> result: unit pure contract {
+  requires forall small(k in 0_u64..part^.len): part^[k].f <= 7_u64;
+} {
+  return unit;
+}
+
+fn probe(rows: &[Pair]) -> result: unit writes(rows) contract {
+  requires 1_u64 <= rows^.len;
+} {
+  let part = &rows^[0_u64..1_u64];
+  set_g(row: &part^[0_u64]);
+  need_small(part: part);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    assert_rule_kind(source.as_bytes(), SemanticRule::Range3, |kind| {
+        matches!(kind, SemanticIssueKind::UndischargedRangeFact { .. })
+    });
+}
+
+/// Only the actual substituted for a requirement contributes its source
+/// path. Another actual can intern the same read without participating.
+#[test]
+fn an_unused_same_range_actual_does_not_taint_a_root_requirement() {
+    let source = same_frame_call_program("rows^[0_u64].f", "part^[0_u64].f");
+    assert_rule_kind(source.as_bytes(), SemanticRule::Fn8, |kind| {
+        matches!(kind, SemanticIssueKind::UndischargedCallRequirement(_))
+    });
+}
+
+/// Selecting the range-framed actual in the same argument list must still
+/// expose the implementation's missing frame precision explicitly.
+#[test]
+fn a_used_same_range_actual_keeps_its_requirement_provenance() {
+    let source = same_frame_call_program("part^[0_u64].f", "rows^[0_u64].f");
+    super::assert_unsupported(
+        source.as_bytes(),
+        crate::UnsupportedSemanticFeature::RangeCallFootprint,
+    );
+}
+
+/// A different comparison cannot lend its range spelling to the failed
+/// root comparison, even when both actuals have the same read atom.
+#[test]
+fn a_same_range_conjunct_does_not_taint_a_root_conjunct() {
+    for conjunction in [
+        "band(index_small, unused_small)",
+        "band(unused_small, index_small)",
+    ] {
+        let source = same_frame_call_program("rows^[0_u64].f", "part^[0_u64].f").replace(
+            "  requires index < 1_u64;",
+            &format!(
+                "  define index_small = index < 1_u64;\n  define unused_small = unused <= 7_u64;\n  requires {conjunction};",
+            ),
+        );
+        assert_rule_kind(source.as_bytes(), SemanticRule::Fn8, |kind| {
+            matches!(kind, SemanticIssueKind::UndischargedCallRequirement(_))
+        });
+    }
+}
+
+/// Every failed comparison must recover from its own range source. A
+/// comparison already proved from its type needs no restored definition.
+#[test]
+fn same_range_conjuncts_retain_their_independent_requirement_provenance() {
+    for (unused, bound) in [
+        ("part^[0_u64].f", "7_u64"),
+        ("rows^[0_u64].f", "18446744073709551615_u64"),
+    ] {
+        let source = same_frame_call_program("part^[0_u64].f", unused).replace(
+            "  requires index < 1_u64;",
+            &format!(
+                "  define index_small = index < 1_u64;\n  define unused_small = unused <= {bound};\n  requires band(index_small, unused_small);",
+            ),
+        );
+        super::assert_unsupported(
+            source.as_bytes(),
+            crate::UnsupportedSemanticFeature::RangeCallFootprint,
+        );
+    }
+}
+
+/// The read that makes the quantified range empty appears only in its
+/// endpoint. Restoring its same-frame sibling definition diagnoses a checker
+/// limitation even though the conclusion itself contains no read.
+#[test]
+fn a_same_range_bound_loss_is_explicit_for_a_quantified_requirement() {
+    let source = same_frame_requirement_program(
+        "forall empty(k in 0_u64..part^[0_u64].f): 1_u64 <= 0_u64",
+        "part",
+        "",
+    );
+    super::assert_unsupported(
+        source.as_bytes(),
+        crate::UnsupportedSemanticFeature::RangeCallFootprint,
+    );
+}
+
+/// The unchanged f is zero, so this guard admits no tuple. Its read belongs
+/// to the failed query independently of the read-free false conclusion.
+#[test]
+fn a_same_range_guard_loss_is_explicit_for_a_quantified_requirement() {
+    let source = same_frame_requirement_program(
+        "forall empty(k in 0_u64..1_u64) when 0_u64 < part^[0_u64].f: 1_u64 <= 0_u64",
+        "part",
+        "",
+    );
+    super::assert_unsupported(
+        source.as_bytes(),
+        crate::UnsupportedSemanticFeature::RangeCallFootprint,
+    );
+}
+
+/// A scalar copy of the same-frame read remains the source of the callee's
+/// quantified endpoint. Passing the copied value must not erase that origin.
+#[test]
+fn a_same_range_scalar_bound_loss_is_explicit_for_a_quantified_requirement() {
+    let source =
+        same_frame_scalar_requirement_program("forall empty(k in 0_u64..bound): 1_u64 <= 0_u64");
+    super::assert_unsupported(
+        source.as_bytes(),
+        crate::UnsupportedSemanticFeature::RangeCallFootprint,
+    );
+}
+
+/// The false guard uses a copied scalar actual rather than a place read in
+/// the callee's clause. That actual retains its own range-frame provenance.
+#[test]
+fn a_same_range_scalar_guard_loss_is_explicit_for_a_quantified_requirement() {
+    let source = same_frame_scalar_requirement_program(
+        "forall empty(k in 0_u64..1_u64) when 0_u64 < bound: 1_u64 <= 0_u64",
+    );
+    super::assert_unsupported(
+        source.as_bytes(),
+        crate::UnsupportedSemanticFeature::RangeCallFootprint,
+    );
+}
+
+/// A locally formed loop clause gets the copied endpoint's provenance from
+/// its live binding, without a callee's actual-to-formal substitution.
+#[test]
+fn a_same_range_scalar_bound_loss_is_explicit_for_a_local_loop_invariant() {
+    let source = same_frame_body_program(
+        "let bound = part^[0_u64].f;\n    for (\n      j in 0_u64..1_u64,\n      invariant forall empty(q in 0_u64..bound): 1_u64 <= 0_u64\n    ) {\n      return unit;\n    }",
+    );
+    super::assert_unsupported(
+        source.as_bytes(),
+        crate::UnsupportedSemanticFeature::RangeCallFootprint,
+    );
+}
+
+/// RANGE-1 admits the named scalar result as a quantified endpoint. The
+/// single unrouted return retains the source of its same-frame read, so an
+/// empty postcondition range diagnoses lost precision rather than RANGE-3.
+#[test]
+fn a_same_range_scalar_return_bound_loss_is_explicit_for_a_postcondition() {
+    let source = br#"struct Pair {
+  f: u64;
+  g: u64;
+}
+
+fn set_g(row: &Pair) -> result: unit writes(row.g) {
+  set row^.g = 9_u64;
+  return unit;
+}
+
+fn probe(rows: &[Pair]) -> bound: u64 writes(rows) contract {
+  requires forall initial(k in 0_u64..rows^.len): rows^[k].f < 1_u64;
+  requires 1_u64 <= rows^.len;
+  ensures forall empty(k in 0_u64..bound): 1_u64 <= 0_u64;
+} {
+  let part = &rows^[0_u64..1_u64];
+  for (
+    k in 0_u64..1_u64,
+    invariant forall framed(q in 0_u64..part^.len): part^[q].f < 1_u64
+  ) {
+    set_g(row: &part^[0_u64]);
+    return part^[0_u64].f;
+  }
+  return 0_u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+    super::assert_unsupported(
+        source,
+        crate::UnsupportedSemanticFeature::RangeCallFootprint,
+    );
+}
+
+/// Two scalar actuals can carry one mathematical atom with distinct source
+/// origins. A callee endpoint rooted in the containing run must not acquire
+/// the unused actual's more precise range-frame provenance.
+#[test]
+fn an_unused_same_range_scalar_actual_does_not_taint_a_root_quantified_bound() {
+    let source =
+        same_frame_scalar_requirement_program("forall empty(k in 0_u64..bound): 1_u64 <= 0_u64")
+            .replace("let bound = part^[0_u64].f;", "let bound = rows^[0_u64].f;")
+            .replace(
+                "need_empty(bound: bound);",
+                "need_empty(bound: bound, unused: part^[0_u64].f);",
+            )
+            .replace(
+                "fn need_empty(bound: u64)",
+                "fn need_empty(bound: u64, unused: u64)",
+            );
+    assert_rule_kind(source.as_bytes(), SemanticRule::Range3, |kind| {
+        matches!(
+            kind,
+            SemanticIssueKind::UndischargedRangeFact { fact, site, .. }
+                if fact == "empty" && *site == "a call"
+        )
+    });
+}
+
+/// The inner f read is one and the run has one element. The outer read at
+/// f is therefore undefined, so RANGE-1 asserts no conclusion there.
+/// The outer read selects g, which the call writes, so no same-frame sibling
+/// definition can restore it. Only the inner f read can prove the empty domain.
+#[test]
+fn a_same_range_read_domain_loss_is_explicit_for_a_quantified_requirement() {
+    let source = same_frame_requirement_program(
+        "forall absent(k in 0_u64..1_u64): part^[part^[0_u64].f].g < 0_u64",
+        "part",
+        "",
+    )
+    .replace(".f < 1_u64", ".f == 1_u64");
+    super::assert_unsupported(
+        source.as_bytes(),
+        crate::UnsupportedSemanticFeature::RangeCallFootprint,
+    );
+}
+
+/// A bound over the containing run owes its own root read. An unused
+/// same-frame read cannot repair that root's normative range/index barrier,
+/// even when the mathematical atom is shared by the two source occurrences.
+#[test]
+fn an_unused_same_range_read_does_not_taint_a_root_quantified_bound() {
+    let source = same_frame_requirement_program(
+        "forall empty(k in 0_u64..part^[0_u64].f): 1_u64 <= 0_u64",
+        "rows",
+        "let ignored = part^[0_u64].f;\n    ",
+    );
+    assert_rule_kind(source.as_bytes(), SemanticRule::Range3, |kind| {
+        matches!(
+            kind,
+            SemanticIssueKind::UndischargedRangeFact { fact, site, .. }
+                if fact == "empty" && *site == "a call"
+        )
+    });
+}
+
+/// Unresolved formal index and range captures must not turn an independent
+/// false range requirement into an unsupported capability.
+#[test]
+fn unresolved_formal_writes_keep_an_unrelated_range_failure() {
+    for source in [
+        include_bytes!(
+            "../../../../tests/conformance/cases/range3-neg-unrelated-formal-index-write.wf"
+        )
+        .as_slice(),
+        include_bytes!(
+            "../../../../tests/conformance/cases/range3-neg-unrelated-formal-range-write.wf"
+        )
+        .as_slice(),
+    ] {
+        assert_rule_kind(source, SemanticRule::Range3, |kind| {
+            matches!(
+                kind,
+                SemanticIssueKind::UndischargedRangeFact { fact, site, .. }
+                    if fact == "impossible" && *site == "a call"
+            )
+        });
+    }
+}
+
+/// The selected pure actual does not narrow the formal write row. A query
+/// reading that written run still needs the missing selector precision and
+/// remains an explicit compiler limitation for either selector kind.
+#[test]
+fn unresolved_formal_writes_keep_a_related_range_loss_explicit() {
+    for source in [
+        include_bytes!(
+            "../../../../tests/conformance/cases/range3-neg-unrelated-formal-index-write.wf"
+        )
+        .as_slice(),
+        include_bytes!(
+            "../../../../tests/conformance/cases/range3-neg-unrelated-formal-range-write.wf"
+        )
+        .as_slice(),
+    ] {
+        let source = std::str::from_utf8(source)
+            .expect("the complete fixture is UTF-8")
+            .replace(
+                "forall impossible(k in 0_u64..1_u64): 1_u64 <= 0_u64",
+                "forall impossible(k in 0_u64..rows^.len): rows^[k] <= 7_u64",
+            );
+        super::assert_unsupported(
+            source.as_bytes(),
+            crate::UnsupportedSemanticFeature::RangeCallFootprint,
+        );
+    }
+}
+
+fn same_frame_requirement_program(requirement: &str, actual: &str, prefix: &str) -> String {
+    same_frame_body_program(&format!("{prefix}need_requirement(part: {actual});")).replace(
+        "fn probe(",
+        &format!(
+            "fn need_requirement(part: &[Pair]) -> result: unit pure contract {{\n  requires {requirement};\n}} {{\n  return unit;\n}}\n\nfn probe(",
+        ),
+    )
+}
+
+fn same_frame_scalar_requirement_program(requirement: &str) -> String {
+    same_frame_body_program(
+        "let bound = part^[0_u64].f;\n    need_empty(bound: bound);",
+    )
+    .replace(
+        "fn probe(",
+        &format!(
+            "fn need_empty(bound: u64) -> result: unit pure contract {{\n  requires {requirement};\n}} {{\n  return unit;\n}}\n\nfn probe(",
+        ),
+    )
+}
+
+fn same_frame_call_program(index: &str, unused: &str) -> String {
+    same_frame_body_program(&format!("check_index(index: {index}, unused: {unused});")).replace(
+        "fn probe(",
+        r#"fn check_index(index: u64, unused: u64) -> result: unit pure contract {
+  requires index < 1_u64;
+} {
+  return unit;
+}
+
+fn probe("#,
+    )
+}
+
+fn same_frame_projection_program(read_index: &str) -> String {
+    same_frame_body_program(&format!(
+        "{read_index}\n    let data = array_filled::<u8, 1>(value: 0_u8);\n    let observed = data[index];",
+    ))
+}
+
+fn same_frame_body_program(body: &str) -> String {
+    r#"struct Pair {
+  f: u64;
+  g: u64;
+}
+
+fn set_g(row: &Pair) -> result: unit writes(row.g) {
+  set row^.g = 9_u64;
+  return unit;
+}
+
+fn probe(rows: &[Pair]) -> result: unit writes(rows) contract {
+  requires forall initial(k in 0_u64..rows^.len): rows^[k].f < 1_u64;
+  requires 1_u64 <= rows^.len;
+} {
+  let part = &rows^[0_u64..1_u64];
+  for (
+    k in 0_u64..1_u64,
+    invariant forall framed(q in 0_u64..part^.len): part^[q].f < 1_u64
+  ) {
+    set_g(row: &part^[0_u64]);
+    BODY
+    return unit;
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
+"#
+    .replace("BODY", body)
 }

@@ -121,6 +121,14 @@ link_form() {
     module=$1
     output=$2
     shift 2
+    # Compile the audited child closure separately so compiler-inserted libc,
+    # stack and sanitizer hooks cannot enter it. Other runtime units retain
+    # the measurement's original flags.
+    for unit in snapshot_export fork_capsule; do
+        "$CLANG" -std=c11 -pthread -O2 -I "$BACKEND" -I "$BACKEND/completion" \
+            "$@" -fno-builtin -fno-stack-protector -fno-sanitize=all \
+            -c "$BACKEND/completion/$unit.c" -o "$output.$unit.o"
+    done
     "$CLANG" -std=c11 -pthread -I "$BACKEND" -I "$BACKEND/completion" \
         -I "$BACKEND/sched" "$@" \
         -x c "$BACKEND/wf_floor.c" \
@@ -132,8 +140,14 @@ link_form() {
         -x c "$BACKEND/completion/file_adapter.c" \
         -x c "$BACKEND/completion/file_posix.c" \
         -x c "$BACKEND/completion/bridge.c" \
+        -x c "$BACKEND/completion/stop_signals.c" \
         -x c "$BACKEND/completion/linux_io_uring.c" \
+        -x c "$BACKEND/keyed_table.c" \
+        -x c "$BACKEND/heap.c" \
+        -x c "$BACKEND/ordinary_values.c" \
         -x c "$BUNDLE/statistics_observer.c" \
+        -x ir "$BACKEND/ordinary_values.ll" \
+        -x none "$output.snapshot_export.o" "$output.fork_capsule.o" \
         -x ir "$module" -Wno-override-module -O2 -lm -o "$output"
 }
 

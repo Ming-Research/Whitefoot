@@ -1,0 +1,15 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn width(rows: &Array<Slots<u8, 8>, 4>, i: u64) -> r: u64 reads(rows) contract {
+  requires i < 4_u64;
+  ensures r == rows^[i].len;
+} {
+  doc "The body's own read of rows^[i].len is the term the postcondition names.";
+  return rows^[i].len;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The declaration alone is judged.";
+  return exit_status(code: 0_u8);
+}

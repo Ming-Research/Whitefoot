@@ -1,0 +1,12 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+alias Instant = std::time::Instant;
+
+fn reading(instant: Instant) -> ticks: u64 pure {
+  doc "MOD-5: Instant is an opaque struct of std::time whose field ticks is declared without public, so it is private to std::time [MOD-6, PRE-2]. A field selection outside that module is not accessible and is a hard error at the field suffix.";
+  return instant.ticks;
+}
+
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
+}

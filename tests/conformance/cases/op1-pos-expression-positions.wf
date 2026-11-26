@@ -34,10 +34,9 @@ fn expression_position_3() -> status: ExitStatus pure {
   return exit_status(code: 0_u8);
 }
 
-fn expression_position_4() -> status: ExitStatus pure {
+fn expression_position_4(f: Bool) -> status: ExitStatus pure {
   let a = 6_u64;
   let b = 7_u64;
-  let f = True();
   let c = if f {
     give a +wrap b;
   } else {

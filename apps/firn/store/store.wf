@@ -131,8 +131,8 @@ fn expire_key(store: &Keyspace, key: &[u8], at: u64) -> result: unit reads(store
   atomic slot = &store^.keys[key], m = &store^.meta {
     let matched = False();
     match slot^ {
-      Some(value: held) => {
-        if held^.expires == at {
+      Some(value: observed) => {
+        if observed^.expires == at {
           set matched = True();
         }
       }
@@ -155,8 +155,8 @@ fn remove_expired(store: &Keyspace, key: &[u8], now: u64) -> result: unit reads(
   atomic slot = &store^.keys[key], m = &store^.meta {
     let lapsed = False();
     match slot^ {
-      Some(value: held) => {
-        set lapsed = expired(expires: held^.expires, now: now);
+      Some(value: observed) => {
+        set lapsed = expired(expires: observed^.expires, now: now);
       }
       None() => {
       }
@@ -216,9 +216,7 @@ fn log_reserve(log: &Box<Slots<u8>>, needed: u64) -> result: unit writes(log) {
     let target = imax(doubled, wanted);
     let fits = target <= 4611686018427387904_u64;
     if fits {
-      if target >= log^.inner.cap {
-        grow(cell: log, capacity: target);
-      }
+      grow(cell: log, capacity: target);
     }
   }
   return unit;

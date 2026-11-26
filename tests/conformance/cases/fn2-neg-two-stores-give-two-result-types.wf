@@ -7,8 +7,8 @@ struct Holder<T: drop> {
 
 fn hold<T: drop>(value: T) -> made: Holder<T> pure {
   doc "Wraps one owned run in a nominal generic over its element type.";
-  let held = Holder<T>(run: move value);
-  return move held;
+  let observed = Holder<T>(run: move value);
+  return move observed;
 }
 
 fn main() -> status: ExitStatus pure {

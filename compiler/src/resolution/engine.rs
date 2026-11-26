@@ -719,16 +719,29 @@ fn resolve_route_variants(
             modules,
             std::slice::from_ref(route),
         )?;
-        if issue.is_none() {
-            lexical_uses.append(&mut resolved);
-            continue;
-        }
+        // [TYPE-6] a route label belongs to its declared result enum.
+        // A successful constructor lookup (such as PRE-1 `Some`) must not
+        // preempt a same-spelled variant of that source enum.
+        // The fixed PRE-1 preorder puts each enum before its variants.
+        let lexical_owner = resolved.first().and_then(|usage| {
+            let ResolvedTarget::Prelude(variant) = usage.target() else {
+                return None;
+            };
+            PRELUDE_DECLARATIONS
+                .iter()
+                .take_while(|declaration| declaration.id != variant)
+                .filter(|declaration| declaration.class == Some(DeclarationClass::NominalType))
+                .last()
+                .map(|declaration| declaration.id)
+        });
         let function = function_owner(topology, route.owner)
             .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?;
         let ordinal = selector_spelling(roles, route.owner, |selector| {
             matches!(selector, SelectorRole::ResultOrdinal)
         });
         let mut found = None;
+        let mut conflicting_source_owners = false;
+        let mut lexical_carrier = false;
         for binding in topology
             .node_children(function)
             .ok_or(ResolutionCompilerFailure::InvalidCanonicalTree)?
@@ -765,12 +778,26 @@ fn resolve_route_variants(
                 continue;
             };
             let path = scopes.path(ty)?;
-            let Some(ResolvedTarget::Source { declaration, .. }) = lexical_uses
+            let target = lexical_uses
                 .iter()
                 .find(|usage| usage.role() == LexicalUseRole::Type && usage.origin().node() == path)
-                .map(LexicalUseRecord::target)
-            else {
-                continue;
+                .map(LexicalUseRecord::target);
+            let declaration = match target {
+                Some(ResolvedTarget::Prelude(owner)) => {
+                    lexical_carrier |= Some(owner) == lexical_owner;
+                    continue;
+                }
+                Some(ResolvedTarget::Source {
+                    class: DeclarationClass::GenericType,
+                    ..
+                }) => {
+                    // Its concrete instance still determines whether this
+                    // existing lexical target has a carrier.
+                    lexical_carrier |= issue.is_none();
+                    continue;
+                }
+                Some(ResolvedTarget::Source { declaration, .. }) => declaration,
+                _ => continue,
             };
             let Some(enum_meta) = metas.get(declaration.index()) else {
                 continue;
@@ -780,9 +807,18 @@ fn resolve_route_variants(
                     && meta.owner == enum_meta.owner
                     && declarations[meta.record_index].spelling == route.spelling
             }) {
-                found = Some(declarations[variant.record_index].id);
-                break;
+                let declaration = declarations[variant.record_index].id;
+                conflicting_source_owners |= found.is_some_and(|prior| prior != declaration);
+                found.get_or_insert(declaration);
             }
+        }
+        // Preserve the existing selection when an omitted ordinal leaves
+        // both a prelude owner and a source owner in play, or source owners
+        // disagree. Only a unique contextual source owner overrides an
+        // existing lexical identity with no possible result carrier.
+        if lexical_carrier || (conflicting_source_owners && issue.is_none()) {
+            lexical_uses.append(&mut resolved);
+            continue;
         }
         match found {
             Some(declaration) => lexical_uses.push(LexicalUseRecord {
@@ -794,6 +830,7 @@ fn resolve_route_variants(
                     class: DeclarationClass::EnumVariant,
                 },
             }),
+            None if issue.is_none() => lexical_uses.append(&mut resolved),
             None => return Ok(issue),
         }
     }

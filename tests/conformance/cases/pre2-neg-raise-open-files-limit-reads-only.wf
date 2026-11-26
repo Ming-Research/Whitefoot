@@ -1,0 +1,3 @@
+fn raise_to(factory: &std::io::HandleFactory, wanted: u64) -> result: Result<std::process::OpenFilesLimit, std::io::IoError> reads(factory) {
+  return std::process::raise_open_files_limit(factory: factory, wanted: wanted);
+}

@@ -54,10 +54,22 @@ impl<'unit> Checker<'_, 'unit> {
             | CheckedConversionMode::Defined => false,
         };
         if outside_endpoint_domain {
+            let source_type = self.types.checked_type_name(source.ty())?;
+            let destination_type = self.types.checked_type_name(destination.ty())?;
             return self.types.declarations.issue_node(
                 SemanticRule::Op1,
                 node,
-                SemanticIssueKind::InvalidOperation,
+                SemanticIssueKind::InvalidOperation {
+                    operation: Some(spelling.to_owned()),
+                    mechanical_fix: Some(
+                        super::super::super::repairs::writer_operations::conversion_repair(
+                            mode,
+                            &source_type,
+                            &destination_type,
+                        ),
+                    ),
+                    operand_types: Some(vec![source_type, destination_type]),
+                },
             );
         }
         let result = match mode {

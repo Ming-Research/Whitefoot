@@ -202,8 +202,8 @@ fn run_hset(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.number = 0_u64;
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let edited = set_fields(env: client, value: held);
+      Some(value: observed) => {
+        let edited = set_fields(env: client, value: observed);
       }
       None() => {
       }
@@ -302,8 +302,8 @@ fn run_hsetnx(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   set client^.number = 0_u64;
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let edited = set_field_once(env: client, value: held);
+      Some(value: observed) => {
+        let edited = set_field_once(env: client, value: observed);
       }
       None() => {
       }
@@ -390,8 +390,8 @@ fn run_hget(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.state = state_absent;
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = get_field(env: client, value: held);
+      Some(value: observed) => {
+        let found = get_field(env: client, value: observed);
       }
       None() => {
       }
@@ -471,8 +471,8 @@ fn run_hmget(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &C
   set client^.state = state_absent;
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = get_fields(env: client, value: held);
+      Some(value: observed) => {
+        let found = get_fields(env: client, value: observed);
       }
       None() => {
       }
@@ -558,8 +558,8 @@ fn run_hdel(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.number = 0_u64;
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let edited = delete_fields(env: client, value: held);
+      Some(value: observed) => {
+        let edited = delete_fields(env: client, value: observed);
       }
       None() => {
       }
@@ -638,8 +638,8 @@ fn run_hfield(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &
   set client^.number = 0_u64;
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = find_field(env: client, value: held);
+      Some(value: observed) => {
+        let found = find_field(env: client, value: observed);
       }
       None() => {
       }
@@ -705,8 +705,8 @@ fn run_hlen(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.number = 0_u64;
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = hash_size(env: client, value: held);
+      Some(value: observed) => {
+        let found = hash_size(env: client, value: observed);
       }
       None() => {
       }
@@ -796,8 +796,8 @@ fn run_hall(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: &Cl
   set client^.low = shown;
   atomic slot = &store^.keys[key] {
     match slot^ {
-      Some(value: held) => {
-        let found = all_fields(env: client, value: held);
+      Some(value: observed) => {
+        let found = all_fields(env: client, value: observed);
       }
       None() => {
       }
@@ -905,8 +905,8 @@ fn run_hincrby(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client: 
   set client^.high = 0_i64;
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let edited = add_to_field(env: client, value: held);
+      Some(value: observed) => {
+        let edited = add_to_field(env: client, value: observed);
       }
       None() => {
       }
@@ -1064,8 +1064,8 @@ fn run_hincrbyfloat(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, cli
   let floating = Floating(increment: read, text: move empty, state: state_absent);
   atomic slot = &store^.keys[key], m = &store^.meta {
     match slot^ {
-      Some(value: held) => {
-        let edited = add_float(env: client, value: held, floating: &floating);
+      Some(value: observed) => {
+        let edited = add_float(env: client, value: observed, floating: &floating);
       }
       None() => {
       }
@@ -1137,20 +1137,18 @@ fn random_field(fields: &HashMap<Key, Bytes, ceiling>, start: u64, client: &Clie
   for @scan (step in 0_u64..buckets) {
     let offset = first +wrap step;
     let index = offset % buckets;
-    if index < fields^.cells.inner.len {
-      let slot = &fields^.cells.inner[index];
-      match slot^ {
-        HashMapFilled(key: field, value: stored) => {
-          reply_text(client: client, text: &field^.bytes);
-          if with_values {
-            reply_text(client: client, text: stored);
-          }
-          return True();
+    let slot = &fields^.cells.inner[index];
+    match slot^ {
+      HashMapFilled(key: field, value: stored) => {
+        reply_text(client: client, text: &field^.bytes);
+        if with_values {
+          reply_text(client: client, text: stored);
         }
-        HashMapVacant() => {
-        }
-        HashMapDeleted() => {
-        }
+        return True();
+      }
+      HashMapVacant() => {
+      }
+      HashMapDeleted() => {
       }
     }
   }
@@ -1169,25 +1167,23 @@ fn distinct_fields(fields: &HashMap<Key, Bytes, ceiling>, wanted: u64, client: &
     if remaining == 0_u64 {
       break @scan;
     }
-    if index < fields^.cells.inner.len {
-      let slot = &fields^.cells.inner[index];
-      match slot^ {
-        HashMapFilled(key: field, value: stored) => {
-          set client^.random = next_random(state: client^.random);
-          let draw = client^.random % remaining;
-          if draw < needed {
-            reply_text(client: client, text: &field^.bytes);
-            if with_values {
-              reply_text(client: client, text: stored);
-            }
-            set needed = needed -wrap 1_u64;
+    let slot = &fields^.cells.inner[index];
+    match slot^ {
+      HashMapFilled(key: field, value: stored) => {
+        set client^.random = next_random(state: client^.random);
+        let draw = client^.random % remaining;
+        if draw < needed {
+          reply_text(client: client, text: &field^.bytes);
+          if with_values {
+            reply_text(client: client, text: stored);
           }
-          set remaining = remaining -wrap 1_u64;
+          set needed = needed -wrap 1_u64;
         }
-        HashMapVacant() => {
-        }
-        HashMapDeleted() => {
-        }
+        set remaining = remaining -wrap 1_u64;
+      }
+      HashMapVacant() => {
+      }
+      HashMapDeleted() => {
       }
     }
   }
@@ -1324,8 +1320,8 @@ fn run_hrandfield(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, clien
   if reading {
     atomic slot = &store^.keys[key] {
       match slot^ {
-        Some(value: held) => {
-          let found = random_fields(env: client, value: held);
+        Some(value: observed) => {
+          let found = random_fields(env: client, value: observed);
         }
         None() => {
         }
@@ -1334,8 +1330,8 @@ fn run_hrandfield(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, clien
   } else {
     atomic slot = &store^.keys[key] {
       match slot^ {
-        Some(value: held) => {
-          let found = hash_size(env: client, value: held);
+        Some(value: observed) => {
+          let found = hash_size(env: client, value: observed);
         }
         None() => {
         }
@@ -1368,175 +1364,179 @@ fn hash_command(store: &Keyspace, input: &[u8], args: &Box<Slots<Span>>, client:
   let open = bnot(client^.locked);
   let counting = True();
   let plain = False();
-  if code == code_hset {
-    let fits = count >= 4_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
+  match code {
+    code_hset => {
+      let fits = count >= 4_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_hset(store: store, input: input, args: args, client: client, env: env, time: time, counted: counting);
+      }
+      return True();
     }
-    if go {
-      run_hset(store: store, input: input, args: args, client: client, env: env, time: time, counted: counting);
+    code_hmset => {
+      let fits = count >= 4_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_hset(store: store, input: input, args: args, client: client, env: env, time: time, counted: plain);
+      }
+      return True();
     }
-    return True();
-  }
-  if code == code_hmset {
-    let fits = count >= 4_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_hset(store: store, input: input, args: args, client: client, env: env, time: time, counted: plain);
-    }
-    return True();
-  }
-  if code == code_hsetnx {
-    let fits = count == 4_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_hsetnx(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return True();
-  }
-  if code == code_hget {
-    let fits = count == 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_hget(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return True();
-  }
-  if code == code_hmget {
-    let fits = count >= 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_hmget(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return True();
-  }
-  if code == code_hdel {
-    let fits = count >= 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_hdel(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return True();
-  }
-  if code == code_hexists {
-    let fits = count == 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_hfield(store: store, input: input, args: args, client: client, env: env, time: time, length: plain);
-    }
-    return True();
-  }
-  if code == code_hstrlen {
-    let fits = count == 3_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_hfield(store: store, input: input, args: args, client: client, env: env, time: time, length: counting);
-    }
-    return True();
-  }
-  if code == code_hlen {
-    let fits = count == 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_hlen(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return True();
-  }
-  if code == code_hgetall {
-    let fits = count == 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_hall(store: store, input: input, args: args, client: client, env: env, time: time, shown: 2_i64);
-    }
-    return True();
-  }
-  if code == code_hkeys {
-    let fits = count == 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_hall(store: store, input: input, args: args, client: client, env: env, time: time, shown: 0_i64);
-    }
-    return True();
-  }
-  if code == code_hvals {
-    let fits = count == 2_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_hall(store: store, input: input, args: args, client: client, env: env, time: time, shown: 1_i64);
-    }
-    return True();
-  }
-  if code == code_hincrby {
-    let fits = count == 4_u64;
-    let go = band(fits, open);
-    if bnot(go) {
-      refused(client: client, input: input, name: name, fits: fits);
-    }
-    if go {
-      run_hincrby(store: store, input: input, args: args, client: client, env: env, time: time);
-    }
-    return True();
-  }
-  if code == code_hincrbyfloat {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_hincrbyfloat[0_u64..12_u64]);
-    if spelled {
+    code_hsetnx => {
       let fits = count == 4_u64;
       let go = band(fits, open);
       if bnot(go) {
         refused(client: client, input: input, name: name, fits: fits);
       }
       if go {
-        run_hincrbyfloat(store: store, input: input, args: args, client: client, env: env, time: time);
+        run_hsetnx(store: store, input: input, args: args, client: client, env: env, time: time);
       }
       return True();
     }
-  }
-  if code == code_hrandfield {
-    let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_hrandfield[0_u64..10_u64]);
-    if spelled {
-      let fits = count >= 2_u64;
+    code_hget => {
+      let fits = count == 3_u64;
       let go = band(fits, open);
       if bnot(go) {
         refused(client: client, input: input, name: name, fits: fits);
       }
       if go {
-        run_hrandfield(store: store, input: input, args: args, client: client, env: env, time: time);
+        run_hget(store: store, input: input, args: args, client: client, env: env, time: time);
       }
       return True();
+    }
+    code_hmget => {
+      let fits = count >= 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_hmget(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return True();
+    }
+    code_hdel => {
+      let fits = count >= 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_hdel(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return True();
+    }
+    code_hexists => {
+      let fits = count == 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_hfield(store: store, input: input, args: args, client: client, env: env, time: time, length: plain);
+      }
+      return True();
+    }
+    code_hstrlen => {
+      let fits = count == 3_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_hfield(store: store, input: input, args: args, client: client, env: env, time: time, length: counting);
+      }
+      return True();
+    }
+    code_hlen => {
+      let fits = count == 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_hlen(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return True();
+    }
+    code_hgetall => {
+      let fits = count == 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_hall(store: store, input: input, args: args, client: client, env: env, time: time, shown: 2_i64);
+      }
+      return True();
+    }
+    code_hkeys => {
+      let fits = count == 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_hall(store: store, input: input, args: args, client: client, env: env, time: time, shown: 0_i64);
+      }
+      return True();
+    }
+    code_hvals => {
+      let fits = count == 2_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_hall(store: store, input: input, args: args, client: client, env: env, time: time, shown: 1_i64);
+      }
+      return True();
+    }
+    code_hincrby => {
+      let fits = count == 4_u64;
+      let go = band(fits, open);
+      if bnot(go) {
+        refused(client: client, input: input, name: name, fits: fits);
+      }
+      if go {
+        run_hincrby(store: store, input: input, args: args, client: client, env: env, time: time);
+      }
+      return True();
+    }
+    code_hincrbyfloat => {
+      let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_hincrbyfloat[0_u64..12_u64]);
+      if spelled {
+        let fits = count == 4_u64;
+        let go = band(fits, open);
+        if bnot(go) {
+          refused(client: client, input: input, name: name, fits: fits);
+        }
+        if go {
+          run_hincrbyfloat(store: store, input: input, args: args, client: client, env: env, time: time);
+        }
+        return True();
+      }
+    }
+    code_hrandfield => {
+      let spelled = name_is(input: input, start: name.start, length: name.length, word: &word_hrandfield[0_u64..10_u64]);
+      if spelled {
+        let fits = count >= 2_u64;
+        let go = band(fits, open);
+        if bnot(go) {
+          refused(client: client, input: input, name: name, fits: fits);
+        }
+        if go {
+          run_hrandfield(store: store, input: input, args: args, client: client, env: env, time: time);
+        }
+        return True();
+      }
+    }
+    else => {
     }
   }
   return False();

@@ -1,0 +1,14 @@
+alias WriteFile = std::fs::WriteFile;
+
+fn park(file: WriteFile) -> slot: Shared<Option<WriteFile>> pure {
+  let present = Some<WriteFile>(value: move file);
+  return shared_new::<Option<WriteFile>>(value: move present);
+}
+
+fn reclaim(slot: Shared<Option<WriteFile>>) -> result: Option<Option<WriteFile>> pure waits {
+  return shared_close::<Option<WriteFile>>(shared: move slot);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

@@ -13,7 +13,7 @@
 //! - [BLK-1]'s two-run inventory, [BLK-2]'s formation rows, [BLK-3]'s refusal
 //!   of swap, growth and middle removal, [BLK-4]'s confinement and [PROV-1]'s
 //!   store/provider/capability table retire. The successor is the ordinary
-//!   [PRE-1] records: the nine window operations [OP-10], the nine
+//!   [PRE-1] records: the window operations [OP-10], the nine
 //!   construction functions [OP-13], `swap` [OP-11] and `free_empty` [OP-14],
 //!   over one heap [STOR-8].
 //! - `buffer_new`, `buffer_vacant`, `array_new` and `box_new`'s old spelling
@@ -274,6 +274,66 @@ fn grow_remakes_a_boxed_window() {
     assert_accepts(include_bytes!(
         "../../../../tests/conformance/cases/op10-pos-boxed-window-grow.wf"
     ));
+}
+
+/// [OP-10] `clear` empties every admitted shape and publishes `len == 0`
+/// with an unchanged `cap`, so a refill needs no new guard; a reference to
+/// the window itself survives it.
+#[test]
+fn clear_empties_every_shape_and_keeps_its_capacity() {
+    for source in [
+        include_bytes!("../../../../tests/conformance/cases/op10-pos-clear-retains-byte-buffer.wf")
+            .as_slice(),
+        include_bytes!("../../../../tests/conformance/cases/op10-pos-clear-every-shape.wf")
+            .as_slice(),
+        include_bytes!(
+            "../../../../tests/conformance/cases/op10-pos-clear-keeps-window-reference.wf"
+        )
+        .as_slice(),
+    ] {
+        assert_accepts(source);
+    }
+}
+
+/// [OP-10, PROV-6] `clear`'s record bounds its operand-supplied element type
+/// by `drop`, judged at the call whatever the window's length; an `Array` is
+/// outside its admitted shapes.
+#[test]
+fn clear_refuses_a_linear_element_and_an_array() {
+    assert_rule_kind(
+        include_bytes!("../../../../tests/conformance/cases/prov6-neg-clear-linear-element.wf"),
+        SemanticRule::Prov6,
+        |kind| matches!(kind, SemanticIssueKind::LinearityBoundMismatch { .. }),
+    );
+    assert_rule_kind(
+        include_bytes!("../../../../tests/conformance/cases/op10-neg-clear-array.wf"),
+        SemanticRule::Op10,
+        |kind| matches!(kind, SemanticIssueKind::UnadmittedOperandShape { .. }),
+    );
+}
+
+/// [OP-10, REF-2] `clear` ends every element, range and page reference into
+/// its window, an empty range included, and a later placement revives none.
+#[test]
+fn clear_ends_every_reference_into_its_window() {
+    for source in [
+        include_bytes!(
+            "../../../../tests/conformance/cases/ref2-neg-element-reference-after-clear.wf"
+        )
+        .as_slice(),
+        include_bytes!("../../../../tests/conformance/cases/ref2-neg-empty-range-after-clear.wf")
+            .as_slice(),
+        include_bytes!("../../../../tests/conformance/cases/ref2-neg-paged-page-after-clear.wf")
+            .as_slice(),
+    ] {
+        assert_rule_kind(source, SemanticRule::Ref2, |kind| {
+            matches!(
+                kind,
+                SemanticIssueKind::InvalidReferenceUse { event, .. }
+                    if event.contains("window operation")
+            )
+        });
+    }
 }
 
 /// [OP-10] `place_back`'s `requires window^.len < window^.cap` is an ordinary

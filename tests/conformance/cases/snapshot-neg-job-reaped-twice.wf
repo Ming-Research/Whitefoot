@@ -1,0 +1,8 @@
+alias Reserve = std::snapshot::Reserve;
+alias Job = std::snapshot::Job;
+alias CreateError = std::snapshot::CreateError;
+
+fn reap(job: Job) -> result: std::snapshot::Outcome pure waits {
+  let first = std::snapshot::finish(job: move job);
+  return std::snapshot::finish(job: move job);
+}

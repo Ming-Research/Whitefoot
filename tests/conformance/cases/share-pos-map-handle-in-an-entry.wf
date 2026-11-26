@@ -20,8 +20,8 @@ fn read(outer: Shared<ConcurrentHashMap<Shared<ConcurrentHashMap<u8>>>>) -> resu
       atomic t = &handle {
         let slot = &t^[key];
         match slot^ {
-          Some(value: held) => {
-            set got = held^;
+          Some(value: observed) => {
+            set got = observed^;
           }
           None() => {
             set got = 40_u8;
@@ -29,7 +29,7 @@ fn read(outer: Shared<ConcurrentHashMap<Shared<ConcurrentHashMap<u8>>>>) -> resu
         }
         let absent = &t^[missing];
         match absent^ {
-          Some(value: held) => {
+          Some(value: observed) => {
             set got = 50_u8;
           }
           None() => {
@@ -43,8 +43,8 @@ fn read(outer: Shared<ConcurrentHashMap<Shared<ConcurrentHashMap<u8>>>>) -> resu
         let batch = 0_u8;
         for (i in 0_u64..keys.len) {
           match entries^[i] {
-            Some(value: held) => {
-              set batch = batch +wrap held^;
+            Some(value: observed) => {
+              set batch = batch +wrap observed^;
             }
             None() => {
               set batch = batch +wrap 2_u8;

@@ -1,0 +1,10 @@
+# A child process that nothing bounds can hold a test, and with it the whole
+# gate, until the command deadline. A test program runs under the managed
+# process (tests/support/process.rs), which stops it at the test deadline;
+# these three std methods start a child and wait for it or leave it running.
+# Each place that must start a child directly allows it, with its reason.
+disallowed-methods = [
+    { path = "std::process::Command::output", reason = "run a test program through bounded_output or the managed process" },
+    { path = "std::process::Command::status", reason = "run a test program through bounded_output or the managed process" },
+    { path = "std::process::Command::spawn", reason = "run a test program through the managed process" },
+]

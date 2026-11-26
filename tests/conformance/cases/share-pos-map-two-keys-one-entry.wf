@@ -12,8 +12,8 @@ fn main() -> status: std::process::ExitStatus pure waits {
   let counted = 0_u64;
   atomic t = &store {
     match t^[first] {
-      Some(value: held) => {
-        set seen = held^;
+      Some(value: observed) => {
+        set seen = observed^;
       }
       None() => {
       }

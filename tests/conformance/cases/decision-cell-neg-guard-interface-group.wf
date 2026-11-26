@@ -1,0 +1,20 @@
+interface CellFactory {
+  fn make() -> result: DecisionCell pure;
+}
+
+binding DecisionFactory : CellFactory {
+  make = decision_cell_new;
+}
+
+fn permit<interface CellFactory>() -> result: Bool pure {
+  let cell = CellFactory::make();
+  return True();
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let target = shared_new::<u8>(value: 0_u8);
+  atomic byte = &target when permit::<DecisionFactory>() {
+    set byte^ = 1_u8;
+  }
+  return std::process::exit_status(code: 0_u8);
+}

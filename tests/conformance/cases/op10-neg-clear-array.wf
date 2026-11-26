@@ -1,0 +1,6 @@
+fn main() -> status: std::process::ExitStatus pure {
+  doc "OP-10: an Array has no window boundary, so clear refuses it as an operand outside its admitted shapes.";
+  let a = array_filled::<u8, 4>(value: 0_u8);
+  clear(window: &a);
+  return std::process::exit_status(code: 0_u8);
+}

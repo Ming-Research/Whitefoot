@@ -3,7 +3,7 @@ use super::*;
 
 /// Instantiated frame definitions and the existing reads already expanded
 /// through them. A definition is retained once per fact instance [RANGE-3].
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(in crate::semantic::range_judgment) struct Definitions {
     instances: Vec<(Rule, Vec<Rule>)>,
     seen: BTreeSet<(usize, AtomId)>,
@@ -187,6 +187,8 @@ mod tests {
             version,
             generation: 0,
             prefix: Vec::new(),
+            projection: Vec::new(),
+            barrier: None,
             offset: Linear::constant(0),
             length: Linear::constant(length),
         };

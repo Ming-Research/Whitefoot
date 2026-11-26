@@ -1,0 +1,11 @@
+fn need_small(source: &[u64], i: u64, j: u64) -> result: unit pure contract {
+  define next = i * j;
+  requires forall small(k in 0_u64..1_u64): source^[next] <= 7_u64;
+} {
+  doc "Expanding next exposes multiplication of two integer parameters, which is not a range term.";
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

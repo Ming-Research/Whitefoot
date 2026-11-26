@@ -1,0 +1,34 @@
+fn choose_selected(first: &Option<u64>, second: &Option<u64>, flag: Bool) -> result: u64 reads(first), reads(second) {
+  doc "A joined reference may select its own payload under the fact established by its borrowed match.";
+  let selected = if flag {
+    give first;
+  } else {
+    give second;
+  }
+  match &selected^ {
+    None() => {
+      return 0_u64;
+    }
+    Some(value: inner) => {
+      let direct = selected^.Some.value;
+      return direct;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "Both incoming targets are selected and their distinct payload values determine successful exit.";
+  let first = Some<u64>(value: 7_u64);
+  let second = Some<u64>(value: 29_u64);
+  let pick_first = True();
+  let first_value = choose_selected(first: &first, second: &second, flag: pick_first);
+  if first_value != 7_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let pick_second = False();
+  let second_value = choose_selected(first: &first, second: &second, flag: pick_second);
+  if second_value != 29_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

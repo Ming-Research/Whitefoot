@@ -18,7 +18,7 @@ fn need(order: &[Outer]) -> result: unit pure contract {
 }
 
 fn forward(order: &[Outer]) -> result: unit writes(order) contract {
-  requires forall held(k in 0_u64..order^.len): order^[k].inner.e.Open.block == 0_u64;
+  requires forall observed(k in 0_u64..order^.len): order^[k].inner.e.Open.block == 0_u64;
 } {
   if 0_u64 < order^.len {
     let r = &order^[0_u64];

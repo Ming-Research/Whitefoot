@@ -815,6 +815,6 @@ fn main() -> status: std::process::ExitStatus pure {
     assert_eq!(failure.rule_id(), Some("EFF-2"));
     let rendered = format!("{failure}\n");
     assert!(rendered.contains(
-        "\n  expected_row: reads(value)\n  found_row: pure\n  missing: [reads(value)]\n  extra: []\n  mechanical_fix: declare the row as `reads(value)`, which covers every access the body makes and no other\n"
+        "\n  expected_row: reads(value)\n  found_row: pure\n  missing: [\"reads(value)\"]\n  extra: []\n  mechanical_fix: declare the row as `reads(value)`, which covers every access the body makes and no other\n"
     ), "{rendered}");
 }

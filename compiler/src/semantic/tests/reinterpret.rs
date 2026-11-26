@@ -92,7 +92,7 @@ fn reinterpret_shape_pair_and_operand_failures_keep_their_rule_owners() {
         assert_rule(
             source,
             SemanticRule::Op1,
-            SemanticIssueKind::InvalidOperation,
+            SemanticIssueKind::invalid_operation(),
         );
     }
     assert_rule_kind(

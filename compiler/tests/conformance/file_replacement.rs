@@ -1,4 +1,4 @@
-//! The file-replacement and writable-subdirectory witnesses on both Windows host routes.
+//! The file-replacement, writable-subdirectory and listing witnesses on both Windows host routes.
 //! The Unix corpus adapter already builds and runs every manifest case;
 //! programs::file_replacement also covers replacement on the native-disabled route.
 //! Windows's ordinary corpus adapter does not yet run the full corpus.
@@ -44,12 +44,15 @@ fn namespace_cases_on_both_host_routes() {
         let program = build_program(&llvm);
         let arrangement = case.arrange.as_ref().expect("native argument names");
         let argv = arrangement.argv.as_ref().expect("argument vector");
-        // These ASCII fixture names are host strings, copied by the WF case
-        // into POSIX bytes or Windows UTF-16 bytes through host_copy_bytes.
+        // These ASCII fixture names are host strings, which the WF case
+        // copies into name bytes through host_copy_name_bytes [PRE-2].
         let arguments: Vec<_> = argv
             .iter()
             .skip(1)
-            .map(|bytes| std::str::from_utf8(bytes).expect("textual fixture argument"))
+            .map(|bytes| {
+                std::str::from_utf8(bytes.exact().expect("exact fixture argument"))
+                    .expect("textual fixture argument")
+            })
             .collect();
         assert!(
             arrangement.files.is_empty()
@@ -75,5 +78,42 @@ fn namespace_cases_on_both_host_routes() {
             );
             assert!(output.stdout.is_empty() && output.stderr.is_empty());
         }
+    }
+}
+
+/// The listing witness: a case that makes its own folder, lists it and opens
+/// what it listed, so it needs no fixture and no argument. Its names are the
+/// same name bytes on Windows as on POSIX [PRE-2].
+#[test]
+fn listing_case_on_both_host_routes() {
+    let cases = corpus::load();
+    let id = "sys14-run-listed-names";
+    let case = cases
+        .iter()
+        .find(|case| case.id == id)
+        .expect("manifest case");
+    let Expectation::Run(expected) = case.expect else {
+        panic!("{id} must retain its executable verdict");
+    };
+    assert!(case.arrange.is_none(), "{id} makes its own fixture");
+    let llvm = compile_sources(&[("case.wf", &case.source())]);
+    let program = build_program(&llvm);
+    for native in [true, false] {
+        let directory = fixture_directory();
+        let mut command = Command::new(program.executable());
+        command
+            .current_dir(directory.path())
+            .env_remove("WF_REQUIRE_WINDOWS_IOCP")
+            .env_remove("WF_IO_NO_NATIVE_RING");
+        if !native {
+            command.env("WF_IO_NO_NATIVE_RING", "1");
+        }
+        let output = run_command(&mut command);
+        assert_eq!(
+            output.status.code(),
+            Some(expected),
+            "{id}, route {native}: {output:?}"
+        );
+        assert!(output.stdout.is_empty() && output.stderr.is_empty());
     }
 }

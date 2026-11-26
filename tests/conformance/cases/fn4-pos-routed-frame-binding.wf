@@ -1,0 +1,17 @@
+interface Probe {
+  fn probe(slot: &u64) -> outcome: Result<u64, Overflow> writes(slot) contract {
+    ensures when Ok(value: found): slot^ == entry(slot)^;
+  };
+}
+
+fn answer(actual_slot: &u64) -> answered: Result<u64, Overflow> pure {
+  return Ok<u64, Overflow>(value: 7_u64);
+}
+
+binding Fixed : Probe {
+  probe = answer;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

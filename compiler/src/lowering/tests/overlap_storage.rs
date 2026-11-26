@@ -1436,6 +1436,8 @@ fn main() -> status: std::process::ExitStatus pure {
 
 /// The review's join witness: the owner and reference have distinct block
 /// parameters, so definition tracing cannot recover their common storage.
+/// The selector is `main`'s parameter so that both arms are lowered and
+/// joined.
 #[test]
 fn joined_reference_preserves_borrowed_call_entry_order() {
     let source = br#"fn ignore(part: &u64) -> result: unit pure {
@@ -1448,10 +1450,9 @@ fn consume(value: Box<u64>) -> result: unit pure {
   return unit;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
+fn main(pick: u64) -> status: std::process::ExitStatus pure {
   doc "Keeps an owner alive until a joined reference enters its call.";
   let p = box_new::<u64>(value: 0_u64);
-  let pick = 1_u64;
   let q = if pick == 1_u64 {
     give &p.inner;
   } else {
@@ -1467,6 +1468,7 @@ fn main() -> status: std::process::ExitStatus pure {
 
 /// A joined reference can name either owner. Keeping only one alternative
 /// would allow the other owner's release to race the borrowed call's entry.
+/// The selector is `main`'s parameter, so neither alternative is decided.
 #[test]
 fn joined_reference_retains_every_borrowed_origin() {
     for consumed in ["left", "right"] {
@@ -1481,11 +1483,10 @@ fn consume(value: Box<u64>) -> result: unit pure {{
   return unit;
 }}
 
-fn main() -> status: std::process::ExitStatus pure {{
+fn main(pick: u64) -> status: std::process::ExitStatus pure {{
   doc "Orders either origin's release after joined borrowed call entry.";
   let left = box_new::<u64>(value: 0_u64);
   let right = box_new::<u64>(value: 1_u64);
-  let pick = 1_u64;
   let q = if pick == 1_u64 {{
     give &left.inner;
   }} else {{
@@ -1553,7 +1554,7 @@ fn ignore(part: &u64) -> result: unit pure {{
   return unit;
 }}
 
-fn clear(entries: &Entries<{value_type}>) -> result: unit writes(entries) {{
+fn wipe(entries: &Entries<{value_type}>) -> result: unit writes(entries) {{
   doc "Replaces entries and releases their previous payloads.";
   for (i in 0_u64..entries^.len) {{
     set entries^[i] = None<{value_type}>();
@@ -1568,7 +1569,7 @@ fn borrow_then_clear(entries: &Entries<{value_type}>) -> result: unit writes(ent
     match first^ {{
       Some(value: b) => {{
         ignore(part: {borrowed});
-        clear(entries: entries);
+        wipe(entries: entries);
       }}
       None() => {{
       }}
@@ -1583,10 +1584,8 @@ fn main() -> status: std::process::ExitStatus pure waits {{
   let keys = key_set_new(capacity: 1_u64);
   let index = key_set_insert(keys: &keys, key: &names[0_u64..1_u64]);
   atomic entries = &store[keys] {{
-    if entries^.len > 0_u64 {{
-      let value = {value};
-      set entries^[0_u64] = Some<{value_type}>(value: {payload});
-    }}
+    let value = {value};
+    set entries^[0_u64] = Some<{value_type}>(value: {payload});
     borrow_then_clear(entries: entries);
   }}
   return std::process::exit_status(code: 0_u8);
@@ -1603,7 +1602,7 @@ fn main() -> status: std::process::ExitStatus pure waits {{
                 .pairs
                 .iter()
                 .filter(|pair| {
-                    pair.first.callee_name == "ignore" && pair.second.callee_name == "clear"
+                    pair.first.callee_name == "ignore" && pair.second.callee_name == "wipe"
                 })
                 .collect::<Vec<_>>();
             assert_eq!(pairs.len(), 1, "{value_type}: one adjacent call pair");
@@ -1627,7 +1626,7 @@ fn main() -> status: std::process::ExitStatus pure waits {{
                         ..
                     } if matches!(
                         program.functions()[*function as usize].name(),
-                        "ignore" | "clear"
+                        "ignore" | "wipe"
                     ) =>
                     {
                         Some(*result)

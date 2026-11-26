@@ -1,0 +1,20 @@
+enum RoutedLeft {
+  Left(index: u64);
+}
+
+enum RoutedRight {
+  Right(index: u64);
+}
+
+fn pair() -> (left: RoutedLeft, right: RoutedRight) pure contract {
+  ensures when Left(index: payload): payload == 1_u64;
+  ensures when Right(index: payload): payload == 2_u64;
+} {
+  let left_value = RoutedLeft::Left(index: 1_u64);
+  let right_value = RoutedRight::Right(index: 2_u64);
+  return left_value, right_value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

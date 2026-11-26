@@ -942,9 +942,9 @@ fn indexed_reductions_split_inside_a_split_and_release_every_nested_private_rang
     std::fs::remove_dir_all(directory).expect("remove nested artifacts");
 }
 
-const EXTENDED_FORMS: &str = r#"fn measured() -> made: Box<Array<u64>> pure {
-  doc "Read the unchanged descriptor inside every colliding update.";
-  let cells = box_array_filled::<u64>(count: 8_u64, value: 5_u64);
+const EXTENDED_FORMS: &str = r#"fn measured(extent: u64) -> made: Box<Array<u64>> pure {
+  doc "Read the unchanged descriptor inside every colliding update; the caller supplies the extent, so the guard on it is a run-time test.";
+  let cells = box_array_filled::<u64>(count: extent, value: 5_u64);
   for (i in 0_u64..262144_u64) {
     let bucket = i % 5_u64;
     if bucket < cells.inner.len {
@@ -986,7 +986,7 @@ fn scalar_saturation() -> result: u32 pure {
 
 fn main() -> status: std::process::ExitStatus pure {
   doc "Check literal counts, untouched cells, and the mathematical clamped sum.";
-  let measured_cells = measured();
+  let measured_cells = measured(extent: 8_u64);
   let temporary_cells = temporaries();
   let saturated_cells = indexed_saturation();
   let saturated_scalar = scalar_saturation();

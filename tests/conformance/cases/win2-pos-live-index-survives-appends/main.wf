@@ -14,11 +14,9 @@ fn grow_twice(rows: &Slots<Node, 4>, kids: &[u64], i: u64) -> total: u64 reads(k
   let wider = kinds::make_node(count: 9_u64, weight: 0_u64);
   place_back(window: rows, value: wider);
   let acc = 0_u64;
-  if i < rows^.len {
-    for (c in 0_u64..rows^[i].count) {
-      let kid = kids^[c];
-      set acc = acc +wrap kid;
-    }
+  for (c in 0_u64..rows^[i].count) {
+    let kid = kids^[c];
+    set acc = acc +wrap kid;
   }
   return acc;
 }
@@ -30,16 +28,12 @@ fn main() -> status: ExitStatus pure {
   place_back(window: &arena, value: node);
   let kids = array_filled::<u64, 3>(value: 5_u64);
   let children = &kids[0_u64..3_u64];
-  if 0_u64 < arena.len {
-    if arena.len < 3_u64 {
-      if arena[0_u64].count <= children^.len {
-        let total = grow_twice(rows: &arena, kids: children, i: 0_u64);
-        if total == 10_u64 {
-          return exit_status(code: 0_u8);
-        }
-        return exit_status(code: 2_u8);
-      }
+  if arena[0_u64].count <= children^.len {
+    let total = grow_twice(rows: &arena, kids: children, i: 0_u64);
+    if total == 10_u64 {
+      return exit_status(code: 0_u8);
     }
+    return exit_status(code: 2_u8);
   }
   return exit_status(code: 1_u8);
 }

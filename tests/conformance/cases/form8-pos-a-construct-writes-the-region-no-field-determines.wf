@@ -6,10 +6,9 @@ struct Ticket<T> {
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "FN-2: the other half. No field of `Ticket` mentions its type parameter, so nothing about the operands could have supplied it, and the construct writes it in its own type-argument list exactly as every other instantiation argument is written.";
+  doc "FN-2: the other half. No field of `Ticket` mentions its type parameter, so nothing about the operands could have supplied it, and the construct writes it in its own type-argument list exactly as every other instantiation argument is written. The program returns the field's value, 7, as its exit status.";
   let one = Ticket<Slots<u8, 4>>(count: 7_u64);
-  if one.count == 7_u64 {
-    return exit_status(code: 0_u8);
-  }
-  return exit_status(code: 1_u8);
+  let count = one.count;
+  let code = cvt::<u64, u8>(count);
+  return exit_status(code: code);
 }

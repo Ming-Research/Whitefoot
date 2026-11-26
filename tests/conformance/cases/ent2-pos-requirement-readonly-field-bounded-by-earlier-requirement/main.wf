@@ -19,20 +19,18 @@ fn child_sum(nodes: &Slots<Node, 4>, kids: &[u64], i: u64) -> total: u64 reads(n
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "The caller discharges both instantiated requirements from its own guards; the callee sums two children of five.";
+  doc "The caller discharges the bound from the published arena length and the count requirement from its own guard; the callee sums two children of five.";
   let arena = slots_new::<Node, 4>();
   let node = kinds::make_node(count: 2_u64, weight: 1_u64);
   place_back(window: &arena, value: node);
   let kids = array_filled::<u64, 3>(value: 5_u64);
   let children = &kids[0_u64..3_u64];
-  if 0_u64 < arena.len {
-    if arena[0_u64].count <= children^.len {
-      let total = child_sum(nodes: &arena, kids: children, i: 0_u64);
-      if total == 10_u64 {
-        return exit_status(code: 0_u8);
-      }
-      return exit_status(code: 2_u8);
+  if arena[0_u64].count <= children^.len {
+    let total = child_sum(nodes: &arena, kids: children, i: 0_u64);
+    if total == 10_u64 {
+      return exit_status(code: 0_u8);
     }
+    return exit_status(code: 2_u8);
   }
   return exit_status(code: 1_u8);
 }

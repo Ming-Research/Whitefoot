@@ -24,8 +24,41 @@ fn view_total(window: &[u8]) -> total: u64 reads(window) {
   return sum;
 }
 
-fn main() -> status: ExitStatus pure {
-  doc "Range references over a Slots window replace the retired view values: one reference is passed twice with no move, the window is appended to after that reference's last use, it is drained to empty from the front by remove_at, and a second reference reads back what a write through the first one left.";
+fn publish_report(factory: &std::io::HandleFactory, output: &std::io::OutputStream, source: &[u8], length: u64) -> result: Result<unit, std::io::IoError> reads(source), writes(factory), writes(output) waits contract {
+  define source_length = source^.len;
+  requires length <= source_length;
+} {
+  doc "Publishes one prefix of the report, reattempting until the host has accepted every byte or refused it.";
+  let sent = 0_u64;
+  loop @publish {
+    let pending = sent < length;
+    if pending {
+    } else {
+      break @publish;
+    }
+    let no_deadline = None<std::time::Instant>();
+    let wait_cancel = std::time::cancel_never();
+    let wait_outcome = std::io::write_once(factory: factory, output: output, source: source, start: sent, end: length, deadline: no_deadline, cancel: &wait_cancel);
+    std::time::close_cancel_watch(watch: move wait_cancel);
+    match wait_outcome {
+      Ok(value: accepted) => {
+        set sent = accepted;
+      }
+      Err(error: problem) => {
+        return Err<unit, std::io::IoError>(error: problem);
+      }
+    }
+  }
+  return Ok<unit, std::io::IoError>(value: unit);
+}
+
+fn main(inputs: std::process::Inputs) -> status: ExitStatus pure waits {
+  doc "Range references over a Slots window replace the retired view values: one reference is passed twice with no move, the window is appended to after that reference's last use, it is drained to empty from the front by remove_at, and a second reference reads back what a write through the first one left. The two references' lengths are published one byte each for the harness to compare.";
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &factory, directory: move unused_cwd_write);
+  std::fs::close_directory(factory: &factory, directory: move unused_cwd);
+  let report = array_filled::<u8, 2>(value: 0_u8);
   let empty = slots_new::<u8, 4>();
   place_back(window: &empty, value: 3_u8);
   let one = move empty;
@@ -33,10 +66,7 @@ fn main() -> status: ExitStatus pure {
   let two = move one;
   let window = &two[0_u64..two.len];
   let width = window^.len;
-  if width == 2_u64 {
-  } else {
-    return exit_status(code: 21_u8);
-  }
+  set report[0_u64] = cvt::<u64, u8>(width);
   let total = view_total(window: window);
   let again = view_total(window: window);
   if total == 7_u64 {
@@ -63,10 +93,7 @@ fn main() -> status: ExitStatus pure {
   let drained = move shorter;
   let nothing = &drained[0_u64..drained.len];
   let empty_width = nothing^.len;
-  if empty_width == 0_u64 {
-  } else {
-    return exit_status(code: 25_u8);
-  }
+  set report[1_u64] = cvt::<u64, u8>(empty_width);
   let table = slots_new::<u8, 3>();
   for @fill_table (
     at in 0_u64..3_u64,
@@ -87,6 +114,14 @@ fn main() -> status: ExitStatus pure {
   if written == 11_u8 {
   } else {
     return exit_status(code: 27_u8);
+  }
+  let report_window = &report[0_u64..2_u64];
+  match publish_report(factory: &factory, output: &out, source: report_window, length: 2_u64) {
+    Ok(value: published) => {
+    }
+    Err(error: problem) => {
+      return exit_status(code: 28_u8);
+    }
   }
   return exit_status(code: 0_u8);
 }

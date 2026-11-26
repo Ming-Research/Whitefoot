@@ -208,7 +208,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
     place_back(window: &line, value: 0_u8);
   }
   let room = 16_u64;
-  let held = 128_u64;
+  let kept = 128_u64;
   let window = &digits[0_u64..16_u64];
   let text = &line[0_u64..128_u64];
   let arguments = args_count(args: &args);
@@ -251,7 +251,7 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
           match local_address(receive: &link.receive) {
             Ok(value: own_end) => {
               let length = put_report(destination: text, peer: &arrived_from, own_end: &own_end);
-              let fits = length <= held;
+              let fits = length <= kept;
               if fits {
                 match send_all(send: &link.send, source: text, length: length) {
                   Ok(value: delivered) => {

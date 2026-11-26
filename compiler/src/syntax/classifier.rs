@@ -30,6 +30,25 @@ fn reserve_exact<T>(
     Ok(output)
 }
 
+fn terminal_fix(kind: TokenKind, spelling: &[u8]) -> Option<&'static str> {
+    use crate::diagnostic_repairs::{
+        CHARACTER_SUFFIX_FIX, DECIMAL_INTEGER_FIX, REMAINDER_MODE_FIX,
+    };
+    let magnitude = spelling.strip_prefix(b"-").unwrap_or(spelling);
+    match kind {
+        TokenKind::CharacterForm => {
+            let text = crate::syntax::text::quoted_text(spelling, b'\'')?;
+            (text.items.len() == 1 && text.suffix_start == spelling.len())
+                .then_some(CHARACTER_SUFFIX_FIX)
+        }
+        TokenKind::NumberForm if magnitude.starts_with(b"0x") || magnitude.starts_with(b"0X") => {
+            Some(DECIMAL_INTEGER_FIX)
+        }
+        TokenKind::OperatorForm if spelling == b"%wrap" => Some(REMAINDER_MODE_FIX),
+        _ => None,
+    }
+}
+
 fn fixed(set: &mut TerminalSet, terminal: FixedTerminal, spelling: &[u8]) -> bool {
     if spelling != terminal.spelling_bytes() {
         return false;
@@ -222,6 +241,7 @@ pub fn classify_terminals(
                     return TerminalOutcome::SourceIssue(TerminalIssue {
                         token: token.id(),
                         owner,
+                        mechanical_fix: terminal_fix(token.kind(), spelling),
                     });
                 }
                 return TerminalOutcome::CompilerFailure(invalid_token(*token));

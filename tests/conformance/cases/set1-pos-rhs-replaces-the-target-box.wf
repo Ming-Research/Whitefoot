@@ -1,0 +1,19 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn rebox(cell: &Box<u64>) -> result: u64 writes(cell) {
+  doc "Replaces the box, which releases the old one and its content.";
+  let replacement = box_new::<u64>(value: 5_u64);
+  set cell^ = move replacement;
+  return 7_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "SET-1: the right-hand side runs first. rebox replaces the box b holds and releases the old one, so the target b.inner, evaluated after it, is the content of the new box, which then holds 7. Evaluating the target first, as before, stored into the released box.";
+  let b = box_new::<u64>(value: 1_u64);
+  set b.inner = rebox(cell: &b);
+  if b.inner == 7_u64 {
+    return exit_status(code: 0_u8);
+  }
+  return exit_status(code: 1_u8);
+}

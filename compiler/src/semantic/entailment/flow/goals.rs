@@ -639,6 +639,59 @@ impl Input<'_, '_> {
         self.body_goal_expression(&requirement.template.root)
     }
 
+    /// A declaration template's projections below the parameter `binding`
+    /// as this callable's body names them: [`Self::body_projections`] with
+    /// every formal-valued offset instantiated [`Self::body_formal_offsets`].
+    pub(super) fn body_template_projections(
+        &self,
+        binding: BindingId,
+        projections: &[GoalProjection],
+    ) -> Option<Vec<GoalProjection>> {
+        self.body_formal_offsets(self.body_projections(PlaceRoot::Binding(binding), projections))
+    }
+
+    /// A declaration template's projections with every formal-valued offset
+    /// replaced by the offset this callable's body reads.
+    ///
+    /// [MSR-1, ENT-2] a formal-valued subscript names a value parameter of
+    /// this same callable, so inside the body it is that parameter's own
+    /// binding: `rows^[i].len` written in a clause and written in the body
+    /// are one term because their canonical spellings are byte-identical
+    /// there. The requirement and postcondition readers both use it [FN-8,
+    /// FN-9].
+    pub(super) fn body_formal_offsets(
+        &self,
+        projections: &[GoalProjection],
+    ) -> Option<Vec<GoalProjection>> {
+        projections
+            .iter()
+            .map(|projection| {
+                projection.instantiate_formal(|ordinal, projected| {
+                    let offset = self.function.parameters.get(ordinal as usize)?;
+                    if let Some((id, _)) = projected {
+                        let mut place = ResolvedPlace::binding(offset.binding);
+                        place.path = self.context.captured_places.formal(id);
+                        let id = self.context.captured_places.intern(place);
+                        let term = if self.context.captured_places.get(id).path.is_empty() {
+                            CapturedTerm::Binding(offset.binding)
+                        } else {
+                            CapturedTerm::Place(id)
+                        };
+                        return Some(CapturedValue::new(CaptureId::SpellingDetermined, term));
+                    }
+
+                    Some(
+                        CapturedValue::new(
+                            CaptureId::source(u32::MAX),
+                            CapturedTerm::Binding(offset.binding),
+                        )
+                        .goal_identity(),
+                    )
+                })
+            })
+            .collect()
+    }
+
     pub(super) fn body_goal_expression(
         &self,
         expression: &GoalExpression,
@@ -651,35 +704,7 @@ impl Input<'_, '_> {
             }) => {
                 let parameter = self.function.parameters.get(*ordinal as usize)?;
                 let binding = parameter.binding;
-                // [MSR-1, ENT-2] a formal-valued subscript names a value
-                // parameter of this same callable, so inside the body it is
-                // that parameter's own binding: `rows^[i].len` written
-                // in the clause and written in the body are one term because
-                // their canonical spellings are byte-identical there.
-                let projections = self
-                    .body_projections(PlaceRoot::Binding(binding), projections)
-                    .iter()
-                    .map(|projection| match projection {
-                        GoalProjection::FormalSubscript { ordinal }
-                        | GoalProjection::FormalPage { ordinal } => self
-                            .function
-                            .parameters
-                            .get(*ordinal as usize)
-                            .map(|offset| {
-                                let offset = CapturedValue::new(
-                                    CaptureId::source(u32::MAX),
-                                    CapturedTerm::Binding(offset.binding),
-                                )
-                                .goal_identity();
-                                if matches!(projection, GoalProjection::FormalPage { .. }) {
-                                    GoalProjection::Page(offset)
-                                } else {
-                                    GoalProjection::Subscript(offset)
-                                }
-                            }),
-                        other => Some(*other),
-                    })
-                    .collect::<Option<Vec<_>>>()?;
+                let projections = self.body_template_projections(binding, projections)?;
                 let mut admission = if parameter.mode.is_range() {
                     GoalAdmission::plain_range(parameter.ty)
                 } else {
@@ -716,9 +741,7 @@ impl Input<'_, '_> {
 
     pub(super) fn goal_integer_constant(&self, expression: &GoalExpression) -> Option<i128> {
         match expression {
-            GoalExpression::Datum(GoalDatum::Literal(CheckedValue::Integer { ty, bits })) => {
-                Some(integer_value(*ty, *bits))
-            }
+            GoalExpression::Datum(GoalDatum::Literal(value)) => literal_integer_constant(value),
             GoalExpression::Datum(GoalDatum::NamedConst {
                 declaration,
                 projections,
@@ -1147,7 +1170,14 @@ impl Reasoning<'_, '_, '_> {
         state.ambiguous_goal_origins.remove(&binding);
     }
 
+    /// Reuse only an admission-specific record completed by this routine.
+    /// Its children, struct fields and deterministic numeric metadata are then
+    /// identical to a rebuild, including metadata whose final value is None;
+    /// a record inserted directly into GoalTable must still be completed.
     pub(super) fn intern_goal_expression(&mut self, expression: GoalExpression) -> GoalId {
+        if let Some(goal) = self.vocabulary.goals.complete_id(&expression) {
+            return goal;
+        }
         if let GoalExpression::Operation {
             row: GoalOperation::Boolean(_),
             arguments,
@@ -1172,6 +1202,33 @@ impl Reasoning<'_, '_, '_> {
                         .collect(),
                 )
             });
+        let integer_comparison = if let GoalExpression::Operation {
+            row: GoalOperation::Integer { operation, .. },
+            arguments,
+            ..
+        } = &expression
+        {
+            let sign = match operation {
+                CheckedIntegerOperation::Equal => Some(GoalSign::Negative),
+                CheckedIntegerOperation::NotEqual => Some(GoalSign::Positive),
+                _ => None,
+            };
+            sign.and_then(|sign| {
+                let [left, right] = arguments.as_slice() else {
+                    return None;
+                };
+                self.input
+                    .goal_integer_constant(right)
+                    .map(|constant| (left.clone(), constant, sign))
+                    .or_else(|| {
+                        self.input
+                            .goal_integer_constant(left)
+                            .map(|constant| (right.clone(), constant, sign))
+                    })
+            })
+        } else {
+            None
+        };
         let projection = self.goal_projection(&expression);
         let normalization = self.goal_normalization(&expression);
         let mut support = Vec::new();
@@ -1180,11 +1237,19 @@ impl Reasoning<'_, '_, '_> {
             .vocabulary
             .goals
             .intern(expression, projection, normalization, support);
+        if let Some(comparison) = integer_comparison {
+            let canonical = self.vocabulary.goals.canonical(goal);
+            self.vocabulary
+                .goals
+                .integer_comparisons
+                .insert(canonical, comparison);
+        }
         if let Some((equal, fields)) = fields {
             self.vocabulary
                 .goals
                 .set_struct_equality_fields(goal, equal, fields);
         }
+        self.vocabulary.goals.mark_metadata_complete(goal);
         goal
     }
 
@@ -2035,4 +2100,42 @@ pub(super) fn element_type(input: CheckedType, elements: &[CheckedType]) -> Opti
 pub(super) fn element_write_place(mut base: ResolvedPlace, offset: CapturedValue) -> ResolvedPlace {
     base.path.push(PlaceStep::Index(offset));
     base
+}
+
+/// Numeric identities are integer constants only in an Int-constrained body.
+fn literal_integer_constant(value: &CheckedValue) -> Option<i128> {
+    match value {
+        CheckedValue::NumericIdentity {
+            ty: CheckedType::GenericInt(_),
+            one,
+        } => Some(i128::from(*one)),
+        CheckedValue::Integer { ty, bits } => Some(integer_value(*ty, *bits)),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod integer_constant_tests {
+    use super::*;
+    use crate::DeclarationId;
+
+    #[test]
+    fn numeric_identity_constants_require_an_int_constraint() {
+        for one in [false, true] {
+            assert_eq!(
+                literal_integer_constant(&CheckedValue::NumericIdentity {
+                    ty: CheckedType::GenericInt(DeclarationId::from_index(0).unwrap()),
+                    one,
+                }),
+                Some(i128::from(one))
+            );
+            assert_eq!(
+                literal_integer_constant(&CheckedValue::NumericIdentity {
+                    ty: CheckedType::GenericFloat(DeclarationId::from_index(0).unwrap()),
+                    one,
+                }),
+                None
+            );
+        }
+    }
 }

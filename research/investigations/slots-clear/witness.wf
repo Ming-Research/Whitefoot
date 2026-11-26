@@ -1,0 +1,29 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn clear_by_taking(window: &Slots<u8>) -> result: unit writes(window.last), writes(window.len) contract {
+  ensures window^.len == 0_u64;
+  ensures window^.cap == entry(window)^.cap;
+} {
+  doc "Current-language attempt: preserve the backing and take every byte out. For entry length n this executes n take_back calls and allocates nothing; u8 has empty release. It expresses the result, but not a constant-work reset. This research witness has not been compiled.";
+  loop {
+    if window^.len == 0_u64 {
+      return unit;
+    }
+    let removed = take_back(window: window);
+  }
+}
+
+fn main() -> status: ExitStatus pure {
+  let bytes = box_slots_new::<u8>(capacity: 65536_u64);
+  place_back(window: &bytes.inner, value: 65_u8);
+  place_back(window: &bytes.inner, value: 66_u8);
+  clear_by_taking(window: &bytes.inner);
+  invariant empty: bytes.inner.len == 0_u64;
+  invariant retained: bytes.inner.cap == 65536_u64;
+  place_back(window: &bytes.inner, value: 67_u8);
+  if bytes.inner[0_u64] != 67_u8 {
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 0_u8);
+}

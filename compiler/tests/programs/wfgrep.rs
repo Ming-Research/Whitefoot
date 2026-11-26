@@ -203,6 +203,7 @@ fn assert_reference(
 /// enumeration order while wfgrep visits it in sorted order; the hit *set* is
 /// the property under test, not the order the two tools chose.
 fn grep_rn(root: &Path, tree: &str, pattern: &[u8]) -> Vec<String> {
+    #[allow(clippy::disallowed_methods, reason = "host tool, not a test program")]
     let output = Command::new("/usr/bin/grep")
         .arg("-rn")
         .arg("-e")

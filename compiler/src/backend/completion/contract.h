@@ -100,6 +100,8 @@ enum wf_file_operation_kind {
     WF_FILE_MOVE = 23,
     WF_FILE_STOP_NEXT = 24,
     WF_FILE_STOP_CLOSE = 25,
+    /* Runtime-owned snapshot collection and its one confirmed reap. */
+    WF_FILE_SNAPSHOT_FINISH = 26,
 };
 
 /* Which direction of one connection a half-close releases (ordinary native library). */
@@ -164,6 +166,10 @@ typedef struct wf_file_request {
     union {
         /* WF_COMPLETION_ROUTE_SHARED stays within the context runtime. */
         void *shared;
+        struct {
+            void *owner;
+            uint32_t abort_requested;
+        } snapshot;
         struct {
             int directory;
             /* The submitting frame's own bytes, live until the join. */

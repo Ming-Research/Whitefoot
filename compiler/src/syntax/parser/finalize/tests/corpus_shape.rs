@@ -1,5 +1,6 @@
-//! The two conditional forms no corpus file may carry, asserted over the
-//! corpus's own derivation trees.
+//! The two conditional forms the corpus gate tracks, asserted over the
+//! corpus's own derivation trees with an exact inventory of deliberate
+//! semantic rejection witnesses.
 //!
 //! [GRAM-6] rejects a Bool-scrutinee `match` (spell `if`) and an `else` whose
 //! block is exactly one `if_stmt` and nothing else (spell `else if`). Both
@@ -29,25 +30,28 @@ use crate::{
 use super::super::topology::{FinalizedTopology, NodeId};
 use super::super::{FinalizeOutcome, FinalizedBundle, finalize};
 
-/// The Bool constructors. An arm naming one is an arm of a Bool `match`.
+/// The Bool constructors whose arm labels the syntactic census tracks.
 ///
-/// A tree carries no types, so this is the syntactic criterion the rule's type
-/// judgment reduces to: an arm can only name `True` or `False` when the
-/// scrutinee is the prelude Bool — unless the case exists precisely to be
-/// rejected for naming them over something else, which is the one file below.
+/// A tree carries no types. These labels identify both Bool matches and
+/// matches deliberately rejected for naming Bool constructors over another
+/// type; the exact witness inventory below distinguishes their purposes.
 const BOOL_CONSTRUCTORS: [&[u8]; 2] = [b"True", b"False"];
 
-/// The one corpus file that keeps a Bool-constructor arm by ruling.
+/// The two deliberate semantic rejection witnesses with Bool-constructor arms.
 ///
-/// `type5-neg-match-non-enum.wf` matches `True()` against an `i32`. Its
-/// scrutinee is a scalar, so [GRAM-6] never applies and [TYPE-5] still fires as
-/// the case records; the 2026-08-08 ruling examined it beside
-/// `reject-err2-nonexhaustive.wf` and left it alone deliberately.
+/// `gram6-neg-bool-match.wf` guards [GRAM-6]'s unchanged Bool prohibition.
+/// `type5-neg-match-non-enum.wf` matches `True()` against an `f32`, guarding
+/// [TYPE-5]'s rejection of a scrutinee that is neither an enum nor an integer.
+/// The latter retains the non-enum witness deliberately kept by the
+/// 2026-08-08 ruling.
 ///
-/// It is named rather than skipped by a pattern, and asserted to still be here
-/// rather than merely permitted, so that neither a second such file nor the
-/// silent disappearance of this one can pass unnoticed.
-const RULED_BOOL_CONSTRUCTOR_ARMS: [&str; 1] = ["type5-neg-match-non-enum.wf"];
+/// Both are named rather than skipped by a pattern, and asserted to still be
+/// here rather than merely permitted, so neither an additional such file nor
+/// a witness's silent disappearance can pass unnoticed.
+const RULED_BOOL_CONSTRUCTOR_ARMS: [&str; 2] = [
+    "gram6-neg-bool-match.wf",
+    "type5-neg-match-non-enum.wf",
+];
 
 /// What one file's tree says about the two forbidden forms.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -116,8 +120,9 @@ fn forbidden_forms(source: &[u8]) -> Option<Forbidden> {
 
 /// Counts the arms of one `match` whose constructor is a Bool constructor.
 ///
-/// `arm := TYPEID "(" fieldbind_list? ")" "=>" "{" stmt* "}"`, so the arm's
-/// first terminal is the constructor name.
+/// The variant alternative of `arm` starts with `TYPEID "("`, so its first
+/// terminal is the constructor name. Integer-value and `else` labels cannot
+/// be Bool constructor names.
 fn bool_arms(finalized: &FinalizedBundle, node: NodeId) -> usize {
     let Some(children) = finalized.topology.node_children(node) else {
         return 0;
@@ -314,7 +319,7 @@ fn no_corpus_file_keeps_a_bool_match_or_an_unflattened_else() {
     let census = format!("{derived} corpus files derived and {underived} did not");
     assert_eq!(
         bool_matches, RULED_BOOL_CONSTRUCTOR_ARMS,
-        "{census}; exactly the ruled case may match a Bool constructor"
+        "{census}; exactly the listed semantic rejection witnesses may match a Bool constructor"
     );
     assert!(
         unflattened.is_empty(),

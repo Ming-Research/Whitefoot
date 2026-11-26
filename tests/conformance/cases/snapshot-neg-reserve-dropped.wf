@@ -1,0 +1,7 @@
+alias Reserve = std::snapshot::Reserve;
+alias Job = std::snapshot::Job;
+alias CreateError = std::snapshot::CreateError;
+
+fn abandon(reserve: Reserve) -> result: unit pure {
+  return unit;
+}

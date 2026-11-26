@@ -44,7 +44,7 @@ public struct Client {
   public settings: Settings;
 }
 
-public fn parse_request(input: &[u8], start: u64, held: u64, args: &Box<Slots<Span>>, locked: Bool) -> parsed: Parsed writes(input), writes(args) doc "Reads one request from a position of the input, of which held bytes are filled: a RESP array of bulk strings, or an inline command split as Redis splits one, quotes and escapes included. A command's arguments replace what args held, one span each; an inline command's decoded arguments are written back into the input over its line. locked is true for a client that must authenticate first, whose arrays Redis limits.";
+public fn parse_request(input: &[u8], start: u64, observed: u64, args: &Box<Slots<Span>>, locked: Bool) -> parsed: Parsed writes(input), writes(args) doc "Reads one request from a position of the input, of which observed bytes are filled: a RESP array of bulk strings, or an inline command split as Redis splits one, quotes and escapes included. A command's arguments replace what args held, one span each; an inline command's decoded arguments are written back into the input over its line. locked is true for a client that must authenticate first, whose arrays Redis limits.";
 
 public fn settings_copy(settings: &Settings) -> made: Settings reads(settings) doc "A copy of the settings, for another connection.";
 
@@ -57,7 +57,7 @@ public fn input_new(capacity: u64) -> made: Box<Slots<u8>> pure contract {
 
 public fn input_grow(input: &Box<Slots<u8>>) -> result: unit writes(input) doc "Doubles a full input window, filling its new bytes; one of 2^31 bytes or more stays as it is.";
 
-public fn keep_rest(input: &Box<Slots<u8>>, from: u64, held: u64) -> kept: u64 writes(input) doc "Moves the bytes from a position up to held, an incomplete request, to the front of the input and returns how many it moved.";
+public fn keep_rest(input: &Box<Slots<u8>>, from: u64, observed: u64) -> kept: u64 writes(input) doc "Moves the bytes from a position up to observed, an incomplete request, to the front of the input and returns how many it moved.";
 
 public fn arg(args: &Box<Slots<Span>>, index: u64) -> span: Span reads(args) doc "The span of one argument, or an empty span past the last.";
 

@@ -1,0 +1,14 @@
+fn is_written(cell: &DecisionCell) -> result: Bool reads(cell) {
+  let seen = decision_cell_read(cell: cell);
+  let written = Written();
+  return seen == written;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let cell = decision_cell_new();
+  let target = shared_new::<u8>(value: 0_u8);
+  atomic byte = &target when is_written(cell: &cell) {
+    set byte^ = 1_u8;
+  }
+  return std::process::exit_status(code: 0_u8);
+}

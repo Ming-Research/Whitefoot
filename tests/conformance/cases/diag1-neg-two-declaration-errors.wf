@@ -1,0 +1,8 @@
+fn first(a: u64) -> r: u64 {
+  return a;
+}
+
+fn second(a: u64) -> r: u64 pure {
+  let x = [a, a];
+  return a;
+}

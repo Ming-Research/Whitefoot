@@ -10,9 +10,7 @@ fn inspect(p: &Box<Paged<u64>>) -> result: u64 writes(p) contract {
   if p^.inner.pages[0_u64].len == 1_u64 {
     let capacity = p^.inner.cap;
     grow_paged(cell: p, capacity: capacity);
-    if 0_u64 < p^.inner.pages.len {
-      return one(length: p^.inner.pages[0_u64].len);
-    }
+    return one(length: p^.inner.pages[0_u64].len);
   }
   return 0_u64;
 }

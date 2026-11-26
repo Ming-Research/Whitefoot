@@ -27,8 +27,8 @@ fn main() -> status: ExitStatus pure {
   let pair = Pair(left: 41_i32, right: 1_i32);
   let packet = Packet::Data(item: move pair);
   let fallback = Packet::Empty();
-  let held = &packet;
-  let read = inspect(packet: held);
+  let observed = &packet;
+  let read = inspect(packet: observed);
   if read != 41_i32 {
     return exit_status(code: 1_u8);
   }

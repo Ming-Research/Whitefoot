@@ -1,0 +1,19 @@
+fn probe<T: copy>(value: T) -> result: u8 pure waits {
+  let store = shared_map_new::<u8>(capacity: 1_u64);
+  let keys = key_set_new(capacity: 1_u64);
+  atomic es = &store[keys] {
+    for (
+      i in 0_u64..1_u64,
+      invariant forall reflexive(q in 0_u64..es^.len): value <= value
+    ) {
+      let count = i;
+    }
+  }
+  return 0_u8;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let value = True();
+  let code = probe::<Bool>(value: value);
+  return std::process::exit_status(code: code);
+}

@@ -1,0 +1,22 @@
+fn selected(cells: &Array<u64, 1>) -> result: unit writes(cells) contract {
+  requires forall bounded(k in 0_u64..cells^.len): cells^[k] <= 3_u64;
+} {
+  match cells^[0_u64] {
+    0_u64 => {
+    }
+    1_u64 => {
+    }
+    2_u64 => {
+    }
+    else => {
+      set cells^[0_u64] = 0_u64;
+      let seen = cells^[0_u64];
+      invariant stale_selection: seen == 3_u64;
+    }
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

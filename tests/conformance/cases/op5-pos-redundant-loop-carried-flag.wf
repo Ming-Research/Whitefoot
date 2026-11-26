@@ -1,0 +1,40 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn first_marked(limit: u64) -> r: u64 pure {
+  doc "The flag is false when the counted loop is entered, but a later iteration sets it, so the test at the top of the body is undecided.";
+  let seen = False();
+  let found = 0_u64;
+  for (i in 0_u64..limit) {
+    if seen {
+      break;
+    }
+    if i == 3_u64 {
+      set seen = True();
+      set found = i;
+    }
+  }
+  return found;
+}
+
+fn countdown(start: u64) -> r: u64 pure {
+  doc "The flag is false when the plain loop is entered, but an iteration that reaches the loop's head again may have set it, so the test is undecided.";
+  let done = False();
+  let left = start;
+  loop {
+    if done {
+      break;
+    }
+    if left == 0_u64 {
+      set done = True();
+    } else {
+      set left = left -wrap 1_u64;
+    }
+  }
+  return left;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The checker judges every body.";
+  return exit_status(code: 0_u8);
+}

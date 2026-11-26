@@ -1,0 +1,44 @@
+struct RoutedInterval {
+  start: u64;
+  end: u64;
+  invariant ordered(interval): interval.start <= interval.end;
+}
+
+enum RoutedIntervalChoice {
+  Held(span: RoutedInterval);
+}
+
+interface Maker {
+  fn produce(start: u64, end: u64) -> result: RoutedIntervalChoice pure contract {
+    requires start <= end;
+    ensures when Held(span: selected): selected.start <= selected.end;
+  };
+}
+
+fn make(start: u64, end: u64) -> result: RoutedIntervalChoice pure contract {
+  requires start <= end;
+} {
+  let interval = RoutedInterval(start: start, end: end);
+  return RoutedIntervalChoice::Held(span: interval);
+}
+
+binding Generated : Maker {
+  produce = make;
+}
+
+fn width<interface Maker>(start: u64, end: u64) -> result: u64 pure contract {
+  requires start <= end;
+} {
+  let made = Maker::produce(start: start, end: end);
+  match made {
+    Held(span: selected) => {
+      return selected.end - selected.start;
+    }
+  }
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let measured = width::<Generated>(start: 2_u64, end: 5_u64);
+  let code = cvt.wrap::<u64, u8>(measured);
+  return std::process::exit_status(code: code);
+}

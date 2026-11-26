@@ -23,6 +23,7 @@
 #include "windows_runtime.h"
 #include <io.h>
 #include <shellapi.h>
+#include <time.h>
 #else
 #include <fcntl.h>
 #include <locale.h>
@@ -90,6 +91,28 @@ void wf__body_host_copy_bytes(wf_copy_result *result, const wf_value *value,
                wf_value_pointer(value), (size_t)bytes);
     }
     result->ok.value = start + bytes;
+}
+
+/* The name bytes of a host string [PRE-2]: its bytes on POSIX, and on Windows
+ * the WTF-8 spelling of its UTF-16 code units, which loses none of them. */
+void wf__body_host_copy_name_bytes(wf_copy_result *result, const wf_value *value,
+                                   wf_view *destination, uint64_t start, uint64_t end) {
+#if defined(_WIN32)
+    const unsigned char *units = wf_value_pointer(value);
+    const uint64_t bytes = wf__windows_wtf8_write(units, (size_t)value->words[1], NULL);
+    memset(result, 0, sizeof(*result));
+    if (bytes > end - start) {
+        result->tag = 1;
+        result->err.error.required = bytes;
+        return;
+    }
+    if (bytes != 0)
+        (void)wf__windows_wtf8_write(units, (size_t)value->words[1],
+                                     wf_window(destination, start));
+    result->ok.value = start + bytes;
+#else
+    wf__body_host_copy_bytes(result, value, destination, start, end);
+#endif
 }
 
 /* The XSI entry writes into caller storage and reports EINVAL for an unknown
@@ -334,21 +357,29 @@ static void wf_host_code_description(wf_copy_result *result, uint32_t code,
 #endif
 }
 
-#if !defined(_WIN32)
-/* UTF-8 validation examines the invocation backing without copying it. */
-static int wf_utf8_valid(const unsigned char *text, uint64_t length) {
+/* UTF-8 validation examines the invocation backing or a window in place.
+ * With surrogates set it validates WTF-8 instead: UTF-8 that also spells a
+ * lone UTF-16 surrogate code unit as the three bytes ED A0..BF xx, while a
+ * lead surrogate followed by a trail one must be spelled as their pair's
+ * four-byte scalar, so each code unit sequence has exactly one spelling. */
+static int wf_text_valid(const unsigned char *text, uint64_t length, int surrogates) {
     uint64_t at = 0;
+    int after_lead = 0;
     while (at < length) {
         unsigned first = text[at++];
         unsigned continuation;
         unsigned lower = 0x80, upper = 0xbf;
-        if (first < 0x80) continue;
+        int lead = 0;
+        if (first < 0x80) {
+            after_lead = 0;
+            continue;
+        }
         if (first >= 0xc2 && first <= 0xdf) {
             continuation = 1;
         } else if (first >= 0xe0 && first <= 0xef) {
             continuation = 2;
             if (first == 0xe0) lower = 0xa0;
-            if (first == 0xed) upper = 0x9f;
+            if (first == 0xed && !surrogates) upper = 0x9f;
         } else if (first >= 0xf0 && first <= 0xf4) {
             continuation = 3;
             if (first == 0xf0) lower = 0x90;
@@ -356,6 +387,11 @@ static int wf_utf8_valid(const unsigned char *text, uint64_t length) {
         } else return 0;
         if (length - at < continuation || text[at] < lower || text[at] > upper)
             return 0;
+        if (first == 0xed && text[at] >= 0xa0) {
+            if (text[at] >= 0xb0 && after_lead) return 0;
+            lead = text[at] < 0xb0;
+        }
+        after_lead = lead;
         at++;
         while (--continuation != 0) {
             if (text[at] < 0x80 || text[at] > 0xbf) return 0;
@@ -364,7 +400,10 @@ static int wf_utf8_valid(const unsigned char *text, uint64_t length) {
     }
     return 1;
 }
-#endif
+
+static int wf_utf8_valid(const unsigned char *text, uint64_t length) {
+    return wf_text_valid(text, length, 0);
+}
 
 void wf__body_host_utf8_len(wf_utf8_result *result, const wf_value *value) {
     uint64_t length = value->words[1];
@@ -616,8 +655,12 @@ static void wf_factory_return(wf_value *factory) {
     }
 }
 
+/* WF_NAME_BYTES bounds a name in name bytes [PRE-2]; WF_COMPONENT_BYTES
+ * bounds the native component a name becomes. They differ only on Windows,
+ * where a name is WTF-8 and its component UTF-16. */
 #if defined(_WIN32)
 #define WF_COMPONENT_BYTES WF_WINDOWS_COMPONENT_MAX_BYTES
+#define WF_NAME_BYTES WF_WINDOWS_NAME_MAX_BYTES
 #define WF_OPEN_DIRECTORY_FLAGS 0
 #define WF_OPEN_COMPONENT_DIRECTORY_FLAGS 1
 #define WF_OPEN_COMPONENT_FILE_FLAGS 1
@@ -627,11 +670,13 @@ static void wf_factory_return(wf_value *factory) {
 #define WF_OPEN_APPEND_CLASS WF_WINDOWS_DESCRIPTOR_CLASS_WRITE_FILE
 #elif defined(__APPLE__)
 #define WF_COMPONENT_BYTES 1023u
+#define WF_NAME_BYTES WF_COMPONENT_BYTES
 #define WF_OPEN_DIRECTORY_FLAGS O_DIRECTORY
 #define WF_OPEN_COMPONENT_DIRECTORY_FLAGS (O_DIRECTORY | O_NOFOLLOW)
 #define WF_OPEN_COMPONENT_FILE_FLAGS (O_NOFOLLOW | O_NONBLOCK)
 #else
 #define WF_COMPONENT_BYTES 255u
+#define WF_NAME_BYTES WF_COMPONENT_BYTES
 #define WF_OPEN_DIRECTORY_FLAGS O_DIRECTORY
 #define WF_OPEN_COMPONENT_DIRECTORY_FLAGS (O_DIRECTORY | O_NOFOLLOW)
 #define WF_OPEN_COMPONENT_FILE_FLAGS (O_NOFOLLOW | O_NONBLOCK)
@@ -658,11 +703,13 @@ static void wf_factory_return(wf_value *factory) {
  * The blocking bodies the probes call are the two with a join between them. */
 typedef struct wf_host_operation {
     wf_completion_record record;
-    /* A directory read's cursor, which the host may write at completion. */
+    /* A directory read's cursor, which the host may write at completion, or
+     * the size of the block a host-path open copied its window into. */
     int64_t position;
     /* Path components stay live until an open or namespace change completes. */
     alignas(2) unsigned char component[WF_COMPONENT_BYTES + 2];
-    /* Only rename needs a second name, borrowed from the runtime pool. */
+    /* Rename's second name, or a host path copied from a window [PRE-2],
+     * borrowed from the runtime pool until the finish. */
     unsigned char *destination;
 } wf_host_operation;
 _Static_assert(offsetof(wf_host_operation, record) == 0,
@@ -996,46 +1043,429 @@ void wf__body_open_read(wf_open_result *result, wf_value *factory,
         wf__body_open_read_finish(result, factory, root, path, &operation);
 }
 
-/* `.` and `..` name the directory itself and its parent, never an entry
- * directly below the root, so a component operation refuses them [PRE-2]:
- * a write half must not reach the directory above it. unit_bytes is 1 for
- * POSIX bytes and 2 for Windows UTF-16 code units. */
-static int wf_component_is_dots(const unsigned char *text, uint64_t length,
-                                uint64_t unit_bytes) {
-    uint64_t units = length / unit_bytes;
-    uint64_t index;
-    if (units == 0 || units > 2) return 0;
-    for (index = 0; index < length; index++) {
-        unsigned char expected = (index % unit_bytes) == 0 ? '.' : 0;
-        if (text[index] != expected) return 0;
+/* [PRE-2] The host-path opens. POSIX and Windows hosts supply `HostPaths`.
+ * A POSIX host looks a path up with `openat` from the base's descriptor,
+ * which starts an absolute path at the root directory, resolves each `..`
+ * after the links before it and follows every link the lookup reaches, the
+ * last component's included: unlike a name, a path is opened without
+ * O_NOFOLLOW, and a directory open never passes O_CREAT. A Windows host
+ * hands the UTF-16 path to the worker under its host-path flag, which
+ * applies the Win32 dialect (`windows_runtime.c`) and follows every reparse
+ * point the lookup reaches, and never creates. Both halves of a directory
+ * are the descriptor the lookup returned and its duplicate, so they name the
+ * one directory that lookup opened. */
+enum { WF_HOST_OPEN_FILE, WF_HOST_OPEN_DIRECTORY, WF_HOST_OPEN_PAIR };
+
+static int wf_host_refused(uint8_t *tag, wf_io_error *error, wf_value *factory, unsigned kind) {
+    wf_transition(factory);
+    *tag = 1;
+    wf_error_class(error, kind, 0, 0);
+    return 0;
+}
+
+#if defined(_WIN32)
+/* A window's path holds fewer UTF-16 code units than this. */
+#define WF_HOST_PATH_UNITS ((uint64_t)WF_WINDOWS_HOST_PATH_MAX_UNITS)
+#define WF_HOST_FILE_FLAGS WF_WINDOWS_HOST_PATH
+#define WF_HOST_DIRECTORY_FLAGS WF_WINDOWS_HOST_PATH
+#else
+/* A window's path holds fewer bytes than this. */
+#if defined(PATH_MAX)
+#define WF_HOST_PATH_BYTES ((uint64_t)PATH_MAX)
+#else
+#define WF_HOST_PATH_BYTES UINT64_C(4096)
+#endif
+#define WF_HOST_FILE_FLAGS 0
+#define WF_HOST_DIRECTORY_FLAGS WF_OPEN_DIRECTORY_FLAGS
+#endif
+
+/* Spends the credits an open of `shape` holds on success: two for a pair,
+ * whose first comes back when the second is refused. */
+static int wf_host_take(wf_io_error *error, wf_value *factory, unsigned shape) {
+    if (!wf_factory_take(factory, error)) return 0;
+    if (shape == WF_HOST_OPEN_PAIR && !wf_factory_take(factory, error)) {
+        wf_factory_return(factory);
+        return 0;
     }
     return 1;
 }
 
+static int wf_host_submit(const wf_value *base, const void *path, unsigned shape,
+                          wf_host_operation *operation) {
+    wf__completion_file_open_at_submit(
+        wf_descriptor(base), path,
+        shape == WF_HOST_OPEN_FILE ? WF_HOST_FILE_FLAGS : WF_HOST_DIRECTORY_FLAGS, 0, 0,
+        shape == WF_HOST_OPEN_FILE ? WF_FILE_EXPECT_REGULAR : WF_FILE_EXPECT_DIRECTORY,
+#if defined(_WIN32)
+        shape == WF_HOST_OPEN_FILE ? WF_WINDOWS_DESCRIPTOR_CLASS_READ_FILE
+                                   : WF_WINDOWS_DESCRIPTOR_CLASS_DIRECTORY_ROOT,
+#endif
+        &operation->record);
+    return wf__completion_pending(&operation->record) ? 2 : 1;
+}
+
+/* A window's path is copied, terminated, into a pool block of `bytes` the
+ * operation keeps until its finish has joined the open: the host may read
+ * the path after the submit returns. The block's size stays in the
+ * operation's position, which an open does not otherwise use, and the finish
+ * gives the block back. */
+static void *wf_host_copy_block(wf_host_operation *operation, uint64_t bytes) {
+    unsigned char *copy = wf__runtime_take(bytes);
+    operation->destination = copy;
+    operation->position = (int64_t)bytes;
+    return copy;
+}
+
+#if defined(_WIN32)
+/* The UTF-16 code units of UTF-8 or WTF-8 text: one for each scalar or
+ * surrogate below U+10000, which a lead byte below 0xf0 starts, and two for
+ * each other scalar. */
+static uint64_t wf_utf8_utf16_units(const unsigned char *text, uint64_t length) {
+    uint64_t units = 0, at;
+    for (at = 0; at < length; at++) {
+        if ((text[at] & 0xc0u) != 0x80u) units += text[at] >= 0xf0u ? 2u : 1u;
+    }
+    return units;
+}
+
+/* Encodes UTF-8 or WTF-8 text as UTF-16 code units; a WTF-8 surrogate
+ * decodes to the code unit it spells. */
+static void wf_utf8_to_utf16(const unsigned char *text, uint64_t length, uint16_t *units) {
+    uint64_t at = 0, out = 0;
+    while (at < length) {
+        uint32_t scalar = text[at];
+        unsigned more = scalar < 0x80u ? 0u : scalar < 0xe0u ? 1u : scalar < 0xf0u ? 2u : 3u;
+        if (more != 0) scalar &= 0x3fu >> more;
+        at++;
+        for (; more != 0; more--) scalar = (scalar << 6) | (text[at++] & 0x3fu);
+        if (scalar >= 0x10000u) {
+            scalar -= 0x10000u;
+            units[out++] = (uint16_t)(0xd800u | (scalar >> 10));
+            units[out++] = (uint16_t)(0xdc00u | (scalar & 0x3ffu));
+        } else {
+            units[out++] = (uint16_t)scalar;
+        }
+    }
+}
+
+/* A native window is UTF-16LE code units, unpaired surrogates included; a
+ * UTF-8 window is converted to them. */
+static int wf_host_bytes_start(uint8_t *tag, wf_io_error *error, wf_value *factory,
+                               const wf_value *base, const wf_view *path, uint64_t start,
+                               uint64_t end, uint8_t encoding, unsigned shape,
+                               wf_host_operation *operation) {
+    uint64_t length = end - start, units, at;
+    const unsigned char *text = wf_window(path, start);
+    uint16_t *copy;
+    if (length == 0) return wf_host_refused(tag, error, factory, WF_IO_INVALID_PATH);
+    if (encoding == WF_PATH_ENCODING_UTF8) {
+        if (memchr(text, 0, (size_t)length) != NULL || !wf_utf8_valid(text, length))
+            return wf_host_refused(tag, error, factory, WF_IO_INVALID_PATH);
+        units = wf_utf8_utf16_units(text, length);
+    } else {
+        if ((length & 1u) != 0) return wf_host_refused(tag, error, factory, WF_IO_INVALID_PATH);
+        for (at = 0; at < length; at += 2)
+            if (text[at] == 0 && text[at + 1] == 0)
+                return wf_host_refused(tag, error, factory, WF_IO_INVALID_PATH);
+        units = length / 2;
+    }
+    if (units >= WF_HOST_PATH_UNITS) return wf_host_refused(tag, error, factory, WF_IO_INVALID_PATH);
+    if (!wf_host_take(error, factory, shape)) {
+        *tag = 1;
+        return 0;
+    }
+    copy = wf_host_copy_block(operation, (units + 1) * 2);
+    if (encoding == WF_PATH_ENCODING_UTF8) wf_utf8_to_utf16(text, length, copy);
+    else memcpy(copy, text, (size_t)length);
+    copy[units] = 0;
+    return wf_host_submit(base, copy, shape, operation);
+}
+#else
+static int wf_host_bytes_start(uint8_t *tag, wf_io_error *error, wf_value *factory,
+                               const wf_value *base, const wf_view *path, uint64_t start,
+                               uint64_t end, uint8_t encoding, unsigned shape,
+                               wf_host_operation *operation) {
+    uint64_t length = end - start;
+    const unsigned char *text = wf_window(path, start);
+    unsigned char *copy;
+    if (length == 0 || length >= WF_HOST_PATH_BYTES || memchr(text, 0, (size_t)length) != NULL
+        || (encoding == WF_PATH_ENCODING_UTF8 && !wf_utf8_valid(text, length)))
+        return wf_host_refused(tag, error, factory, WF_IO_INVALID_PATH);
+    if (!wf_host_take(error, factory, shape)) {
+        *tag = 1;
+        return 0;
+    }
+    copy = wf_host_copy_block(operation, length + 1);
+    memcpy(copy, text, (size_t)length);
+    copy[length] = 0;
+    return wf_host_submit(base, copy, shape, operation);
+}
+#endif
+
+/* An argument's native code units are NUL-terminated invocation backing that
+ * outlives the open, so the host reads them in place. */
+static int wf_host_string_start(uint8_t *tag, wf_io_error *error, wf_value *factory,
+                                const wf_value *base, const wf_value *path, unsigned shape,
+                                wf_host_operation *operation) {
+    if (path->words[1] == 0) return wf_host_refused(tag, error, factory, WF_IO_INVALID_PATH);
+    if (!wf_host_take(error, factory, shape)) {
+        *tag = 1;
+        return 0;
+    }
+    operation->destination = NULL;
+    return wf_host_submit(base, wf_value_pointer(path), shape, operation);
+}
+
+static void wf_host_release_copy(wf_host_operation *operation) {
+    if (operation->destination != NULL)
+        wf__runtime_give(operation->destination, (uint64_t)operation->position);
+    operation->destination = NULL;
+}
+
+static void wf_host_open_finish(wf_open_result *result, wf_value *factory,
+                                wf_host_operation *operation) {
+    wf_open_finish(result, factory, operation);
+    wf_host_release_copy(operation);
+}
+
+/* A refused open has returned one credit and the pair returns the other. A
+ * refused duplicate closes the opened descriptor, so no half survives. */
+static void wf_host_pair_finish(wf_directory_result *result, wf_value *factory,
+                                wf_host_operation *operation) {
+    wf_open_result opened;
+    int reader, writer, error;
+    wf_open_finish(&opened, factory, operation);
+    wf_host_release_copy(operation);
+    memset(result, 0, sizeof(*result));
+    if (opened.tag != 0) {
+        wf_factory_return(factory);
+        result->tag = 1;
+        result->err.error = opened.err.error;
+        return;
+    }
+    reader = wf_descriptor(&opened.ok.value);
+#if defined(_WIN32)
+    writer = wf__windows_duplicate_directory(reader);
+    error = writer < 0 ? *wf__windows_error_location() : 0;
+    if (writer < 0) wf__windows_discard_descriptor(reader);
+#else
+    writer = fcntl(reader, F_DUPFD_CLOEXEC, 0);
+    error = writer < 0 ? errno : 0;
+    if (writer < 0) (void)close(reader);
+#endif
+    if (writer < 0) {
+        wf_factory_return(factory);
+        wf_factory_return(factory);
+        result->tag = 1;
+        wf_error(&result->err.error, error, 1);
+        return;
+    }
+    wf_descriptor_value(&result->ok.value.read, reader);
+    wf_descriptor_value(&result->ok.value.write, writer);
+}
+
+int wf__body_open_host_read_start(wf_open_result *result, wf_value *factory,
+                                  const wf_value *paths, const wf_value *base,
+                                  const wf_value *path, wf_host_operation *operation) {
+    (void)paths;
+    memset(result, 0, sizeof(*result));
+    return wf_host_string_start(&result->tag, &result->err.error, factory, base, path,
+                                WF_HOST_OPEN_FILE, operation);
+}
+
+void wf__body_open_host_read_finish(wf_open_result *result, wf_value *factory,
+                                    const wf_value *paths, const wf_value *base,
+                                    const wf_value *path, wf_host_operation *operation) {
+    (void)paths; (void)base; (void)path;
+    wf_host_open_finish(result, factory, operation);
+}
+
+void wf__body_open_host_read(wf_open_result *result, wf_value *factory, const wf_value *paths,
+                             const wf_value *base, const wf_value *path) {
+    wf_host_operation operation;
+    if (wf__body_open_host_read_start(result, factory, paths, base, path, &operation))
+        wf__body_open_host_read_finish(result, factory, paths, base, path, &operation);
+}
+
+int wf__body_open_host_read_bytes_start(wf_open_result *result, wf_value *factory,
+                                        const wf_value *paths, const wf_value *base,
+                                        const wf_view *path, uint64_t start, uint64_t end,
+                                        uint8_t encoding, wf_host_operation *operation) {
+    (void)paths;
+    memset(result, 0, sizeof(*result));
+    return wf_host_bytes_start(&result->tag, &result->err.error, factory, base, path, start, end,
+                               encoding, WF_HOST_OPEN_FILE, operation);
+}
+
+void wf__body_open_host_read_bytes_finish(wf_open_result *result, wf_value *factory,
+                                          const wf_value *paths, const wf_value *base,
+                                          const wf_view *path, uint64_t start, uint64_t end,
+                                          uint8_t encoding, wf_host_operation *operation) {
+    (void)paths; (void)base; (void)path; (void)start; (void)end; (void)encoding;
+    wf_host_open_finish(result, factory, operation);
+}
+
+void wf__body_open_host_read_bytes(wf_open_result *result, wf_value *factory, const wf_value *paths,
+                                   const wf_value *base, const wf_view *path, uint64_t start,
+                                   uint64_t end, uint8_t encoding) {
+    wf_host_operation operation;
+    if (wf__body_open_host_read_bytes_start(result, factory, paths, base, path, start, end,
+                                            encoding, &operation))
+        wf__body_open_host_read_bytes_finish(result, factory, paths, base, path, start, end,
+                                             encoding, &operation);
+}
+
+int wf__body_open_host_directory_read_start(wf_open_result *result, wf_value *factory,
+                                            const wf_value *paths, const wf_value *base,
+                                            const wf_value *path, wf_host_operation *operation) {
+    (void)paths;
+    memset(result, 0, sizeof(*result));
+    return wf_host_string_start(&result->tag, &result->err.error, factory, base, path,
+                                WF_HOST_OPEN_DIRECTORY, operation);
+}
+
+void wf__body_open_host_directory_read_finish(wf_open_result *result, wf_value *factory,
+                                              const wf_value *paths, const wf_value *base,
+                                              const wf_value *path, wf_host_operation *operation) {
+    (void)paths; (void)base; (void)path;
+    wf_host_open_finish(result, factory, operation);
+}
+
+void wf__body_open_host_directory_read(wf_open_result *result, wf_value *factory,
+                                       const wf_value *paths, const wf_value *base,
+                                       const wf_value *path) {
+    wf_host_operation operation;
+    if (wf__body_open_host_directory_read_start(result, factory, paths, base, path, &operation))
+        wf__body_open_host_directory_read_finish(result, factory, paths, base, path, &operation);
+}
+
+int wf__body_open_host_directory_read_bytes_start(wf_open_result *result, wf_value *factory,
+                                                  const wf_value *paths, const wf_value *base,
+                                                  const wf_view *path, uint64_t start,
+                                                  uint64_t end, uint8_t encoding,
+                                                  wf_host_operation *operation) {
+    (void)paths;
+    memset(result, 0, sizeof(*result));
+    return wf_host_bytes_start(&result->tag, &result->err.error, factory, base, path, start, end,
+                               encoding, WF_HOST_OPEN_DIRECTORY, operation);
+}
+
+void wf__body_open_host_directory_read_bytes_finish(wf_open_result *result, wf_value *factory,
+                                                    const wf_value *paths, const wf_value *base,
+                                                    const wf_view *path, uint64_t start,
+                                                    uint64_t end, uint8_t encoding,
+                                                    wf_host_operation *operation) {
+    (void)paths; (void)base; (void)path; (void)start; (void)end; (void)encoding;
+    wf_host_open_finish(result, factory, operation);
+}
+
+void wf__body_open_host_directory_read_bytes(wf_open_result *result, wf_value *factory,
+                                             const wf_value *paths, const wf_value *base,
+                                             const wf_view *path, uint64_t start, uint64_t end,
+                                             uint8_t encoding) {
+    wf_host_operation operation;
+    if (wf__body_open_host_directory_read_bytes_start(result, factory, paths, base, path, start,
+                                                      end, encoding, &operation))
+        wf__body_open_host_directory_read_bytes_finish(result, factory, paths, base, path, start,
+                                                       end, encoding, &operation);
+}
+
+int wf__body_open_host_directory_start(wf_directory_result *result, wf_value *factory,
+                                       const wf_value *paths, const wf_value *base,
+                                       const wf_value *path, wf_host_operation *operation) {
+    (void)paths;
+    memset(result, 0, sizeof(*result));
+    return wf_host_string_start(&result->tag, &result->err.error, factory, base, path,
+                                WF_HOST_OPEN_PAIR, operation);
+}
+
+void wf__body_open_host_directory_finish(wf_directory_result *result, wf_value *factory,
+                                         const wf_value *paths, const wf_value *base,
+                                         const wf_value *path, wf_host_operation *operation) {
+    (void)paths; (void)base; (void)path;
+    wf_host_pair_finish(result, factory, operation);
+}
+
+void wf__body_open_host_directory(wf_directory_result *result, wf_value *factory,
+                                  const wf_value *paths, const wf_value *base,
+                                  const wf_value *path) {
+    wf_host_operation operation;
+    if (wf__body_open_host_directory_start(result, factory, paths, base, path, &operation))
+        wf__body_open_host_directory_finish(result, factory, paths, base, path, &operation);
+}
+
+int wf__body_open_host_directory_bytes_start(wf_directory_result *result, wf_value *factory,
+                                             const wf_value *paths, const wf_value *base,
+                                             const wf_view *path, uint64_t start, uint64_t end,
+                                             uint8_t encoding, wf_host_operation *operation) {
+    (void)paths;
+    memset(result, 0, sizeof(*result));
+    return wf_host_bytes_start(&result->tag, &result->err.error, factory, base, path, start, end,
+                               encoding, WF_HOST_OPEN_PAIR, operation);
+}
+
+void wf__body_open_host_directory_bytes_finish(wf_directory_result *result, wf_value *factory,
+                                               const wf_value *paths, const wf_value *base,
+                                               const wf_view *path, uint64_t start, uint64_t end,
+                                               uint8_t encoding, wf_host_operation *operation) {
+    (void)paths; (void)base; (void)path; (void)start; (void)end; (void)encoding;
+    wf_host_pair_finish(result, factory, operation);
+}
+
+void wf__body_open_host_directory_bytes(wf_directory_result *result, wf_value *factory,
+                                        const wf_value *paths, const wf_value *base,
+                                        const wf_view *path, uint64_t start, uint64_t end,
+                                        uint8_t encoding) {
+    wf_host_operation operation;
+    if (wf__body_open_host_directory_bytes_start(result, factory, paths, base, path, start, end,
+                                                 encoding, &operation))
+        wf__body_open_host_directory_bytes_finish(result, factory, paths, base, path, start, end,
+                                                  encoding, &operation);
+}
+
+/* `.` and `..` name the directory itself and its parent, never an entry
+ * directly below the root, so a component operation refuses them [PRE-2]:
+ * a write half must not reach the directory above it. They are the same
+ * name bytes on every host. */
+static int wf_name_is_dots(const unsigned char *text, uint64_t length) {
+    return (length == 1 && text[0] == '.')
+        || (length == 2 && text[0] == '.' && text[1] == '.');
+}
+
+/* Copies a name, given in name bytes [PRE-2], into component as the native
+ * component it names, terminated. */
 static int wf_component(unsigned char *component, const wf_view *name,
                          uint64_t start, uint64_t end) {
     uint64_t length = end - start;
     uint64_t index;
     const unsigned char *text = wf_window(name, start);
-    if (length == 0 || length > WF_COMPONENT_BYTES) return 0;
+    if (length == 0 || length > WF_NAME_BYTES) return 0;
+    if (wf_name_is_dots(text, length)) return 0;
 #if defined(_WIN32)
-    if ((length & 1) != 0) return 0;
-    for (index = 0; index < length; index += 2) {
-        uint16_t unit;
-        memcpy(&unit, text + index, 2);
-        /* A colon selects a data stream rather than a file component. */
-        if (unit == 0 || unit == '/' || unit == '\\' || unit == ':') return 0;
+    {
+        /* A name is WTF-8 here, and its component the UTF-16 code units it
+         * spells. Every byte below 0x80 is the code unit of the same value. */
+        uint16_t units[WF_COMPONENT_BYTES / 2];
+        uint64_t count;
+        for (index = 0; index < length; index++)
+            /* A colon selects a data stream rather than a file component. */
+            if (text[index] == 0 || text[index] == '/' || text[index] == '\\' ||
+                text[index] == ':')
+                return 0;
+        if (!wf_text_valid(text, length, 1)) return 0;
+        count = wf_utf8_utf16_units(text, length);
+        if (count > WF_COMPONENT_BYTES / 2) return 0;
+        wf_utf8_to_utf16(text, length, units);
+        memcpy(component, units, (size_t)count * 2);
+        component[count * 2] = 0;
+        component[count * 2 + 1] = 0;
     }
-    if (wf_component_is_dots(text, length, 2)) return 0;
-    component[length] = 0;
-    component[length + 1] = 0;
 #else
     for (index = 0; index < length; index++)
         if (text[index] == 0 || text[index] == '/') return 0;
-    if (wf_component_is_dots(text, length, 1)) return 0;
+    memcpy(component, text, (size_t)length);
     component[length] = 0;
 #endif
-    memcpy(component, text, (size_t)length);
     return 1;
 }
 
@@ -1602,6 +2032,51 @@ int64_t wf__body_unix_nanoseconds(const wf_value *clock) {
 #endif
 }
 
+/* Days from 1970-01-01 to a proleptic Gregorian date, counting March as the
+ * first month of a 400-year era so that February's leap day ends the year;
+ * the method is Howard Hinnant's days_from_civil
+ * (https://howardhinnant.github.io/date_algorithms.html). */
+static int64_t wf_days_from_civil(int64_t year, int64_t month, int64_t day) {
+    int64_t shifted = month <= 2 ? year - 1 : year;
+    int64_t era = (shifted >= 0 ? shifted : shifted - 399) / 400;
+    int64_t year_of_era = shifted - era * 400;
+    int64_t day_of_year = (153 * (month > 2 ? month - 3 : month + 9) + 2) / 5 + day - 1;
+    int64_t day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    return era * 146097 + day_of_era - 719468;
+}
+
+/* [PRE-2] The offset is the host conversion's local date and time, read as a
+ * UTC date and time, minus the second it converted, the greatest second not
+ * after `at`, and is reported only when it is less than one day either way,
+ * the bound the signature's postconditions state. `localtime` implies
+ * `tzset`; `localtime_r` does not, so the reading calls it, which also
+ * observes a changed system zone. */
+void wf__body_local_offset_seconds(wf_optional_i64 *result, const wf_value *clock, int64_t at) {
+    int64_t second = at / INT64_C(1000000000);
+    struct tm local;
+    (void)clock;
+    memset(result, 0, sizeof(*result));
+    if (at % INT64_C(1000000000) < 0) second -= 1;
+#if defined(_WIN32)
+    __time64_t moment = (__time64_t)second;
+    _tzset();
+    if (_localtime64_s(&local, &moment) != 0) return;
+#else
+    time_t moment = (time_t)second;
+    if ((int64_t)moment != second) return;
+    tzset();
+    if (localtime_r(&moment, &local) == NULL) return;
+#endif
+    int64_t days = wf_days_from_civil((int64_t)local.tm_year + 1900, (int64_t)local.tm_mon + 1,
+                                      (int64_t)local.tm_mday);
+    int64_t wall = days * INT64_C(86400) + (int64_t)local.tm_hour * 3600 +
+                   (int64_t)local.tm_min * 60 + (int64_t)local.tm_sec;
+    int64_t offset = wall - second;
+    if (offset <= -INT64_C(86400) || offset >= INT64_C(86400)) return;
+    result->tag = WF_OPTION_SOME;
+    result->value = offset;
+}
+
 /* [PRE-2] no host operation: the driver ends the sleep at its deadline
  * or when its watch fires. */
 int wf__body_sleep_until_start(wf_sleep_result *result, const wf_instant *deadline, const wf_cancel_handle *cancel,
@@ -1919,6 +2394,19 @@ void wf__body_close_stop_listener(wf_close_result *result, wf_value *factory,
 
 #if !defined(_WIN32)
 #include <sys/resource.h>
+
+/* [PRE-2] c(n): the handle credits a soft open-files limit n gives, keeping
+ * 64 descriptors for the runtime and bounding the budget at 2^20. A host
+ * without the limit starts with 4096 credits and never adds any. */
+static uint64_t wf_limit_credits(uint64_t soft) {
+    uint64_t bounded = soft > (UINT64_C(1) << 20) ? (UINT64_C(1) << 20) : soft;
+    return bounded > 64 ? bounded - 64 : 0;
+}
+
+/* A limit the host reports as unlimited reads as 2^64 - 1 [PRE-2]. */
+static uint64_t wf_limit_value(rlim_t value) {
+    return value == RLIM_INFINITY ? UINT64_MAX : (uint64_t)value;
+}
 #endif
 
 int wf__ordinary_inputs(wf_inputs *inputs, int argc, void *argv) {
@@ -1926,6 +2414,12 @@ int wf__ordinary_inputs(wf_inputs *inputs, int argc, void *argv) {
     uint64_t capacity;
     memset(inputs, 0, sizeof(*inputs));
     inputs->drivers = wf__context_driver_count();
+    inputs->process_id.tag = WF_OPTION_SOME;
+#if defined(_WIN32)
+    inputs->process_id.value = (uint64_t)GetCurrentProcessId();
+#else
+    inputs->process_id.value = (uint64_t)getpid();
+#endif
     if (wf__stop_initialize() != 0) return 0;
 #if defined(_WIN32)
     /* The build launcher has an ordinary narrow-argv main. Recover Windows'
@@ -1949,9 +2443,7 @@ int wf__ordinary_inputs(wf_inputs *inputs, int argc, void *argv) {
     cwd = open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     capacity = 0;
     if (getrlimit(RLIMIT_NOFILE, &limit) == 0) {
-        capacity = limit.rlim_cur == RLIM_INFINITY || limit.rlim_cur > (1u << 20)
-            ? (1u << 20) : (uint64_t)limit.rlim_cur;
-        capacity = capacity > 64 ? capacity - 64 : 0;
+        capacity = wf_limit_credits(wf_limit_value(limit.rlim_cur));
     }
     wf_descriptor_value(&inputs->out, STDOUT_FILENO);
     wf_descriptor_value(&inputs->err, STDERR_FILENO);
@@ -1968,10 +2460,93 @@ int wf__ordinary_inputs(wf_inputs *inputs, int argc, void *argv) {
 #endif
     if (cwd < 0) return 0;
     wf_descriptor_value(&inputs->cwd_write, cwd);
+    /* [PRE-2] POSIX and Windows hosts grant host-path lookup. The
+     * authority's own value is empty: it names no descriptor and owns
+     * nothing to close. */
+    inputs->host_paths.tag = WF_OPTION_SOME;
     wf_text(&inputs->args, argv, argc > 0 ? (uint64_t)(unsigned)argc : 0);
     wf_handle_budget = capacity;
     inputs->handles.words[2] = (uint64_t)(uintptr_t)&wf_handle_budget;
     return 1;
+}
+
+/* [PRE-2] The open-files limit, origin 11. A raise reads the limit, sets
+ * the soft limit and adds the credits it gives under one lock, so two
+ * contexts raising through related factories add each credit once. */
+#define WF_LIMIT_ORIGIN 11u
+#if !defined(_WIN32)
+static unsigned char wf_limit_lock;
+#endif
+
+void wf__body_open_files_limit(wf_limit_result *result, const wf_value *factory) {
+    (void)factory;
+    memset(result, 0, sizeof(*result));
+#if defined(_WIN32)
+    result->tag = 1;
+    wf_error_class(&result->err.error, WF_IO_UNSUPPORTED, 0, 0);
+#else
+    struct rlimit limit;
+    if (getrlimit(RLIMIT_NOFILE, &limit) != 0) {
+        result->tag = 1;
+        wf_error(&result->err.error, errno, WF_LIMIT_ORIGIN);
+        return;
+    }
+    result->ok.value.soft = wf_limit_value(limit.rlim_cur);
+    result->ok.value.hard = wf_limit_value(limit.rlim_max);
+#endif
+}
+
+void wf__body_raise_open_files_limit(wf_limit_result *result, wf_value *factory, uint64_t wanted) {
+    memset(result, 0, sizeof(*result));
+    wf_transition(factory);
+#if defined(_WIN32)
+    (void)wanted;
+    result->tag = 1;
+    wf_error_class(&result->err.error, WF_IO_UNSUPPORTED, 0, 0);
+#else
+    struct rlimit limit;
+    int failure = 0;
+    while (__atomic_test_and_set(&wf_limit_lock, __ATOMIC_ACQUIRE)) {
+    }
+    if (getrlimit(RLIMIT_NOFILE, &limit) != 0) {
+        failure = errno;
+    } else {
+        uint64_t soft = wf_limit_value(limit.rlim_cur);
+        uint64_t hard = wf_limit_value(limit.rlim_max);
+        if (wanted > soft) {
+            /* A request above the hard limit goes to the host too, which
+             * refuses a soft limit above the hard one (POSIX: EINVAL). The
+             * limits reported and the credits added are those the host
+             * holds after the call, read back, since a finite request may
+             * map to RLIM_INFINITY or the host may adjust it. */
+            struct rlimit raised = limit;
+            raised.rlim_cur = wanted >= (uint64_t)RLIM_INFINITY ? RLIM_INFINITY : (rlim_t)wanted;
+            if (setrlimit(RLIMIT_NOFILE, &raised) != 0) {
+                failure = errno;
+            } else {
+                struct rlimit after;
+                uint64_t before_credits = wf_limit_credits(soft);
+                uint64_t after_credits;
+                if (getrlimit(RLIMIT_NOFILE, &after) != 0) after = raised;
+                soft = wf_limit_value(after.rlim_cur);
+                hard = wf_limit_value(after.rlim_max);
+                after_credits = wf_limit_credits(soft);
+                if (after_credits > before_credits) {
+                    __atomic_add_fetch(wf_factory_budget(factory), after_credits - before_credits,
+                                       __ATOMIC_ACQ_REL);
+                }
+            }
+        }
+        result->ok.value.soft = soft;
+        result->ok.value.hard = hard;
+    }
+    __atomic_clear(&wf_limit_lock, __ATOMIC_RELEASE);
+    if (failure != 0) {
+        memset(result, 0, sizeof(*result));
+        result->tag = 1;
+        wf_error(&result->err.error, failure, WF_LIMIT_ORIGIN);
+    }
+#endif
 }
 
 #if defined(_WIN32)
@@ -2007,6 +2582,12 @@ int wf__body_directory_next_start(wf_list_result *result, wf_value *source,
     return wf__completion_pending(&operation->record) ? 2 : 1;
 }
 
+/* A host batch's native records are rewritten in place into the portable
+ * records [PRE-2], which are never longer: one kind byte, the name's byte
+ * count as a little-endian u16, and the name bytes. `.` and `..` are left
+ * out. The engine reads a batch holding only them again within the same
+ * operation, so a nonempty batch here holds an entry and a successful batch
+ * over a nonempty window is never empty. */
 void wf__body_directory_next_finish(wf_list_result *result, wf_value *source,
                                     wf_view *destination, uint64_t start, uint64_t end,
                                     wf_host_operation *operation) {
@@ -2047,21 +2628,18 @@ void wf__body_directory_next_finish(wf_list_result *result, wf_value *source,
             if (entry[WF_DIRENT_NAME + named] == 0) break;
         if (named == extent - WF_DIRENT_NAME) abort();
 #endif
-        if (named == 0 || named > WF_COMPONENT_BYTES ||
+        if (named == 0 || named > WF_NAME_BYTES ||
             named > extent - WF_DIRENT_NAME || named + 3 > end - start - written)
             abort();
+        for (index = 0; index < named; index++) {
+            unsigned char byte = entry[WF_DIRENT_NAME + index];
 #if defined(_WIN32)
-        if ((named & 1) != 0) abort();
-        for (index = 0; index < named; index += 2) {
-            uint16_t unit;
-            memcpy(&unit, entry + WF_DIRENT_NAME + index, 2);
-            if (unit == 0 || unit == '/' || unit == '\\') abort();
-        }
-#else
-        for (index = 0; index < named; index++)
-            if (entry[WF_DIRENT_NAME + index] == 0 || entry[WF_DIRENT_NAME + index] == '/')
-                abort();
+            if (byte == '\\') abort();
 #endif
+            if (byte == 0 || byte == '/') abort();
+        }
+        cursor += extent;
+        if (wf_name_is_dots(entry + WF_DIRENT_NAME, named)) continue;
         portable = kind == 0 ? 0 : kind == WF_DIRENT_REGULAR ? 1 :
             kind == WF_DIRENT_DIRECTORY ? 2 : kind == WF_DIRENT_SYMLINK ? 3 : 4;
         window[written] = (unsigned char)portable;
@@ -2069,9 +2647,9 @@ void wf__body_directory_next_finish(wf_list_result *result, wf_value *source,
         window[written + 2] = (unsigned char)(named >> 8);
         memmove(window + written + 3, entry + WF_DIRENT_NAME, (size_t)named);
         written += named + 3;
-        cursor += extent;
         entries++;
     }
+    if (entries == 0) abort();
     result->next = start + written;
     result->entries = entries;
 }

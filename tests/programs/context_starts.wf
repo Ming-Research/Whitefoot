@@ -1,0 +1,41 @@
+fn tick(value: u64) -> result: u64 pure waits {
+  return value;
+}
+
+fn count_one(total: Shared<u64>) -> result: unit pure waits {
+  atomic count = &total {
+    set count^ = count^ +wrap 1_u64;
+  }
+  return unit;
+}
+
+fn start_batch(total: &Shared<u64>) -> result: unit reads(total) waits {
+  for @start (index in 0_u64..100_u64) {
+    let handle = shared_share::<u64>(shared: total);
+    spawn count_one(total: move handle);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let sum = 0_u64;
+  for @joined (index in 0_u64..10000_u64) {
+    let pending = spawn tick(value: index);
+    set sum = sum +wrap pending;
+  }
+  if sum != 49995000_u64 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let total = shared_new::<u64>(value: 0_u64);
+  for @batches (index in 0_u64..100_u64) {
+    start_batch(total: &total);
+  }
+  let seen = 0_u64;
+  atomic count = &total {
+    set seen = count^;
+  }
+  if seen != 10000_u64 {
+    return std::process::exit_status(code: 2_u8);
+  }
+  return std::process::exit_status(code: 0_u8);
+}

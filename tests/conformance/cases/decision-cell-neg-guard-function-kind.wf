@@ -1,0 +1,12 @@
+fn permit<fn make() -> result: DecisionCell pure>() -> result: Bool pure {
+  let cell = make();
+  return True();
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let target = shared_new::<u8>(value: 0_u8);
+  atomic byte = &target when permit::<fn decision_cell_new>() {
+    set byte^ = 1_u8;
+  }
+  return std::process::exit_status(code: 0_u8);
+}

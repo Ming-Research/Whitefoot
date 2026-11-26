@@ -760,9 +760,8 @@ fn priority_test_zero_size() -> failures: u64 pure {
   priority_queue_free::<unit, PriorityTestSequence, fn priority_test_unit_release, 0>(queue: move empty_heap, env: &seen);
   let queue = priority_queue_new::<PriorityTestZero, 18446744073709551615>();
   let capacity = priority_queue_reserve::<PriorityTestZero, 18446744073709551615>(queue: &queue, total: 18446744073709551615_u64);
-  if capacity != 18446744073709551615_u64 {
-    set failures = failures +wrap 1_u64;
-  }
+  let capacity_shortfall = 18446744073709551615_u64 - capacity;
+  set failures = failures +wrap capacity_shortfall;
   for (index in 0_u64..3_u64) {
     let value = PriorityTestZero();
     let pushed = priority_queue_push::<PriorityTestZeros, 18446744073709551615>(queue: &queue, value: value, env: &env);

@@ -251,7 +251,9 @@ impl<'a> Terms<'a> {
                 }
                 GoalProjection::Range(_)
                 | GoalProjection::Page(_)
-                | GoalProjection::FormalPage { .. } => return None,
+                | GoalProjection::FormalPage { .. }
+                | GoalProjection::FormalPlaceSubscript { .. }
+                | GoalProjection::FormalPlacePage { .. } => return None,
             };
         }
         Some(place)

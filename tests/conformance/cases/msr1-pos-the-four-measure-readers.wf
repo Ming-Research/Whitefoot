@@ -2,7 +2,7 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn main() -> status: ExitStatus pure {
-  doc "MSR-1, OP-15: a measure read is a place form and not a call, and the table gives each measured type exactly the cells it has. A Slots has len and cap, a Ring adds head, and a range reference has len alone; free slots is the ordinary expression cap - len. The program reads every measure the table gives, computes free slots, and observes those values over constant-capacity and boxed runtime-capacity windows, a ring and a range reference.";
+  doc "MSR-1, OP-15: a measure read is a place form and not a call, and the table gives each measured type exactly the cells it has. A Slots has len and cap, a Ring adds head, and a range reference has len alone; free slots is the ordinary expression cap - len. The program reads every measure the table gives, computes free slots, and observes those values over constant-capacity and boxed runtime-capacity windows, a ring and a range reference. It tests the boxed window's length and free slots at run time and returns a weighted sum of the other values, 28, as its exit status.";
   let values = array_filled::<u8, 4>(value: 0_u8);
   let fixed = slots_from_array::<u8, 4>(values: values);
   let fixed_length = fixed.len;
@@ -26,27 +26,22 @@ fn main() -> status: ExitStatus pure {
   let ring_head = cycle.head;
   let view = &fixed[0_u64..4_u64];
   let view_length = view^.len;
-  if view_length == 4_u64 {
-    if ring_head == 0_u64 {
-      if ring_length == 0_u64 {
-        if ring_capacity == 2_u64 {
-          if ring_room == 2_u64 {
-            if run_length == 8_u64 {
-              if run_capacity == 8_u64 {
-                if run_room == 0_u64 {
-                  if fixed_length == 4_u64 {
-                    if fixed_capacity == 4_u64 {
-                      if fixed_room == 0_u64 {
-                        return exit_status(code: 0_u8);
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
+  let room_ring = ring_room * 3_u64;
+  let length_ring = ring_length * 5_u64;
+  let head_ring = ring_head * 7_u64;
+  let room_fixed = fixed_room * 11_u64;
+  let sum_one = view_length + fixed_length;
+  let sum_two = sum_one + fixed_capacity;
+  let sum_three = sum_two + run_capacity;
+  let sum_four = sum_three + ring_capacity;
+  let sum_five = sum_four + room_ring;
+  let sum_six = sum_five + length_ring;
+  let sum_seven = sum_six + head_ring;
+  let observed = sum_seven + room_fixed;
+  let code = cvt::<u64, u8>(observed);
+  if run_length == 8_u64 {
+    if run_room == 0_u64 {
+      return exit_status(code: code);
     }
   }
   return exit_status(code: 5_u8);

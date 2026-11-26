@@ -1,31 +1,37 @@
 alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
-fn main() -> status: ExitStatus pure {
-  doc "Exercise every Boolean table operation through normal source compilation and host execution [OP-1, OP-8].";
-  let yes = True();
-  let no = False();
+fn table(yes: Bool, no: Bool) -> code: u8 pure {
+  doc "Applies every Boolean table operation to its operands and maps the first result that differs from the truth table for a true yes and a false no to a nonzero code.";
   let both = band(yes, no);
   let not_both = bnot(both);
   if not_both {
   } else {
-    return exit_status(code: 1_u8);
+    return 1_u8;
   }
   let either = bor(no, yes);
   if either {
   } else {
-    return exit_status(code: 2_u8);
+    return 2_u8;
   }
   let different = bxor(yes, no);
   if different {
   } else {
-    return exit_status(code: 3_u8);
+    return 3_u8;
   }
   let same = bxor(yes, yes);
   let not_same = bnot(same);
   if not_same {
   } else {
-    return exit_status(code: 4_u8);
+    return 4_u8;
   }
-  return exit_status(code: 0_u8);
+  return 0_u8;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "Exercise every Boolean table operation through normal source compilation and host execution [OP-1, OP-8].";
+  let yes = True();
+  let no = False();
+  let code = table(yes: yes, no: no);
+  return exit_status(code: code);
 }

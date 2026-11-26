@@ -38,7 +38,7 @@ impl TypeContext<'_> {
     /// Depth-first declaration order, with nominal cycles visited once. Symbolic
     /// parameters are checked again at each concrete instantiation.
     pub(super) fn first_unfrozen_part(&self, ty: CheckedType) -> Result<Option<String>, CheckStop> {
-        self.first_part(ty, false, |types, ty| {
+        self.first_part(ty, false, false, |types, ty| {
             let CheckedType::Nominal(id) = ty else {
                 return Ok(false);
             };
@@ -65,7 +65,7 @@ impl TypeContext<'_> {
         &self,
         ty: CheckedType,
     ) -> Result<Option<String>, CheckStop> {
-        self.first_part(ty, true, |types, ty| {
+        self.first_part(ty, true, false, |types, ty| {
             let CheckedType::Nominal(id) = ty else {
                 return Ok(false);
             };
@@ -77,6 +77,20 @@ impl TypeContext<'_> {
                 .is_some_and(|host| {
                     crate::library::is_self_changing_host_handle(host.module, host.name)
                 }))
+        })
+    }
+
+    /// [SHARE-1] the first part of `state`, `state` included, that is the
+    /// handle `handle`, in the frozen walk extended through the state behind
+    /// each object handle: a value of `state` could then hold a handle to the
+    /// object it is the state of.
+    pub(super) fn first_own_handle_part(
+        &self,
+        state: CheckedType,
+        handle: super::super::model::NominalId,
+    ) -> Result<Option<String>, CheckStop> {
+        self.first_part(state, false, true, |_, ty| {
+            Ok(ty == CheckedType::Nominal(handle))
         })
     }
 
@@ -115,11 +129,13 @@ impl TypeContext<'_> {
     /// entries are walked as its elements. The frozen walk leaves them out:
     /// a map is only ever a shared object's state or a `swap`'s exchange
     /// [TYPE-9], never a part of frozen content, and the frozen walk stops at
-    /// the `Shared` handle that holds one.
+    /// the `Shared` handle that holds one. With `object_states` the walk goes
+    /// on through the state behind each object handle.
     fn first_part(
         &self,
         ty: CheckedType,
         map_entries: bool,
+        object_states: bool,
         stops: impl Fn(&Self, CheckedType) -> Result<bool, CheckStop>,
     ) -> Result<Option<String>, CheckStop> {
         let mut pending = vec![(ty, self.checked_type_name(ty)?)];
@@ -133,9 +149,12 @@ impl TypeContext<'_> {
             }
             match ty {
                 CheckedType::Nominal(id) => match &self.nominal(id)?.kind {
-                    CheckedNominalKind::Shared { shape, .. } => {
+                    CheckedNominalKind::Shared { state, shape } => {
                         if map_entries && let CheckedShared::Map { entry } = shape {
                             pending.push((*entry, format!("{path}[element]")));
+                        }
+                        if object_states && matches!(shape, CheckedShared::Object) {
+                            pending.push((*state, format!("{path}[state]")));
                         }
                     }
                     CheckedNominalKind::Opaque => {}

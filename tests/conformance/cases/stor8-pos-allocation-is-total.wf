@@ -11,9 +11,5 @@ fn main() -> status: ExitStatus pure {
   } else {
     return exit_status(code: 1_u8);
   }
-  if empty == 0_u64 {
-  } else {
-    return exit_status(code: 2_u8);
-  }
   return exit_status(code: 0_u8);
 }

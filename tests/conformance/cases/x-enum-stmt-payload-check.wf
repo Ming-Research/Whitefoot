@@ -13,12 +13,8 @@ fn main() -> status: ExitStatus pure {
     Num(n: v) => {
       let bounded = v % 1073741824_i32;
       let d = bounded * 2_i32;
-      let expected = d == 42_i32;
-      if expected {
-        return exit_status(code: 0_u8);
-      } else {
-        return exit_status(code: 1_u8);
-      }
+      let status_code = cvt::<i32, u8>(d);
+      return exit_status(code: status_code);
     }
     Nil() => {
       return exit_status(code: 2_u8);

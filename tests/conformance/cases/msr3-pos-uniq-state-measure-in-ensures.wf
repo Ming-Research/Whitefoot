@@ -13,11 +13,9 @@ fn record(destination: &Slots<u8, 4>, value: u8) -> count: u64 writes(destinatio
 }
 
 fn main() -> status: ExitStatus pure {
-  doc "MSR-3 admits a source ensures over the measure of a reference parameter the row writes: the bare measure denotes the exit-state term over the caller's resolved place, while entry(parameter) denotes the immutable entry datum, and the two are distinct terms even though both project from one formal and one actual.";
+  doc "MSR-3 admits a source ensures over the measure of a reference parameter the row writes: the bare measure denotes the exit-state term over the caller's resolved place, while entry(parameter) denotes the immutable entry datum, and the two are distinct terms even though both project from one formal and one actual. The program returns the reported length, 1, as its exit status.";
   let workspace = slots_new::<u8, 4>();
   let count = record(destination: &workspace, value: 1_u8);
-  if count != 1_u64 {
-    return exit_status(code: 1_u8);
-  }
-  return exit_status(code: 0_u8);
+  let code = cvt::<u64, u8>(count);
+  return exit_status(code: code);
 }

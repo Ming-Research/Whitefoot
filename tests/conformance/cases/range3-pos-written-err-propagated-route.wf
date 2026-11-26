@@ -1,0 +1,37 @@
+fn fail() -> result: Result<u64, Box<Array<u64>>> pure contract {
+  ensures when Err(error: selected): selected.inner.len == 2_u64;
+  ensures when Err(error: selected): forall bounded(k in 0_u64..selected.inner.len): selected.inner[k] <= 7_u64;
+} {
+  let cells = box_array_filled::<u64>(count: 2_u64, value: 7_u64);
+  return Err<u64, Box<Array<u64>>>(error: move cells);
+}
+
+fn forward() -> result: Result<u32, Box<Array<u64>>> pure contract {
+  ensures when Err(error: selected): selected.inner.len == 2_u64;
+  ensures when Err(error: selected): forall bounded(k in 0_u64..selected.inner.len): selected.inner[k] <= 7_u64;
+} {
+  let got = propagate fail();
+  let small = cvt.wrap::<u64, u32>(got);
+  return Ok<u32, Box<Array<u64>>>(value: small);
+}
+
+fn read(cells: &Box<Array<u64>>) -> result: u8 reads(cells) contract {
+  requires cells^.inner.len > 0_u64;
+  requires forall bounded(k in 0_u64..cells^.inner.len): cells^.inner[k] <= 7_u64;
+} {
+  let got = cells^.inner[0_u64];
+  return cvt::<u64, u8>(got);
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let made = forward();
+  match move made {
+    Ok(value: success) => {
+      return std::process::exit_status(code: 99_u8);
+    }
+    Err(error: selected) => {
+      let code = read(cells: &selected);
+      return std::process::exit_status(code: code);
+    }
+  }
+}

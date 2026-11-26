@@ -1,0 +1,18 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn grow_claim(rows: &Slots<Slots<u8, 8>, 4>, i: u64) -> r: u64 writes(rows.next), writes(rows.len) contract {
+  requires i == rows^.len;
+  requires rows^.len < rows^.cap;
+  ensures r <= entry(rows)^[i].len;
+} {
+  doc "Element i exists only after the append, so the place entry(rows)^[i] is past the entry length.";
+  let fresh = slots_new::<u8, 8>();
+  place_back(window: rows, value: move fresh);
+  return 0_u64;
+}
+
+fn main() -> status: ExitStatus pure {
+  doc "The declaration alone is judged.";
+  return exit_status(code: 0_u8);
+}

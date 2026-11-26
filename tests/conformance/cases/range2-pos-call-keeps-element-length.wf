@@ -1,0 +1,28 @@
+fn set_at(row: &Slots<u8, 8>, index: u64) -> result: unit writes(row[index]) contract {
+  requires index < row^.len;
+} {
+  doc "Writes only an existing element; MSR-2 separates this storage from row.len.";
+  set row^[index] = 0_u8;
+  return unit;
+}
+
+fn need_short(rows: &[Slots<u8, 8>]) -> result: unit pure contract {
+  requires forall short(k in 0_u64..rows^.len): rows^[k].len <= 4_u64;
+} {
+  return unit;
+}
+
+fn probe(rows: &[Slots<u8, 8>]) -> result: unit writes(rows) contract {
+  requires forall held_length(k in 0_u64..rows^.len): rows^[k].len <= 4_u64;
+  requires 1_u64 <= rows^.len;
+  requires 1_u64 <= rows^[0_u64].len;
+} {
+  doc "RANGE-2 keeps every row's length after the call writes rows[0][0], so RANGE-3 proves need_short's requirement.";
+  set_at(row: &rows^[0_u64], index: 0_u64);
+  need_short(rows: rows);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

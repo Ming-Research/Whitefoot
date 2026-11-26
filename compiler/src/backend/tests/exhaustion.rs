@@ -27,22 +27,13 @@
 //! the process inside the trusted base. The tests below cover the resource
 //! record and abort edges for scalar, array, Slots and Ring cells, cleanup of
 //! initialized elements before their backing allocation, probe attachment to
-//! every emitted definition, and native containment on a guarded stack.
+//! every emitted definition, native containment on a guarded stack, and two
+//! lanes of one `--par` module refused an allocation at the same moment.
 
 use super::BoundedOutput;
 use std::process::Command;
 
 use super::{build_linked_executable, compile, test_directory};
-
-/// The attribute group [`crate::backend::emitter`] gives every definition, and
-/// the value it carries on this host.
-///
-/// The value is the host C compiler's own frame-probing helper, so a generated
-/// frame walks its pages exactly the way the runtime's translation unit does.
-#[cfg(target_os = "macos")]
-const HOST_STACK_PROBE: &str = "\"probe-stack\"=\"__chkstk_darwin\"";
-#[cfg(not(target_os = "macos"))]
-const HOST_STACK_PROBE: &str = "\"probe-stack\"=\"inline-asm\"";
 
 /// A program that reaches several kinds of generated definition at once: a
 /// heap box and its compiler-generated drop glue, a recursive walk, a system
@@ -113,7 +104,7 @@ fn buffer_module() -> String {
 }
 
 /// Every definition the module emits carries the probe attribute, and the
-/// group it names is the host's.
+/// group it names matches the resolved consumer's measured capability.
 ///
 /// The count equality is the point of the case. Containment is a completeness
 /// property — one unprobed large frame is enough to jump the guard region into
@@ -154,9 +145,12 @@ pub(super) fn assert_stack_probes(module: &str) {
         1,
         "the module declares its one attribute group once:\n{module}"
     );
+    let target = crate::target::TargetLayout::host().expect("the native host is supported");
+    let attributes =
+        target.stack_probe_attributes(crate::toolchain::facts().darwin_stack_probe_helper);
     assert!(
-        module.contains(&format!("attributes #0 = {{ {HOST_STACK_PROBE} }}")),
-        "the group must name this host's probing helper:\n{module}"
+        module.contains(&format!("attributes #0 = {{ {attributes} uwtable }}")),
+        "the group must name the resolved consumer's probing method:\n{module}"
     );
 }
 
@@ -308,11 +302,11 @@ const ALL_HEAP_FORMS: &[u8] = br#"fn shapes(n: u64) -> result: u64 pure {
   let vacant = box_slots_new::<u32>(capacity: 4_u64);
   let cycle = box_ring_new::<u32>(capacity: 3_u64);
   let boxed = box_new::<u64>(value: 7_u64);
-  let held = boxed.inner;
+  let observed_state = boxed.inner;
   let packed_len = packed.inner.len;
   let vacant_cap = vacant.inner.cap;
   let cycle_cap = cycle.inner.cap;
-  let total = held +wrap packed_len;
+  let total = observed_state +wrap packed_len;
   set total = total +wrap vacant_cap;
   set total = total +wrap cycle_cap;
   return total;
@@ -482,6 +476,223 @@ ssize_t wf_test_record_write(int fd, const void *bytes, size_t length) {
 }
 "#;
 
+/// Two heap-refusal paths on two lanes of one `--par` module.
+///
+/// `both` hands one `build_*` call to a worker lane and runs the other on its
+/// own thread, so one refused allocation can end each thread at its own site
+/// at the same moment. The sites differ in their fill value only, so a record
+/// cannot name the thread that wrote it.
+const RACING_HEAP_RECORD_LANES: &[u8] = br#"fn build_left(n: u64) -> result: u64 pure {
+  let b = box_array_filled::<u8>(count: 4_u64, value: 7_u8);
+  let e = b.inner.len;
+  return e +wrap n;
+}
+
+fn build_right(n: u64) -> result: u64 pure {
+  let b = box_array_filled::<u8>(count: 4_u64, value: 9_u8);
+  let e = b.inner.len;
+  return e +wrap n;
+}
+
+fn both(n: u64) -> result: u64 pure {
+  let a = build_left(n: n);
+  let c = build_right(n: n);
+  return a +wrap c;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let r = both(n: 5_u64);
+  let ok = r > 0_u64;
+  if ok {
+    return std::process::exit_status(code: 0_u8);
+  }
+  return std::process::exit_status(code: 1_u8);
+}
+"#;
+
+/// The module with the record path's host edges handed to
+/// [`RACING_RECORD_OBSERVER`]: every allocation, the record's `write`, and the
+/// latch accessor the record writer asks the floor for.
+///
+/// With `leaky`, the writer's winner test becomes a constant: the same writer
+/// with nothing arbitrating between threads, which is what the sequential
+/// writer would be on a module that has more than one.
+fn observe_racing_records(module: &str, leaky: bool) -> String {
+    const ACCESSOR: &str = "call ptr @wf__floor_record_latch()";
+    const WINNER: &str = "%won = extractvalue { i32, i1 } %acquired, 1";
+    assert!(
+        module.contains(ACCESSOR) && module.contains(WINNER),
+        "the fixture must carry the latched record writer: {module}"
+    );
+    let mut observed = module
+        .replace("@wf__heap_take(", "@wf_test_allocate(")
+        .replace("@wf__heap_give(", "@wf_test_release(")
+        .replace("@write(", "@wf_test_record_write(")
+        .replace(ACCESSOR, "call ptr @wf_test_record_latch()");
+    if leaky {
+        observed = observed.replace(WINNER, "%won = icmp eq i32 0, 0");
+    }
+    observed.push_str("\ndeclare ptr @wf_test_record_latch()\n");
+    observed
+}
+
+/// One fresh process of the linked fixture, four worker lanes.
+fn run_racing_records(executable: &std::path::Path) -> std::process::Output {
+    Command::new(executable)
+        .env("WF_WORKERS", "4")
+        .bounded_output()
+        .expect("run racing heap record writers")
+}
+
+/// Two failure paths reach the record writer together; one record is written.
+///
+/// The allocator the observer links refuses every request, and holds each
+/// caller until a second thread is inside it too, so the two refusals — one on
+/// a worker lane, one on the thread that handed the call out — leave the
+/// allocator together and reach the record writer together. The observer's
+/// `write` then holds the first record until the other path has asked for the
+/// latch and had time to write its own. A latch that arbitrates leaves the
+/// other path parked, and the output is one well-formed record. That is a
+/// runtime contract and no source outcome, since [SCOPE-3] keeps resource
+/// exhaustion outside the source execution model; without the latch, two
+/// threads refused at once would put two records on one channel.
+///
+/// The control runs the same schedule with the writer's winner test replaced
+/// by a constant. It must write both records; if it did not, the schedule
+/// would not be racing the writers and the first half would prove nothing.
+#[test]
+fn failure_paths_racing_for_the_record_leave_exactly_one() {
+    let module = super::emit_with_overlap(RACING_HEAP_RECORD_LANES);
+    assert!(
+        module.contains("@wf__par_thunk_"),
+        "the fixture must hand a call out, or the paths cannot race: {module}"
+    );
+    let latched_directory = test_directory();
+    let latched = build_linked_executable(
+        &observe_racing_records(&module, false),
+        Some(RACING_RECORD_OBSERVER),
+        &[],
+        &latched_directory,
+    );
+    // The winner may be either lane, so the schedule is run more than once.
+    for run in 0..4 {
+        let output = run_racing_records(&latched);
+        assert_eq!(
+            signal_of(&output),
+            Some(libc_sigabrt()),
+            "run {run}: {output:?}"
+        );
+        assert_eq!(
+            output.stdout, b"R;R;",
+            "run {run}: two threads must be inside the refused allocation together: {output:?}"
+        );
+        assert_resource_record(&output.stderr, "heap");
+    }
+    std::fs::remove_dir_all(latched_directory).expect("remove latched racing image");
+
+    let leaky_directory = test_directory();
+    let leaky = build_linked_executable(
+        &observe_racing_records(&module, true),
+        Some(RACING_RECORD_OBSERVER),
+        &[],
+        &leaky_directory,
+    );
+    let output = run_racing_records(&leaky);
+    assert_eq!(signal_of(&output), Some(libc_sigabrt()), "{output:?}");
+    assert_eq!(output.stdout, b"R;R;", "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "{\"resource\":\"heap\"}\n".repeat(2),
+        "without the latch the same schedule writes a record on each path: {output:?}"
+    );
+    std::fs::remove_dir_all(leaky_directory).expect("remove unlatched racing image");
+}
+
+/// The host side of [`failure_paths_racing_for_the_record_leave_exactly_one`].
+///
+/// Every wait is on an event, with a long deadline that only a hung run
+/// reaches; the one fixed interval (half a second) is the time a path the
+/// latch lets through has to start its own write, and only a leaking writer
+/// can be caught by it. Markers go straight to standard output so that an
+/// abort loses none: `R;` for each thread that left the allocator with the
+/// other inside it, `T;` for one that found no second thread.
+const RACING_RECORD_OBSERVER: &str = r#"
+#define _POSIX_C_SOURCE 200809L
+#include <sched.h>
+#include <stdatomic.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <unistd.h>
+
+/* The heap runtime a module that allocates links against. */
+extern const unsigned char wf__empty_window[64];
+extern volatile int *wf__floor_record_latch(void);
+
+static atomic_uint allocator_arrivals;
+static atomic_uint latch_arrivals;
+static atomic_uint writes_started;
+static atomic_uint writes_finished;
+
+static uint64_t now_us(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (uint64_t)now.tv_sec * 1000000u + (uint64_t)now.tv_nsec / 1000u;
+}
+
+static void wait_for(atomic_uint *counter, unsigned target, uint64_t microseconds) {
+    uint64_t deadline = now_us() + microseconds;
+    while (atomic_load(counter) < target && now_us() < deadline) sched_yield();
+}
+
+static void note(const char *text) {
+    ssize_t ignored = write(1, text, strlen(text));
+    (void)ignored;
+}
+
+/* Refuse every allocation, once a second thread is also asking. */
+void *wf_test_allocate(size_t size) {
+    (void)size;
+    atomic_fetch_add(&allocator_arrivals, 1);
+    wait_for(&allocator_arrivals, 2, 10000000);
+    note(atomic_load(&allocator_arrivals) >= 2 ? "R;" : "T;");
+    return NULL;
+}
+
+/* Nothing is ever allocated, so nothing is ever released. */
+void wf_test_release(void *allocation, uint64_t bytes) {
+    (void)bytes;
+    if (allocation == (const void *)&wf__empty_window) return;
+    _Exit(90);
+}
+
+/* The record writer asks for the latch exactly once per path. */
+volatile int *wf_test_record_latch(void) {
+    atomic_fetch_add(&latch_arrivals, 1);
+    return wf__floor_record_latch();
+}
+
+ssize_t wf_test_record_write(int fd, const void *bytes, size_t length) {
+    unsigned started = atomic_fetch_add(&writes_started, 1) + 1;
+    if (started == 1) {
+        /* Hold the first record until the other path has asked for the latch,
+           then give a path the latch lets through time to begin its write. */
+        wait_for(&latch_arrivals, 2, 10000000);
+        wait_for(&writes_started, 2, 500000);
+    }
+    ssize_t written = write(fd, bytes, length);
+    atomic_fetch_add(&writes_finished, 1);
+    /* No path aborts before every write that began has ended, so a record
+       that was let through is a record in the output. */
+    uint64_t deadline = now_us() + 10000000;
+    while (atomic_load(&writes_finished) < atomic_load(&writes_started)
+           && now_us() < deadline) sched_yield();
+    return written;
+}
+"#;
+
 /// Filled and empty windows whose proved byte ceilings fit the selected target
 /// carry no runtime target-domain path. The allocator can still return null,
 /// so each operation keeps its ordinary heap-resource edge, which is the
@@ -629,7 +840,7 @@ fn runtime_count_allocation(statements: &str) -> String {
 }}
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {{
-  let std::process::Inputs(args: args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::process::Inputs(args: args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
@@ -817,7 +1028,7 @@ fn spine(depth: u64, v: u64, i: u8) -> result: u64 pure {
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter) = move inputs;
+  let std::process::Inputs(args: args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
@@ -1050,7 +1261,9 @@ fn ablate_probe(module: &str, signature: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    ablated.push_str("\nattributes #1 = { \"no-stack-arg-probe\" }\n");
+    // The control differs from group 0 only in its probe, so it keeps
+    // `uwtable`: without it the unwind directives would differ too.
+    ablated.push_str("\nattributes #1 = { \"no-stack-arg-probe\" uwtable }\n");
     ablated
 }
 
@@ -1097,7 +1310,7 @@ fn assert_native_spine_probe_was_ablated(probed: &str, ablated: &str) {
     let ablated = native_function_body(ablated, label);
     let has_probe = |body: &str| {
         if cfg!(target_os = "macos") {
-            body.contains("chkstk")
+            darwin_native_stack_probe(body)
         } else if cfg!(target_arch = "x86_64") {
             body.contains("subq\t$4096, %rsp") && body.contains("movq\t$0, (%rsp)")
         } else if cfg!(target_arch = "aarch64") {
@@ -1114,6 +1327,139 @@ fn assert_native_spine_probe_was_ablated(probed: &str, ablated: &str) {
         !has_probe(ablated),
         "the negative-control spine still contains a native stack probe:\n{ablated}"
     );
+}
+
+/// Darwin's helper call or a complete inline page walk in this function.
+/// Inline recognition requires adjacent descent, touch, SP/target comparison
+/// and a backedge to that descent; scattered prologue substrings are no proof.
+fn darwin_native_stack_probe(body: &str) -> bool {
+    body.lines().any(|line| {
+        let mut words = line.split_whitespace();
+        matches!(words.next(), Some("bl" | "call" | "callq"))
+            && words
+                .next()
+                .is_some_and(|callee| callee.trim_start_matches('_') == "chkstk_darwin")
+    }) || darwin_indirect_helper_call(body)
+        || darwin_inline_stack_probe(body)
+}
+
+/// Apple's AArch64 backend may reach the helper through the GOT: it loads
+/// `___chkstk_darwin@GOTPAGEOFF` into a register and later branches through
+/// that register with `blr`, rather than a direct `bl`.
+fn darwin_indirect_helper_call(body: &str) -> bool {
+    let mut loaded: Option<String> = None;
+    for line in body.lines() {
+        let code = line.split(';').next().unwrap_or_default().trim();
+        let mut words = code.split_whitespace();
+        match words.next() {
+            Some("ldr") => {
+                let operands: String = words.collect();
+                if operands.contains("chkstk_darwin@GOTPAGEOFF]") {
+                    loaded = operands.split(',').next().map(str::to_owned);
+                }
+            }
+            Some("blr") if loaded.is_some() && words.next() == loaded.as_deref() => {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+// This exact inline sequence is qualified only for AArch64. Intel Darwin
+// retains its helper check; recognizing another backend's loop needs evidence.
+fn darwin_inline_stack_probe(body: &str) -> bool {
+    let mut instructions = Vec::new();
+    let mut labels = std::collections::HashMap::new();
+    for original in body.lines() {
+        let line = original
+            .split(';')
+            .next()
+            .unwrap_or_default()
+            .split("//")
+            .next()
+            .unwrap_or_default()
+            .trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(label) = line.strip_suffix(':') {
+            if labels.insert(label.to_owned(), instructions.len()).is_some() {
+                return false;
+            }
+            continue;
+        }
+        if line.starts_with('.') {
+            continue; // Assembler and CFI directives emit no instruction.
+        }
+        let end = line.find(char::is_whitespace).unwrap_or(line.len());
+        let mnemonic = &line[..end];
+        let operands: String = line[end..].chars().filter(|c| !c.is_whitespace()).collect();
+        instructions.push((mnemonic, operands));
+    }
+    for (index, window) in instructions.windows(4).enumerate() {
+        let [(sub, decrement), (store, touch), (cmp, comparison), (branch, target)] = window else {
+            unreachable!("windows(4) always contains four instructions")
+        };
+        let arm = *sub == "sub"
+            && matches!(
+                decrement.as_str(),
+                "sp,sp,#4096" | "sp,sp,#0x1000" | "sp,sp,#1,lsl#12" | "sp,sp,#0x1,lsl#12"
+            )
+            && *store == "str"
+            && touch == "xzr,[sp]"
+            && *cmp == "cmp"
+            && arm_sp_target_comparison(comparison)
+            && *branch == "b.ne";
+        if arm && labels.get(target).copied() == Some(index) {
+            return true;
+        }
+    }
+    false
+}
+
+fn arm_sp_target_comparison(operands: &str) -> bool {
+    let mut parts = operands.split(',');
+    if parts.next() != Some("sp") {
+        return false;
+    }
+    let Some(register) = parts.next().and_then(|part| part.strip_prefix('x')) else {
+        return false;
+    };
+    if !register.bytes().all(|byte| byte.is_ascii_digit())
+        || !register.parse::<u8>().is_ok_and(|number| number <= 30)
+    {
+        return false;
+    }
+    matches!(parts.next(), None | Some("uxtx" | "uxtx#0")) && parts.next().is_none()
+}
+
+#[test]
+fn darwin_probe_recognizer_requires_a_complete_backward_page_walk() {
+    let assembly = "Lprobe:\n\tsub sp, sp, #1, lsl #12\n\tstr xzr, [sp]\n\tcmp sp, x9\n\tb.ne Lprobe\nLafter:\n\tret\n";
+    assert!(darwin_inline_stack_probe(assembly), "{assembly}");
+    for malformed in [
+        assembly.replace("str xzr, [sp]", "nop"),
+        assembly.replace("#1, lsl #12", "#2, lsl #12"),
+        assembly.replace("b.ne Lprobe", "b.ne Lafter"),
+        assembly.replace("cmp sp, x9", "cmp x10, x9"),
+        assembly.replace("cmp sp, x9", "cmp sp, #0"),
+    ] {
+        assert!(!darwin_inline_stack_probe(&malformed), "{malformed}");
+    }
+    assert!(darwin_native_stack_probe("\tbl ___chkstk_darwin\n"));
+    assert!(darwin_native_stack_probe("\tcallq ___chkstk_darwin\n"));
+    assert!(!darwin_native_stack_probe("; ___chkstk_darwin\n\tbl _other\n"));
+    let indirect = "\tadrp x16, ___chkstk_darwin@GOTPAGE\n\tldr x16, [x16, ___chkstk_darwin@GOTPAGEOFF]\n\tblr x16\n";
+    assert!(darwin_native_stack_probe(indirect), "{indirect}");
+    for malformed in [
+        indirect.replace("blr x16", "blr x17"),
+        indirect.replace("\tblr x16\n", ""),
+        indirect.replace("___chkstk_darwin@GOTPAGEOFF", "_other@GOTPAGEOFF"),
+    ] {
+        assert!(!darwin_native_stack_probe(&malformed), "{malformed}");
+    }
 }
 
 fn native_function_body<'assembly>(assembly: &'assembly str, label: &str) -> &'assembly str {
@@ -1167,13 +1513,13 @@ fn boxed_branch(left: Box<Tree>, right: Box<Tree>) -> result: Box<Tree> pure {{
 
 fn main() -> status: std::process::ExitStatus pure {{
   let seed = boxed_leaf();
-  let held = Holder(node: move seed);
+  let observed_state = Holder(node: move seed);
   for @grow (i in 0_u64..{depth}_u64) {{
     let sibling = boxed_leaf();
     let placeholder = boxed_leaf();
-    swap(first: &held.node, second: &placeholder);
+    swap(first: &observed_state.node, second: &placeholder);
     let taller = boxed_branch(left: move placeholder, right: move sibling);
-    swap(first: &held.node, second: &taller);
+    swap(first: &observed_state.node, second: &taller);
   }}
   return std::process::exit_status(code: 0_u8);
 }}
@@ -1211,9 +1557,9 @@ fn buffer_chain_source(depth: u64) -> Vec<u8> {
 }}
 
 fn nest(inner: Chain) -> result: Chain pure {{
-  let held = box_slots_new::<Chain>(capacity: 1_u64);
-  place_back(window: &held.inner, value: move inner);
-  return Chain::Cons(kids: move held);
+  let observed_state = box_slots_new::<Chain>(capacity: 1_u64);
+  place_back(window: &observed_state.inner, value: move inner);
+  return Chain::Cons(kids: move observed_state);
 }}
 
 fn main() -> status: std::process::ExitStatus pure {{
@@ -1404,8 +1750,8 @@ const WIDE_BUFFER_CYCLE: &[u8] = br#"enum Chain {
 }
 
 fn leafy() -> result: Chain pure {
-  let held = box_slots_new::<Chain>(capacity: 1_u64);
-  return Chain::Cons(kids: move held);
+  let observed_state = box_slots_new::<Chain>(capacity: 1_u64);
+  return Chain::Cons(kids: move observed_state);
 }
 
 fn main() -> status: std::process::ExitStatus pure {

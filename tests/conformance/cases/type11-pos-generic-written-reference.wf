@@ -10,11 +10,11 @@ fn replace_with<T: drop>(slot: &T, fresh: T) -> result: unit writes(slot) {
 }
 
 fn main() -> status: std::process::ExitStatus pure {
-  let held = Span(start: 1_u64, end: 2_u64);
+  let kept = Span(start: 1_u64, end: 2_u64);
   let fresh = Span(start: 3_u64, end: 10_u64);
-  replace_with::<Span>(slot: &held, fresh: fresh);
-  let a = held.start;
-  let b = held.end;
+  replace_with::<Span>(slot: &kept, fresh: fresh);
+  let a = kept.start;
+  let b = kept.end;
   let d = b - a;
   let code = cvt.wrap::<u64, u8>(d);
   return std::process::exit_status(code: code);

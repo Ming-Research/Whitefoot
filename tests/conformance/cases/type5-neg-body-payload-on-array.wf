@@ -1,0 +1,9 @@
+fn wrong_array(cell: &Array<u64, 1>) -> result: u64 reads(cell) {
+  doc "An enum payload suffix cannot select the Array's len measure, even when its field spelling is len.";
+  let direct = cell^.Some.len;
+  return direct;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

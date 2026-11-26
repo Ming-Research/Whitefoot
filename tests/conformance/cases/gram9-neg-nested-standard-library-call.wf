@@ -1,0 +1,7 @@
+fn forward(status: std::process::ExitStatus) -> result: std::process::ExitStatus pure {
+  return move status;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return forward(status: std::process::exit_status(code: 0_u8));
+}

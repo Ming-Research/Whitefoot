@@ -1,0 +1,44 @@
+alias HandleFactory = std::io::HandleFactory;
+alias WriteFile = std::fs::WriteFile;
+
+fn close_desk(desk: Shared<Slots<WriteFile, 1>>, factory: &HandleFactory) -> result: unit writes(factory) waits {
+  match shared_close::<Slots<WriteFile, 1>>(shared: move desk) {
+    Some(value: slot) => {
+      if slot.len > 0_u64 {
+        let file = take_back(window: &slot);
+        std::fs::close_write(factory: factory, file: move file);
+      }
+      free_empty(window: move slot);
+    }
+    None() => {
+    }
+  }
+  return unit;
+}
+
+fn lead(desk: &Shared<Slots<WriteFile, 1>>, factory: &HandleFactory, batch: &[u8]) -> result: Bool reads(desk), reads(batch), writes(factory) waits {
+  let hand = slots_new::<WriteFile, 1>();
+  atomic home = &desk^ when home^.len > 0_u64 {
+    let taken = take_back(window: home);
+    place_back(window: &hand, value: move taken);
+  }
+  let file = take_back(window: &hand);
+  free_empty(window: move hand);
+  let appended = False();
+  let end = batch^.len;
+  match std::fs::append_once(factory: factory, file: &file, source: batch, start: 0_u64, end: end) {
+    Ok(value: next) => {
+      set appended = True();
+    }
+    Err(error: problem) => {
+    }
+  }
+  atomic home = &desk^ when home^.len < home^.cap {
+    place_back(window: home, value: move file);
+  }
+  return appended;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

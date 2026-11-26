@@ -65,14 +65,17 @@ impl IrBuilder<'_> {
         self.indexed_place(root.root, &root.path)
             .is_some_and(|place| {
                 owner.place.contains(&place)
-                    && place.path[owner.place.path.len()..]
-                        .iter()
-                        .all(|step| matches!(step, CheckedResolvedStep::Field(_)))
+                    && place.path[owner.place.path.len()..].iter().all(|step| {
+                        matches!(
+                            step,
+                            CheckedResolvedStep::Field(_) | CheckedResolvedStep::Payload { .. }
+                        )
+                    })
             })
     }
 
     /// Below a root-shaped block, stored families and inline ancestors use
-    /// field steps; an alias to a readonly descriptor field can additionally
+    /// field and payload steps; an alias to a readonly descriptor field can additionally
     /// end in a measure step [REF-1, MSR-2]. Their resolved suffix survives
     /// reference aliases whose written path starts at a different depth.
     pub(super) fn indexed_block_fields(
@@ -83,12 +86,37 @@ impl IrBuilder<'_> {
         if !owner.place.contains(place) {
             return Err(LoweringFailure::InvalidCheckedProgram);
         }
+        let mut ty = owner.ty;
         place.path[owner.place.path.len()..]
             .iter()
-            .map(|step| match step {
-                CheckedResolvedStep::Field(field) => Ok(CheckedPlaceStep::Field(*field)),
-                CheckedResolvedStep::Measure(measure) => Ok(CheckedPlaceStep::Measure(*measure)),
-                _ => Err(LoweringFailure::InvalidCheckedProgram),
+            .map(|step| {
+                let checked = match step {
+                    CheckedResolvedStep::Field(field) => Ok(CheckedPlaceStep::Field(*field)),
+                    CheckedResolvedStep::Measure(measure) => {
+                        Ok(CheckedPlaceStep::Measure(*measure))
+                    }
+                    CheckedResolvedStep::Payload { variant, field } => {
+                        let IrType::Nominal(nominal) = ty else {
+                            return Err(LoweringFailure::InvalidCheckedProgram);
+                        };
+                        let checked = self
+                            .erasure
+                            .nominals
+                            .iter()
+                            .position(|erased| *erased == Some(nominal))
+                            .ok_or(LoweringFailure::InvalidCheckedProgram)?;
+                        Ok(CheckedPlaceStep::Payload {
+                            nominal: crate::NominalId(checked as u32),
+                            variant: *variant,
+                            field: *field,
+                        })
+                    }
+                    _ => Err(LoweringFailure::InvalidCheckedProgram),
+                }?;
+                if !matches!(checked, CheckedPlaceStep::Measure(_)) {
+                    ty = self.indexed_step(ty, &checked)?.1;
+                }
+                Ok(checked)
             })
             .collect()
     }
@@ -147,6 +175,28 @@ impl IrBuilder<'_> {
                 Ok((
                     IrPlaceStep::Field {
                         nominal,
+                        field: *field,
+                    },
+                    ty,
+                ))
+            }
+            (
+                CheckedPlaceStep::Payload {
+                    nominal: checked,
+                    variant,
+                    field,
+                },
+                IrNominalKind::Enum { variants },
+            ) if self.erased(*checked)? == nominal => {
+                let ty = variants
+                    .get(*variant as usize)
+                    .and_then(|variant| variant.fields.get(*field as usize))
+                    .ok_or(LoweringFailure::InvalidCheckedProgram)?
+                    .ty;
+                Ok((
+                    IrPlaceStep::EnumVariant {
+                        nominal,
+                        variant: *variant,
                         field: *field,
                     },
                     ty,

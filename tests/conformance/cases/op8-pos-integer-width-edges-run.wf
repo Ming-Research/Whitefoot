@@ -2,141 +2,71 @@ alias ExitStatus = std::process::ExitStatus;
 alias exit_status = std::process::exit_status;
 
 fn main() -> status: ExitStatus pure {
-  doc "All four unsigned widths check masked wrapping shifts, rotation, zero leading and trailing counts, full-width population, saturating multiplication and the admitted byte-swap widths.";
+  doc "All four unsigned widths compute masked wrapping shifts, rotation, zero leading and trailing counts, full-width population, saturating multiplication and the admitted byte-swap widths. Every result enters the exit status 35: each width's shift and rotation contribute 2 apiece, the twelve counts together contribute their total less 348, and each saturated product and byte swap contributes its distance above one less than its expected value.";
   let shifted8 = ishl.wrap(1_u8, 9_u32);
-  if shifted8 == 2_u8 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
   let rotated8 = irotl(1_u8, 9_u32);
-  if rotated8 == 2_u8 {
-  } else {
-    return exit_status(code: 2_u8);
-  }
   let population8 = ipopcount(255_u8);
-  if population8 == 8_u32 {
-  } else {
-    return exit_status(code: 3_u8);
-  }
   let leading8 = iclz(0_u8);
-  if leading8 == 8_u32 {
-  } else {
-    return exit_status(code: 4_u8);
-  }
   let trailing8 = ictz(0_u8);
-  if trailing8 == 8_u32 {
-  } else {
-    return exit_status(code: 5_u8);
-  }
   let saturated8 = 255_u8 *sat 2_u8;
-  if saturated8 == 255_u8 {
-  } else {
-    return exit_status(code: 6_u8);
-  }
   let shifted16 = ishl.wrap(1_u16, 17_u32);
-  if shifted16 == 2_u16 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
   let rotated16 = irotl(1_u16, 17_u32);
-  if rotated16 == 2_u16 {
-  } else {
-    return exit_status(code: 2_u8);
-  }
   let population16 = ipopcount(65535_u16);
-  if population16 == 16_u32 {
-  } else {
-    return exit_status(code: 3_u8);
-  }
   let leading16 = iclz(0_u16);
-  if leading16 == 16_u32 {
-  } else {
-    return exit_status(code: 4_u8);
-  }
   let trailing16 = ictz(0_u16);
-  if trailing16 == 16_u32 {
-  } else {
-    return exit_status(code: 5_u8);
-  }
   let saturated16 = 65535_u16 *sat 2_u16;
-  if saturated16 == 65535_u16 {
-  } else {
-    return exit_status(code: 6_u8);
-  }
   let swapped16 = ibswap(1_u16);
-  if swapped16 == 256_u16 {
-  } else {
-    return exit_status(code: 7_u8);
-  }
   let shifted32 = ishl.wrap(1_u32, 33_u32);
-  if shifted32 == 2_u32 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
   let rotated32 = irotl(1_u32, 33_u32);
-  if rotated32 == 2_u32 {
-  } else {
-    return exit_status(code: 2_u8);
-  }
   let population32 = ipopcount(4294967295_u32);
-  if population32 == 32_u32 {
-  } else {
-    return exit_status(code: 3_u8);
-  }
   let leading32 = iclz(0_u32);
-  if leading32 == 32_u32 {
-  } else {
-    return exit_status(code: 4_u8);
-  }
   let trailing32 = ictz(0_u32);
-  if trailing32 == 32_u32 {
-  } else {
-    return exit_status(code: 5_u8);
-  }
   let saturated32 = 4294967295_u32 *sat 2_u32;
-  if saturated32 == 4294967295_u32 {
-  } else {
-    return exit_status(code: 6_u8);
-  }
   let swapped32 = ibswap(1_u32);
-  if swapped32 == 16777216_u32 {
-  } else {
-    return exit_status(code: 7_u8);
-  }
   let shifted64 = ishl.wrap(1_u64, 65_u32);
-  if shifted64 == 2_u64 {
-  } else {
-    return exit_status(code: 1_u8);
-  }
   let rotated64 = irotl(1_u64, 65_u32);
-  if rotated64 == 2_u64 {
-  } else {
-    return exit_status(code: 2_u8);
-  }
   let population64 = ipopcount(18446744073709551615_u64);
-  if population64 == 64_u32 {
-  } else {
-    return exit_status(code: 3_u8);
-  }
   let leading64 = iclz(0_u64);
-  if leading64 == 64_u32 {
-  } else {
-    return exit_status(code: 4_u8);
-  }
   let trailing64 = ictz(0_u64);
-  if trailing64 == 64_u32 {
-  } else {
-    return exit_status(code: 5_u8);
-  }
   let saturated64 = 18446744073709551615_u64 *sat 2_u64;
-  if saturated64 == 18446744073709551615_u64 {
-  } else {
-    return exit_status(code: 6_u8);
-  }
   let swapped64 = ibswap(1_u64);
-  if swapped64 == 72057594037927936_u64 {
-  } else {
-    return exit_status(code: 7_u8);
-  }
-  return exit_status(code: 0_u8);
+  let moved8 = shifted8 + rotated8;
+  let clamped8 = saturated8 - 254_u8;
+  let edges8 = moved8 + clamped8;
+  let moved16 = shifted16 + rotated16;
+  let clamped16 = saturated16 - 65534_u16;
+  let swapped16_step = swapped16 - 255_u16;
+  let partial16 = moved16 + clamped16;
+  let edges16 = partial16 + swapped16_step;
+  let moved32 = shifted32 + rotated32;
+  let clamped32 = saturated32 - 4294967294_u32;
+  let swapped32_step = swapped32 - 16777215_u32;
+  let partial32 = moved32 + clamped32;
+  let edges32 = partial32 + swapped32_step;
+  let moved64 = shifted64 + rotated64;
+  let clamped64 = saturated64 - 18446744073709551614_u64;
+  let swapped64_step = swapped64 - 72057594037927935_u64;
+  let partial64 = moved64 + clamped64;
+  let edges64 = partial64 + swapped64_step;
+  let counts8a = population8 + leading8;
+  let counts8 = counts8a + trailing8;
+  let counts16a = population16 + leading16;
+  let counts16 = counts16a + trailing16;
+  let counts32a = population32 + leading32;
+  let counts32 = counts32a + trailing32;
+  let counts64a = population64 + leading64;
+  let counts64 = counts64a + trailing64;
+  let counts_low = counts8 + counts16;
+  let counts_high = counts32 + counts64;
+  let counts_all = counts_low + counts_high;
+  let counts_step = counts_all - 348_u32;
+  let wide8 = cvt::<u8, u32>(edges8);
+  let wide16 = cvt::<u16, u32>(edges16);
+  let narrow64 = cvt::<u64, u32>(edges64);
+  let edges_low = wide8 + wide16;
+  let edges_high = edges32 + narrow64;
+  let edges_all = edges_low + edges_high;
+  let total = edges_all + counts_step;
+  let code = cvt::<u32, u8>(total);
+  return exit_status(code: code);
 }

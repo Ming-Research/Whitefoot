@@ -1,0 +1,13 @@
+fn limit() -> result: u64 pure {
+  return 2_u64;
+}
+
+fn inspect(value: u64) -> result: u64 pure contract {
+  requires forall each(i in 0_u64..limit()): i == i;
+} {
+  return value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

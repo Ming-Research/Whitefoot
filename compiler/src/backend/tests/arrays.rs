@@ -371,13 +371,6 @@ fn main() -> status: std::process::ExitStatus pure {
   if entries[1_u64].samples[1_u64][1_u64] != 53_u64 {
     return std::process::exit_status(code: 1_u8);
   }
-  if stored_entry.tag != 59_u64 {
-    return std::process::exit_status(code: 2_u8);
-  }
-  let length = stored_entry.samples[1_u64].len;
-  if length != 2_u64 {
-    return std::process::exit_status(code: 3_u8);
-  }
   let first = read(values: &entries, outer: 0_u64, row: 0_u64, column: 1_u64);
   let trailing = read(values: &entries, outer: 1_u64, row: 1_u64, column: 1_u64);
   if first != 23_u64 {
@@ -394,9 +387,13 @@ fn main() -> status: std::process::ExitStatus pure {
   if tag != 59_u64 {
     return std::process::exit_status(code: 7_u8);
   }
-  return std::process::exit_status(code: 0_u8);
+  let stored_tag = cvt::<u64, u8>(stored_entry.tag);
+  return std::process::exit_status(code: stored_tag);
 }
 "#;
+    // The program's exit status is the constant `stored_entry.tag` read
+    // through its static place, which the harness compares with 59.
+    //
     // Independent calls with storage unavailable to the WF optimizer retain
     // the shared-reference argument ABI. The WF caller above separately
     // supplies actual immutable globals through the same helpers.
@@ -438,7 +435,7 @@ __attribute__((constructor)) static void check_shared_abi(void) {
             );
         }
         let output = super::compile_link_and_run(&module, Some(observer), &[]);
-        assert_eq!(output.status.code(), Some(0), "{overlap:?}: {output:?}");
+        assert_eq!(output.status.code(), Some(59), "{overlap:?}: {output:?}");
         assert!(output.stdout.is_empty(), "{output:?}");
         assert!(output.stderr.is_empty(), "{output:?}");
     }
@@ -786,8 +783,8 @@ fn relay(values: Array<Record, 1>) -> result: Array<Record, 1> pure {
 
 fn main() -> status: std::process::ExitStatus pure {
   let owner = box_new::<u64>(value: 17_u64);
-  let held = make(owner: move owner, tag: 17_u64);
-  let returned = relay(values: move held);
+  let observed_state = make(owner: move owner, tag: 17_u64);
+  let returned = relay(values: move observed_state);
   let tag = returned[0_u64].tag;
   if tag != 17_u64 {
     return std::process::exit_status(code: 1_u8);
@@ -815,7 +812,9 @@ fn main() -> status: std::process::ExitStatus pure {
 /// `let previous = replace empty_returned[1_u64] = Empty();`. [SET-2] retires
 /// and nothing here observes the old value, so the successor is the ordinary
 /// `set` whose old occupant takes [WIN-3]'s disposition, an empty action for
-/// a zero-byte element.
+/// a zero-byte element. The two arrays' `len` reads are gone: an `Array`'s
+/// extent is its type's `n` and occupies no storage, so the checker already
+/// decides them and they observed nothing the run could get wrong.
 #[test]
 fn full_array_zero_extents_and_zero_byte_elements_execute_without_payload_access() {
     let source = br#"struct Empty {
@@ -865,14 +864,6 @@ fn main() -> status: std::process::ExitStatus pure {
   }
   if mixed[1_u64].tag != 19_u64 {
     return std::process::exit_status(code: 4_u8);
-  }
-  let zero_length = zero_again.len;
-  let empty_length = empty_again.len;
-  if zero_length != 0_u64 {
-    return std::process::exit_status(code: 1_u8);
-  }
-  if empty_length != 2_u64 {
-    return std::process::exit_status(code: 2_u8);
   }
   return std::process::exit_status(code: 0_u8);
 }
@@ -936,18 +927,19 @@ fn const_runs_are_immutable_globals_and_execute_through_index_and_len() {
     )));
     let main = emitted_function(&llvm, "main");
     // The constant lookup is discharged [OP-4]: no bounds compare remains.
-    // The source's two terminal result checks are ordinary control flow, not
-    // claims, so all three outcomes return an ExitStatus without a trap edge.
+    // The element check is ordinary control flow, not a claim, and the
+    // length leaves as the exit status, so both outcomes return an
+    // ExitStatus without a trap edge.
     assert!(!main.contains("icmp ult i64"));
-    assert_eq!(main.matches("icmp eq").count(), 2);
+    assert_eq!(main.matches("icmp eq").count(), 1);
     assert_eq!(
         main.matches("call void @wf_std.process.exit_status")
             .count(),
-        3
+        2
     );
     assert!(!main.contains("call void @wf_trap"));
     let output = compile_and_run(&llvm);
-    assert!(output.status.success());
+    assert_eq!(output.status.code(), Some(4), "{output:?}");
     assert!(output.stdout.is_empty());
     assert!(output.stderr.is_empty());
 }
@@ -980,10 +972,6 @@ fn read(values: Array<u16, 4>, offset: u64) -> result: u16 pure {
 
 fn main() -> status: std::process::ExitStatus pure {
   let values = make();
-  let length = values.len;
-  if length != 4_u64 {
-    return std::process::exit_status(code: 1_u8);
-  }
   let value = read(values: values, offset: 3_u64);
   if value != 42_u16 {
     return std::process::exit_status(code: 2_u8);
@@ -1028,7 +1016,7 @@ fn main() -> status: std::process::ExitStatus pure {
 }
 
 #[test]
-fn indexed_set_checks_before_rhs_and_updates_the_run() {
+fn indexed_set_has_no_bounds_branch_and_updates_the_run() {
     let source = br#"fn replacement() -> result: u8 pure {
   return 9_u8;
 }
@@ -1048,17 +1036,17 @@ fn main() -> status: std::process::ExitStatus pure {
     let llvm = compile(source);
     let main = emitted_function(&llvm, "main");
     // The discharged target carries no bounds branch [OP-4]; SET-1's order
-    // remains: the RHS call is emitted after target formation and the store
+    // remains: the RHS call is emitted before target formation and the store
     // after the RHS.
     //
     // KEPT AS WRITTEN for the lowering port: the RHS call and the element
     // store are matched by their emitted spellings.
     let rhs = main
         .find("call i8 @wf_replacement")
-        .expect("RHS must be emitted after target evaluation");
+        .expect("RHS must be emitted");
     assert!(
-        !main[..rhs].contains("call void @wf_trap"),
-        "no bounds trap edge precedes the RHS"
+        !main.contains("call void @wf_trap"),
+        "the discharged target has no bounds trap edge"
     );
     let store = main[rhs..]
         .find("store i8")
@@ -1122,7 +1110,7 @@ fn a_long_loop_over_a_dynamically_indexed_run_keeps_the_frame_bounded() {
   let total = 0_u64;
   for @outer (
     batch in 0_u64..25000_u64,
-    invariant held: built.len >= 8_u64
+    invariant observed_state: built.len >= 8_u64
   ) {
     for @inner (
       cursor in 0_u64..8_u64,
@@ -1164,7 +1152,7 @@ fn a_long_loop_over_a_dynamically_indexed_run_keeps_the_frame_bounded() {
 }
 
 #[test]
-fn nested_struct_run_update_uses_the_element_address_prepared_before_the_rhs() {
+fn nested_struct_run_update_uses_the_element_address_prepared_after_the_rhs() {
     let source = br#"struct Inner {
   values: Slots<u8, 2>;
   sibling: u16;
@@ -1179,7 +1167,11 @@ fn replacement() -> result: u8 pure {
   return 9_u8;
 }
 
-fn main() -> status: std::process::ExitStatus pure {
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  let std::process::Inputs(args: unused_args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: out, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
+  let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
+  std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
+  std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
   let base = array_filled::<u8, 2>(value: 0_u8);
   let values = slots_from_array::<u8, 2>(values: base);
   let inner = Inner(values: move values, sibling: 77_u16);
@@ -1189,17 +1181,32 @@ fn main() -> status: std::process::ExitStatus pure {
   if stored != 9_u8 {
     return std::process::exit_status(code: 1_u8);
   }
-  if outer.inner.sibling != 77_u16 {
-    return std::process::exit_status(code: 2_u8);
+  let sibling_byte = cvt::<u16, u8>(outer.inner.sibling);
+  let prefix_byte = cvt::<u32, u8>(outer.prefix);
+  let report = slots_new::<u8, 2>();
+  place_back(window: &report, value: sibling_byte);
+  place_back(window: &report, value: prefix_byte);
+  let window = &report[0_u64..2_u64];
+  let no_deadline = None<std::time::Instant>();
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = std::io::write_once(factory: &entry_factory, output: &out, source: window, start: 0_u64, end: 2_u64, deadline: no_deadline, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  match wait_outcome_1 {
+    Ok(value: accepted) => {
+      return std::process::exit_status(code: 0_u8);
+    }
+    Err(error: problem) => {
+      return std::process::exit_status(code: 4_u8);
+    }
   }
-  if outer.prefix != 123_u32 {
-    return std::process::exit_status(code: 3_u8);
-  }
-  return std::process::exit_status(code: 0_u8);
 }
 "#;
     let llvm = compile(source);
     let main = emitted_function(&llvm, "main");
+    // The program writes the two neighbouring fields, `outer.inner.sibling`
+    // and `outer.prefix`, as one byte each after the element write; the
+    // harness compares them with the constructed 77 and 123 below.
+    //
     // The discharged projected target carries no bounds branch [OP-4].
     //
     // KEPT AS WRITTEN for the lowering port: the RHS call spelling, the
@@ -1210,8 +1217,8 @@ fn main() -> status: std::process::ExitStatus pure {
         .find("call i8 @wf_replacement")
         .expect("RHS must follow projected target evaluation");
     assert!(
-        !main[..rhs].contains("call void @wf_trap"),
-        "no bounds trap edge precedes the RHS"
+        !main.contains("call void @wf_trap"),
+        "the discharged target has no bounds trap edge"
     );
     assert_eq!(main.matches("call i8 @wf_replacement").count(), 1);
     let replacement = main[..rhs]
@@ -1238,15 +1245,15 @@ fn main() -> status: std::process::ExitStatus pure {
     let prepared = main
         .find(&format!("{address} = getelementptr "))
         .expect("the complete element address is prepared once");
-    assert!(prepared < rhs && rhs < store);
+    assert!(rhs < prepared && prepared < store);
     assert!(
-        !main[rhs..store].contains("store %wf.t"),
+        !main[prepared..store].contains("store %wf.t"),
         "the element write must not rebuild its enclosing structs"
     );
 
     let output = compile_and_run(&llvm);
-    assert!(output.status.success());
-    assert!(output.stdout.is_empty());
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(output.stdout, [77_u8, 123_u8], "{output:?}");
     assert!(output.stderr.is_empty());
 }
 
@@ -1254,7 +1261,8 @@ fn main() -> status: std::process::ExitStatus pure {
 /// and x1 retires the `cap` and `room` reads beside it: [MSR-1]'s table now
 /// gives `Array<T, N>` only a `len` cell, an array being its own extent with
 /// no second capacity quantity and no window origin. Their successor is the
-/// `len` observation this case keeps, over the same element writes and reads.
+/// `len` observation this case keeps, over the same element writes and reads,
+/// delivered as the exit status and compared by the harness.
 #[test]
 fn general_run_elements_preserve_array_places_and_standing_extents() {
     let source = br#"fn main() -> status: std::process::ExitStatus pure {
@@ -1267,18 +1275,18 @@ fn general_run_elements_preserve_array_places_and_standing_extents() {
     return std::process::exit_status(code: 1_u8);
   }
   if rows[0_u64][1_u64] != 9_u64 {
-    return std::process::exit_status(code: 2_u8);
-  }
-  if width != 2_u64 {
     return std::process::exit_status(code: 3_u8);
   }
-  return std::process::exit_status(code: 0_u8);
+  let width_code = cvt::<u64, u8>(width);
+  return std::process::exit_status(code: width_code);
 }
 "#;
     for overlap in [crate::OverlapLowering::Off, crate::OverlapLowering::On] {
         let llvm = super::emit_lowered(source, overlap);
         let output = compile_and_run(&llvm);
-        assert!(output.status.success(), "{overlap:?}: {output:?}");
+        // The exit status is the standing extent `rows[0_u64].len`, read
+        // after the element writes; the two element checks fail with 1 and 3.
+        assert_eq!(output.status.code(), Some(2), "{overlap:?}: {output:?}");
         assert!(output.stdout.is_empty());
         assert!(output.stderr.is_empty());
     }
@@ -1529,21 +1537,18 @@ fn main() -> status: std::process::ExitStatus pure {
     return std::process::exit_status(code: 5_u8);
   }
   let empty = box_array_filled::<Array<u64, 2>>(count: 0_u64, value: seed);
-  if empty.inner.len != 0_u64 {
-    return std::process::exit_status(code: 6_u8);
-  }
+  let empty_length = cvt::<u64, u8>(empty.inner.len);
   let empty_seed = array_filled::<u64, 0>(value: 0_u64);
   let zero_width = box_array_filled::<Array<u64, 0>>(count: 3_u64, value: empty_seed);
-  if zero_width.inner[2_u64].len != 0_u64 {
-    return std::process::exit_status(code: 7_u8);
-  }
-  return std::process::exit_status(code: 0_u8);
+  return std::process::exit_status(code: empty_length);
 }
 "#;
     let module = retain_calls(&compile(source))
         .replace("@wf__heap_take(", "@wf_test_allocate(")
         .replace("@wf__heap_give(", "@wf_test_release(");
-    // STOR-1: the capacity-zero array now allocates nothing.
+    // STOR-1: the capacity-zero array now allocates nothing. The exit status
+    // is that empty owner's stored `len`, which must read 0; the element
+    // extent of `Array<u64, 0>` is its type's and is not read at run time.
     let observer = super::owned_places::allocation_observer(2, 0);
     let output = super::compile_link_and_run(&module, Some(&observer), &[]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
@@ -1696,12 +1701,14 @@ fn runtime_allocation_headers_qualify_for_zero_and_nonzero_strides() {
             let exact = host.with_runtime_allocation_limits_for_test(header, 8);
             assert_eq!(validate_program(exact, program), Ok(()));
             let short = host.with_runtime_allocation_limits_for_test(header - 1, 8);
-            assert_eq!(
+            assert!(matches!(
                 validate_program(short, program),
-                Err(TargetLayoutFailure::Unrepresentable(
-                    crate::target::TargetObject::RuntimeSizedAllocation
-                ))
-            );
+                Err(TargetLayoutFailure::Allocation {
+                    alignment: Some(1),
+                    limit: crate::target::AllocationLimit::AllocationSize { maximum },
+                    ..
+                }) if maximum == header - 1
+            ));
             if element == "Empty" {
                 // Narrow only the address domain, retaining enough space for
                 // the ordinary prelude's concrete nominal representations.

@@ -7,8 +7,8 @@ struct Stamp {
 fn stamped(table: &ConcurrentHashMap<Stamp>) -> result: Bool reads(table) {
   doc "Reports whether the table holds a stamp.";
   let count = map_count::<Stamp>(map: table);
-  let held = count > 0_u64;
-  return held;
+  let kept = count > 0_u64;
+  return kept;
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {

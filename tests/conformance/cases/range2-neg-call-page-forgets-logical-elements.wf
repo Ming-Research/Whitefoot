@@ -1,0 +1,28 @@
+fn clobber(page: &[u64]) -> result: unit writes(page) {
+  doc "The guard proves the only page-local subscript bound.";
+  if 0_u64 < page^.len {
+    set page^[0_u64] = 9_u64;
+  }
+  return unit;
+}
+
+fn need_small(rows: &Paged<u64>) -> result: unit pure contract {
+  requires forall small(k in 0_u64..rows^.len): rows^[k] <= 7_u64;
+} {
+  return unit;
+}
+
+fn probe(rows: &Paged<u64>, page: u64) -> result: unit reads(rows.len), writes(rows.pages[page]) contract {
+  requires forall held_elements(k in 0_u64..rows^.len): rows^[k] <= 7_u64;
+  requires 1_u64 <= rows^.pages.len;
+  requires page == 0_u64;
+} {
+  doc "REF-4 page formation reads rows.len; OWN-7 makes this page write overlap logical element indices, so RANGE-3 rejects need_small after RANGE-2 forgets their old facts.";
+  clobber(page: &rows^.pages[page]);
+  need_small(rows: rows);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

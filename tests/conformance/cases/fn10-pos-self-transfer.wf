@@ -58,7 +58,7 @@ fn exchange(n: u64, left: Box<u64>, right: Box<u64>) -> result: u64 pure {
   }
   let spare = box_new::<u64>(value: n);
   let empty = Plain(value: n);
-  let held = &empty;
+  let observed = &empty;
   let next = n - 1_u64;
   return musttail exchange(n: next, left: move right, right: move left);
 }

@@ -1,0 +1,3 @@
+fn second(a: u64) -> r: u64 {
+  return a;
+}

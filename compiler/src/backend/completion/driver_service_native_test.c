@@ -207,7 +207,7 @@ int main(void) {
     while (!atomic_load(&wf_executors[0].ready)) wf_prim_yield();
     CHECK(atomic_load(&wf_driver_root.ingress_count) == 1u);
     CHECK(atomic_load(&wf_driver_stats[0].ingress_commits) == 1u);
-    CHECK(!atomic_load(&wf_active_invocations) && !atomic_load(&destroyed_root));
+    CHECK(!wf_invocations_active() && !atomic_load(&destroyed_root));
     CHECK(wf_driver_adopt_ingress(&wf_driver_root));
     CHECK(!wf_driver_adopt_ingress(&wf_driver_root));
     CHECK(pthread_join(thread, NULL) == 0);

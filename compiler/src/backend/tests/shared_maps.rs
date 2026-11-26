@@ -1,8 +1,284 @@
+//! Shared-map emission and atomic target-group lock-ledger reporting.
 //! Deliberately damaged lowering must make the amendment-S witnesses fail.
 //! These checks qualify the conformance observations independently of the
 //! emitted instruction sequences they damage.
 
 use super::{compile, compile_and_run, compile_link_and_run};
+
+/// Keep every ledger witness on the ordinary source-to-emission path used by
+/// the dispatch ledger. The entry is used on every path; only the body's
+/// placement of the metadata read changes between witnesses.
+const LOCK_LEDGER_SOURCE: &str = r#"const ledger_names: Array<u8, 1> =[97_u8];
+
+struct Meta {
+  count: u64;
+}
+
+fn lock_run(keys: Shared<ConcurrentHashMap<u8>>, meta: Shared<STATE>, kept: Bool) -> result: unit pure waits {
+  let key = &ledger_names[0_u64..1_u64];
+  atomic slot = &keys[key], m = &metaGUARD {
+BODY
+    set slot^ = None<u8>();
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure waits {
+  let keys = shared_map_new::<u8>(capacity: 1_u64);
+  let initial = INITIAL;
+  let meta = shared_new::<STATE>(value: initial);
+  let kept = True();
+  lock_run(keys: move keys, meta: move meta, kept: kept);
+  return std::process::exit_status(code: 0_u8);
+}
+"#;
+
+fn lock_ledger_source(state: &str, initial: &str, guard: &str, body: &str) -> String {
+    LOCK_LEDGER_SOURCE
+        .replace("STATE", state)
+        .replace("INITIAL", initial)
+        .replace("GUARD", guard)
+        .replace("BODY", body)
+}
+
+fn lock_ledger_position(source: &str, needle: &str) -> String {
+    let offset = source
+        .find(needle)
+        .expect("the witness contains the source position");
+    let before = &source[..offset];
+    let line = before.bytes().filter(|byte| *byte == b'\n').count() + 1;
+    let column = before
+        .rsplit_once('\n')
+        .map_or(before.len(), |(_, tail)| tail.len())
+        + 1;
+    format!("test.wf:{line}:{column}")
+}
+
+fn lock_ledger_lines(module: &str) -> Vec<&str> {
+    module
+        .lines()
+        .filter_map(|line| line.strip_prefix(crate::LOCK_LEDGER_PREFIX))
+        .filter(|line| line.starts_with("LOCK lock_run  "))
+        .collect()
+}
+
+fn metadata_lock_line(source: &str, state: &str, timing: &str, first_use: &str) -> String {
+    format!(
+        "LOCK lock_run  {}  targets(m): {state}  {timing}; first use {}",
+        lock_ledger_position(source, "atomic slot"),
+        lock_ledger_position(source, first_use),
+    )
+}
+
+/// A host display path must remain within one comment, with literal
+/// backslashes distinct from escapes for control characters.
+#[test]
+fn lock_ledger_escapes_control_characters_in_host_display_paths() {
+    let source = lock_ledger_source(
+        "Meta",
+        "Meta(count: 1_u64)",
+        "",
+        "    let observed = m^.count;\n    set m^.count = observed;",
+    );
+    let inputs = [crate::SourceInput::from_host_path(
+        "test.wf",
+        "host\nledger_tail\r\t\u{1}\\test.wf",
+        source.as_bytes(),
+    )];
+    let module = crate::native_test_support::timed("whitefoot-compile", || {
+        crate::compile(&inputs, crate::CompilerLimits::default())
+            .expect("normal compiler pipeline must emit")
+            .into_string()
+    });
+    let lines = lock_ledger_lines(&module);
+    assert_eq!(lines.len(), 2, "one line per target group: {lines:?}");
+    let expected = metadata_lock_line(&source, "Meta", "on every path", "let observed")
+        .replace("test.wf", r"host\nledger_tail\r\t\u{1}\\test.wf");
+    let comment = format!("{}{expected}", crate::LOCK_LEDGER_PREFIX);
+    assert_eq!(
+        module
+            .lines()
+            .filter(|line| *line == comment.as_str())
+            .count(),
+        1,
+        "the escaped metadata path stays on one lock comment: {lines:?}"
+    );
+    assert!(
+        !module.lines().any(|line| line.starts_with("ledger_tail")),
+        "host text after a newline must not become a module line"
+    );
+}
+
+/// An unconditional first read must not be described as conditional merely
+/// because the emitter checks the lazy group's taken word.
+#[test]
+fn lock_ledger_reports_a_metadata_read_on_every_path() {
+    let source = lock_ledger_source(
+        "Meta",
+        "Meta(count: 1_u64)",
+        "",
+        "    let observed = m^.count;\n    set m^.count = observed;\n    if kept {\n      set slot^ = Some<u8>(value: 1_u8);\n    }",
+    );
+    let module = compile(source.as_bytes());
+    let lines = lock_ledger_lines(&module);
+    assert_eq!(lines.len(), 2, "one line per target group: {lines:?}");
+    let expected = metadata_lock_line(&source, "Meta", "on every path", "let observed");
+    assert!(
+        lines.contains(&expected.as_str()),
+        "an unconditional read takes Meta on every path: {lines:?}"
+    );
+}
+
+/// The metadata group is reached only through the true successor of `kept`.
+/// A report that promotes that use to every path must fail this assertion.
+#[test]
+fn lock_ledger_reports_a_metadata_read_on_some_paths() {
+    let source = lock_ledger_source(
+        "Meta",
+        "Meta(count: 1_u64)",
+        "",
+        "    if kept {\n      let observed = m^.count;\n      set m^.count = observed;\n    }",
+    );
+    let module = compile(source.as_bytes());
+    let lines = lock_ledger_lines(&module);
+    assert_eq!(lines.len(), 2, "one line per target group: {lines:?}");
+    let expected = metadata_lock_line(&source, "Meta", "on some paths", "let observed");
+    assert!(
+        lines.contains(&expected.as_str()),
+        "the false successor never uses Meta: {lines:?}"
+    );
+}
+
+/// Primitive states precede the entry's nominal map state. The conditional
+/// primitive read does not postpone its lock: acquiring the entry takes both.
+#[test]
+fn lock_ledger_names_the_entry_that_takes_an_earlier_primitive_group() {
+    let source = lock_ledger_source(
+        "u64",
+        "1_u64",
+        "",
+        "    if kept {\n      let observed = m^;\n      set m^ = observed;\n    }",
+    );
+    let module = compile(source.as_bytes());
+    let lines = lock_ledger_lines(&module);
+    assert_eq!(lines.len(), 2, "one line per target group: {lines:?}");
+    let entry = lock_ledger_position(&source, "slot =");
+    let expected = format!(
+        "{}; taken with targets(slot) at {entry}",
+        metadata_lock_line(&source, "u64", "before the guard", "slot ="),
+    );
+    assert!(
+        lines.contains(&expected.as_str()),
+        "the entry takes u64 before the guard and reports why: {lines:?}"
+    );
+}
+
+/// The guard's read requires the metadata state before the guard, even though
+/// the block itself uses it only under a condition.
+#[test]
+fn lock_ledger_reports_a_guard_read_before_the_guard() {
+    let source = lock_ledger_source(
+        "Meta",
+        "Meta(count: 1_u64)",
+        " when m^.count != 0_u64",
+        "    if kept {\n      let observed = m^.count;\n      set m^.count = observed;\n    }",
+    );
+    let module = compile(source.as_bytes());
+    let lines = lock_ledger_lines(&module);
+    assert_eq!(lines.len(), 2, "one line per target group: {lines:?}");
+    let expected = metadata_lock_line(&source, "Meta", "before the guard", "m^.count !=");
+    assert!(
+        lines.contains(&expected.as_str()),
+        "a guard read takes Meta before testing the guard: {lines:?}"
+    );
+}
+
+/// A guard over a local value reads no target. Its watch fallback takes all
+/// groups before the guard; the true guard fact makes a repeated body test
+/// redundant under OP-5, so the metadata read runs directly.
+#[test]
+fn lock_ledger_reports_all_groups_before_a_guard_that_reads_no_target() {
+    let source = lock_ledger_source(
+        "Meta",
+        "Meta(count: 1_u64)",
+        " when kept",
+        "    let observed = m^.count;\n    set m^.count = observed;",
+    );
+    let module = compile(source.as_bytes());
+    let lines = lock_ledger_lines(&module);
+    assert_eq!(lines.len(), 2, "one line per target group: {lines:?}");
+    let expected = metadata_lock_line(&source, "Meta", "before the guard", "atomic slot");
+    assert!(
+        lines.contains(&expected.as_str()),
+        "a guard that reads no target takes Meta before testing the guard: {lines:?}"
+    );
+}
+
+/// Both emitted successors acquire Meta. This catches a report that treats
+/// all acquisitions within source `if` statements as only some paths.
+#[test]
+fn lock_ledger_reports_a_metadata_read_in_both_branches_on_every_path() {
+    let source = lock_ledger_source(
+        "Meta",
+        "Meta(count: 1_u64)",
+        "",
+        "    if kept {\n      let observed = m^.count;\n      set m^.count = observed;\n    } else {\n      let other = m^.count;\n      set m^.count = other;\n    }",
+    );
+    let module = compile(source.as_bytes());
+    let lines = lock_ledger_lines(&module);
+    assert_eq!(lines.len(), 2, "one line per target group: {lines:?}");
+    let metadata = lines
+        .iter()
+        .find(|line| line.contains("targets(m): Meta"))
+        .expect("the metadata group is reported");
+    assert!(metadata.contains("  on every path; first use "), "{metadata}");
+    assert!(
+        metadata.contains(&lock_ledger_position(&source, "let observed")),
+        "{metadata}"
+    );
+    assert!(
+        metadata.contains(&lock_ledger_position(&source, "let other")),
+        "{metadata}"
+    );
+}
+
+/// An unconditional use of a later source state also takes an earlier state
+/// whose own use is conditional. The ledger must name the actual trigger.
+#[test]
+fn lock_ledger_names_a_later_lazy_group_that_takes_an_earlier_group() {
+    let source = lock_ledger_source(
+        "Meta",
+        "Meta(count: 1_u64)",
+        "",
+        "    let observed_tail = z^.count;\n    set z^.count = observed_tail;\n    if kept {\n      let observed = m^.count;\n      set m^.count = observed;\n    }",
+    )
+    .replace(
+        "struct Meta {\n  count: u64;\n}",
+        "struct Meta {\n  count: u64;\n}\n\nstruct Zeta {\n  count: u64;\n}",
+    )
+    .replace("kept: Bool)", "tail: Shared<Zeta>, kept: Bool)")
+    .replace("m = &meta", "m = &meta, z = &tail")
+    .replace(
+        "  let kept = True();",
+        "  let initial_tail = Zeta(count: 1_u64);\n  let tail = shared_new::<Zeta>(value: initial_tail);\n  let kept = True();",
+    )
+    .replace(
+        "meta: move meta, kept: kept",
+        "meta: move meta, tail: move tail, kept: kept",
+    );
+    let module = compile(source.as_bytes());
+    let lines = lock_ledger_lines(&module);
+    assert_eq!(lines.len(), 3, "one line per target group: {lines:?}");
+    let trigger = lock_ledger_position(&source, "let observed_tail");
+    let expected = format!(
+        "{}; taken with targets(z) at {trigger}",
+        metadata_lock_line(&source, "Meta", "on every path", "let observed_tail"),
+    );
+    assert!(
+        lines.contains(&expected.as_str()),
+        "Zeta's unconditional use takes Meta too: {lines:?}"
+    );
+}
 
 fn witness(name: &str) -> Vec<u8> {
     std::fs::read(

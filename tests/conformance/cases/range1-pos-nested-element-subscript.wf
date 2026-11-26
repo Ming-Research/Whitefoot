@@ -9,7 +9,7 @@ fn need(rows: &[Row]) -> result: unit pure contract {
 }
 
 fn forward(rows: &[Row]) -> result: unit pure contract {
-  requires forall held(b in 0_u64..rows^.len, k in 0_u64..rows^[b].entries.len): rows^[b].entries[k] == 0_u64;
+  requires forall observed(b in 0_u64..rows^.len, k in 0_u64..rows^[b].entries.len): rows^[b].entries[k] == 0_u64;
 } {
   need(rows: rows);
   return unit;

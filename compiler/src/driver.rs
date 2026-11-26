@@ -9,10 +9,13 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod cache;
 mod diagnostic;
+mod module_syntax;
 mod packages;
 mod reads;
+mod segments;
 
 pub(crate) mod launcher;
+pub use launcher::require_executable_runner;
 /// The repair pairs that pin repairs with the programs they produce.
 #[cfg(test)]
 mod pinned_repairs;
@@ -25,7 +28,9 @@ pub use cache::{BuildCache, content_digest, running_compiler_identity};
 pub(crate) use diagnostic::Place;
 use diagnostic::{Anchor, Head, Record};
 pub use diagnostic::{DiagnosticFormat, render_driver_failure};
-pub use packages::{ModuleProgramFailure, form_module_program_graph};
+pub use packages::{
+    FormattedFile, ModuleProgramFailure, form_module_program_graph, format_module_program,
+};
 
 use crate::backend::emitter::{LlvmModule, emit_prepared_llvm, prepare_dispatch_layout};
 use crate::target::TargetLayout;
@@ -33,9 +38,10 @@ use crate::{
     ACTIVE_KERNEL_SPEC_HASH, BackendFailure, CanonicalLimits, CanonicalOutcome,
     CanonicalSyntaxUnit, CheckedProgram, EntryRejection, EntryRequest, FinalizeLimits,
     FinalizeOutcome, LexLimits, LexOutcome, LoweringFailure, ParseLimits, ParseOutcome,
-    ResolutionOutcome, ResolvedSyntaxUnit, SemanticOutcome, SourceBundle, SourceInput,
-    SourceLimits, TerminalLimits, TerminalOutcome, audit_canonical, check_semantics,
-    classify_terminals, finalize, lex, parse, parse_graph, resolve,
+    RenderOutcome, RenderedSource, ResolutionOutcome, ResolvedSyntaxUnit, SemanticOutcome,
+    SourceBundle, SourceInput, SourceLimits, TerminalLimits, TerminalOutcome, audit_canonical,
+    check_semantics, classify_terminals, finalize, lex, parse, parse_graph, render_canonical,
+    resolve,
 };
 
 /// Host-compiler optimization arguments for every Whitefoot executable.
@@ -194,10 +200,12 @@ pub enum CompilationFailureKind {
     TargetLayout,
     /// LLVM emission failed internally.
     Backend,
+    /// The selected native toolchain or its probe environment failed.
+    Toolchain,
 }
 
-/// One compiler stop: its stage, its category, the numbered rule when it is a
-/// source rejection, and the record a reader is shown.
+/// One compiler stop, containing the ordered segment rejections or the single
+/// rejection or toolchain failure selected by a later stage.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompilationFailure {
     stage: CompilationStage,
@@ -205,6 +213,36 @@ pub struct CompilationFailure {
     rule_id: Option<&'static str>,
     /// Boxed so a successful compilation's `Result` stays small.
     record: Box<Record>,
+    coordinate: Option<crate::SyntaxCoordinate>,
+    additional: Vec<Self>,
+}
+
+/// One source rejection's structured evidence, retained in recorded verdicts.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourceDiagnostic {
+    rule: String,
+    coordinate: Option<crate::SyntaxCoordinate>,
+    expected: Option<Vec<String>>,
+}
+
+impl SourceDiagnostic {
+    /// Returns the numbered rule this rejection cites.
+    #[must_use]
+    pub fn rule(&self) -> &str {
+        &self.rule
+    }
+
+    /// Returns the original source ordinal and byte interval, when source-local.
+    #[must_use]
+    pub const fn source_coordinate(&self) -> Option<crate::SyntaxCoordinate> {
+        self.coordinate
+    }
+
+    /// Returns grammar-ordered expected terminal labels for a grammar failure.
+    #[must_use]
+    pub fn expected(&self) -> Option<&[String]> {
+        self.expected.as_deref()
+    }
 }
 
 /// Where a rejection is written: a record's display path and the one-based
@@ -244,6 +282,14 @@ impl fmt::Display for SourceLocation {
 }
 
 impl CompilationFailure {
+    fn toolchain(message: String) -> Self {
+        Self::new(
+            CompilationStage::Backend,
+            CompilationFailureKind::Toolchain,
+            message,
+        )
+    }
+
     fn source_envelope(failure: crate::SourceBundleError) -> Self {
         use crate::{LogicalPathError, SourceBundleError};
 
@@ -276,6 +322,8 @@ impl CompilationFailure {
             kind,
             rule_id: None,
             record: Box::new(Record::opaque(&detail)),
+            coordinate: None,
+            additional: Vec::new(),
         }
     }
 
@@ -298,6 +346,193 @@ impl CompilationFailure {
         Self::new(stage, kind, failure)
     }
 
+    fn target_layout(
+        failure: crate::target::TargetLayoutFailure,
+        program: &crate::IrProgram,
+        resolved: &ResolvedSyntaxUnit,
+    ) -> Self {
+        let crate::target::TargetLayoutFailure::Allocation {
+            function,
+            result,
+            ty,
+            size,
+            alignment,
+            limit,
+        } = failure
+        else {
+            return Self::new(
+                CompilationStage::TargetLayout,
+                CompilationFailureKind::TargetLayout,
+                failure,
+            );
+        };
+        let coordinate = crate::syntax::views::SyntaxView::new(resolved.syntax())
+            .ok()
+            .and_then(|view| {
+                let bundle = resolved.syntax().classified_bundle().source_bundle();
+                let origin = |call: &crate::IrSourceCall| {
+                    let node = view.node_with_path(&call.origin)?;
+                    if view.is_prelude_node(node).ok()? {
+                        return None;
+                    }
+                    let coordinate = view.coordinate(node).ok()?;
+                    let module = bundle.module(bundle.file(coordinate.source())?.module())?;
+                    Some((coordinate, module.package() == crate::Package::Standard))
+                };
+                let mut fallback = None;
+                if let Some((coordinate, standard)) = program
+                    .functions()
+                    .get(function)
+                    .and_then(|function| {
+                        function
+                            .source_calls()
+                            .iter()
+                            .find(|call| call.result() == result)
+                    })
+                    .and_then(origin)
+                {
+                    if !standard {
+                        return Some(coordinate);
+                    }
+                    fallback = Some(coordinate);
+                }
+                // Walk retained call edges, never source spelling or filename
+                // heuristics. Standard-package frames lead to the caller that
+                // requests the allocation; their own first position is kept
+                // when the composition has no caller outside that package.
+                let mut pending = std::collections::VecDeque::from([function]);
+                let mut visited = BTreeSet::new();
+                while let Some(callee_index) = pending.pop_front() {
+                    if !visited.insert(callee_index) {
+                        continue;
+                    }
+                    for (caller_index, caller) in program.functions().iter().enumerate() {
+                        for block in caller.blocks() {
+                            for instruction in block.instructions() {
+                                let crate::IrInstruction::Define {
+                                    result,
+                                    operation:
+                                        crate::IrOperation::Call {
+                                            function: callee, ..
+                                        },
+                                    ..
+                                } = instruction
+                                else {
+                                    continue;
+                                };
+                                if *callee as usize != callee_index {
+                                    continue;
+                                }
+                                if let Some((coordinate, standard)) = caller
+                                    .source_calls()
+                                    .iter()
+                                    .find(|call| call.result() == *result)
+                                    .and_then(origin)
+                                {
+                                    if !standard {
+                                        return Some(coordinate);
+                                    }
+                                    fallback.get_or_insert(coordinate);
+                                }
+                                pending.push_back(caller_index);
+                            }
+                        }
+                    }
+                }
+                fallback
+            });
+        fn type_name(program: &crate::IrProgram, ty: crate::IrType) -> String {
+            let element_name = |element| program.element(element).map(|ty| type_name(program, ty));
+            match ty {
+                crate::IrType::Nominal(id) => program.nominal(id).map_or_else(
+                    || format!("{ty:?}"),
+                    |nominal| {
+                        nominal
+                            .stable_spelling()
+                            .unwrap_or(&nominal.name)
+                            .to_owned()
+                    },
+                ),
+                crate::IrType::Unit => "unit".to_owned(),
+                crate::IrType::Bool => "Bool".to_owned(),
+                crate::IrType::Integer { width, signed } => {
+                    format!("{}{width}", if signed { "i" } else { "u" })
+                }
+                crate::IrType::Float { width } => format!("f{width}"),
+                crate::IrType::Array { element, length } => element_name(element)
+                    .map(|element| format!("Array<{element}, {length}>"))
+                    .unwrap_or_else(|| format!("{ty:?}")),
+                crate::IrType::Buffer { element } => element_name(element)
+                    .map(|element| format!("Array<{element}>"))
+                    .unwrap_or_else(|| format!("{ty:?}")),
+                crate::IrType::Segments { element } => element_name(element)
+                    .map(|element| format!("Segments<{element}>"))
+                    .unwrap_or_else(|| format!("{ty:?}")),
+                crate::IrType::Window {
+                    shape,
+                    element,
+                    capacity,
+                } => element_name(element)
+                    .map(|element| {
+                        let shape = match shape {
+                            crate::IrWindowShape::Slots => "Slots",
+                            crate::IrWindowShape::Ring => "Ring",
+                            crate::IrWindowShape::Paged => "Paged",
+                        };
+                        match capacity {
+                            Some(capacity) => format!("{shape}<{element}, {capacity}>"),
+                            None => format!("{shape}<{element}>"),
+                        }
+                    })
+                    .unwrap_or_else(|| format!("{ty:?}")),
+                _ => format!("{ty:?}"),
+            }
+        }
+        let name = type_name(program, ty);
+        let layout = match (size, alignment) {
+            (Some(size), Some(alignment)) => {
+                format!("size {size} bytes, alignment {alignment} bytes")
+            }
+            _ => "size or alignment exceeds the u64 layout arithmetic domain".to_owned(),
+        };
+        let violated = match limit {
+            crate::target::AllocationLimit::Alignment { maximum } => format!(
+                "required allocation alignment exceeds the selected target allocation alignment limit {maximum} bytes"
+            ),
+            crate::target::AllocationLimit::AllocationSize { maximum } => format!(
+                "complete allocation including its descriptor and padding exceeds the selected target allocation byte limit {maximum}"
+            ),
+            crate::target::AllocationLimit::AddressDomain { maximum } => format!(
+                "element representation exceeds the selected target address-index byte limit {maximum}"
+            ),
+            crate::target::AllocationLimit::LayoutCeiling(ceiling) => {
+                let magnitude = |value| match value {
+                    crate::IrLayoutMagnitude::Finite(value) => value.to_string(),
+                    crate::IrLayoutMagnitude::AboveU64 => "above u64".to_owned(),
+                };
+                format!(
+                    "element layout exceeds its ceiling: size at most {} bytes, alignment at most {} bytes, stride at most {} bytes",
+                    magnitude(ceiling.size),
+                    ceiling.align,
+                    magnitude(ceiling.stride)
+                )
+            }
+        };
+        let reason = format!("type {name} (payload {layout}): {violated}");
+        Self {
+            stage: CompilationStage::TargetLayout,
+            kind: CompilationFailureKind::TargetLayout,
+            rule_id: None,
+            record: Box::new(Record::target_layout(
+                reason,
+                resolved.syntax().classified_bundle().source_bundle(),
+                coordinate,
+            )),
+            coordinate: None,
+            additional: Vec::new(),
+        }
+    }
+
     /// A composition rejection [MOD-8, MOD-9, STOR-8] located at a place
     /// another record already resolved, such as a graph entry's line, or at
     /// none when nothing written names it.
@@ -312,6 +547,8 @@ impl CompilationFailure {
             kind: CompilationFailureKind::Source,
             rule_id: Some(rule),
             record: Box::new(Record::placed(issue, bundle, at)),
+            coordinate: None,
+            additional: Vec::new(),
         }
     }
 
@@ -341,6 +578,8 @@ impl CompilationFailure {
                 kind: CompilationFailureKind::Compiler,
                 rule_id: None,
                 record,
+                coordinate: Some(coordinate),
+                additional: Vec::new(),
             }
         } else {
             Self {
@@ -348,11 +587,13 @@ impl CompilationFailure {
                 kind: CompilationFailureKind::Source,
                 rule_id: Some(rule),
                 record,
+                coordinate: Some(coordinate),
+                additional: Vec::new(),
             }
         }
     }
 
-    /// Returns the stage that did not produce a complete result.
+    /// Returns the stage of the first reported rejection.
     #[must_use]
     pub const fn stage(&self) -> CompilationStage {
         self.stage
@@ -378,10 +619,42 @@ impl CompilationFailure {
     /// error[RULE]: Kind` shape -- `whitefootc: compiler failure in Stage:
     /// Kind` for a stop that is not a source rejection -- the marked source
     /// line, then one indented `label: value` line per payload field. The JSON
-    /// form is one complete object on one line with the same payload field
-    /// names. Both are deterministic for one compiler executable.
+    /// form is one complete object per rejection on its own line with the same
+    /// payload field names. Both are deterministic for one compiler executable.
     #[must_use]
     pub fn render(&self, format: DiagnosticFormat) -> String {
+        self.diagnostics()
+            .map(|diagnostic| diagnostic.render_diagnostic(format))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Returns each rejection in source order; later stages return one record.
+    pub fn diagnostics(&self) -> impl Iterator<Item = &Self> {
+        core::iter::once(self).chain(self.additional.iter())
+    }
+
+    /// Returns the source coordinate of this record, when it has one.
+    #[must_use]
+    pub const fn source_coordinate(&self) -> Option<crate::SyntaxCoordinate> {
+        self.coordinate
+    }
+
+    fn source_diagnostics(&self) -> Vec<SourceDiagnostic> {
+        self.diagnostics()
+            .filter_map(|diagnostic| {
+                diagnostic.rule_id().map(|rule| SourceDiagnostic {
+                    rule: rule.to_owned(),
+                    coordinate: diagnostic.coordinate,
+                    expected: diagnostic.record.expected_terminals().map(<[String]>::to_vec),
+                })
+            })
+            .collect()
+    }
+
+    /// Renders this individual record, without the other segment rejections.
+    #[must_use]
+    pub fn render_diagnostic(&self, format: DiagnosticFormat) -> String {
         let category = format!("{:?}", self.kind);
         let stage = format!("{:?}", self.stage);
         // A source rejection is always in the source stages, so its rule is
@@ -420,7 +693,7 @@ impl CompilationFailure {
         self.record.location()
     }
 
-    /// Returns the exact numbered source rule this rejection cites.
+    /// Returns the exact numbered source rule the first rejection cites.
     ///
     /// Present for every [`CompilationFailureKind::Source`] stop, at whichever
     /// stage selected it, and absent for every stop that is not a
@@ -677,8 +950,9 @@ fn with_library_records<'input>(
 
 /// Checks every module of a module program's own package and of the
 /// packages it binds against its dependencies' interfaces, in package and
-/// row order, without selecting an entry, and returns the first rejected
-/// module's failure [MOD-8, MOD-11]. Standard library modules are checked
+/// row order, without selecting an entry. DIAG-1 first reports every source
+/// segment rejection together; later stages return the first rejected module's
+/// failure [MOD-8, MOD-11]. Standard library modules are checked
 /// with the library.
 ///
 /// `inputs` are the modules' interface and implementation records, each
@@ -691,6 +965,25 @@ pub fn check_module_program(
     let inputs = &with_library_records(graph, inputs);
     let modules = graph.program_modules().collect::<Vec<_>>();
     require_module_verdicts(graph, inputs, &modules, limits, None)
+}
+
+/// Checks a module program through the same DIAG-1 program-wide syntax gate
+/// and MOD-8 module verdicts as [`check_module_program`], retaining accepted
+/// module verdicts and proof receipts in `cache`.
+///
+/// # Errors
+///
+/// Returns every independent syntax-segment rejection together, or the first
+/// failure of a later stage, exactly as the uncached program check does.
+pub fn check_module_program_with_cache(
+    graph: &crate::ModuleGraph,
+    inputs: &[SourceInput<'_>],
+    limits: CompilerLimits,
+    cache: &BuildCache,
+) -> Result<(), CompilationFailure> {
+    let inputs = &with_library_records(graph, inputs);
+    let modules = graph.program_modules().collect::<Vec<_>>();
+    require_module_verdicts(graph, inputs, &modules, limits, Some(cache))
 }
 
 /// Checks one module against the interfaces it may name [MOD-8]: the
@@ -802,13 +1095,15 @@ pub enum CheckOutcome {
         /// The pending interface function declarations, in source order.
         pending: Vec<String>,
     },
-    /// The check's first source rejection, and the failing tasks an impact
-    /// report lists, the first of which is that rejection [MOD-8].
+    /// The check's source rejection report and the failing tasks an impact
+    /// report lists [MOD-8]. Syntax reports contain every rejected segment.
     Rejected {
-        /// The numbered rule the rejection cites.
+        /// The numbered rule the first rejection cites.
         rule: Option<String>,
         /// The rejection as a fresh check renders it.
         failure: String,
+        /// Structured records in the same order as the rejection report.
+        diagnostics: Vec<SourceDiagnostic>,
         /// One task per failing definition, body or declaration.
         tasks: Vec<ImpactTask>,
         /// Whether the tasks name every failure of the check; a list that
@@ -951,8 +1246,20 @@ pub fn module_verdict(
     let inputs = &with_library_records(graph, inputs);
     let target = registered_module(graph, module)?;
     let check = ModuleCheck::new(graph, inputs, target, interface_only);
+    module_verdict_using(graph, inputs, module, &check, limits, cache, None)
+}
+
+fn module_verdict_using(
+    graph: &crate::ModuleGraph,
+    inputs: &[SourceInput<'_>],
+    module: &str,
+    check: &ModuleCheck<'_>,
+    limits: CompilerLimits,
+    cache: Option<&BuildCache>,
+    prepared: Option<CanonicalSyntaxUnit>,
+) -> Result<CheckVerdict, CompilationFailure> {
     if let Some(cache) = cache
-        && let Some(pending) = validated_acceptance(graph, inputs, &check, limits, cache)?
+        && let Some(pending) = validated_acceptance(graph, inputs, check, limits, cache)?
     {
         return Ok(CheckVerdict {
             subject: module.to_owned(),
@@ -966,7 +1273,7 @@ pub fn module_verdict(
         cache,
         MODULE_VERDICTS,
         (&check.material, &check.reading),
-        || match check.run(graph, limits, cache) {
+        || match check.run_using(graph, limits, cache, prepared) {
             Ok(checked) => {
                 judged = checked;
                 let pending = judged
@@ -976,7 +1283,7 @@ pub fn module_verdict(
                 Ok(CheckOutcome::Accepted { pending })
             }
             Err(failure) if failure.kind() == CompilationFailureKind::Source => {
-                module_rejection(graph, &check, &failure, limits, cache)
+                module_rejection(graph, check, &failure, limits, cache)
             }
             Err(failure) => Err(failure),
         },
@@ -984,7 +1291,7 @@ pub fn module_verdict(
     if let Some(cache) = cache
         && !judged.is_empty()
     {
-        record_acceptances(graph, inputs, &check, &judged, limits, cache);
+        record_acceptances(graph, inputs, check, &judged, limits, cache);
     }
     Ok(verdict)
 }
@@ -997,7 +1304,9 @@ pub fn module_verdict(
 /// interface as a pending private declaration. Callers keep using the
 /// written boundary, so the next check reports the next failure. A failure
 /// in no function, or a private header the interface cannot state, ends the
-/// list, which is then not known to be complete.
+/// list, which is then not known to be complete. A syntax rejection already
+/// lists every failed segment; those tasks are retained together and no
+/// semantic impact walk begins before syntax admission.
 fn module_rejection(
     graph: &crate::ModuleGraph,
     check: &ModuleCheck<'_>,
@@ -1005,6 +1314,14 @@ fn module_rejection(
     limits: CompilerLimits,
     cache: Option<&BuildCache>,
 ) -> Result<CheckOutcome, CompilationFailure> {
+    if matches!(
+        first.stage(),
+        CompilationStage::Lexing
+            | CompilationStage::TerminalClassification
+            | CompilationStage::Parsing
+    ) {
+        return outcome_of(Err(first.clone()), &check.selected);
+    }
     let mut texts = check
         .selected
         .iter()
@@ -1085,6 +1402,7 @@ fn module_rejection(
     Ok(CheckOutcome::Rejected {
         rule: first.rule_id().map(str::to_owned),
         failure: first.to_string(),
+        diagnostics: first.source_diagnostics(),
         tasks,
         complete,
     })
@@ -1196,7 +1514,7 @@ fn impact_task(
         function,
         rule: failure.rule_id().map(str::to_owned),
         location: failure.location(),
-        failure: failure.to_string(),
+        failure: failure.render_diagnostic(DiagnosticFormat::Text),
     }
 }
 
@@ -1312,31 +1630,36 @@ impl<'input> ModuleCheck<'input> {
     /// read of other modules, then the same for the interface of every
     /// module of its dependency closure, whose judgments the accepted check
     /// also made; or the check's failure.
-    fn run(
+    fn run_using(
         &self,
         graph: &crate::ModuleGraph,
         limits: CompilerLimits,
         cache: Option<&BuildCache>,
+        prepared: Option<CanonicalSyntaxUnit>,
     ) -> Result<Vec<Judged>, CompilationFailure> {
-        with_checked_program_using(
-            &self.selected,
-            Some(graph.modules()),
-            limits,
-            cache,
-            |_, resolved| {
-                let reads = reads::DeclarationReads::new(resolved);
-                Ok(std::iter::once(self.target)
-                    .chain(graph.dependency_closure(self.target))
-                    .map(|module| Judged {
-                        module,
-                        pending: pending_declarations(resolved, module),
-                        read: reads
-                            .as_ref()
-                            .and_then(|reads| reads.read_declarations(module)),
-                    })
-                    .collect())
-            },
-        )
+        let continuation = |_: CheckedProgram, resolved: &ResolvedSyntaxUnit| {
+            let reads = reads::DeclarationReads::new(resolved);
+            Ok(std::iter::once(self.target)
+                .chain(graph.dependency_closure(self.target))
+                .map(|module| Judged {
+                    module,
+                    pending: pending_declarations(resolved, module),
+                    read: reads
+                        .as_ref()
+                        .and_then(|reads| reads.read_declarations(module)),
+                })
+                .collect())
+        };
+        match prepared {
+            Some(canonical) => with_canonical_program_using(canonical, cache, continuation),
+            None => with_checked_program_using(
+                &self.selected,
+                Some(graph.modules()),
+                limits,
+                cache,
+                continuation,
+            ),
+        }
     }
 
     /// Records an acceptance under the module's own records and graph facts,
@@ -1599,7 +1922,8 @@ fn validated_acceptance(
 /// [MOD-8] a composition holds only while every selected module's own
 /// verdict does. Each module is checked against its dependencies' interfaces
 /// alone, in row order, reusing an acceptance a cache recorded for exactly
-/// its inputs, and the first rejected module's failure is the composition's.
+/// its inputs. DIAG-1 admits syntax across all selected records first; the
+/// first subsequent rejected module's failure is the composition's.
 fn require_module_verdicts(
     graph: &crate::ModuleGraph,
     inputs: &[SourceInput<'_>],
@@ -1607,10 +1931,14 @@ fn require_module_verdicts(
     limits: CompilerLimits,
     cache: Option<&BuildCache>,
 ) -> Result<(), CompilationFailure> {
-    for module in modules {
-        let check = ModuleCheck::new(graph, inputs, *module, false);
+    let checks = modules
+        .iter()
+        .map(|module| ModuleCheck::new(graph, inputs, *module, false))
+        .collect::<Vec<_>>();
+    let prepared = module_syntax::prepare(graph, inputs, &checks, limits, cache)?;
+    for (check, canonical) in checks.iter().zip(prepared) {
         if let Some(cache) = cache
-            && validated_acceptance(graph, inputs, &check, limits, cache)?.is_some()
+            && validated_acceptance(graph, inputs, check, limits, cache)?.is_some()
         {
             continue;
         }
@@ -1623,9 +1951,9 @@ fn require_module_verdicts(
         }
         // A rejection is left to a module check, which records it with its
         // impact report; a build needs only its first failure.
-        let judged = check.run(graph, limits, cache)?;
+        let judged = check.run_using(graph, limits, cache, canonical)?;
         if let Some(cache) = cache {
-            record_acceptances(graph, inputs, &check, &judged, limits, cache);
+            record_acceptances(graph, inputs, check, &judged, limits, cache);
             let pending = judged
                 .first()
                 .map(|judged| judged.pending.clone())
@@ -1642,7 +1970,7 @@ fn require_module_verdicts(
 }
 
 /// A composition check's result as a verdict records it: an acceptance, or a
-/// source rejection with its one task. Any other failure returns as it is
+/// source rejection with one task per diagnostic. Any other failure returns as it is
 /// and is never recorded.
 fn outcome_of(
     result: Result<Vec<String>, CompilationFailure>,
@@ -1655,11 +1983,27 @@ fn outcome_of(
                 .iter()
                 .map(|input| input.bytes().to_vec())
                 .collect::<Vec<_>>();
-            let item = failing_item(&failure, records, &texts);
+            let tasks = failure
+                .diagnostics()
+                .map(|diagnostic| {
+                    let item = if matches!(
+                        diagnostic.stage(),
+                        CompilationStage::Lexing
+                            | CompilationStage::TerminalClassification
+                            | CompilationStage::Parsing
+                    ) {
+                        None
+                    } else {
+                        failing_item(diagnostic, records, &texts)
+                    };
+                    impact_task(diagnostic, records, item.as_ref())
+                })
+                .collect();
             Ok(CheckOutcome::Rejected {
                 rule: failure.rule_id().map(str::to_owned),
                 failure: failure.to_string(),
-                tasks: vec![impact_task(&failure, records, item.as_ref())],
+                diagnostics: failure.source_diagnostics(),
+                tasks,
                 complete: false,
             })
         }
@@ -1783,7 +2127,9 @@ pub fn entry_verdict(
         (&modules, &selected),
         RecordOrder::Sorted,
     );
-    let mut reading = rejection_reading(graph, &selected);
+    // Program-wide syntax diagnostics retain the input unit's source ordinals,
+    // so even records outside this entry fix their mapping in a cached rejection.
+    let mut reading = rejection_reading(graph, inputs);
     // A named entry's rejection quotes where the graph writes it.
     if let Some(place) = selection.written {
         let mut fields = Fields::default();
@@ -1815,18 +2161,35 @@ pub fn entry_verdict(
         || {
             // Each module's verdict reads only its own records and its
             // dependencies' interfaces, so the verdicts are independent and
-            // run concurrently. The first rejection or failure in module
-            // order is the one reported; unlike a sequential walk, every
-            // module is checked even after an earlier one rejects, and a
-            // panic in any of them propagates.
-            let verdicts = crate::in_parallel(&modules, |module| {
-                let name = graph
-                    .modules()
-                    .get(module.index())
-                    .map_or_else(String::new, crate::ModuleRecord::qualified_name);
+            // run concurrently after program-wide syntax admission. The first
+            // later-stage rejection or failure in module order is reported.
+            // Every module is checked even after an earlier one rejects,
+            // and a panic in any of them propagates.
+            let checks = modules
+                .iter()
+                .map(|module| ModuleCheck::new(graph, inputs, *module, false))
+                .collect::<Vec<_>>();
+            let prepared = match module_syntax::prepare(graph, inputs, &checks, limits, cache) {
+                Ok(prepared) => prepared,
+                Err(failure) => return outcome_of(Err(failure), inputs),
+            };
+            let work = checks
+                .iter()
+                .zip(prepared.into_iter().map(std::sync::Mutex::new))
+                .collect::<Vec<_>>();
+            let verdicts = crate::in_parallel(&work, |(check, prepared)| {
+                let name = module_name(graph, check.target);
                 match known.iter().find(|verdict| verdict.subject == name) {
                     Some(verdict) => Ok(verdict.clone()),
-                    None => module_verdict(graph, inputs, &name, false, limits, cache),
+                    None => module_verdict_using(
+                        graph,
+                        inputs,
+                        &name,
+                        check,
+                        limits,
+                        cache,
+                        prepared.lock().expect("one owner per prepared module").take(),
+                    ),
                 }
             });
             for verdict in verdicts {
@@ -2122,15 +2485,17 @@ fn encode_outcome(outcome: &CheckOutcome, reading: &[u8]) -> Vec<u8> {
         CheckOutcome::Rejected {
             rule,
             failure,
+            diagnostics,
             tasks,
             complete,
         } => {
             fields
-                .push(b"rejected")
+                .push(b"rejected-diagnostics")
                 .push(rule.as_deref().unwrap_or_default().as_bytes())
                 .push(failure.as_bytes())
                 .push(reading)
-                .push(if *complete { b"complete" } else { b"partial" });
+                .push(if *complete { b"complete" } else { b"partial" })
+                .push(&encode_diagnostics(diagnostics));
             for task in tasks {
                 let (path, line, column) = task.location.as_ref().map_or_else(
                     || (String::new(), String::new(), String::new()),
@@ -2156,6 +2521,89 @@ fn encode_outcome(outcome: &CheckOutcome, reading: &[u8]) -> Vec<u8> {
     fields.into_bytes()
 }
 
+/// Nested length-prefixed fields retain each diagnostic independently of prose.
+fn encode_diagnostics(diagnostics: &[SourceDiagnostic]) -> Vec<u8> {
+    let mut records = Fields::default();
+    for diagnostic in diagnostics {
+        let mut fields = Fields::default();
+        fields.push(diagnostic.rule.as_bytes());
+        let mut coordinate = Fields::default();
+        if let Some(at) = diagnostic.coordinate {
+            coordinate
+                .push(at.source().ordinal().to_string().as_bytes())
+                .push(at.start().value().to_string().as_bytes())
+                .push(at.end().value().to_string().as_bytes());
+        }
+        fields.push(&coordinate.into_bytes());
+        match &diagnostic.expected {
+            None => {
+                fields.push(b"none");
+            }
+            Some(expected) => {
+                fields.push(b"expected");
+                for terminal in expected {
+                    fields.push(terminal.as_bytes());
+                }
+            }
+        }
+        records.push(&fields.into_bytes());
+    }
+    records.into_bytes()
+}
+
+fn decode_diagnostics(payload: &[u8]) -> Option<Vec<SourceDiagnostic>> {
+    let records = Fields::parse(payload)?;
+    if records.is_empty() {
+        return None;
+    }
+    records
+        .iter()
+        .map(|record| {
+            let fields = Fields::parse(record)?;
+            let [rule, coordinate, expectation, terminals @ ..] = fields.as_slice() else {
+                return None;
+            };
+            let rule = std::str::from_utf8(rule).ok()?.to_owned();
+            if rule.is_empty() {
+                return None;
+            }
+            let coordinates = Fields::parse(coordinate)?;
+            let coordinate = match coordinates.as_slice() {
+                [] => None,
+                [source, start, end] => {
+                    let source = std::str::from_utf8(source).ok()?.parse().ok()?;
+                    let start = std::str::from_utf8(start).ok()?.parse().ok()?;
+                    let end = std::str::from_utf8(end).ok()?.parse().ok()?;
+                    if start > end {
+                        return None;
+                    }
+                    Some(crate::SyntaxCoordinate::new(
+                        crate::SourceId::from_ordinal(source),
+                        crate::ByteOffset::new(start),
+                        crate::ByteOffset::new(end),
+                    ))
+                }
+                _ => return None,
+            };
+            let expected = match *expectation {
+                b"none" if terminals.is_empty() => None,
+                b"expected" => Some(
+                    terminals
+                        .iter()
+                        .map(|terminal| std::str::from_utf8(terminal).ok().map(str::to_owned))
+                        .collect::<Option<Vec<_>>>()?,
+                ),
+                _ => return None,
+            };
+            Some(SourceDiagnostic {
+                rule,
+                coordinate,
+                expected,
+            })
+        })
+        .collect()
+}
+
 /// A recorded outcome, or `None` when the payload is malformed or records a
 /// rejection read in another way than `reading`.
 fn decode_outcome(payload: &[u8], reading: &[u8]) -> Option<CheckOutcome> {
@@ -2168,7 +2616,7 @@ fn decode_outcome(payload: &[u8], reading: &[u8]) -> Option<CheckOutcome> {
                 .map(|name| text(name))
                 .collect::<Option<Vec<_>>>()?,
         }),
-        [b"rejected", rule, failure, recorded, complete, tasks @ ..]
+        [b"rejected-diagnostics", rule, failure, recorded, complete, diagnostics, tasks @ ..]
             if *recorded == reading && tasks.len() % 7 == 0 =>
         {
             let optional = |field: &[u8]| (!field.is_empty()).then(|| text(field)).flatten();
@@ -2199,6 +2647,7 @@ fn decode_outcome(payload: &[u8], reading: &[u8]) -> Option<CheckOutcome> {
             Some(CheckOutcome::Rejected {
                 rule: optional(rule),
                 failure: text(failure)?,
+                diagnostics: decode_diagnostics(diagnostics)?,
                 tasks,
                 complete: *complete == b"complete",
             })
@@ -2332,6 +2781,7 @@ pub fn build_module_entry_for_emission(
     let mut selection = entry_selection(graph, entry)?;
     selection.fragments = fragments;
     let (modules, selected) = composition_inputs(graph, inputs, selection.module);
+    crate::toolchain::prepare_toolchain().map_err(CompilationFailure::toolchain)?;
     let material = entry_module_material(
         graph,
         &selection,
@@ -2341,9 +2791,10 @@ pub fn build_module_entry_for_emission(
     );
     // Only a build that composed is recorded, so a recorded module implies
     // that every module verdict of its closure held for these inputs.
-    if let Some(module) = cache
+    if let Some(mut module) = cache
         .and_then(|cache| cache.load(ENTRY_MODULES, &material))
         .and_then(|payload| LlvmModule::decode(&payload))
+        && module.rebind_sources(&selected, Some(graph.modules())).is_some()
     {
         return Ok((module, Vec::new(), true));
     }
@@ -2382,9 +2833,12 @@ fn entry_module_material(
         composition_material(ENTRY_MODULES, graph, selection, inputs, RecordOrder::Read);
     material.extend_from_slice(
         format!(
-            "overlap {overlap:?}\nfragments {}\npreserve-none {}\nno-capture {}\ncoro-end {}\n",
+            "overlap {overlap:?}\nfragments {}\npreserve-none {}\nno-capture {}\ncoro-end {}\ndarwin-stack-probe-helper {}\n",
             selection.fragments,
-            toolchain.preserve_none, toolchain.no_capture_attribute, toolchain.coro_end_result,
+            toolchain.preserve_none,
+            toolchain.no_capture_attribute,
+            toolchain.coro_end_result,
+            toolchain.darwin_stack_probe_helper,
         )
         .as_bytes(),
     );
@@ -2551,6 +3005,73 @@ fn admit_entry(
     })
 }
 
+/// The grammar start a formatting request derives, independent of source
+/// names and diagnostic display paths.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FormatGrammar {
+    /// The `program` start for one ordered source compilation unit.
+    Program,
+    /// The `graph_file` start for exactly one module graph record.
+    Graph,
+}
+
+/// Computes every input record's exact FORM-2 rendering without checking
+/// canonical layout, resolution, types, ownership or other semantic rules.
+///
+/// With [`FormatGrammar::Program`], source records form one compilation unit
+/// in input order, without compiler-owned prelude or library records. With
+/// [`FormatGrammar::Graph`], exactly one record takes the module graph start.
+/// The grammar does not depend on logical paths or display paths. Returned
+/// source identities are the zero-based input ordinals, and results retain
+/// that order. No partial result escapes when any syntax stage or rendering
+/// fails; lexical and grammar failures use the ordinary compiler diagnostics.
+///
+/// This is the shared entry point for tools that need canonical bytes,
+/// including formatting requests. It neither writes files nor treats the
+/// rendered bytes as a semantic acceptance verdict.
+pub fn canonical_format(
+    inputs: &[SourceInput<'_>],
+    grammar: FormatGrammar,
+    limits: CompilerLimits,
+) -> Result<Vec<RenderedSource>, CompilationFailure> {
+    let bundle = SourceBundle::with_limits(inputs, limits.source)
+        .map_err(CompilationFailure::source_envelope)?;
+    let graph = grammar == FormatGrammar::Graph;
+    if graph && inputs.len() != 1 {
+        return Err(CompilationFailure::new(
+            CompilationStage::SourceEnvelope,
+            CompilationFailureKind::Invocation,
+            "graph formatting requires exactly one source record",
+        ));
+    }
+    let finalized = finalized_syntax(&bundle, limits, graph)?;
+    match render_canonical(&finalized, limits.canonical) {
+        RenderOutcome::Complete(sources) => Ok(sources),
+        RenderOutcome::ResourceFailure(failure) => Err(CompilationFailure::new(
+            CompilationStage::CanonicalSource,
+            CompilationFailureKind::Resource,
+            failure,
+        )),
+        RenderOutcome::CompilerFailure(failure) => Err(CompilationFailure::new(
+            CompilationStage::CanonicalSource,
+            CompilationFailureKind::Compiler,
+            failure,
+        )),
+    }
+}
+
+/// Runs the syntax stages a formatting request shares with checking, through
+/// finalization and not the FORM-2 audit, so a rejection is the one `--check`
+/// reports and a layout fault, which only the audit refuses, is rendered away.
+fn finalized_syntax(
+    bundle: &SourceBundle,
+    limits: CompilerLimits,
+    graph: bool,
+) -> Result<crate::FinalizedBundle, CompilationFailure> {
+    let parsed = segment_syntax(bundle, limits, graph)??;
+    finalize_syntax(parsed, limits)
+}
+
 /// Runs the syntax stages over one bundle, from raw lexical formation through
 /// the canonical [FORM-2] audit, and returns the canonical unit, which owns
 /// every stage's result. A module graph file takes the `graph_file` start and
@@ -2561,6 +3082,36 @@ fn canonical_syntax(
     limits: CompilerLimits,
     graph: bool,
 ) -> Result<CanonicalSyntaxUnit, CompilationFailure> {
+    let parsed = segment_syntax(bundle, limits, graph)??;
+    finish_syntax(bundle, parsed, limits)
+}
+
+/// Establishes segment admission while retaining the complete derivation,
+/// whose failure is selected only after every segment has been judged.
+fn segment_syntax(
+    bundle: &SourceBundle,
+    limits: CompilerLimits,
+    graph: bool,
+) -> Result<Result<crate::ParsedBundle, CompilationFailure>, CompilationFailure> {
+    let parsed = derive_syntax(bundle, limits, graph, false);
+    if !parsed
+        .as_ref()
+        .is_ok_and(|parsed| segments::aligns(bundle, parsed, graph))
+    {
+        // Whole-source success alone cannot establish segment success: a raw
+        // boundary may split a noncanonical declaration. Whole-source failure
+        // likewise cannot select a diagnostic before the independent segments.
+        segments::check(bundle, limits, graph)?;
+    }
+    Ok(parsed)
+}
+
+fn derive_syntax(
+    bundle: &SourceBundle,
+    limits: CompilerLimits,
+    graph: bool,
+    graph_segment: bool,
+) -> Result<crate::ParsedBundle, CompilationFailure> {
     let lexed = match lex(bundle, limits.lexer) {
         LexOutcome::Complete(complete) => complete,
         LexOutcome::SourceIssue(issue) => {
@@ -2624,7 +3175,9 @@ fn canonical_syntax(
             ));
         }
     };
-    let parsed = match if graph {
+    let parsed = match if graph_segment {
+        crate::syntax::parse_graph_segment(classified, limits.parser)
+    } else if graph {
         parse_graph(classified, limits.parser)
     } else {
         parse(classified, limits.parser)
@@ -2662,23 +3215,36 @@ fn canonical_syntax(
             ));
         }
     };
-    let finalized = match finalize(parsed, limits.finalizer) {
-        FinalizeOutcome::Complete(complete) => *complete,
-        FinalizeOutcome::ResourceFailure(failure) => {
-            return Err(CompilationFailure::new(
-                CompilationStage::Finalization,
-                CompilationFailureKind::Resource,
-                failure,
-            ));
-        }
-        FinalizeOutcome::CompilerFailure(failure) => {
-            return Err(CompilationFailure::new(
-                CompilationStage::Finalization,
-                CompilationFailureKind::Compiler,
-                failure,
-            ));
-        }
-    };
+    Ok(parsed)
+}
+
+/// Finalizes a complete derivation, the point where the canonical unit's
+/// audit and the formatting request's rendering part ways.
+fn finalize_syntax(
+    parsed: crate::ParsedBundle,
+    limits: CompilerLimits,
+) -> Result<crate::FinalizedBundle, CompilationFailure> {
+    match finalize(parsed, limits.finalizer) {
+        FinalizeOutcome::Complete(complete) => Ok(*complete),
+        FinalizeOutcome::ResourceFailure(failure) => Err(CompilationFailure::new(
+            CompilationStage::Finalization,
+            CompilationFailureKind::Resource,
+            failure,
+        )),
+        FinalizeOutcome::CompilerFailure(failure) => Err(CompilationFailure::new(
+            CompilationStage::Finalization,
+            CompilationFailureKind::Compiler,
+            failure,
+        )),
+    }
+}
+
+fn finish_syntax(
+    bundle: &SourceBundle,
+    parsed: crate::ParsedBundle,
+    limits: CompilerLimits,
+) -> Result<CanonicalSyntaxUnit, CompilationFailure> {
+    let finalized = finalize_syntax(parsed, limits)?;
     let canonical = match audit_canonical(finalized, limits.canonical) {
         CanonicalOutcome::Complete(complete) => complete,
         CanonicalOutcome::SourceIssue(issue) => {
@@ -2749,6 +3315,21 @@ where
     }
     .map_err(CompilationFailure::source_envelope)?;
     let canonical = canonical_syntax(&bundle, limits, false)?;
+    with_canonical_program_using(canonical, receipts, continuation)
+}
+
+/// Resumes the ordinary front end after all records have passed DIAG-1's
+/// syntax stages. Module-program admission retains this capability so the
+/// module verdict uses its original derivation rather than parsing again.
+fn with_canonical_program_using<T, F>(
+    canonical: CanonicalSyntaxUnit,
+    receipts: Option<&BuildCache>,
+    continuation: F,
+) -> Result<T, CompilationFailure>
+where
+    F: FnOnce(CheckedProgram, &ResolvedSyntaxUnit) -> Result<T, CompilationFailure>,
+{
+    let bundle = canonical.classified_bundle().source_bundle().clone();
     let resolved = match resolve(canonical) {
         ResolutionOutcome::Complete(complete) => complete,
         ResolutionOutcome::SourceIssue { issue, .. } => {
@@ -2813,6 +3394,8 @@ where
                     unsupported.node.coordinate(),
                     Anchor::Start,
                 )),
+                coordinate: Some(unsupported.node.coordinate()),
+                additional: Vec::new(),
             });
         }
         SemanticOutcome::CompilerFailure { failure, .. } => {
@@ -2923,27 +3506,219 @@ fn lower_selected(
             let mut ledger = ledger;
             ledger.extend(module.take_actualization_ledger());
             if launcher_contract_ready {
-                module.append(launcher::render(ir, selected)?);
+                module.append(launcher::render(ir, selected)?)?;
             }
             if let Some(failure) = caller_failure {
                 let mut comment = crate::backend::emission::Module::default();
+                comment.require_source_paths(bundle);
                 comment.text(format!(
-                    "\n; Executable caller was not admitted: {failure}\n"
+                    "\n; Executable caller was not admitted: {}\n",
+                    failure.replace('\n', "\n; ")
                 ));
-                module.append(comment);
+                module.append(comment)?;
             }
             Ok(Reported { module, ledger })
         })
-        .map_err(|failure: BackendFailure| {
-            let (stage, kind) = match failure {
-                BackendFailure::TargetLayout(_) => (
-                    CompilationStage::TargetLayout,
-                    CompilationFailureKind::TargetLayout,
-                ),
-                _ => (CompilationStage::Backend, CompilationFailureKind::Backend),
-            };
-            CompilationFailure::new(stage, kind, failure)
+        .map_err(|failure: BackendFailure| match failure {
+            BackendFailure::TargetLayout(layout) => {
+                CompilationFailure::target_layout(layout, &ir, resolved)
+            }
+            BackendFailure::Toolchain => CompilationFailure::toolchain(
+                crate::toolchain::prepare_toolchain()
+                    .expect_err("Toolchain failure records the settled resolution/probe error"),
+            ),
+            BackendFailure::SnapshotTargetUnsupported => CompilationFailure::new(
+                CompilationStage::Backend,
+                CompilationFailureKind::Unsupported,
+                "snapshot export requires Linux x86-64 with glibc; source checking succeeded",
+            ),
+            failure => CompilationFailure::new(
+                CompilationStage::Backend,
+                CompilationFailureKind::Backend,
+                failure,
+            ),
         })
+}
+
+#[cfg(test)]
+mod formatting_tests {
+    use super::{
+        CompilationFailureKind, CompilationStage, CompilerLimits, DiagnosticFormat, FormatGrammar,
+        canonical_format, canonical_syntax, check, derive_syntax,
+    };
+    use crate::{SourceBundle, SourceInput};
+
+    #[test]
+    fn formatting_grammar_is_independent_of_logical_and_display_paths() {
+        let source = b"const value:u64=1_u64;\n";
+        for (logical, display) in [
+            ("ordinary.wfg", "ordinary.wfg"),
+            ("ordinary.wf", "ordinary.wf"),
+            ("ordinary.wfg", "/some/package/ordinary.wfg"),
+            ("ordinary.wfg", "./ordinary.wfg"),
+        ] {
+            let inputs = [SourceInput::from_host_path(logical, display, source)];
+            let formatted =
+                canonical_format(&inputs, FormatGrammar::Program, CompilerLimits::default())
+                    .expect("source names never select the grammar start");
+            assert_eq!(formatted.len(), 1);
+            assert_eq!(formatted[0].bytes, b"const value: u64 = 1_u64;\n");
+        }
+        let inputs = [SourceInput::new("ordinary.wf", b"pkg:[];\n")];
+        let formatted = canonical_format(&inputs, FormatGrammar::Graph, CompilerLimits::default())
+            .expect("graph selection also ignores the source name");
+        assert_eq!(formatted[0].bytes, b"pkg: [];\n");
+    }
+
+    #[test]
+    fn graph_formatting_requires_exactly_one_record() {
+        let records = [
+            SourceInput::new("first.wfg", b"pkg: [];\n"),
+            SourceInput::new("second.wfg", b"pkg: [];\n"),
+        ];
+        for inputs in [records.as_slice(), &records[..0]] {
+            let failure = canonical_format(inputs, FormatGrammar::Graph, CompilerLimits::default())
+                .expect_err("a graph grammar invocation holds exactly one record");
+            assert_eq!(failure.stage(), CompilationStage::SourceEnvelope);
+            assert_eq!(failure.kind(), CompilationFailureKind::Invocation);
+            assert_eq!(failure.rule_id(), None);
+        }
+    }
+
+    #[test]
+    fn formatting_ignores_semantic_errors_and_keeps_source_order() {
+        let first = b"fn wrong() -> result: u8 pure {\n    return 7_u64;  \n}\n";
+        let second = b"const spare: u64 = 2_u64;\n";
+        let inputs = [
+            SourceInput::new("wrong.wf", first),
+            SourceInput::new("spare.wf", second),
+        ];
+        let formatted =
+            canonical_format(&inputs, FormatGrammar::Program, CompilerLimits::default())
+                .expect("complete derivations format despite a return type error");
+        assert_eq!(formatted.len(), 2);
+        assert_eq!(formatted[0].source.ordinal(), 0);
+        assert_eq!(formatted[1].source.ordinal(), 1);
+        assert_eq!(
+            formatted[0].bytes,
+            b"fn wrong() -> result: u8 pure {\n  return 7_u64;\n}\n"
+        );
+        assert_eq!(formatted[1].bytes, second);
+        let canonical = [
+            SourceInput::new("wrong.wf", &formatted[0].bytes),
+            SourceInput::new("spare.wf", &formatted[1].bytes),
+        ];
+        assert_eq!(
+            check(&canonical, CompilerLimits::default())
+                .expect_err("the checker still rejects the type error")
+                .rule_id(),
+            Some("FN-1")
+        );
+    }
+
+    #[test]
+    fn formatting_reuses_lexical_and_grammar_diagnostics() {
+        for bytes in [b"$\n".as_slice(), b"fn wrong(\n".as_slice()] {
+            let inputs = [SourceInput::new("broken.wf", bytes)];
+            let formatted =
+                canonical_format(&inputs, FormatGrammar::Program, CompilerLimits::default())
+                    .expect_err("an incomplete derivation cannot format");
+            let checked = check(&inputs, CompilerLimits::default())
+                .expect_err("the same source fails before canonical auditing");
+            assert_eq!(formatted.stage(), checked.stage());
+            assert_eq!(formatted.kind(), checked.kind());
+            assert_eq!(formatted.rule_id(), checked.rule_id());
+            assert_eq!(formatted.to_string(), checked.to_string());
+        }
+    }
+
+    /// Rejects `inputs` through formatting and through the front end's syntax
+    /// stages over the same bundle, asserts both report the same diagnostics,
+    /// and returns how many diagnostics there are.
+    fn formatting_and_front_end_reject_alike(
+        inputs: &[SourceInput<'_>],
+        grammar: FormatGrammar,
+    ) -> usize {
+        let limits = CompilerLimits::default();
+        let graph = grammar == FormatGrammar::Graph;
+        let bundle = SourceBundle::with_limits(inputs, limits.source).expect("bundle");
+        let checked = canonical_syntax(&bundle, limits, graph)
+            .expect_err("independent segment failures precede canonical rendering");
+        let formatted = canonical_format(inputs, grammar, limits)
+            .expect_err("formatting needs every segment to derive");
+        assert_eq!(
+            formatted.render(DiagnosticFormat::Json),
+            checked.render(DiagnosticFormat::Json)
+        );
+        formatted.diagnostics().count()
+    }
+
+    /// Formatting derives through the segment admission checking uses. A
+    /// declaration keyword at the start of a line that is inside a declaration
+    /// derives as a whole token sequence and is rejected only by that
+    /// admission, so formatting it as a whole would write `public fn f() ...`.
+    #[test]
+    fn formatting_reports_a_declaration_split_across_lines_like_checking() {
+        let limits = CompilerLimits::default();
+        let inputs = [SourceInput::new(
+            "split.wf",
+            b"public\nfn f() -> r: unit pure {\n  return unit;\n}\n",
+        )];
+        let bundle = SourceBundle::with_limits(&inputs, limits.source).expect("bundle");
+        derive_syntax(&bundle, limits, false, false)
+            .expect("the complete token sequence derives");
+        formatting_and_front_end_reject_alike(&inputs, FormatGrammar::Program);
+    }
+
+    /// Two independent bad declarations in two sources are two diagnostics
+    /// from the segment admission; the whole derivation stops at one.
+    #[test]
+    fn formatting_reports_every_independent_bad_declaration_like_checking() {
+        let inputs = [
+            SourceInput::new("first.wf", b"fn first() -> r: unit {\n  return unit;\n}\n"),
+            SourceInput::new(
+                "second.wf",
+                b"fn second() -> r: unit pure {\n  // bad\n}\n",
+            ),
+        ];
+        assert_eq!(
+            formatting_and_front_end_reject_alike(&inputs, FormatGrammar::Program),
+            2
+        );
+    }
+
+    /// The graph grammar has its own segments, one per row.
+    #[test]
+    fn formatting_reports_a_graph_row_split_across_lines_like_checking() {
+        let limits = CompilerLimits::default();
+        let inputs = [SourceInput::new("split.wfg", b"pkg: [\nother\n];\n")];
+        let bundle = SourceBundle::with_limits(&inputs, limits.source).expect("bundle");
+        derive_syntax(&bundle, limits, true, false).expect("the complete graph derives");
+        formatting_and_front_end_reject_alike(&inputs, FormatGrammar::Graph);
+    }
+
+    #[test]
+    fn formatting_keeps_resource_stops_distinct_from_source_rejections() {
+        let inputs = [SourceInput::new(
+            "source.wf",
+            b"const value: u64 = 1_u64;\n",
+        )];
+        let mut limits = CompilerLimits::default();
+        limits.lexer.max_tokens = 0;
+        let failure = canonical_format(&inputs, FormatGrammar::Program, limits)
+            .expect_err("lexical ceilings also apply to formatting");
+        assert_eq!(failure.stage(), CompilationStage::Lexing);
+        assert_eq!(failure.kind(), CompilationFailureKind::Resource);
+        assert_eq!(failure.rule_id(), None);
+
+        let mut limits = CompilerLimits::default();
+        limits.canonical.max_work = 0;
+        let failure = canonical_format(&inputs, FormatGrammar::Program, limits)
+            .expect_err("rendering ceilings apply before a result escapes");
+        assert_eq!(failure.stage(), CompilationStage::CanonicalSource);
+        assert_eq!(failure.kind(), CompilationFailureKind::Resource);
+        assert_eq!(failure.rule_id(), None);
+    }
 }
 
 #[cfg(test)]

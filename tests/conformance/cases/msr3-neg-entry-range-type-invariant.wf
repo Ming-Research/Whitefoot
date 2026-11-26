@@ -1,0 +1,9 @@
+struct Zeroes {
+  marker: u64;
+  cells: Array<u64, 1>;
+  invariant(z): forall zero(k in 0_u64..z^.cells.len): z^.cells[k] == entry(z)^.cells[k];
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

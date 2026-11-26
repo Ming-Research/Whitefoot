@@ -1,0 +1,11 @@
+nodrop struct Token {
+  value: u64;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  doc "OP-10, PROV-6: clear's record bounds the element type by drop, and a nodrop element is linear, so the call is refused even though the window is empty; the window is otherwise consumed by free_empty.";
+  let w = box_slots_new::<Token>(capacity: 2_u64);
+  clear(window: &w.inner);
+  free_empty(window: move w);
+  return std::process::exit_status(code: 0_u8);
+}

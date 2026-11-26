@@ -97,6 +97,9 @@ fn split_emission(
     if let Some(name) = module.repeated_declaration() {
         return Err(failure(format!("@{name} is declared or defined twice")));
     }
+    if let Some(id) = module.repeated_attribute_group() {
+        return Err(failure(format!("attribute group #{id} is defined twice")));
+    }
     let mut names = module.declarations.keys().cloned().collect::<BTreeSet<_>>();
     for entity in &module.entities {
         if !names.insert(entity.name.clone()) {
@@ -981,7 +984,7 @@ mod tests {
         let mut duplicate = base.clone();
         duplicate.entities.push(duplicate.entities[0].clone());
         let mut duplicate_declaration = base.clone();
-        duplicate_declaration.declare(Signature::new("abort", "void", Vec::new()));
+        duplicate_declaration.declare(Signature::new("abort", "i32", Vec::new()));
         for (name, edited) in [
             ("symbol", missing_symbol),
             ("transitive type", missing_type),
@@ -993,6 +996,27 @@ mod tests {
                 split_emission(&edited, FragmentGranularity::Function).is_err(),
                 "{name} must be refused"
             );
+        }
+    }
+
+    #[test]
+    fn conflicting_group_bodies_cannot_reach_fragment_emission() {
+        for grouped_declaration in [false, true] {
+            let mut parent = module("  %v9 = add i32 %v0, 1");
+            let mut child = Module::default();
+            if grouped_declaration {
+                let mut signature = Signature::new("callee", "void", Vec::new());
+                signature.suffix = " #1".into();
+                signature.references.attributes.insert(1);
+                parent.declare(signature.clone());
+                child.declare(signature);
+            }
+            parent.attribute_group(1, "noreturn".into());
+            child.attribute_group(1, "nounwind".into());
+            parent.append(child);
+            assert!(split_emission(&parent, FragmentGranularity::Function).is_err());
+            let decoded = Module::decode(&parent.encode()).expect("conflicts round-trip");
+            assert!(split_emission(&decoded, FragmentGranularity::Module).is_err());
         }
     }
 
