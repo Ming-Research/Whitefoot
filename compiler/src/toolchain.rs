@@ -298,8 +298,8 @@ fn probe_status(toolchain: &Toolchain, status: std::process::ExitStatus) -> io::
 }
 
 /// Runs `module` through the host clang's LLVM verifier without optimizing it
-/// (`-fverify-intermediate-code`). A release clang does not run the verifier
-/// unless asked, so compiling a module does not show it well-formed. The
+/// (`-fverify-intermediate-code`). Whether compiling a module runs the
+/// verifier depends on how the host clang was built, so this asks for it. The
 /// module is written into `directory` as `<name>.ll`.
 #[cfg(test)]
 #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
