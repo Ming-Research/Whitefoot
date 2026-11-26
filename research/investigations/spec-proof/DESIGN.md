@@ -1,5 +1,11 @@
 # Machine-checked soundness of the kernel specification
 
+> The phases below are this study's plan, not the scope the owner chose. The
+> proof's aim is the whole specification: every rule that decides whether a
+> program is accepted or what it does at run time, concurrency and the host
+> modules included (the owner, 2026-11-26). The phases are planned again
+> after the specification is rewritten.
+
 Status board item: `wf-spec-proof`. This record holds the study behind it:
 which rules carry the safety claims, how other projects proved such claims
 and kept the proof in step with a changing specification, the approaches
