@@ -90,6 +90,14 @@ The correctness gate and the paired performance checks depend on no research pro
 - replaced: Experimental models, repeated measurements and shared research inputs wired into ordinary verification was on main; the owner changed it, because they had no permanent-test grounds of their own (data: `research/investigations/test-economy/redesign.md`).
 - rejected: an agent proposed relying only on manual review, or withholding research inputs from CI, to keep the boundary; the owner rejected it, because light reference checks catch accidental dependencies with normal complete checkouts.
 
+### decision research-tool-self-tests-run-in-their-manual-workflow
+A research tool's self-tests run as a step of the manual workflow that uses the tool, after the step that extracts what they read, and no gate group runs them.
+- rejected: an agent proposed a gate group that extracts the prototype commit and runs the self-tests each check; the owner rejected it, because the gate stays free of research programs, and the group would tie it to one commit's reachability and add a stage for tools only a manual workflow uses.
+
+### decision manual-workflows-reach-their-prototype-through-a-retention-tag
+A prototype commit that a manual workflow extracts from and tree links name is kept by a retention tag outside the `wf-` prefix; the workflow reaches it only through that tag and checks the commit id.
+- rejected: an agent proposed restoring the prototype's research directory into main so the workflow reads it from the repository; the owner rejected it, because it adds about 40 files and their tests as a copy that only convention keeps unedited, and the tree links naming the commit still need it.
+
 ### decision assertions-live-with-their-contract
 A verification assertion lives with the contract it checks: specification requirements in conformance, whole-program behavior in programs, other compiler obligations in compiler tests.
 - rejected: an agent proposed assigning WF wrappers to Rust unit tests by fixture language; the owner rejected it, because a useful property is placed by what it checks, apart from its fixture language and executable packaging (data: `research/investigations/test-economy/redesign.md`).

@@ -7,6 +7,8 @@ use crate::{OverlapLowering, RecursionBudget, SourceInput};
 mod call_result_repairs;
 mod call_spellings;
 mod recursive_postconditions;
+mod split_advice;
+mod split_advice_corners;
 mod wait_sites;
 #[cfg(unix)]
 mod spellings;
