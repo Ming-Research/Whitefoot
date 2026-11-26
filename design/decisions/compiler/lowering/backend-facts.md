@@ -30,7 +30,7 @@ A run-reference parameter passes its directory pointer at cell + 24, origin and 
 - rejected: an agent proposed giving it the contiguous range's element-pointer facts; the owner rejected it, because disjoint runs of one `Paged` share one directory, so a promise of exclusive access would be false.
 
 ### decision clang-forms-are-probed-when-whitefootc-runs
-`whitefootc` probes the clang it hands modules to, once per process, for the no-capture spelling and the result type of `llvm.coro.end`, and falls back to the older form.
+`whitefootc` probes its clang once per process for the no-capture spelling and the result type of `llvm.coro.end`, unless its package records them, and falls back to the older form.
 - replaced: Probing the forms when the compiler was built was on main; the owner changed it, because a compiler built against one clang runs where clang accepts other forms: a macOS release built where clang took the `void` call emitted it to Apple clang 21, which refuses it.
 - rejected: an agent proposed pinning LLVM for these forms; the owner rejected it, because the supported hosts span both forms.
 - rejected: an agent proposed inferring support from a vendor's version number; the owner rejected it, because version strings do not tell which syntax that clang accepts.
