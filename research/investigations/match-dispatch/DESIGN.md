@@ -2019,3 +2019,6 @@ predicts. The candidate's 2000-iteration CoreMark prints the four recorded CRCs
 (0xe714, 0x1fd7, 0x8e3a, 0x4983). These are instruction counts and a
 correctness check; they say nothing about speed, which only the 14900K run of
 `compiler-compare.yml` can.
+With the control required only of Clz and GlobalSet, the same check passed as a
+whole in [run 45802062823](https://github.com/Ming-Research/Whitefoot/actions/runs/45802062823)
+on commit 9dedc7b77 with the same counts and CRCs.
