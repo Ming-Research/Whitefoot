@@ -865,3 +865,23 @@ fn e1_sample() {
 fn e1_full() {
     e1_collect(1, true);
 }
+
+/// E1: the gate's adapter test itself, every case built and run, with the
+/// shadow derivation on in all three configurations. It passing shows the
+/// shadow changes no declared verdict.
+#[test]
+#[ignore = "E1 experiment: run by name"]
+fn e1_adapter() {
+    let scratch = std::env::var_os("WHITEFOOT_SCRATCH_ROOT")
+        .map_or_else(std::env::temp_dir, PathBuf::from)
+        .join(format!("e1-adapter-{}", std::process::id()));
+    std::fs::create_dir_all(&scratch).expect("E1 scratch directory");
+    let rows = scratch.join("rows.tsv");
+    std::fs::write(&rows, format!("{}\n", whitefoot::e1::HEADER)).expect("E1 header");
+    whitefoot::e1::open(&rows);
+    the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path();
+    let written = std::fs::read_to_string(&rows).expect("E1 rows").lines().count();
+    let _ = std::io::stderr()
+        .write_all(format!("E1 ADAPTER rows written {written}\n").as_bytes());
+    assert!(written > 1, "the shadow wrote no row");
+}
