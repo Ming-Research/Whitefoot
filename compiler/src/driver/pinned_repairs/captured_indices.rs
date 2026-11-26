@@ -59,59 +59,65 @@ fn main() -> status: std::process::ExitStatus pure {
 "#],
     },
     RepairPair {
-        // The reference's index is the field place `p.k`, which is rewritten before the write the reference must stay apart from, so the path the rejection names holds a superseded place and the description names that place.
-        name: "reference-preservation-after-index-place-write.wf",
-        rejected: br#"alias ExitStatus = std::process::ExitStatus;
-alias exit_status = std::process::exit_status;
-
-struct BystanderRecord {
-  value: u8;
-}
-
-struct Cursor {
+        // [EFF-5] a reference argument was formed through the field place `p.k`, which is rewritten before the call, so the place the rejection names holds a superseded place and the description names it.
+        name: "call-separation-after-index-place-write.wf",
+        rejected: br#"struct Cursor {
   k: u64;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn copy_across(source: &u8, destination: &u8) -> result: unit reads(source), writes(destination) {
+  let observed = source^;
+  set destination^ = observed;
+  return unit;
 }
 
-fn inspect(values: &Array<BystanderRecord, 4>, p: Cursor, j: u64) -> result: u8 reads(values), writes(values[j]) contract {
+fn shift(values: &Array<u8, 4>, p: Cursor, b: u64) -> result: unit writes(values) contract {
   requires p.k < 4_u64;
-  requires j < 4_u64;
+  requires b < 4_u64;
 } {
-  let selected = &values^[p.k].value;
+  let src = &values^[p.k];
   set p.k = 1_u64;
-  set values^[j] = BystanderRecord(value: 9_u8);
-  return selected^;
+  copy_across(source: src, destination: &values^[b]);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let values = array_filled::<u8, 4>(value: 1_u8);
+  shift(values: &values, p: Cursor(k: 1_u64), b: 2_u64);
+  return std::process::exit_status(code: 0_u8);
 }
 "#,
-        rule: "REF-2",
-        sentences: &[],
-        repaired: &[br#"alias ExitStatus = std::process::ExitStatus;
-alias exit_status = std::process::exit_status;
-
-struct BystanderRecord {
-  value: u8;
-}
-
-struct Cursor {
+        rule: "EFF-5",
+        sentences: &[
+            "\n  first: values^[\u{2039}the value of p.k before it was rewritten\u{203a}]\n",
+        ],
+        repaired: &[br#"struct Cursor {
   k: u64;
 }
 
-fn main() -> status: ExitStatus pure {
-  return exit_status(code: 0_u8);
+fn copy_across(source: &u8, destination: &u8) -> result: unit reads(source), writes(destination) {
+  let observed = source^;
+  set destination^ = observed;
+  return unit;
 }
 
-fn inspect(values: &Array<BystanderRecord, 4>, p: Cursor, j: u64) -> result: u8 reads(values), writes(values[j]) contract {
-  requires p.k < j;
-  requires j < 4_u64;
+fn shift(values: &Array<u8, 4>, p: Cursor, b: u64) -> result: unit writes(values) contract {
+  requires p.k < 4_u64;
+  requires b < 4_u64;
 } {
   let k0 = p.k;
-  let selected = &values^[k0].value;
+  let src = &values^[k0];
   set p.k = 1_u64;
-  set values^[j] = BystanderRecord(value: 9_u8);
-  return selected^;
+  if k0 < b {
+    copy_across(source: src, destination: &values^[b]);
+  }
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let values = array_filled::<u8, 4>(value: 1_u8);
+  shift(values: &values, p: Cursor(k: 1_u64), b: 2_u64);
+  return std::process::exit_status(code: 0_u8);
 }
 "#],
     },
