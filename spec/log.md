@@ -27,6 +27,7 @@ outgoing version with every amendment; git holds the rest of the history.
 Rules: changed PRE-2
 
 Summary: PRE-2 called the peer `tcp_accept` returns and the addresses `local_address` and `listener_address` return the host's report of one endpoint, and the runtime answered the all-zero address, which reads as 0.0.0.0:0, for a record of a third family or one too short for its family, so a program was given an address the host never reported. PRE-2 now states that `tcp_listen` and `tcp_connect` establish every socket from an IPv4 or an IPv6 address, that a connection `tcp_accept` returns belongs to such a listening socket, so the host reports its endpoint as one of those two families, and that any other report is a failure of the trusted base [SCOPE-3] which stops the program with a report, none of the three queries returning an address. Selected over a source-visible `Err(Unsupported)` because no program can make the host report a third family, the Err would add a result no source program can test and require closing the accepted connection and returning its handle credit in each of three accept engines, while the stop is the shape the runtime already uses when a host failure leaves it nothing to return.
+
 ## 2026-11-25 a listener's own address is readable
 
 Rules: changed PRE-2
