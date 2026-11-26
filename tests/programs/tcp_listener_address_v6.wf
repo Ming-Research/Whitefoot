@@ -196,11 +196,18 @@ fn is_loopback_v6(address: &SocketAddress) -> result: u8 reads(address) {
       return 0_u8;
     }
     Ipv6(a: group_a, b: group_b, c: group_c, d: group_d, e: group_e, f: group_f, g: group_g, h: group_h) => {
-      let lead = band(group_a == 0_u16, group_b == 0_u16);
-      let mid = band(group_c == 0_u16, group_d == 0_u16);
-      let tail = band(group_e == 0_u16, group_f == 0_u16);
+      let zero_a = group_a == 0_u16;
+      let zero_b = group_b == 0_u16;
+      let zero_c = group_c == 0_u16;
+      let zero_d = group_d == 0_u16;
+      let zero_e = group_e == 0_u16;
+      let zero_f = group_f == 0_u16;
+      let zero_g = group_g == 0_u16;
+      let lead = band(zero_a, zero_b);
+      let mid = band(zero_c, zero_d);
+      let tail = band(zero_e, zero_f);
       let upper = band(lead, mid);
-      let lower = band(tail, group_g == 0_u16);
+      let lower = band(tail, zero_g);
       let zeros = band(upper, lower);
       let last = group_h == 1_u16;
       let both = band(zeros, last);
@@ -213,7 +220,7 @@ fn is_loopback_v6(address: &SocketAddress) -> result: u8 reads(address) {
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  doc "Connects to the harness's loopback listener named by the invocation, opens its own listener on the IPv6 loopback ::1 with port 0, checks that the address listener_address reports is ::1,, reads the port the host chose with listener_address, reports that port to the harness as decimal text and a line feed over the first connection, accepts the harness's second connection on its own listener, and returns every byte that connection sends until the peer stops sending [PRE-2]. The harness holds the first listener throughout, so no port is reserved and released outside the program, and the harness's bytes come back only if the port reported is the one the program's own listener is bound to.";
+  doc "Connects to the harness's loopback listener named by the invocation, opens its own listener on the IPv6 loopback ::1 with port 0, checks that the address listener_address reports is ::1, reads the port the host chose with listener_address, reports that port to the harness as decimal text and a line feed over the first connection, accepts the harness's second connection on its own listener, and returns every byte that connection sends until the peer stops sending [PRE-2]. The harness holds the first listener throughout, so no port is reserved and released outside the program, and the harness's bytes come back only if the port reported is the one the program's own listener is bound to.";
   let Inputs(args: args, cwd: cwd_directory, handles: handles, ..) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
