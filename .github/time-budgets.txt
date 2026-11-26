@@ -47,12 +47,14 @@ cpu epyc-9v45  AMD EPYC 9V45 96-Core Processor
 # Only performance-baseline-compiler rises above the largest class. Evidence:
 # research/investigations/test-economy/time-budgets.md.
 # performance-candidate-compiler is set per class by the owner (165 s on
-# epyc-7763, 150 s on epyc-9v74, 135 s on epyc-9v45), after the 145 s of every
-# class, set on 2026-10-13, was exceeded four times in the recent runs (152.0 s
-# at most); its xeon-8573c column follows the rule for a model with too few runs:
-# the larger of the largest class and the model's own runs by the rule, which is
-# the 165 s, its three builds having taken 139.9 s at most (research/
-# investigations/test-economy/time-budgets.md, the candidate-compiler section).
+# epyc-7763, 150 s on epyc-9v74, 135 s on epyc-9v45), in place of one budget for
+# every class (145 s, set on 2026-10-13, 160 s since the tenth above); the 145 s
+# had been exceeded four times in the recent runs (152.0 s at most), and the
+# classes differ in speed. Its xeon-8573c column follows the rule for a model
+# with too few runs: the larger of the largest class and the model's own runs by
+# the rule, which is the 165 s, its three builds having taken 139.9 s at most
+# (research/investigations/test-economy/time-budgets.md, the candidate-compiler
+# section).
 cpu xeon-8573c INTEL(R) XEON(R) PLATINUM 8573C
 
 label                           epyc-7763  epyc-9v74  epyc-9v45  xeon-8573c  macos  windows

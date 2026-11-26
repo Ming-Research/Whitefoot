@@ -45,7 +45,7 @@ A Linux column the owner adds for a model with fewer than 20 runs of a stage tak
 
 ### decision candidate-compiler-build-budget-is-set-per-processor
 The candidate compiler's build budget in the performance comparison is set by the owner per processor class: 165 s on the EPYC 7763, 150 s on the 9V74, 135 s on the 9V45 and 165 s on the Xeon 8573C.
-- replaced: One budget of 145 s for every Linux class was on main; the owner changed it, because the build exceeded it four times in recent runs, up to 152.0 s, while the classes differ in speed.
+- replaced: One budget for every Linux class (145 s, 160 s since the tenth added to every Linux budget) was on main; the owner changed it, because the 145 s had been exceeded four times, up to 152.0 s, and the classes differ in speed (data: `research/investigations/test-economy/time-budgets.md`).
 
 ### decision overruns-fail-only-the-final-verdict
 Hosted CI records a budget overrun without changing the stage's status and fails its final verdict for Linux and Windows overruns or a missing budget row; macOS overruns are only reported.
