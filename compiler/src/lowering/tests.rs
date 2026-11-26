@@ -1438,21 +1438,31 @@ fn assert_uses_follow_definitions(function: &IrFunction) {
 /// asserts, on lowered source, that a join leaves no parameter carrying one
 /// value or that a counted range's bounds name values that survive. It lowers
 /// without running, in the one source with nested counted loops and a join
-/// that the old test already compiled: the inner bound is a binding the outer
-/// loop carries, and a loop sets a carried variable back to its pre-loop value
-/// on one arm.
+/// that the old test already compiled, plus a nest whose inner bound is a
+/// binding the outer loop carries, and a loop that sets a carried variable back
+/// to its pre-loop value on one arm.
 #[test]
 fn nested_counted_breaks_keep_each_exit_interface_local_to_its_range() {
     let source = br#"fn count() -> result: u64 pure {
-  let bound = 4_u64;
   let total = 0_u64;
   for @outer (i in 0_u64..4_u64) {
-    for @inner (j in 0_u64..bound) {
+    for @inner (j in 0_u64..4_u64) {
       set total = total +wrap 1_u64;
       break @inner;
     }
     if i == 1_u64 {
       break @outer;
+    }
+  }
+  return total;
+}
+
+fn nest() -> result: u64 pure {
+  let bound = 4_u64;
+  let total = 0_u64;
+  for @rows (i in 0_u64..4_u64) {
+    for @columns (j in 0_u64..bound) {
+      set total = total +wrap 1_u64;
     }
   }
   return total;
@@ -1490,16 +1500,17 @@ fn main() -> status: std::process::ExitStatus pure {
             );
             assert_uses_follow_definitions(function);
         }
-        // The inner loop's bound is the outer loop's carried `bound`, which
-        // is the constant itself once the carried parameter is merged away.
-        let parameters: Vec<_> = counted
+        // The inner loop's bound is the outer loop's carried `bound`, which is
+        // the constant itself once the carried parameter is merged away.
+        let nest = function(program, "nest");
+        let parameters: Vec<_> = nest
             .blocks()
             .iter()
             .flat_map(IrBlock::parameters)
             .map(|(value, _)| *value)
             .collect();
-        assert_eq!(counted.counted_ranges.len(), 2);
-        for range in &counted.counted_ranges {
+        assert_eq!(nest.counted_ranges.len(), 2);
+        for range in &nest.counted_ranges {
             assert!(
                 !parameters.contains(&range.lower) && !parameters.contains(&range.upper),
                 "a counted range's bounds are constants here, not carried parameters"
