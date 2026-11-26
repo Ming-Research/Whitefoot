@@ -609,6 +609,14 @@ entry:
   ret void
 }
 
+declare void @wf__body_listener_address(ptr, ptr)
+
+define void @wf_std.net.listener_address(ptr %result, ptr %listener) align 64 {
+entry:
+  tail call void @wf__body_listener_address(ptr %result, ptr %listener)
+  ret void
+}
+
 declare i32 @wf__body_tcp_listen_start(ptr, ptr, ptr, ptr)
 
 define i32 @wf_std.net.tcp_listen.start(ptr %result, ptr %factory, ptr %address, ptr %operation) align 64 {

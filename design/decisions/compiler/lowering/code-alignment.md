@@ -25,3 +25,5 @@ The function boundary is 64 bytes on every target.
 ### decision loop-headers-keep-llvm-alignment
 Loop headers keep LLVM's own alignment; the compiler passes no `-falign-loops`.
 - rejected: an agent proposed compiling the module with `-falign-loops=32`; the owner rejected it, because it met the experiment's selection rule on no host, and its one large gain came with a placement dependence that run did not locate (data: `research/investigations/code-placement/DESIGN.md`).
+- rejected: an agent proposed `-falign-loops=32` for the module and the whole runtime; the owner rejected it, because it failed the experiment's placement condition, was measured on no larger program and adds a build argument (data: `research/investigations/code-placement/DESIGN.md`).
+- rejected: an agent proposed `-falign-loops=64` for the module and the whole runtime; the owner rejected it, because it left a cost on the EPYC 9V74 at one thread, was measured on no larger program and adds a build argument (data: `research/investigations/code-placement/DESIGN.md`).

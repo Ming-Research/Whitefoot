@@ -932,6 +932,8 @@ function-kind parameters follow the existing HashMap callback forms:
 | `ordered_map_remove(map: &M, key: &K, env: &E)` | `Option<OrderedPair<K,V>>`; caller owns every removed key and value. |
 | `ordered_map_each(map: &M, env: &F)` | unit; visit every pair in order. |
 | `ordered_map_range(map: &M, lower: &K, upper: &K, key_env: &E, visit_env: &F)` | unit; ordered half-open `[lower,upper)` visit, empty for equal/inverted bounds under lawful order. |
+| `ordered_map_first(map: &M)`, `ordered_map_last(map: &M)`, `ordered_map_seek(map: &M, seek, probe: &P, env: &E)` | `OrderedCursor`, an owned position at an end or at one of four probe placements ([Ordered-map cursor](#ordered-map-cursor)). |
+| `ordered_map_step(map: &M, cursor: &OrderedCursor, direction)`, `ordered_map_read(map: &M, cursor: &OrderedCursor, env: &F)`, `ordered_map_rank(map: &M, cursor: &OrderedCursor)` | Bool for a move one pair either way; `Result<R,unit>` from an observing callback on the cursor's pair; `Result<u64,unit>` counting the pairs before it; a cursor made before the latest insertion or removal neither moves, reads nor ranks. |
 | `ordered_map_free(map: M, env: &F)` | unit; explicitly consume every remaining pair and release all nodes. |
 
 Observe/visit callbacks read key and value and write their environment; edit
@@ -1271,6 +1273,63 @@ direct paired comparison between candidates. Further source or lowering work
 needs a new discriminator for the remaining per-put storage, owner movement,
 occupancy and frame costs; [the maintained TODO](../../../docs/todo.md) retains
 that attribution task alongside node construction/cleanup and occupancy work.
+
+### Ordered-map cursor
+
+**Question.** The map lent pairs only through `ordered_map_each` and the
+half-open forward `ordered_map_range`, whose callbacks return unit, so a writer
+could not start at the last key at or below a probe, walk backward, or stop
+early. Firn's sorted-set code in `apps/firn` walked the published node fields
+instead, which made the fanout-16 node shape, a measured baseline rather than
+a default representation, part of every such client.
+
+**Constraint.** A reference may not be stored in an aggregate or returned
+([REF-3](../../../spec/kernel-spec.md)), and there are no function values
+([FN-5](../../../spec/kernel-spec.md)), so no value can hold the map. A
+position must be owned data that the caller hands back with the map.
+
+**Alternatives compared, by reading the interfaces and Firn's walks.**
+
+| Interface | Loop | Per step | Writer cost |
+| --- | --- | --- | --- |
+| Owned cursor: index path plus the map's version | caller's | one descent along the path, no key comparison | none beyond the lend callbacks |
+| Callback walk that stops on a returned flag | library's | amortized constant | the callback has one environment, so a step that writes two places copies the pair out first; two maps cannot be walked together |
+| Successor query by key | caller's | one comparing descent | the caller copies a key every step to remember its place |
+
+Firn's range walk decides from its walk state and then writes the client
+reply, two places per pair; under the callback walk every taken member would
+be copied before replying. The cursor lets the same loop lend the pair twice,
+once with each environment. A walk keeps the map borrowed only for each call,
+so a writer may change the map between steps; a cursor made before an
+insertion or a removal then reads nothing and does not step, because those
+can move pairs between nodes, while an edit or a replacement of a present key
+moves nothing and keeps cursors usable. The writer re-seeks by key.
+
+**Rank.** Firn's `ZRANK` summed the published subtrees before a key: one
+size call for every link it passed, empty links below leaf entries included,
+so about one call and one loop turn per preceding pair. With the tree
+private, a client could only count by stepping a cursor back to the first
+pair, one descent from the root per step, about two calls per level for every
+preceding pair: some five to ten times the work at five levels, growing with
+the height. `ordered_map_rank` keeps the earlier cost inside the module: it follows the cursor's path and adds, at each
+level, the entries before the path and the whole subtrees left of it. Storing
+subtree sizes in the nodes would make rank logarithmic, but it changes the
+representation and is not part of this comparison. These costs are read from
+the code, not timed.
+
+**Path bound.** The path is 32 levels. Every node below the root keeps at
+least seven entries, so eight children, and the root at least two children
+once it has a child, so a tree of depth 33 holds at least 2 times 8^31 times 7
+pairs, more than 10^28; a cursor that would pass the 32nd level rests on no
+pair instead. This is a deduction from the balancing in
+`lib/std/collections/ordered_map/ordered-map.wf`, not a measurement.
+
+**Not measured.** The cost of one descent per step against the callback walk
+was not timed. Firn's sorted-set range commands (`ZRANGE` with `LIMIT`,
+`ZREVRANGE`, `ZRANGEBYSCORE`) and `ZRANK` are to be compared on the i9-14900K
+with Firn's `redis-bench compare` when Firn adopts a Whitefoot release that
+carries the cursor; a range command measured materially slower than its earlier
+node walk would reopen the comparison.
 
 ## Ceiling challenges connected to real source contracts
 
