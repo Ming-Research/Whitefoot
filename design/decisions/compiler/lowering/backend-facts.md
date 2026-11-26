@@ -13,6 +13,11 @@ The backend gives LLVM a checked fact as an attribute, flag, metadata or assumpt
 Reference parameters get `noalias` from EFF-5 disjointness except for `swap`, `dereferenceable` from the target's guaranteed referent size, and only exact arithmetic gets no-wrap flags.
 - rejected: an agent proposed the same attributes for every operation; the owner rejected it, because the language layout ceiling is an upper bound, not a guaranteed extent, and wrapping operations admit operands that overflow on purpose.
 
+### decision a-counted-loops-hidden-increment-is-exact
+A counted loop's hidden unit increment is lowered as an exact operation and emitted with `add nuw`; source `+wrap` and the updates lowering itself synthesizes stay wrapping adds.
+- replaced: Lowering the hidden increment as a wrapping add was on main; the owner changed it, because the true guard `binder < upper` already makes it representable [FN-1], and without the flag LLVM cannot compute the trip count and unrolls only twice.
+- rejected: an agent proposed the same flag on every update lowering synthesizes, such as range splitting's width, midpoint and budget decrement and the byte probe's advance; the owner rejected it, because the checker never judged those updates and the specification has no rule for them.
+
 ### decision a-range-reference-crosses-calls-as-pointer-and-count
 A contiguous range-reference parameter crosses every call as its element pointer and count, and the pointer gets the reference facts except `dereferenceable`.
 - rejected: an agent proposed withholding EFF-5 disjointness from range references; the owner rejected it, because with the fact on the element pointer the host vectorizer drops its runtime overlap check (data: `research/investigations/range-reference-facts/DESIGN.md`).
