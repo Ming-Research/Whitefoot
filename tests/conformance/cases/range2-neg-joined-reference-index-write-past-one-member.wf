@@ -1,4 +1,4 @@
-fn clear(marks: &[u64], a: &Slots<u64, 4>, b: &Slots<u64, 4>, x: u64) -> result: unit writes(a, b) contract {
+fn clear(marks: &[u64], a: &Slots<u64, 4>, b: &Slots<u64, 4>, x: u64) -> result: unit writes(a), writes(b) contract {
   requires a^.len == 4_u64;
   requires b^.len == 2_u64;
   requires forall small(k in 0_u64..marks^.len): marks^[k] < 8_u64;
