@@ -27,25 +27,31 @@ LINEAR_STEPS = (
 )
 
 
+QUOTIENT_STEPS = {"UnsignedDivisionProduct"}
+ORIGIN_STEPS = {"OriginTransport", "OriginEquality", "OriginProjection", "LetOrigin"}
+JOIN_STEPS = {"JoinBound", "JoinDistinct", "JoinGoal", "JoinContradiction",
+              "TransportedHeaderRelation"}
+
+
+def step_names(route):
+    return {tag.split(":")[0] for tag in route.split("+")}
+
+
 def route_class(route):
-    """The eight-item row an ordinary proof's steps point to, or None. The
-    most specific step decides: a quotient product (items 3 and 4; the
-    ledger has no separate step for the power atom of item 3), then an
-    origin step (item 5), then a join step (item 7), then an S7 result range
-    (items 1 and 2). Item 6's float decoding has no ledger step of its own."""
-    tags = set(route.split("+"))
-    names = {tag.split(":")[0] for tag in tags}
-    if "UnsignedDivisionProduct" in names:
-        return "item 3 or 4 (quotient product)"
-    if names & {"OriginTransport", "OriginEquality", "OriginProjection", "LetOrigin"}:
-        return "item 5"
-    if names & {"JoinBound", "JoinDistinct", "JoinGoal", "JoinContradiction",
-                "TransportedHeaderRelation"}:
-        return "item 7 not recovered by the join"
+    """The class DESIGN.md's fixed order gives an ordinary proof's steps, or
+    None: class 3 (an S7 result range, items 1 and 2) before class 4 (a
+    quotient product for items 3 and 4, the ledger having no separate step
+    for item 3's power atom; an origin step for item 5; a written certificate
+    for item 8). Item 6's float decoding has no ledger step of its own."""
+    names = step_names(route)
     if "OperationFact" in names:
-        return "item 1/2 (S7 fact) not recovered by the remedy"
+        return "class 3: item 1/2 (S7 fact) not recovered by the remedy"
+    if names & QUOTIENT_STEPS:
+        return "class 4: item 3 or 4 (quotient product)"
+    if names & ORIGIN_STEPS:
+        return "class 4: item 5"
     if route == "certificate":
-        return "item 8 candidate (written certificate)"
+        return "class 4: item 8 (written certificate)"
     return None
 
 
@@ -159,6 +165,7 @@ def main(path):
 
     print("\n== criterion (1): ordinary-proved, baseline-unproved")
     classes = collections.Counter()
+    overlap = collections.Counter()
     sources = collections.Counter()
     ninth = []
     gaps = []
@@ -172,29 +179,43 @@ def main(path):
         j = joined.get(k)
         shadow = row["shadow"]
         if r is not None and proved(r):
-            label = "item 1/2 recovered by remedy"
+            label = "class 1: item 1/2 recovered by remedy"
         elif j is not None and proved(j):
-            label = "item 7 recovered by join"
+            label = "class 2: item 7 recovered by join"
         elif route_class(row["route"]):
             label = route_class(row["route"])
-        elif shadow.startswith("not-posed"):
-            label = "not posed: " + row["kind"].split("#")[0]
+            if label.startswith("class 3"):
+                # The fixed order puts an S7 range first; say which of these
+                # also rest on a step of another row.
+                names = step_names(row["route"])
+                also = [name for name, steps in (("quotient", QUOTIENT_STEPS),
+                                                 ("origin", ORIGIN_STEPS),
+                                                 ("join", JOIN_STEPS)) if names & steps]
+                overlap["+".join(also) or "(S7 only)"] += 1
         elif shadow.startswith("inconclusive") or shadow in ("unreached", "pending"):
-            label = "walk gap: " + shadow
+            label = "class 5: walk gap: " + shadow
             unrepresentable.append(row)
+        elif shadow.startswith("not-posed"):
+            label = "class 6: not posed: " + row["kind"].split("#")[0]
+        elif step_names(row["route"]) & JOIN_STEPS:
+            label = "ninth kind: join route not recovered by the weakest-bound join"
+            ninth.append(row)
         elif linear_only(row["route"]):
-            label = "walk gap: linear derivation, facts the walk lacks"
+            label = "ninth kind: linear route, facts the walk lacks"
             gaps.append(row)
             sources[tuple(sorted(tag for tag in row["route"].split("+")
                                  if tag.startswith("Source")))] += 1
         else:
-            label = "ninth kind"
+            label = "ninth kind: other route"
             ninth.append(row)
         classes[label] += 1
     for label, count in sorted(classes.items()):
-        print(f"  {label:50} {count}")
+        print(f"  {label:70} {count}")
     print(f"  total {sum(classes.values())}")
-    print("  sources of the linear walk gaps (top 25):")
+    print("  class 3 records whose route also has a step of another row:")
+    for also, count in sorted(overlap.items()):
+        print(f"    {also:30} {count}")
+    print("  sources of the ninth kind's linear routes (top 25):")
     for tags, count in sources.most_common(25):
         print(f"    {count:6} {'+'.join(tags) or '(none)'}")
     lost = [k for k, row in base.items() if proved(row) and k in remedy and not proved(remedy[k])]
@@ -224,11 +245,11 @@ def main(path):
                                                        "Materialized", "GoalProjection",
                                                        "GoalNormalization"))})) or "(sources only)"
 
-    grouped("ninth kind", ninth, lambda row: (row["kind"].split("#")[0], route_signature(row)))
-    grouped("linear walk gaps", gaps,
+    grouped("ninth kind: join and other routes", ninth, lambda row: (row["kind"].split("#")[0], route_signature(row)))
+    grouped("ninth kind: linear routes", gaps,
             lambda row: (row["kind"].split("#")[0], "+".join(sorted(
                 tag for tag in row["route"].split("+") if tag.startswith("Source"))) or "(none)"))
-    grouped("unrepresentable", unrepresentable,
+    grouped("class 5: walk gaps", unrepresentable,
             lambda row: (row["kind"].split("#")[0], row["notes"][:80]))
 
     print("\n== soundness review: ordinary unproved, baseline shadow proved")
