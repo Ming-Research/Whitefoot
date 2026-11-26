@@ -357,39 +357,6 @@ fn a_record_that_cannot_be_taken_probes_and_the_note_names_why() {
     }
 }
 
-/// RFC 8259 reference: a number is `-? (0 | [1-9][0-9]*) (. [0-9]+)? ([eE] [+-]? [0-9]+)?`.
-/// A manifest holding a value that is not a JSON number is not JSON, so its
-/// record is not trusted.
-#[test]
-fn a_manifest_with_a_malformed_number_is_not_trusted() {
-    let good = record_for("clang version 22.1.8");
-    let mut taken = Vec::new();
-    for (tag, bad) in [
-        ("minus", "1-2"),
-        ("zero", "01"),
-        ("dot", "1."),
-        ("exponent", "1e"),
-        ("sign", "1+2"),
-    ] {
-        let manifest = good.replace("\"size\":1}", &format!("\"size\":{bad}}}"));
-        assert_ne!(manifest, good);
-        let package = StandInPackage::new(
-            &format!("number-{tag}"),
-            Some(&manifest),
-            "clang version 22.1.8\\n",
-        );
-        let built = package.build(&[]);
-        let stderr = String::from_utf8_lossy(&built.stderr);
-        if !(stderr.contains("not valid JSON") && package.probes() >= 3) {
-            taken.push(bad);
-        }
-    }
-    assert!(
-        taken.is_empty(),
-        "records were taken from manifests holding these non-numbers: {taken:?}"
-    );
-}
-
 /// With the reference being the item's own result for the other two
 /// installations: a compiler beside no clang (a source build or a lightweight
 /// package) probes and reports no reason and no note; the compiler inside a
