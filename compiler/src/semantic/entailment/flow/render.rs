@@ -2,6 +2,7 @@
 //! and places spelled in the source's own terms.
 
 use super::*;
+use crate::diagnostic_repairs::described;
 
 /// How a source rendering spells one counted loop binder.
 #[derive(Clone, Copy, Debug)]
@@ -123,7 +124,7 @@ impl Input<'_, '_> {
             (CheckedIntegerOperation::ShiftRightExact, [value, amount]) => {
                 format!("ishr.defined({value}, {amount})")
             }
-            _ => "<invalid integer-domain goal>".to_owned(),
+            _ => described("an invalid integer-domain goal"),
         }
     }
 
@@ -177,12 +178,12 @@ impl Input<'_, '_> {
                 // former over the place, never an internal term identity.
                 CheckedAffineExpressionKind::Measure(measure) => self
                     .render_affine_measure(measure, counted)
-                    .unwrap_or_else(|| "?".to_owned()),
+                    .unwrap_or_else(|| described("a measure with no source spelling")),
                 // [INV-1, ENT-6] a tracked field place factor renders as the
                 // writer wrote it, through a reference root's `^`.
                 CheckedAffineExpressionKind::Field(field) => match self.read_place_path(field) {
                     Some(place) => self.render_header_place(&place, counted),
-                    None => "?".to_owned(),
+                    None => described("a field with no source spelling"),
                 },
                 CheckedAffineExpressionKind::ConstGeneric { name, .. } => name.clone(),
                 CheckedAffineExpressionKind::Add(_, _)
@@ -270,7 +271,7 @@ impl Input<'_, '_> {
             .binding_names
             .get(binding.0 as usize)
             .cloned()
-            .unwrap_or_else(|| "?".to_owned())
+            .unwrap_or_else(|| described("a binding with no source spelling"))
     }
 
     /// [RANGE-1] a name for a suggested range clause or bound variable: the
@@ -310,7 +311,10 @@ impl Input<'_, '_> {
         self.context
             .declarations
             .get(declaration.index())
-            .map_or_else(|| "?".to_owned(), |record| record.spelling().to_owned())
+            .map_or_else(
+                || described("a declaration with no source spelling"),
+                |record| record.spelling().to_owned(),
+            )
     }
 
     fn render_header_offset(
@@ -326,13 +330,21 @@ impl Input<'_, '_> {
                 self.render_header_place(&self.context.captured_places.get(id), counted)
             }
             // [REF-1] the binding's spelling names a later value than the one
-            // this index read, and no source spelling names that one.
-            CapturedTerm::Superseded(_) | CapturedTerm::SupersededPlace(_) => "?".to_owned(),
+            // this index read, and no source spelling names that one, so the
+            // value is described.
+            CapturedTerm::Superseded(binding) => described(&format!(
+                "the value of {} before it was rewritten",
+                self.render_header_binding(binding, counted)
+            )),
+            CapturedTerm::SupersededPlace(id) => described(&format!(
+                "the value of {} before it was rewritten",
+                self.render_header_place(&self.context.captured_places.get(id), counted)
+            )),
             CapturedTerm::Opaque => offset
                 .source
                 .and_then(|node| self.context.source_spellings.get(&node))
                 .cloned()
-                .unwrap_or_else(|| "?".to_owned()),
+                .unwrap_or_else(|| described("a computed value with no source spelling")),
         }
     }
 
@@ -387,7 +399,7 @@ impl Input<'_, '_> {
                     .constants
                     .get(id.0 as usize)
                     .map(|constant| constant.name.clone())
-                    .unwrap_or_else(|| "?".to_owned()),
+                    .unwrap_or_else(|| described("a constant with no source spelling")),
                 self.context
                     .constants
                     .get(id.0 as usize)
@@ -635,14 +647,18 @@ impl Input<'_, '_> {
                 ordinal,
                 projections,
                 ..
-            } => self.render_goal_projections(format!("parameter #{ordinal}"), None, projections),
+            } => self.render_goal_projections(
+                described(&format!("parameter #{ordinal}")),
+                None,
+                projections,
+            ),
             GoalDatum::NamedConst {
                 declaration,
                 projections,
                 ..
             } => {
                 let (name, ty) = self.context.constant(*declaration).map_or_else(
-                    || ("?".to_owned(), None),
+                    || (described("a constant with no source spelling"), None),
                     |constant| (constant.name.clone(), Some(constant.declared_type)),
                 );
                 self.render_goal_projections(name, ty, projections)
@@ -687,10 +703,10 @@ impl Input<'_, '_> {
                 let base = match occurrence {
                     // [DIAG-1] fixes this spelling for an FN-8 payload.
                     EvaluatedValueOccurrence::CallArgument { argument, .. } => {
-                        format!("argument #{argument} pre-transfer value")
+                        crate::diagnostic_repairs::call_argument_datum(argument)
                     }
                     EvaluatedValueOccurrence::ObligationOperand { operand, .. } => {
-                        format!("<operand #{operand} evaluated value>")
+                        described(&format!("operand #{operand} evaluated value"))
                     }
                 };
                 self.render_goal_projections(base, Some(*captured_type), projections)
@@ -725,7 +741,7 @@ impl Input<'_, '_> {
                         self.context.elements.get(element.index())
                     }) {
                         Some(CheckedType::Integer(IntegerType::U8)) => "\"\"".to_owned(),
-                        _ => "?".to_owned(),
+                        _ => described("an empty array with no source spelling"),
                     };
                 }
                 format!(
@@ -746,10 +762,10 @@ impl Input<'_, '_> {
                         .map(|nominal| &nominal.kind),
                     _ => None,
                 }) else {
-                    return "?".to_owned();
+                    return described("a value with no source spelling");
                 };
                 let Some(name) = self.context.type_spellings.get(ty) else {
-                    return "?".to_owned();
+                    return described("a type with no source spelling");
                 };
                 let arguments = declared
                     .iter()
@@ -772,7 +788,7 @@ impl Input<'_, '_> {
             CheckedType::GenericInt(declaration) | CheckedType::GenericFloat(declaration) => {
                 self.declaration_name(declaration)
             }
-            _ => "?".to_owned(),
+            _ => described("a type with no source spelling"),
         }
     }
 
@@ -877,7 +893,7 @@ impl Input<'_, '_> {
     pub(super) fn render_expression(&self, expression: &CheckedExpression) -> String {
         match expression {
             CheckedExpression::Constant(CheckedValue::ConstGeneric { .. }) => {
-                "<const parameter>".to_owned()
+                described("a const parameter")
             }
             CheckedExpression::Constant(CheckedValue::Integer { ty, bits }) => {
                 format!("{}_{}", integer_value(*ty, *bits), integer_type_name(*ty))
@@ -941,7 +957,7 @@ impl Input<'_, '_> {
                         }
                         _ => None,
                     })
-                    .unwrap_or_else(|| "?".to_owned());
+                    .unwrap_or_else(|| described("a field with no source spelling"));
                 format!("{}.{field_name}", self.render_expression(value))
             }
             CheckedExpression::ArrayIndex { root, offset, .. } => {
@@ -971,7 +987,7 @@ impl Input<'_, '_> {
                 base.path.extend(place.place_path());
                 self.render_place(&base)
             }
-            _ => "?".to_owned(),
+            _ => described("an expression with no source spelling"),
         }
     }
 }
@@ -1083,16 +1099,16 @@ impl Reasoning<'_, '_, '_> {
             }
             TermKind::Zero => self.input.render_normalized_integer(0, ty),
             TermKind::Constant(value) => self.input.render_normalized_integer(*value, ty),
-            TermKind::ConstParameter(..) => "<const parameter>".to_owned(),
+            TermKind::ConstParameter(..) => described("a const parameter"),
             TermKind::Place(place, _) => self.input.render_place(place),
             TermKind::Measure(measure, place) => {
                 format!("{}.{}", self.input.render_place(place), measure.spelling())
             }
             TermKind::CountedCapture { side, .. } => match side {
-                CountedCaptureSide::Lower => "<counted lower capture>".to_owned(),
-                CountedCaptureSide::Upper => "<counted upper capture>".to_owned(),
+                CountedCaptureSide::Lower => described("the counted loop's lower capture"),
+                CountedCaptureSide::Upper => described("the counted loop's upper capture"),
             },
-            TermKind::IndexCapture { .. } => "<captured index>".to_owned(),
+            TermKind::IndexCapture { .. } => described("a captured index"),
             TermKind::ResultPayload {
                 payload,
                 path,
@@ -1100,7 +1116,7 @@ impl Reasoning<'_, '_, '_> {
                 ..
             } => {
                 let place = self.input.render_place_projections(
-                    "<success payload>".to_owned(),
+                    described("the success payload"),
                     Some(*payload),
                     path,
                     None,
@@ -1109,11 +1125,11 @@ impl Reasoning<'_, '_, '_> {
                     format!("{place}.{}", measure.spelling())
                 })
             }
-            TermKind::CommitValue { .. } => "<assigned value>".to_owned(),
-            TermKind::ReturnedValue { .. } => "<returned value>".to_owned(),
+            TermKind::CommitValue { .. } => described("the assigned value"),
+            TermKind::ReturnedValue { .. } => described("the returned value"),
             TermKind::CallDatum { measure, .. } => measure.map_or_else(
-                || "<argument value at the call>".to_owned(),
-                |measure| format!("<argument {} at the call>", measure.spelling()),
+                || described("the argument value at the call"),
+                |measure| described(&format!("the argument {} at the call", measure.spelling())),
             ),
             // [MSR-3] an entry datum is what the writer wrote: a measure of
             // the parameter, at the one state an `ensures` gives it.
@@ -1125,7 +1141,12 @@ impl Reasoning<'_, '_, '_> {
             } => {
                 let parameter = self.input.function.parameters.get(*formal as usize);
                 let (base, ty, range, projections) = parameter.map_or_else(
-                    || ("?".to_owned(), None, false, projections.as_slice()),
+                    || (
+                        described("a parameter with no source spelling"),
+                        None,
+                        false,
+                        projections.as_slice(),
+                    ),
                     |parameter| {
                         if parameter.mode.is_reference() {
                             // The clause retains its leading reference step;
@@ -1170,8 +1191,8 @@ impl Reasoning<'_, '_, '_> {
                     MeasurePlacement::Payload => "the payload",
                 };
                 measure.map_or_else(
-                    || format!("<value at {event}>"),
-                    |measure| format!("<{} at {event}>", measure.spelling()),
+                    || described(&format!("the value at {event}")),
+                    |measure| described(&format!("the {} at {event}", measure.spelling())),
                 )
             }
         }
@@ -1291,13 +1312,13 @@ pub(super) fn render_goal_row(
         | GoalOperation::BufferMeasure { measure, .. }
         | GoalOperation::ContainerMeasure { measure, .. } => match arguments {
             [place] => format!("{place}.{}", measure.spelling()),
-            _ => "<invalid measure goal>".to_owned(),
+            _ => described("an invalid measure goal"),
         },
         GoalOperation::ArrayIndex { .. }
         | GoalOperation::BufferIndex { .. }
         | GoalOperation::RunIndex { .. } => match arguments {
             [collection, offset] => format!("{collection}[{offset}]"),
-            _ => "<invalid index goal>".to_owned(),
+            _ => described("an invalid index goal"),
         },
     }
 }
@@ -1323,7 +1344,7 @@ pub(super) fn numeric_type_name(
         CheckedNumericType::GenericInteger(declaration)
         | CheckedNumericType::GenericFloat(declaration) => {
             declarations.get(declaration.index()).map_or_else(
-                || format!("<type-parameter:{}>", declaration.index()),
+                || described(&format!("type parameter #{}", declaration.index())),
                 |record| record.spelling().to_owned(),
             )
         }
