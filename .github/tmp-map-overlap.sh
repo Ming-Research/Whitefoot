@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Temporary: the evidence of work W291 for the concurrent map test. Removed before the full check.
-# usage: tmp-map-overlap.sh calibrate|before|after|swap-control|inert-control|late-control
+# usage: tmp-map-overlap.sh calibrate|before|after|swap-control|inert-control|late-control|newtest-control
 set -u
 ROOT=$(pwd)
 S=${RUNNER_TEMP:-/tmp}/map-overlap
@@ -113,6 +113,24 @@ late_patch() { # file
     [ "$(grep -c 'getenv("LATE")' "$1")" -eq 3 ] || { echo "PATCH DID NOT APPLY AS EXPECTED: $1"; grep -n LATE "$1"; exit 1; }
 }
 
+# A copy of this checkout with one wrong behaviour patched in, built and run
+# N_CTL times on one focused path: how many runs failed, and how many with the
+# message the path is to fail with.
+variant() { # name file(under src/backend) perl-expression arg expected-message
+    local name=$1 file=$2 expr=$3 arg=$4 expected=$5
+    local tree="$S/nt-$name-tree"
+    copy_tree "$tree"
+    perl -0pi -e "$expr" "$tree/src/backend/$file"
+    if diff "$ROOT/compiler/src/backend/$file" "$tree/src/backend/$file" > "$S/nt-$name.diff"; then
+        echo "PATCH DID NOT APPLY: $name"
+        exit 1
+    fi
+    cat "$S/nt-$name.diff"
+    build "nt-$name" "$tree"
+    expect_fail "nt-$name" "$S/nt-$name" "$N_CTL" "$arg"
+    echo "RESULT nt-$name: $(grep -l -F -- "$expected" "$S"/nt-"$name".*.out 2>/dev/null | wc -l) of $N_CTL runs gave: $expected"
+}
+
 case ${1:-} in
 calibrate)
     build fixed-plain "$ROOT/compiler"
@@ -193,8 +211,35 @@ late-control)
     done
     unset LATE
     ;;
+newtest-control)
+    # Each of the three tests added after the first hand-in, on the sources as
+    # they are (it must pass) and with the one wrong behaviour it guards.
+    build nt-ok "$ROOT/compiler"
+    for arg in swap-hook release-inside-self-swap owed-bound; do
+        expect_fail "nt-ok-$arg" "$S/nt-ok" "$N_CTL" "$arg"
+    done
+    CM=concurrent_map.c
+    T=concurrent_map_test.c
+    variant hook-after $CM 's/    WF_CMAP_SWAPPING\(a, b\);\n(    table \*current = [^\n]*\n[^\n]*\n[^\n]*\n    atomic_store_explicit\(&b->current, current, memory_order_relaxed\);\n)/$1    WF_CMAP_SWAPPING(a, b);\n/' \
+        swap-hook "a swap's hook ran after the exchange began"
+    variant hook-before $CM 's/(    wf_cmap \*first = [^\n]*\n)(    lock_map\(first\);\n    if \(b != a\)\n        lock_map\(first == a \? b : a\);\n)    WF_CMAP_SWAPPING\(a, b\);\n/$1    WF_CMAP_SWAPPING(a, b);\n$2/' \
+        swap-hook "a swap's hook ran without a map's lock"
+    variant hook-twice $CM 's/(    WF_CMAP_SWAPPING\(a, b\);\n)/$1$1/' \
+        swap-hook "a swap did not run its hook once"
+    variant hook-never $CM 's/    WF_CMAP_SWAPPING\(a, b\);\n//' \
+        swap-hook "a swap did not run its hook once"
+    nolocks='s/(void wf_cmap_swap.*?#undef SWAP_FIELD)/my $f = $1; $f =~ s{    lock_map\(first\);\n    if \(b != a\)\n        lock_map\(first == a \? b : a\);\n}{    (void)first;\n}; $f =~ s{    unlock_map\(a\);\n    if \(b != a\)\n        unlock_map\(b\);\n}{}; $f/se'
+    variant locks-gone-self $CM "$nolocks" \
+        release-inside-self-swap "a release inside a swap of a map with itself freed a reserve"
+    variant locks-gone-hook $CM "$nolocks" \
+        swap-hook "a swap's hook ran without a map's lock"
+    variant bound-100 $T 's/at\.tv_sec - since->start\.tv_sec >= 10\)/at.tv_sec - since->start.tv_sec >= 100)/' \
+        owed-bound "a wait 11 s old for an act did not end the test"
+    variant no-early-return $T 's/    if \(now >= want\)\n        return 0;\n//' \
+        owed-bound "a wait for an act already made asked again or started its clock"
+    ;;
 *)
-    echo "usage: $0 calibrate|before|after|swap-control|inert-control|late-control" >&2
+    echo "usage: $0 calibrate|before|after|swap-control|inert-control|late-control|newtest-control" >&2
     exit 2
     ;;
 esac

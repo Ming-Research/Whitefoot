@@ -5000,6 +5000,21 @@ int main(int argc, char **argv) {
         puts("concurrent-map-test: release inside swap checks passed");
         return 0;
     }
+    if (argc == 2 && strcmp(argv[1], "release-inside-self-swap") == 0) {
+        reserves_refused_inside_a_self_swap();
+        puts("concurrent-map-test: release inside self swap checks passed");
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "swap-hook") == 0) {
+        swap_hook_runs_once_under_the_locks();
+        puts("concurrent-map-test: swap hook checks passed");
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "owed-bound") == 0) {
+        owed_is_bounded();
+        puts("concurrent-map-test: owed bound checks passed");
+        return 0;
+    }
     if (argc == 3 && strcmp(argv[1], "read-hold-write") == 0) {
         read_hold_write_selection((unsigned)atoi(argv[2]));
         printf("concurrent-map-test: read-hold write selection %s passed\n", argv[2]);
