@@ -54,71 +54,12 @@
 # suite runs each line both on two server CPUs (0 and 1, the client on 2 and 3)
 # and on one (0, the client on 1 to 3).
 #
-# The compare, scale and quick modes place n server CPUs with `place`: one
-# logical CPU on each of n distinct physical cores, performance cores only
-# where the host lists them (/sys/devices/cpu_core/cpus), in CPU-number order,
-# skipping the physical core of CPU 0, which the OS and the runner keep; the
-# client gets every logical CPU of the remaining such cores, up to the count
-# asked. On the native i9-14900K, whose adjacent CPU numbers are hyperthread
-# siblings and whose CPUs 16-31 are efficiency cores, n = 2 gives server 2,4
-# and client 6-15. SERVER_CPU_LIST and CLIENT_CPU_LIST, comma-separated CPU
-# numbers, override the two lists; the server list's first n CPUs are used.
-# Each placement is printed as a placement line. The rule is Firn-wf's
-# benchmark placement (its design node firn/measurement-sessions).
+# The compare, scale and quick modes place n server CPUs with `place`, the
+# rule of placement.sh, which describes it; each placement is printed as a
+# placement line.
 set -e
 
-# Sets SERVER_CPUS, CLIENT_CPUS and CLIENT_THREADS for n servers and at most
-# the given client count; returns 2 when the host has too few cores for n.
-place() {
-    lists=$(python3 - "$1" "$2" "${SERVER_CPU_LIST:-}" "${CLIENT_CPU_LIST:-}" <<'PY'
-import sys
-from pathlib import Path
-n, wanted, server_list, client_list = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3], sys.argv[4]
-def parse(text):
-    cpus = []
-    for part in text.strip().split(","):
-        if part:
-            first, _, last = part.partition("-")
-            cpus.extend(range(int(first), int(last or first) + 1))
-    return cpus
-root = Path("/sys/devices")
-listed = root / "cpu_core" / "cpus"
-online = root / "system" / "cpu" / "online"
-eligible = parse(listed.read_text()) if listed.exists() else parse(online.read_text())
-def core(cpu):
-    topology = root / "system" / "cpu" / f"cpu{cpu}" / "topology"
-    try:
-        return ((topology / "physical_package_id").read_text().strip(),
-                (topology / "core_id").read_text().strip())
-    except OSError:
-        return ("cpu", str(cpu))
-cores = {}
-for cpu in sorted(eligible):
-    cores.setdefault(core(cpu), []).append(cpu)
-reserved = core(0)
-ordered = [cpus for key, cpus in cores.items() if key != reserved]
-if server_list:
-    servers = parse(server_list)[:n]
-else:
-    servers = [cpus[0] for cpus in ordered[:n]]
-if client_list:
-    clients = parse(client_list)[:wanted]
-else:
-    clients = [cpu for cpus in ordered[n:] for cpu in cpus][:wanted]
-server_cores = {core(cpu) for cpu in servers}
-if len(servers) < n or not clients:
-    sys.exit(2)
-if len(server_cores) != len(servers) or server_cores & {core(cpu) for cpu in clients}:
-    sys.exit("placement: a server CPU shares a physical core with another server or the client")
-print(",".join(map(str, servers)), ",".join(map(str, clients)), len(clients))
-PY
-    ) || return $?
-    set -- $lists
-    SERVER_CPUS=$1
-    CLIENT_CPUS=$2
-    CLIENT_THREADS=$3
-    echo "placement,$n servers,server=$SERVER_CPUS,client=$CLIENT_CPUS"
-}
+. "$(dirname "$0")/placement.sh"
 
 ROOT=${ROOT:-$(cd "$(dirname "$0")/../../.." && pwd)}
 OUT=${OUT:-/tmp/redis-bench}
