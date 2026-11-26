@@ -3,19 +3,38 @@ public struct OrderedPair<K, V> {
   public value: V;
 }
 
-public struct OrderedEntry<K, V, N> {
-  public readonly pair: OrderedPair<K, V>;
-  public readonly after: Slots<Box<N>, 1>;
+struct OrderedEntry<K, V, N> {
+  pair: OrderedPair<K, V>;
+  after: Slots<Box<N>, 1>;
 }
 
-public struct OrderedNode<K, V> {
-  public readonly leading: Slots<Box<OrderedNode<K, V>>, 1>;
-  public readonly entries: Slots<OrderedEntry<K, V, OrderedNode<K, V>>, 15>;
+struct OrderedNode<K, V> {
+  leading: Slots<Box<OrderedNode<K, V>>, 1>;
+  entries: Slots<OrderedEntry<K, V, OrderedNode<K, V>>, 15>;
 }
 
 public struct OrderedMap<K, V, const ceiling: u64> {
-  public readonly root: Slots<Box<OrderedNode<K, V>>, 1>;
+  root: Slots<Box<OrderedNode<K, V>>, 1>;
   public readonly length: u64;
+  version: u64;
+}
+
+public struct OrderedCursor {
+  path: Array<u8, 32>;
+  depth: u64;
+  version: u64;
+}
+
+public enum OrderedSeek {
+  OrderedAtLeast();
+  OrderedAbove();
+  OrderedAtMost();
+  OrderedBelow();
+}
+
+public enum OrderedDirection {
+  OrderedForward();
+  OrderedBackward();
 }
 
 public enum OrderedReturnReason {
@@ -49,5 +68,17 @@ public fn ordered_map_edit<interface OrderedKey<K, E>, V, F, R, fn update(env: &
 public fn ordered_map_each<K, V, F, fn visit(env: &F, key: &K, value: &V) -> result: unit reads(key), reads(value), writes(env), const ceiling: u64>(map: &OrderedMap<K, V, ceiling>, env: &F) -> result: unit reads(map), writes(env) doc "Lends every pair to visit in key order.";
 
 public fn ordered_map_range<interface OrderedKey<K, E>, V, F, fn visit(env: &F, key: &K, value: &V) -> result: unit reads(key), reads(value), writes(env), const ceiling: u64>(map: &OrderedMap<K, V, ceiling>, lower: &K, upper: &K, key_env: &E, visit_env: &F) -> result: unit reads(map), reads(lower), reads(upper), reads(key_env), writes(visit_env) doc "Lends every pair whose key lies in the half-open interval from lower to upper to visit, in key order.";
+
+public fn ordered_map_first<K, V, const ceiling: u64>(map: &OrderedMap<K, V, ceiling>) -> cursor: OrderedCursor reads(map) doc "Returns a cursor on the pair with the least key, or on no pair when the map is empty.";
+
+public fn ordered_map_last<K, V, const ceiling: u64>(map: &OrderedMap<K, V, ceiling>) -> cursor: OrderedCursor reads(map) doc "Returns a cursor on the pair with the greatest key, or on no pair when the map is empty.";
+
+public fn ordered_map_seek<K, V, E, P, fn place(env: &E, left: &K, right: &P) -> order: i32 reads(env), reads(left), reads(right), const ceiling: u64>(map: &OrderedMap<K, V, ceiling>, seek: OrderedSeek, probe: &P, env: &E) -> cursor: OrderedCursor reads(map), reads(probe), reads(env) doc "Returns a cursor on the first pair whose key place orders at or after the probe (OrderedAtLeast) or after it (OrderedAbove), or on the last pair whose key place orders at or before the probe (OrderedAtMost) or before it (OrderedBelow); the cursor is on no pair when there is none. place returns a negative, zero or positive order of a stored key, left, against the probe, right, and must be monotone in the map's key order; the map's own comparison serves when the probe is a key. The search reads the keys of one path from the root.";
+
+public fn ordered_map_step<K, V, const ceiling: u64>(map: &OrderedMap<K, V, ceiling>, cursor: &OrderedCursor, direction: OrderedDirection) -> moved: Bool reads(map), writes(cursor) doc "Moves the cursor to the next pair in key order (OrderedForward) or the previous one (OrderedBackward) and returns True; returns False, leaving the cursor on no pair, when it was on the last pair in that direction, on no pair, or made before the map's latest insertion or removal. Replacing a pair or editing a value leaves cursors usable. A cursor names a position in the map that made it; given another map it names some position of that map or none.";
+
+public fn ordered_map_read<K, V, F, R, fn observe(env: &F, key: &K, value: &V) -> result: R reads(key), reads(value), writes(env), const ceiling: u64>(map: &OrderedMap<K, V, ceiling>, cursor: &OrderedCursor, env: &F) -> result: Result<R, unit> reads(map), reads(cursor), writes(env) doc "Lends the pair the cursor is on to observe and returns its owned result in Ok; Err reports a cursor on no pair or one made before the map's latest insertion or removal.";
+
+public fn ordered_map_rank<K, V, const ceiling: u64>(map: &OrderedMap<K, V, ceiling>, cursor: &OrderedCursor) -> result: Result<u64, unit> reads(map), reads(cursor) doc "Returns in Ok the number of pairs ordered before the pair the cursor is on, counting whole subtrees beside the cursor's path, about one call per preceding pair, where stepping a cursor back to the first pair would descend from the root for each; Err reports a cursor on no pair or one made before the map's latest insertion or removal.";
 
 public fn ordered_map_free<K, V, F, fn consume(env: &F, key: K, value: V) -> result: unit writes(env), const ceiling: u64>(map: OrderedMap<K, V, ceiling>, env: &F) -> result: unit writes(env) doc "Consumes every remaining key and value through consume, nodrop owners included, and releases every node.";
