@@ -3664,3 +3664,144 @@ fn main() -> status: ExitStatus pure {
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
 }
+
+/// The assembly the host's optimizer and assembler produce for one emitted
+/// module at the shipped optimization level.
+fn host_assembly(module: &str) -> String {
+    let directory = super::test_directory();
+    let input = directory.join("program.ll");
+    std::fs::write(&input, module).expect("write the module");
+    #[allow(clippy::disallowed_methods, reason = "host toolchain, not a test program")]
+    let output = std::process::Command::new(crate::clang_executable())
+        .arg("-x")
+        .arg("ir")
+        .arg(&input)
+        .args(crate::HOST_OPTIMIZATION_ARGUMENTS)
+        .arg("-S")
+        .arg("-o")
+        .arg("-")
+        .output()
+        .expect("invoke host clang");
+    assert!(
+        output.status.success(),
+        "clang rejected the module:\n{}\n{module}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::fs::remove_dir_all(&directory).expect("remove the assembly directory");
+    String::from_utf8(output.stdout).expect("assembly is UTF-8")
+}
+
+/// Each function of the assembly whose label names a dispatch part
+/// (`<base>.arm.<n>`, with its cold split) and how many pushes and pops of
+/// `%rbp` it holds.
+fn part_rbp_saves(assembly: &str) -> Vec<(String, usize)> {
+    let mut parts = Vec::new();
+    let mut current: Option<(String, usize)> = None;
+    for line in assembly.lines() {
+        let code = line.split('#').next().unwrap_or("").trim();
+        if let Some(label) = code.strip_suffix(':').filter(|label| label.contains(".arm.")) {
+            parts.extend(current.take());
+            current = Some((label.to_owned(), 0));
+        } else if code.starts_with(".Lfunc_end") {
+            parts.extend(current.take());
+        } else if let Some((_, saves)) = current.as_mut() {
+            let mut words = code.split_whitespace();
+            if matches!(words.next(), Some("pushq" | "push" | "popq" | "pop"))
+                && words.next() == Some("%rbp")
+            {
+                *saves += 1;
+            }
+        }
+    }
+    parts.extend(current);
+    parts
+}
+
+/// x86-64 System V (psABI 3.2.1): RBP is callee-saved and a part that uses it
+/// as a scratch register under the ordinary `preserve_none` convention saves
+/// and restores it on every transfer; with the attribute written on every
+/// definition and call no part does, and the same loop without the attribute
+/// still does, so the check can fail. Judged on the host's own assembly, not
+/// on the emitted text.
+#[test]
+fn the_attribute_removes_every_rbp_save_from_the_parts_it_is_written_on() {
+    let attribute = host_attribute();
+    if attribute.is_empty() {
+        assert!(
+            !cfg!(all(target_arch = "x86_64", target_os = "linux")),
+            "the pinned LLVM on Linux x86-64 honors the attribute"
+        );
+        return;
+    }
+    let mut controlled = 0;
+    for (name, source) in [
+        ("scalar interpreter", scalar_interpreter()),
+        ("enum interpreter", enum_interpreter()),
+        ("replacing interpreter", REPLACING.to_owned()),
+        ("frame values", thirty_values(false)),
+    ] {
+        let module = emit(source.as_bytes());
+        if !module.contains(".arm.0(") {
+            continue;
+        }
+        assert!(module.contains(attribute), "{name}: {module}");
+        let attributed = part_rbp_saves(&host_assembly(&module));
+        assert!(!attributed.is_empty(), "{name} has parts in its assembly");
+        for (label, saves) in &attributed {
+            assert_eq!(*saves, 0, "{name}: {label} saves RBP under the attribute");
+        }
+        let legacy = part_rbp_saves(&host_assembly(&module.replace(attribute, "")));
+        assert_eq!(legacy.len(), attributed.len(), "{name}: the same parts");
+        controlled += legacy.iter().filter(|(_, saves)| *saves > 0).count();
+    }
+    assert!(
+        controlled > 0,
+        "no part of any program uses RBP without the attribute, so the check proves nothing"
+    );
+}
+
+/// x86-64 System V (psABI 3.2.1): the enclosing function keeps the C
+/// convention, so values its caller holds in callee-saved registers
+/// (RBX, RBP, R12-R15) across a call survive a split loop whose parts save
+/// nothing. Eight values derived from the first result stay live across the
+/// second call and are combined afterwards; the expected total is computed
+/// here from the same formulas.
+#[test]
+fn a_caller_s_callee_saved_values_survive_a_split_loop() {
+    let first = 3000_u64;
+    let second = 7_u64 + 3 * 10;
+    let multiples = [3_u64, 5, 7, 11];
+    let masks = [1234_u64, 77, 4096, 99];
+    let expected = multiples
+        .iter()
+        .map(|multiple| first.wrapping_mul(*multiple))
+        .chain(masks.iter().map(|mask| first ^ mask))
+        .fold(second, u64::wrapping_add);
+    let mut check = String::new();
+    for (index, multiple) in multiples.iter().enumerate() {
+        check.push_str(&format!("let m{index} = r *wrap {multiple}_u64;\n"));
+    }
+    for (index, mask) in masks.iter().enumerate() {
+        check.push_str(&format!("let x{index} = ixor(r, {mask}_u64);\n"));
+    }
+    check.push_str("let s = run(code: &code, start: 0_u64, seed: 7_u64, steps: 10_u64);\n");
+    check.push_str("let t0 = s +wrap m0;\n");
+    let mut previous = "t0".to_owned();
+    for (number, value) in ["m1", "m2", "m3", "x0", "x1", "x2", "x3"].iter().enumerate() {
+        let next = format!("t{}", number + 1);
+        check.push_str(&format!("let {next} = {previous} +wrap {value};\n"));
+        previous = next;
+    }
+    check.push_str(&format!(
+        "if {previous} == {expected}_u64 {{\n return exit_status(code: 0_u8);\n}}\n\
+         return exit_status(code: 1_u8);"
+    ));
+    let source = INTERPRETER
+        .replace("RESULT", "u64")
+        .replace("FAILED", "0_u64")
+        .replace("DONE", "acc")
+        .replace("CHECK", &check);
+    let module = emit(source.as_bytes());
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
