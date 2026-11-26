@@ -836,7 +836,7 @@ static int wf_bridge_ensure_wake(void) {
 }
 
 /* Inputs needs the actual ring policy before entry, but selecting the count
- * must not start helpers, executors or the deadline monitor. Build the root
+ * must not start helpers, executors or the handoff monitor. Build the root
  * ring once and retain its result for the later full bridge initializer. */
 static unsigned wf_bridge_ring_once;
 
@@ -1489,9 +1489,6 @@ struct wf_context {
      * the object. */
     wf_watch *watching;
     wf_watch shared_watch;
-    /* How many waits in a row the host, an object or a join answered at once
-     * since the driver last resumed the context [WAIT-2]. */
-    uint32_t passes;
     /* While the context waits with a deadline [PRE-2]: the reading of the
      * monotonic clock at which its driver next looks at it, and its place in
      * that driver's deadline heap plus one; zero means no timer or watch,
@@ -1655,11 +1652,15 @@ int wf__resident_bytes(uint64_t *bytes) {
 }
 
 /* One atomic word names an epoch, physical executor and service phase.
- * Borrow/PROBE restore the exact departure; reassignment advances the epoch
- * and changes the executor. No independent identity read grants ownership. */
+ * Borrow/PROBE restore the exact word they took; reassignment advances the
+ * epoch and changes the executor. No independent identity read grants
+ * ownership. YIELD is OUTSIDE with the monitor's request that the running
+ * context suspend at its next waiting boundary: everything that accepts
+ * OUTSIDE accepts it, and the next departure's word drops it. */
 enum {
     WF_DRIVER_SERVICE, WF_DRIVER_OUTSIDE, WF_DRIVER_BORROWED_SERVICE,
-    WF_DRIVER_PROBE, WF_DRIVER_RESERVED, WF_DRIVER_PARKED, WF_DRIVER_STOPPED
+    WF_DRIVER_PROBE, WF_DRIVER_RESERVED, WF_DRIVER_PARKED, WF_DRIVER_STOPPED,
+    WF_DRIVER_YIELD
 };
 #define WF_DRIVER_PHASE_MASK UINT64_C(7)
 #define WF_DRIVER_EXECUTOR_SHIFT 3u
@@ -1672,7 +1673,6 @@ struct wf_driver {
     _Atomic uint64_t service_token;
     /* Epoch plus executor, written only with SERVICE (or acquired RESERVED). */
     uint64_t departure;
-    _Atomic uint64_t deadline_hint;
     atomic_flag ingress_lock;
     wf_context *ingress_head;
     wf_context *ingress_tail;
@@ -1803,6 +1803,8 @@ typedef struct wf_driver_statistics {
     _Atomic uint64_t reassignments;
     _Atomic uint64_t ingress_commits;
     _Atomic uint64_t reserve_misses;
+    /* Runs the monitor asked to yield at their next waiting boundary. */
+    _Atomic uint64_t yield_requests;
 } wf_driver_statistics;
 static wf_driver_statistics wf_driver_stats[WF_DRIVER_LIMIT];
 static _Atomic unsigned wf_driver_stats_count;
@@ -1815,7 +1817,7 @@ static int wf_driver_report(unsigned index, char *buffer, size_t capacity) {
     int written = snprintf(buffer, capacity,
         "driver: index=%u borrow_attempts=%llu borrows=%llu borrowed_sleeps=%llu "
         "borrowed_terminals=%llu stolen_contexts=%llu reassignments=%llu "
-        "ingress_commits=%llu reserve_misses=%llu", index,
+        "ingress_commits=%llu reserve_misses=%llu yield_requests=%llu", index,
         (unsigned long long)atomic_load_explicit(&stats->borrow_attempts, memory_order_relaxed),
         (unsigned long long)atomic_load_explicit(&stats->borrows, memory_order_relaxed),
         (unsigned long long)atomic_load_explicit(&stats->borrowed_sleeps, memory_order_relaxed),
@@ -1823,7 +1825,8 @@ static int wf_driver_report(unsigned index, char *buffer, size_t capacity) {
         (unsigned long long)atomic_load_explicit(&stats->stolen_contexts, memory_order_relaxed),
         (unsigned long long)atomic_load_explicit(&stats->reassignments, memory_order_relaxed),
         (unsigned long long)atomic_load_explicit(&stats->ingress_commits, memory_order_relaxed),
-        (unsigned long long)atomic_load_explicit(&stats->reserve_misses, memory_order_relaxed));
+        (unsigned long long)atomic_load_explicit(&stats->reserve_misses, memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&stats->yield_requests, memory_order_relaxed));
     return written > 0 && (size_t)written < capacity;
 }
 
@@ -1838,7 +1841,8 @@ static void wf_bridge_print_report(void) {
         const wf_driver_statistics *only = &wf_driver_stats[0];
         if (atomic_load_explicit(&only->reassignments, memory_order_relaxed) == 0u
             && atomic_load_explicit(&only->ingress_commits, memory_order_relaxed) == 0u
-            && atomic_load_explicit(&only->reserve_misses, memory_order_relaxed) == 0u)
+            && atomic_load_explicit(&only->reserve_misses, memory_order_relaxed) == 0u
+            && atomic_load_explicit(&only->yield_requests, memory_order_relaxed) == 0u)
             return;
     }
     char buffer[512];
@@ -2008,18 +2012,27 @@ static uint64_t wf_driver_next_epoch(uint64_t token, unsigned executor) {
 static uint64_t wf_driver_leave_service(wf_driver *driver) {
     driver->departure = wf_driver_next_epoch(driver->departure, wf_executor_index);
     uint64_t outside = driver->departure | WF_DRIVER_OUTSIDE;
-    atomic_store_explicit(&driver->deadline_hint,
-        driver->timer_count ? driver->timers[0]->timer_at : 0u, memory_order_relaxed);
     wf_driver_service = NULL;
     atomic_store_explicit(&driver->service_token, outside, memory_order_release);
     return outside;
 }
 
+/* OUTSIDE, or OUTSIDE with a yield request: a role no one services now. */
+static int wf_driver_phase_outside(uint64_t token) {
+    uint64_t phase = token & WF_DRIVER_PHASE_MASK;
+    return phase == WF_DRIVER_OUTSIDE || phase == WF_DRIVER_YIELD;
+}
+
+/* Returns from the departure word or from its yield request, which the
+ * return answers: service resumes with no request standing. */
 static int wf_driver_try_return(wf_driver *driver, uint64_t outside) {
-    return atomic_compare_exchange_strong_explicit(
-        &driver->service_token, &outside,
-        (outside & ~WF_DRIVER_PHASE_MASK) | WF_DRIVER_SERVICE,
-        memory_order_acquire, memory_order_relaxed);
+    uint64_t base = outside & ~WF_DRIVER_PHASE_MASK;
+    uint64_t expected = outside;
+    if (atomic_compare_exchange_strong_explicit(&driver->service_token, &expected,
+            base | WF_DRIVER_SERVICE, memory_order_acquire, memory_order_relaxed)) return 1;
+    expected = base | WF_DRIVER_YIELD;
+    return atomic_compare_exchange_strong_explicit(&driver->service_token, &expected,
+        base | WF_DRIVER_SERVICE, memory_order_acquire, memory_order_relaxed);
 }
 
 static int wf_driver_return_service(wf_driver *driver, uint64_t outside) {
@@ -2027,9 +2040,10 @@ static int wf_driver_return_service(wf_driver *driver, uint64_t outside) {
         /* A borrow/probe of this epoch is temporary. A reservation or newer
          * epoch is permanent loss; never read private state on that path. */
         uint64_t token = atomic_load_explicit(&driver->service_token, memory_order_relaxed);
-        if (token != ((outside & ~WF_DRIVER_PHASE_MASK) | WF_DRIVER_BORROWED_SERVICE)
-            && token != ((outside & ~WF_DRIVER_PHASE_MASK) | WF_DRIVER_PROBE)
-            && token != outside) return 0;
+        uint64_t phase = token & WF_DRIVER_PHASE_MASK;
+        if ((token & ~WF_DRIVER_PHASE_MASK) != (outside & ~WF_DRIVER_PHASE_MASK)
+            || (phase != WF_DRIVER_BORROWED_SERVICE && phase != WF_DRIVER_PROBE
+                && !wf_driver_phase_outside(token))) return 0;
         wf_prim_yield();
     }
     wf_driver_service = driver;
@@ -2038,7 +2052,7 @@ static int wf_driver_return_service(wf_driver *driver, uint64_t outside) {
 
 static int wf_driver_try_borrow(wf_driver *victim, uint64_t *outside) {
     *outside = atomic_load_explicit(&victim->service_token, memory_order_relaxed);
-    if ((*outside & WF_DRIVER_PHASE_MASK) != WF_DRIVER_OUTSIDE) return 0;
+    if (!wf_driver_phase_outside(*outside)) return 0;
     return atomic_compare_exchange_strong_explicit(
         &victim->service_token, outside,
         (*outside & ~WF_DRIVER_PHASE_MASK) | WF_DRIVER_BORROWED_SERVICE,
@@ -2156,37 +2170,27 @@ static void wf_context_commit_wake(wf_context *context) {
     /* Otherwise a waker can now enqueue and release it. No later access. */
 }
 
-/* How many waits in a row a context may have answered at once before it
- * offers its driver to another ready context. */
-#define WF_CONTEXT_YIELD_PASSES 64u
-
 /* [WAIT-2] one more wait the host, an object or a join answered without
  * suspending the running context. Drivers do not preempt, so a context whose
  * waits keep being answered at once, such as one polling an object for
- * another context's write, would otherwise hold its driver while the context
- * it waits for is ready. After WF_CONTEXT_YIELD_PASSES such waits, when
- * another context is ready on this driver, the context goes to the back of
- * the run queue and answers 1, and its frame suspends as for any wait; the
- * driver resets the count whenever it resumes the context. A context alone on
- * its driver continues only when no host wait or ingress needs service: a
- * sleeper is not ready until a reap expires it. */
+ * another context's write, would otherwise hold its driver while other work
+ * of that driver waits. The monitor asks such a run to yield by moving the
+ * driver's word from OUTSIDE to YIELD (wf_monitor_watch); the context then
+ * goes to the back of the run queue and answers 1, its frame suspends as for
+ * any wait, and the driver services its host work before it resumes anyone
+ * (wf_context_run). The ordinary path is one load and one comparison with
+ * the word this run departed with. */
 static int wf_context_pass(wf_context *self, void *frame) {
     wf_driver *driver = wf_driver_self;
     if (driver == NULL) return 0;
     /* Only legal waiting boundaries reach here, before any shared/keyed
      * hold or compute offer. Even an immediately answered wait hands back a
-     * displaced invocation; a temporary borrow does not force suspension. */
+     * displaced invocation; a temporary borrow or probe does not force
+     * suspension. */
     uint64_t token = atomic_load_explicit(&driver->service_token, memory_order_acquire);
-    int displaced = (token & ~WF_DRIVER_PHASE_MASK)
-        != (wf_context_outside & ~WF_DRIVER_PHASE_MASK);
-    self->passes += 1u;
-    if (!displaced) {
-        if (self->passes < WF_CONTEXT_YIELD_PASSES) return 0;
-        self->passes = 0u;
-        if (atomic_load_explicit(&driver->run_count, memory_order_relaxed) == 0u
-            && atomic_load_explicit(&driver->host_waits, memory_order_seq_cst) == 0u
-            && atomic_load_explicit(&driver->ingress_count, memory_order_seq_cst) == 0u) return 0;
-    }
+    if (token == wf_context_outside) return 0;
+    if ((token & ~WF_DRIVER_PHASE_MASK) == (wf_context_outside & ~WF_DRIVER_PHASE_MASK)
+        && (token & WF_DRIVER_PHASE_MASK) != WF_DRIVER_YIELD) return 0;
     self->resume = frame;
     wf_context_parked_away = WF_SUSPEND_FAIR;
     return 1;
@@ -4935,10 +4939,12 @@ static int wf_driver_assist(wf_driver *driver) {
 /* A finite idle poll closes departure-after-scan: an owner can publish
  * OUTSIDE after every peer has looked and gone to sleep, without paying a
  * wake or a clock read on each resume. Even a scan finding no OUTSIDE role
- * must keep this bound. It also notices newly published completions. There
- * is also a deadline monitor, but idle peers get first chance to borrow.
- * One driver retains its ordinary deadline-only service park. The interval is a service policy,
- * not a latency guarantee, and its idle CPU cost needs CI measurement. */
+ * must keep this bound. It also notices newly published completions. A run
+ * that outlasts the monitor's threshold beside other contexts is asked to
+ * yield and then handed to a spare (wf_monitor_watch) whether or not a peer
+ * borrows meanwhile. One driver retains its ordinary deadline-bounded service
+ * park. The interval is a service policy, not a latency guarantee, and its
+ * idle CPU cost needs CI measurement. */
 #define WF_DRIVER_ASSIST_WAIT_MS 1u
 static uint32_t wf_driver_wait_ms(const wf_driver *driver) {
     uint32_t bound = wf_timer_wait_ms(driver);
@@ -5058,7 +5064,6 @@ static int wf_context_run(wf_driver *driver, wf_context *next) {
     }
     next->resume = NULL;
     next->driver = driver;
-    next->passes = 0u;
     wf_context_current = next;
     wf_context_parked_away = WF_SUSPEND_NONE;
     wf_invocation_begin();
@@ -5076,8 +5081,15 @@ static int wf_context_run(wf_driver *driver, wf_context *next) {
         : wf__coro_done(next->root) ? WF_HAND_BACK_COMPLETE
         : next->record != NULL ? WF_HAND_BACK_WAIT : WF_HAND_BACK_READY;
     int retained = wf_driver_return_service(driver, outside);
-    if (retained) wf_context_adopt(driver, next);
-    else wf_context_ingress(driver, next);
+    if (retained) {
+        /* A context yields only at the monitor's request, which means this
+         * driver had other work through the run: service its timers, ring,
+         * helper completions and readiness first, so what they make ready
+         * runs ahead of the context that yielded, instead of after
+         * WF_DRIVER_REAP_RUNS more yields. */
+        if (next->disposition == WF_HAND_BACK_FAIR) wf_driver_reap(driver);
+        wf_context_adopt(driver, next);
+    } else wf_context_ingress(driver, next);
     wf_context_retire(driver, retained);
     return retained;
 }
@@ -5180,22 +5192,31 @@ __attribute__((weak)) size_t wf__floor_stack_bytes(void) {
 }
 #endif
 
-/* Bounded deadline-only detector. It never executes a context or enters a
- * host engine. OUTSIDE publishes a hint; PROBE validates the heap minimum
- * after winning the exact token, since an intervening borrow can remove it.
- * An idle logical driver gets first opportunity to borrow. */
+/* The monitor: a thread that runs no context and enters no host engine. A
+ * role whose one context run has lasted WF_HANDOFF_TAU_NS while the role has
+ * any other context (a host wait, a ready context or an ingress commit) is
+ * asked to yield at the run's next waiting boundary; a run still in progress
+ * one WF_MONITOR_PERIOD_NS later loses the whole role to a spare executor and
+ * keeps computing on its own thread. It reads only atomic counts and the
+ * service word, never which kind of work waits: every host route parks its
+ * waits in host_waits, so ring completions, helper publications, readiness,
+ * due deadlines and fired watches all count. */
 #define WF_HANDOFF_TAU_NS UINT64_C(1000000)
+#define WF_MONITOR_PERIOD_NS UINT64_C(1000000)
 #define WF_MONITOR_PERIOD_MS 1u
-static int wf_driver_deadline_due(uint64_t deadline, uint64_t now) {
-    return deadline != 0u && now > deadline && now - deadline > WF_HANDOFF_TAU_NS;
+
+/* No other context lives on the role, so a long run delays no one. */
+static int wf_driver_alone(wf_driver *driver) {
+    return atomic_load_explicit(&driver->host_waits, memory_order_seq_cst) == 0u
+        && atomic_load_explicit(&driver->run_count, memory_order_seq_cst) == 0u
+        && atomic_load_explicit(&driver->ingress_count, memory_order_seq_cst) == 0u;
 }
 
-static int wf_driver_reassign(wf_driver *driver, uint64_t now) {
-    uint64_t outside = atomic_load_explicit(&driver->service_token, memory_order_acquire);
-    if ((outside & WF_DRIVER_PHASE_MASK) != WF_DRIVER_OUTSIDE
-        || !wf_driver_deadline_due(atomic_load_explicit(&driver->deadline_hint,
-            memory_order_relaxed), now)
-        || atomic_load_explicit(&wf_drivers_idle, memory_order_seq_cst)) return 0;
+/* Hands the role whose word is exactly `token` (OUTSIDE or YIELD of one
+ * run) to a spare executor. PROBE excludes borrowers while it rechecks that
+ * the role is not alone; a miss restores the exact word. */
+static int wf_driver_reassign(wf_driver *driver, uint64_t token) {
+    if (!wf_driver_phase_outside(token)) return 0;
     /* Reserve only an already floor-attached, parked executor. There is no
      * thread creation, allocation or blocking engine lock in this path. */
     wf_quiescence_lock();
@@ -5215,11 +5236,11 @@ static int wf_driver_reassign(wf_driver *driver, uint64_t now) {
         return 0;
     }
     atomic_fetch_add_explicit(&wf_drivers_moving, 1u, memory_order_seq_cst);
+    uint64_t outside = token;
     uint64_t probe = (outside & ~WF_DRIVER_PHASE_MASK) | WF_DRIVER_PROBE;
     int claimed = atomic_compare_exchange_strong_explicit(&driver->service_token,
         &outside, probe, memory_order_acquire, memory_order_relaxed);
-    if (claimed && driver->timer_count
-        && wf_driver_deadline_due(driver->timers[0]->timer_at, now)) {
+    if (claimed && !wf_driver_alone(driver)) {
         uint64_t reserved = wf_driver_next_epoch(outside, spare->index) | WF_DRIVER_RESERVED;
         spare->available = 0u;
         spare->assignment = driver;
@@ -5240,22 +5261,60 @@ static int wf_driver_reassign(wf_driver *driver, uint64_t now) {
     return 0;
 }
 
+/* What the monitor last saw of each role, written only by the monitor: the
+ * epoch and executor of the run it is watching, when it first saw that run,
+ * and when it asked the run to yield (zero before it asks). Every run
+ * departs with a new epoch and a borrow or probe restores the exact word, so
+ * an unchanged epoch is one uninterrupted context run. */
+typedef struct wf_monitor_sighting {
+    uint64_t run;
+    uint64_t since;
+    uint64_t requested;
+} wf_monitor_sighting;
+static wf_monitor_sighting wf_monitor_sightings[WF_DRIVER_LIMIT];
+
+enum { WF_WATCH_NONE, WF_WATCH_REQUESTED, WF_WATCH_REASSIGNED };
+
+static int wf_monitor_watch(wf_driver *driver, uint64_t now) {
+    wf_monitor_sighting *sighting = &wf_monitor_sightings[driver->index];
+    uint64_t token = atomic_load_explicit(&driver->service_token, memory_order_acquire);
+    uint64_t phase = token & WF_DRIVER_PHASE_MASK;
+    uint64_t run = token & ~WF_DRIVER_PHASE_MASK;
+    /* A borrow keeps the run; any phase but OUTSIDE or YIELD ends it. */
+    if (phase == WF_DRIVER_BORROWED_SERVICE && run == sighting->run) return WF_WATCH_NONE;
+    if (!wf_driver_phase_outside(token)) {
+        sighting->run = 0u;
+        return WF_WATCH_NONE;
+    }
+    if (run != sighting->run) {
+        sighting->run = run;
+        sighting->since = now;
+        sighting->requested = phase == WF_DRIVER_YIELD ? now : 0u;
+        return WF_WATCH_NONE;
+    }
+    if (now - sighting->since < WF_HANDOFF_TAU_NS || wf_driver_alone(driver))
+        return WF_WATCH_NONE;
+    if (phase == WF_DRIVER_OUTSIDE) {
+        uint64_t expected = token;
+        if (!atomic_compare_exchange_strong_explicit(&driver->service_token, &expected,
+                run | WF_DRIVER_YIELD, memory_order_release, memory_order_relaxed))
+            return WF_WATCH_NONE;
+        sighting->requested = now;
+        atomic_fetch_add_explicit(&wf_driver_stats[driver->index].yield_requests,
+            1u, memory_order_relaxed);
+        return WF_WATCH_REQUESTED;
+    }
+    if (now - sighting->requested < WF_MONITOR_PERIOD_NS) return WF_WATCH_NONE;
+    return wf_driver_reassign(driver, token) ? WF_WATCH_REASSIGNED : WF_WATCH_NONE;
+}
+
 static uint32_t wf_monitor_scan(uint64_t now) {
-    uint32_t wait = WF_MONITOR_PERIOD_MS;
     unsigned count = atomic_load_explicit(&wf_driver_count, memory_order_acquire);
     for (unsigned i = 0; i < count; ++i) {
         wf_driver *driver = atomic_load_explicit(&wf_drivers[i], memory_order_acquire);
-        if (!driver) continue;
-        (void)wf_driver_reassign(driver, now);
-        if ((atomic_load_explicit(&driver->service_token, memory_order_acquire)
-                & WF_DRIVER_PHASE_MASK) != WF_DRIVER_OUTSIDE) continue;
-        uint64_t deadline = atomic_load_explicit(&driver->deadline_hint, memory_order_relaxed);
-        if (deadline > now) {
-            uint64_t ms = (deadline - now - 1u) / UINT64_C(1000000) + 1u;
-            if (ms < wait) wait = (uint32_t)ms;
-        }
+        if (driver) (void)wf_monitor_watch(driver, now);
     }
-    return wait;
+    return WF_MONITOR_PERIOD_MS;
 }
 
 static void wf_monitor_main(void *unused) {
@@ -5367,7 +5426,7 @@ static void wf_handoff_begin(void) {
     }
     if (wf_completion_runtime_init(&wf_monitor_wake) != 0
         || wf_prim_thread_start(&wf_monitor_thread, wf_monitor_main, NULL, 0u) != 0)
-        wf_bridge_fail("cannot start the driver deadline monitor");
+        wf_bridge_fail("cannot start the driver handoff monitor");
     wf_monitor_started = 1u;
 }
 

@@ -158,7 +158,7 @@ int main(void) {
     CHECK(wf_driver_root.timer_count == 1u);
     CHECK(wf_driver_root.timers[0] == &owner.timer);
     wf_test_guard_phase("reserve and claim the submitting driver's whole role");
-    CHECK(wf_driver_reassign(&wf_driver_root, WF_HANDOFF_TAU_NS + 2u));
+    CHECK(wf_driver_reassign(&wf_driver_root, atomic_load(&wf_driver_root.service_token)));
     wf_spin_lock(&wf_executor_lock);
     CHECK(wf_executors[1].assignment == &wf_driver_root);
     wf_executors[1].assignment = NULL;

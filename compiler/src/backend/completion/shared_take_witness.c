@@ -146,7 +146,6 @@ static void y_acquire(witness_executor *executor) {
         CHECK(ready == &executor->context);
         CHECK(ready->resume == &executor->frame);
         ready->resume = NULL;
-        ready->passes = 0u;
         wf_context_parked_away = 0;
         wf_context_current = ready;
     }
@@ -339,7 +338,6 @@ static void resume_executor(unsigned index, uint32_t write) {
     CHECK(wf_run_take(&executor->driver) == &executor->context);
     CHECK(executor->context.resume == &executor->frame);
     executor->context.resume = NULL;
-    executor->context.passes = 0u;
     bind_executor(executor);
     CHECK(wf__shared_acquire(object, write, &executor->frame) == 0);
 }

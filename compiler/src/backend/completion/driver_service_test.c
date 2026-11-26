@@ -49,8 +49,13 @@ void wf_driver_service_test_resume(void *opaque) {
     CHECK((wf_context_outside & WF_DRIVER_PHASE_MASK) == WF_DRIVER_OUTSIDE);
     /* Reassignment may win even between OUTSIDE and this function's entry. */
     if (frame->kind == FRAME_FAIR) {
-        for (unsigned pass = 1u; pass <= WF_CONTEXT_YIELD_PASSES; ++pass)
-            CHECK(wf__context_pass(frame) == (pass == WF_CONTEXT_YIELD_PASSES));
+        /* With no request, a pass goes on however often it is reached. */
+        for (unsigned pass = 0u; pass < 3u; ++pass) CHECK(wf__context_pass(frame) == 0);
+        /* The monitor's request, made as wf_monitor_watch makes it. */
+        uint64_t expected = wf_context_outside;
+        CHECK(atomic_compare_exchange_strong(&wf_driver_self->service_token, &expected,
+            (wf_context_outside & ~WF_DRIVER_PHASE_MASK) | WF_DRIVER_YIELD));
+        CHECK(wf__context_pass(frame) == 1);
         CHECK(wf_context_parked_away == WF_SUSPEND_FAIR);
         CHECK(!atomic_load(&wf_context_current->wake_gate));
         frame->stage += 1u;
@@ -165,6 +170,7 @@ static void fixture_begin(void) {
     memset(&wf_context_root, 0, sizeof(wf_context_root));
     memset(&assistant, 0, sizeof(assistant));
     memset(wf_driver_stats, 0, sizeof(wf_driver_stats));
+    memset(wf_monitor_sightings, 0, sizeof(wf_monitor_sightings));
     memset(wf_executors, 0, sizeof(wf_executors));
     wf_executor_count = 0u;
     wf_monitor_started = 0u;
@@ -214,34 +220,44 @@ static void fixture_end(void) {
     atomic_store(&wf_drivers[0], NULL);
 }
 
-/* Drivers do not preempt, so a context offers its driver once it has had 64
- * waits answered at once. A peer ready on the driver, a displaced invocation,
- * and a lone context beside a pending host wait or ingress all require the
- * context to unwind; a lone context with nothing pending continues. The
- * suspension has no external waiter: it publishes straight to the run queue
- * when its owner adopts it, never through the wake gate. */
+/* Drivers do not preempt, so a context offers its driver at a waiting
+ * boundary only when asked to. With no request a pass goes on whatever else
+ * the driver holds: the monitor, not the pass, judges whether the run delays
+ * anyone. A yield request or a displaced invocation unwinds; a borrow or
+ * probe of the same run does not. The suspension has no external waiter: it
+ * publishes straight to the run queue when its owner adopts it, never
+ * through the wake gate. */
 static void fair_yield_boundaries(void) {
     fixture_begin();
     service_frame frame = {0};
     wf_context peer = {.driver = &wf_driver_root};
-    wf_context_outside = WF_DRIVER_EPOCH_STEP | WF_DRIVER_OUTSIDE;
+    uint64_t run = WF_DRIVER_EPOCH_STEP;
+    wf_context_outside = run | WF_DRIVER_OUTSIDE;
     atomic_store(&wf_driver_root.service_token, wf_context_outside);
     wf_context_current = &wf_context_root;
     wf_context_parked_away = WF_SUSPEND_NONE;
 
-    /* Alone and nothing pending: the 64th pass resets the count and goes on. */
-    wf_context_root.passes = WF_CONTEXT_YIELD_PASSES - 1u;
-    CHECK(wf__context_pass(&frame) == 0);
-    CHECK(wf_context_root.passes == 0u && wf_context_parked_away == WF_SUSPEND_NONE);
-
-    /* A ready peer: one pass short of the threshold continues, the 64th
-     * unwinds and enqueues behind the peer only when adopted. */
+    /* No request: a ready peer, a host wait and an ingress commit change
+     * nothing at the boundary, however many passes. */
     wf_run_push(&wf_driver_root, &peer);
-    wf_context_root.passes = WF_CONTEXT_YIELD_PASSES - 2u;
-    CHECK(wf__context_pass(&frame) == 0);
-    CHECK(wf_context_root.passes == WF_CONTEXT_YIELD_PASSES - 1u);
+    atomic_store(&wf_driver_root.host_waits, 1u);
+    atomic_store(&wf_driver_root.ingress_count, 1u);
+    for (unsigned pass = 0u; pass < 200u; ++pass) CHECK(wf__context_pass(&frame) == 0);
+    CHECK(wf_context_parked_away == WF_SUSPEND_NONE);
+    atomic_store(&wf_driver_root.host_waits, 0u);
+    atomic_store(&wf_driver_root.ingress_count, 0u);
+
+    /* A borrow or probe of this run is temporary, also of a requested one. */
+    for (unsigned phase = WF_DRIVER_BORROWED_SERVICE; phase <= WF_DRIVER_PROBE; ++phase) {
+        atomic_store(&wf_driver_root.service_token, run | phase);
+        CHECK(wf__context_pass(&frame) == 0);
+        CHECK(wf_context_parked_away == WF_SUSPEND_NONE);
+    }
+
+    /* The request unwinds and enqueues behind the peer only when adopted. */
+    atomic_store(&wf_driver_root.service_token, run | WF_DRIVER_YIELD);
     CHECK(wf__context_pass(&frame) == 1);
-    CHECK(wf_context_root.passes == 0u && wf_context_root.resume == &frame);
+    CHECK(wf_context_root.resume == &frame);
     CHECK(wf_context_parked_away == WF_SUSPEND_FAIR);
     CHECK(atomic_load(&wf_context_root.wake_gate) == WF_WAKE_NONE);
     CHECK(atomic_load(&wf_driver_root.run_count) == 1u);
@@ -251,36 +267,17 @@ static void fair_yield_boundaries(void) {
     CHECK(wf_run_take(&wf_driver_root) == &wf_context_root);
     CHECK(wf_run_take(&wf_driver_root) == NULL);
 
-    /* A displaced invocation unwinds at once, below the threshold. */
-    wf_context_parked_away = WF_SUSPEND_NONE;
-    wf_context_root.passes = 0u;
-    atomic_store(&wf_driver_root.service_token,
-        (2u * WF_DRIVER_EPOCH_STEP) | WF_DRIVER_OUTSIDE);
-    CHECK(wf__context_pass(&frame) == 1);
-    CHECK(wf_context_parked_away == WF_SUSPEND_FAIR);
-    wf_context_root.disposition = WF_HAND_BACK_FAIR;
-    wf_context_adopt(&wf_driver_root, &wf_context_root);
-    CHECK(wf_run_take(&wf_driver_root) == &wf_context_root);
-    atomic_store(&wf_driver_root.service_token, wf_context_outside);
-
-    /* A lone busy context still returns when a sleeper or an ingress record
-     * needs the driver: a sleeper is not ready until a reap expires it. */
-    for (unsigned pending = 0; pending < 2u; ++pending) {
-        atomic_store(&wf_driver_root.host_waits, pending == 0u);
-        atomic_store(&wf_driver_root.ingress_count, pending == 1u);
-        wf_context_root.passes = WF_CONTEXT_YIELD_PASSES - 1u;
+    /* A displaced invocation unwinds at once, whatever the new word's phase. */
+    for (unsigned phase = WF_DRIVER_SERVICE; phase <= WF_DRIVER_YIELD; ++phase) {
         wf_context_parked_away = WF_SUSPEND_NONE;
-        CHECK(!atomic_load(&wf_driver_root.run_count));
+        atomic_store(&wf_driver_root.service_token, (2u * WF_DRIVER_EPOCH_STEP) | phase);
         CHECK(wf__context_pass(&frame) == 1);
         CHECK(wf_context_parked_away == WF_SUSPEND_FAIR);
-        CHECK(!atomic_load(&wf_context_root.wake_gate));
-        CHECK(!atomic_load(&wf_driver_root.run_count));
         wf_context_root.disposition = WF_HAND_BACK_FAIR;
         wf_context_adopt(&wf_driver_root, &wf_context_root);
         CHECK(wf_run_take(&wf_driver_root) == &wf_context_root);
     }
-    atomic_store(&wf_driver_root.host_waits, 0u);
-    atomic_store(&wf_driver_root.ingress_count, 0u);
+    atomic_store(&wf_driver_root.service_token, wf_context_outside);
     wf_context_parked_away = WF_SUSPEND_NONE;
     fixture_end();
 }
@@ -645,6 +642,15 @@ static void ownership_races(void) {
         CHECK(!wf_driver_try_borrow(&wf_driver_root, &unused));
         CHECK(atomic_load(&wf_driver_root.service_token) == token);
     }
+    /* A requested word is OUTSIDE to a borrower, which restores it exactly. */
+    uint64_t requested = wf_driver_root.departure | WF_DRIVER_YIELD, borrowed;
+    atomic_store(&wf_driver_root.service_token, requested);
+    CHECK(wf_driver_try_borrow(&wf_driver_root, &borrowed));
+    CHECK(borrowed == requested);
+    CHECK((atomic_load(&wf_driver_root.service_token) & WF_DRIVER_PHASE_MASK)
+          == WF_DRIVER_BORROWED_SERVICE);
+    wf_driver_release_borrow(&wf_driver_root, borrowed);
+    CHECK(atomic_load(&wf_driver_root.service_token) == requested);
     fixture_end();
 }
 
@@ -662,9 +668,11 @@ static wf_completion_record *park_record(wf_context *context, unsigned route, ui
 }
 
 /* No monitor or second executor participates. Force the parked sleep's
- * timer instant to zero, which is due for every monotonic clock result. The
- * production reap interval alone must make it ready by its 64th resume. */
-static void solitary_sleep_reap(void) {
+ * timer instant to zero, which is due for every monotonic clock result. A
+ * run that yields at the monitor's request makes its driver service the
+ * sleep before it resumes anyone, so the sleeper runs ahead of the context
+ * that yielded, on the first yield and not after WF_DRIVER_REAP_RUNS. */
+static void yield_services_before_resuming(void) {
     fixture_begin();
     service_frame busy = {.kind = FRAME_FAIR};
     wf_context child = {.driver = &wf_driver_root, .root = &busy, .resume = &busy};
@@ -672,22 +680,20 @@ static void solitary_sleep_reap(void) {
     CHECK(wf_driver_root.timer_count == 1u);
     wf_driver_root.timers[0]->timer_at = 0u;
     uint64_t changes = atomic_load(&wf_drivers_changes);
-    for (unsigned run = 1u; run <= WF_DRIVER_REAP_RUNS; ++run) {
-        CHECK(!atomic_load(&wf_driver_root.run_count));
-        CHECK(wf_context_run(&wf_driver_root, &child));
-        CHECK(busy.stage == run);
-        CHECK(atomic_load(&wf_invocations[0].sequence) == 2u * run);
-        CHECK(atomic_load(&wf_drivers_changes) == changes);
-        if (run < WF_DRIVER_REAP_RUNS) {
-            CHECK(wf_bridge_record_state(record) == WF_COMPLETION_PENDING);
-            CHECK(wf_run_take(&wf_driver_root) == &child);
-        }
-    }
+    CHECK(!atomic_load(&wf_driver_root.run_count));
+    CHECK(wf_driver_root.runs_since_reap == 0u);
+    CHECK(wf_context_run(&wf_driver_root, &child));
+    CHECK(busy.stage == 1u);
+    CHECK(atomic_load(&wf_invocations[0].sequence) == 2u);
+    CHECK(atomic_load(&wf_drivers_changes) == changes);
     CHECK(wf_bridge_record_state(record) == WF_COMPLETION_DONE);
     CHECK(!atomic_load(&wf_driver_root.host_waits));
     CHECK(wf_run_take(&wf_driver_root) == &wf_context_root);
     CHECK(wf_run_take(&wf_driver_root) == &child);
     CHECK(wf_run_take(&wf_driver_root) == NULL);
+    /* The returned word answers the request: service holds no YIELD. */
+    CHECK((atomic_load(&wf_driver_root.service_token) & WF_DRIVER_PHASE_MASK)
+          == WF_DRIVER_SERVICE);
     CHECK(!wf_invocations_active());
     fixture_end();
 }
@@ -938,37 +944,47 @@ static void take_reservation(unsigned index) {
 
 typedef struct monitor_race {
     _Atomic unsigned start, finished;
+    uint64_t token;
     int won;
 } monitor_race;
 
 static void *monitor_racer(void *opaque) {
     monitor_race *race = opaque;
     while (!atomic_load(&race->start)) wf_prim_yield();
-    race->won = wf_driver_reassign(&wf_driver_root, WF_HANDOFF_TAU_NS + 2u);
+    race->won = wf_driver_reassign(&wf_driver_root, race->token);
     atomic_store(&race->finished, 1u);
     return NULL;
 }
 
+/* The handoff claims only the exact word of one run, OUTSIDE or YIELD, and
+ * loses to that run's return; a borrow, a newer run and an alone role each
+ * refuse it, leaving the word as it was. */
 static void reassignment_races(void) {
     handoff_fixture();
     wf_context timer = {0};
     (void)park_record(&timer, WF_COMPLETION_ROUTE_TIMER, 1u);
     uint64_t prior = 0u;
     for (unsigned monitor_first = 0; monitor_first < 2u; ++monitor_first) {
-        for (unsigned repeat = 0; repeat < 3u; ++repeat) {
+        for (unsigned repeat = 0; repeat < 4u; ++repeat) {
             unsigned spare = 1u - wf_executor_index;
             wf_executors[wf_executor_index].available = 0u;
             wf_executors[spare].available = 1u;
             uint64_t outside = wf_driver_leave_service(&wf_driver_root);
-            CHECK(!wf_driver_reassign(&wf_driver_root, WF_HANDOFF_TAU_NS + 1u));
-            atomic_store(&wf_drivers_idle, 1u);
-            CHECK(!wf_driver_reassign(&wf_driver_root, WF_HANDOFF_TAU_NS + 2u));
-            atomic_store(&wf_drivers_idle, 0u);
+            uint64_t word = repeat % 2u
+                ? (outside & ~WF_DRIVER_PHASE_MASK) | WF_DRIVER_YIELD : outside;
+            atomic_store(&wf_driver_root.service_token, word);
             uint64_t borrowed;
             CHECK(wf_driver_try_borrow(&wf_driver_root, &borrowed));
-            CHECK(!wf_driver_reassign(&wf_driver_root, WF_HANDOFF_TAU_NS + 2u));
+            CHECK(borrowed == word);
+            CHECK(!wf_driver_reassign(&wf_driver_root, word));
             wf_driver_release_borrow(&wf_driver_root, borrowed);
-            monitor_race race = {0};
+            CHECK(atomic_load(&wf_driver_root.service_token) == word);
+            if (prior) {
+                uint64_t stale = (prior & ~WF_DRIVER_PHASE_MASK) | WF_DRIVER_YIELD;
+                CHECK(!wf_driver_reassign(&wf_driver_root, stale));
+                CHECK(atomic_load(&wf_driver_root.service_token) == word);
+            }
+            monitor_race race = {.token = word};
             pthread_t thread;
             CHECK(pthread_create(&thread, NULL, monitor_racer, &race) == 0);
             if (!monitor_first) CHECK(wf_driver_return_service(&wf_driver_root, outside));
@@ -987,7 +1003,8 @@ static void reassignment_races(void) {
             CHECK(pthread_join(thread, NULL) == 0);
         }
     }
-    /* A stale hint from a completed borrow cannot authorize transfer. */
+    /* A role left alone by a completed borrow is not handed over: the
+     * recheck under PROBE restores the exact word. */
     uint64_t outside = wf_driver_leave_service(&wf_driver_root), borrowed;
     CHECK(wf_driver_try_borrow(&wf_driver_root, &borrowed));
     wf_context_unpark(&wf_driver_root, &timer);
@@ -995,8 +1012,94 @@ static void reassignment_races(void) {
     wf_driver_release_borrow(&wf_driver_root, borrowed);
     wf_executors[wf_executor_index].available = 0u;
     wf_executors[1u - wf_executor_index].available = 1u;
-    CHECK(!wf_driver_reassign(&wf_driver_root, WF_HANDOFF_TAU_NS + 2u));
+    CHECK(!wf_driver_reassign(&wf_driver_root, outside));
+    CHECK(atomic_load(&wf_driver_root.service_token) == outside);
     CHECK(wf_driver_return_service(&wf_driver_root, outside));
+    handoff_fixture_end();
+}
+
+/* The monitor's two stages, on explicit instants: a run is first seen; once
+ * it has lasted WF_HANDOFF_TAU_NS while the role has another context it is
+ * asked to yield; one WF_MONITOR_PERIOD_NS after the request, still the same
+ * run, it loses the role. An alone role, a borrowed word and a new run each
+ * stop or restart the count. */
+static void monitor_watch_stages(void) {
+    handoff_fixture();
+    wf_monitor_sighting *sighting = &wf_monitor_sightings[0];
+    const uint64_t t0 = 1000u;
+    uint64_t outside = wf_driver_leave_service(&wf_driver_root);
+    uint64_t run = outside & ~WF_DRIVER_PHASE_MASK;
+
+    /* Alone: however long the run, nothing is asked. */
+    CHECK(wf_monitor_watch(&wf_driver_root, t0) == WF_WATCH_NONE);
+    CHECK(sighting->run == run && sighting->since == t0);
+    CHECK(wf_monitor_watch(&wf_driver_root, t0 + 50u * WF_HANDOFF_TAU_NS) == WF_WATCH_NONE);
+    CHECK(atomic_load(&wf_driver_root.service_token) == outside);
+
+    /* Each kind of other context makes the role not alone. */
+    for (unsigned kind = 0u; kind < 3u; ++kind) {
+        atomic_store(&wf_driver_root.host_waits, kind == 0u);
+        atomic_store(&wf_driver_root.run_count, kind == 1u);
+        atomic_store(&wf_driver_root.ingress_count, kind == 2u);
+        CHECK(!wf_driver_alone(&wf_driver_root));
+    }
+    atomic_store(&wf_driver_root.run_count, 0u);
+    atomic_store(&wf_driver_root.ingress_count, 0u);
+    wf_context timer = {0};
+    (void)park_record(&timer, WF_COMPLETION_ROUTE_TIMER, 1u);
+    CHECK(atomic_load(&wf_driver_root.host_waits) == 1u);
+
+    /* A new run restarts the count: the first sighting of it asks nothing. */
+    CHECK(wf_driver_return_service(&wf_driver_root, outside));
+    outside = wf_driver_leave_service(&wf_driver_root);
+    run = outside & ~WF_DRIVER_PHASE_MASK;
+    CHECK(wf_monitor_watch(&wf_driver_root, t0) == WF_WATCH_NONE);
+    CHECK(wf_monitor_watch(&wf_driver_root, t0 + WF_HANDOFF_TAU_NS - 1u) == WF_WATCH_NONE);
+    CHECK(atomic_load(&wf_driver_root.service_token) == outside);
+    CHECK(wf_monitor_watch(&wf_driver_root, t0 + WF_HANDOFF_TAU_NS) == WF_WATCH_REQUESTED);
+    CHECK(atomic_load(&wf_driver_root.service_token) == (run | WF_DRIVER_YIELD));
+    CHECK(atomic_load(&wf_driver_stats[0].yield_requests) == 1u);
+    const uint64_t asked = t0 + WF_HANDOFF_TAU_NS;
+    CHECK(wf_monitor_watch(&wf_driver_root, asked + WF_MONITOR_PERIOD_NS - 1u) == WF_WATCH_NONE);
+
+    /* A borrow of the requested word keeps the sighting and is restored. */
+    uint64_t borrowed;
+    CHECK(wf_driver_try_borrow(&wf_driver_root, &borrowed));
+    CHECK(wf_monitor_watch(&wf_driver_root, asked + 5u * WF_MONITOR_PERIOD_NS) == WF_WATCH_NONE);
+    CHECK(sighting->run == run && sighting->requested == asked);
+    wf_driver_release_borrow(&wf_driver_root, borrowed);
+    CHECK(atomic_load(&wf_driver_root.service_token) == (run | WF_DRIVER_YIELD));
+
+    /* No spare: the miss is counted and the word stays. */
+    wf_executors[1].available = 0u;
+    CHECK(wf_monitor_watch(&wf_driver_root, asked + WF_MONITOR_PERIOD_NS) == WF_WATCH_NONE);
+    CHECK(atomic_load(&wf_driver_stats[0].reserve_misses) == 1u);
+    CHECK(atomic_load(&wf_driver_root.service_token) == (run | WF_DRIVER_YIELD));
+
+    /* Became alone after the request: no handoff, the request stands. */
+    wf_executors[1].available = 1u;
+    atomic_store(&wf_driver_root.host_waits, 0u);
+    CHECK(wf_monitor_watch(&wf_driver_root, asked + WF_MONITOR_PERIOD_NS) == WF_WATCH_NONE);
+    CHECK(atomic_load(&wf_driver_root.service_token) == (run | WF_DRIVER_YIELD));
+    atomic_store(&wf_driver_root.host_waits, 1u);
+
+    /* The run never reached a boundary: the role goes to the spare. */
+    CHECK(wf_monitor_watch(&wf_driver_root, asked + WF_MONITOR_PERIOD_NS) == WF_WATCH_REASSIGNED);
+    CHECK(atomic_load(&wf_driver_stats[0].reassignments) == 1u);
+    CHECK(!wf_driver_try_return(&wf_driver_root, outside));
+    take_reservation(1u);
+    CHECK(wf_monitor_watch(&wf_driver_root, asked + 9u * WF_MONITOR_PERIOD_NS) == WF_WATCH_NONE);
+    CHECK(sighting->run == 0u);
+
+    /* A run that answers the request returns from YIELD to SERVICE. */
+    outside = wf_driver_leave_service(&wf_driver_root);
+    CHECK(wf_monitor_watch(&wf_driver_root, t0) == WF_WATCH_NONE);
+    CHECK(wf_monitor_watch(&wf_driver_root, t0 + WF_HANDOFF_TAU_NS) == WF_WATCH_REQUESTED);
+    CHECK(wf_driver_return_service(&wf_driver_root, outside));
+    CHECK((atomic_load(&wf_driver_root.service_token) & WF_DRIVER_PHASE_MASK)
+          == WF_DRIVER_SERVICE);
+    wf_context_unpark(&wf_driver_root, &timer);
+    wf_context_host_wait_ended(&wf_driver_root);
     handoff_fixture_end();
 }
 
@@ -1038,11 +1141,15 @@ static void displaced_dispositions(void) {
         pthread_t thread;
         CHECK(pthread_create(&thread, NULL, compute_thread, child) == 0);
         while (!atomic_load(&computing)) wf_prim_yield();
+        CHECK(wf_monitor_scan(1u) == WF_MONITOR_PERIOD_MS);
+        CHECK(wf_monitor_scan(1u + WF_HANDOFF_TAU_NS) == WF_MONITOR_PERIOD_MS);
+        CHECK(atomic_load(&wf_driver_stats[0].yield_requests) == 1u);
         wf_executors[1].available = 0u;
-        CHECK(!wf_driver_reassign(&wf_driver_root, WF_HANDOFF_TAU_NS + 2u));
+        const uint64_t due = 1u + WF_HANDOFF_TAU_NS + WF_MONITOR_PERIOD_NS;
+        CHECK(wf_monitor_scan(due) == WF_MONITOR_PERIOD_MS);
         CHECK(atomic_load(&wf_driver_stats[0].reserve_misses) == 1u);
         wf_executors[1].available = 1u;
-        CHECK(wf_monitor_scan(WF_HANDOFF_TAU_NS + 2u) == WF_MONITOR_PERIOD_MS);
+        CHECK(wf_monitor_scan(due) == WF_MONITOR_PERIOD_MS);
         CHECK(atomic_load(&wf_driver_stats[0].reassignments) == 1u);
         take_reservation(1u);
         CHECK(wf_driver_expire_wait(&wf_driver_root, &wf_context_root,
@@ -1196,7 +1303,7 @@ int main(void) {
     wf_test_guard_phase("fairness yields unwind for a peer, displacement and pending host work");
     fair_yield_boundaries();
     wf_test_guard_phase("64 lone-context resumptions service an expired sleep without monitor");
-    solitary_sleep_reap();
+    yield_services_before_resuming();
     wf_test_guard_phase("executor generations reject complete intervening invocations");
     invocation_collections();
     wf_test_guard_phase("persistent idle scans and searcher claim ownership");
@@ -1225,6 +1332,7 @@ int main(void) {
     adoption_and_early_wake();
     wf_test_guard_phase("return versus monitor, borrow exclusion and repeated stale epochs");
     reassignment_races();
+    monitor_watch_stages();
     wf_test_guard_phase("timer takeover, physical map users and exactly-once ingress dispositions");
     displaced_dispositions();
     wf_test_guard_phase("root COMPLETE ingress stays live until adoption retires");
