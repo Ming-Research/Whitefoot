@@ -542,7 +542,8 @@ logs) gives it:
 
 The table has no Xeon 6975P-C column, so that model takes each row's largest
 value, which covers its runs; the Xeon 8573C column, which no job reached,
-takes it too. The control's step for B against S took 63 to 67 s on the Xeon
+takes it too. The rows were recomputed over more runs after the judgment's
+run, below. The control's step for B against S took 63 to 67 s on the Xeon
 jobs and 100 to 173 s on the AMD jobs. A run of a pull request whose arms map
 alike executes only the record.
 
@@ -571,18 +572,78 @@ starts the receiver thread. Its criteria, written before the run:
 A kernel set aside and timed, a `not judged` line for a kernel not set aside,
 or a kernel not set aside and not timed rejects the reading as implemented.
 
+It ran on 2026-11-26 as Whitefoot run 45805810396, head `c3ae5bfd7`, where the
+workflow is kept in this branch's history; `tests/performance` there is the
+one that merges. The jobs drew 2 EPYC 7763, 4 EPYC 9V74, 1 EPYC 9V45 and 5
+Xeon 6975P-C hosts. Each criterion holds:
+
+1. On 12 of 12 jobs the judgment's first-round tables hold rows of exactly
+   the kernels the control's `aside.txt` does not name, its `timed:` line
+   names them, and its verdict has one `not judged` line for each kernel of
+   `aside.txt` and no other.
+2. On 6 of 6 EPYC 7763 and 9V74 jobs `stencil` is set aside, the job shows
+   the warning `judgment: not judged: stencil (data placement)`, and its
+   summary holds under `data` both arms' sorted quotients for both rounds.
+3. On 5 of 5 Xeon 6975P-C jobs no kernel is set aside and all five are timed.
+4. Every judgment exits 0 with `VERDICT: PASS`.
+
+Without a criterion:
+
+- No timed kernel failed or was retested. Four first-round tables read one
+  suspect width: `mandelbrot`'s null control on a 9V74, `fir`'s null control
+  and `fir`'s comparison on two Xeon jobs, and `stencil`'s comparison on a
+  third Xeon job.
+- On the 9V45 job `records` was set aside, at 1 unlike rank and then 6, all
+  upward. Both arms had launches 10 to 80 percent above their medians at
+  positions that mostly changed between rounds: B's at 5 positions and then
+  2, S's at 6 and then 8, of which only positions 3 and 14 were slow in both
+  of S's rounds. That reads as the host's noise more than as placement, as
+  `fir` on a 9V45 of the confirmation did.
+- The control's step took 65 to 71 s on the Xeon jobs, 89 s on the 9V45 and
+  142 to 168 s on the 7763 and 9V74 jobs; the judgment's, 33 to 54 s.
+- One 9V74 job ran every stage slower than the others of its model (its null
+  campaign 21.1 s against 16.5 to 16.9 s); its `mandelbrot` round took
+  15.72 s, over the 15 s the confirmation's runs had given that cell.
+
+The same push started `compute-regression.yml` by hand with its
+qualification, Whitefoot run 45805871375 on an EPYC 7763: every step passed,
+the qualification printed its three `PASS` lines, the control recorded the
+branch and its merge base alike for all five kernels and launched no round,
+the judgment found all five images identical, and every stage finished within
+its budget.
+
+The budget rows are the table's rule over every run of each label that the
+logs of the jobs above, the confirmation's and three runs of
+`compute-regression.yml` by hand (45734220582, 45754853968, 45805871375) hold,
+by model, with the number of runs, the median, the maximum and the cell:
+
+| label | EPYC 7763 | EPYC 9V74 | EPYC 9V45 | Xeon 6975P-C |
+|---|---|---|---|---|
+| `performance-data-layout` | 32, 2.90, 3.20, 10 | 28, 2.85, 3.40, 10 | 17, 2.10, 2.40, 10 | 104, 2.10, 2.30 |
+| `performance-data-round-mandelbrot` | 14, 13.61, 13.62, 15 | 13, 12.21, 15.72, 25 | 7, 9.91, 10.62, 15 | 42, 9.31, 9.51 |
+| `performance-data-round-records` | 14, 12.16, 12.41, 15 | 14, 11.46, 14.42, 20 | 11, 8.51, 9.72, 15 | 42, 9.11, 9.41 |
+| `performance-data-round-fir` | 13, 12.51, 12.61, 15 | 13, 10.71, 13.42, 20 | 9, 6.51, 7.22, 10 | 42, 7.41, 7.71 |
+| `performance-data-round-quadrature` | 13, 10.31, 10.41, 15 | 13, 8.21, 10.41, 15 | 10, 5.56, 6.51, 10 | 42, 5.61, 5.71 |
+| `performance-data-round-stencil` | 18, 46.86, 50.96, 65 | 20, 50.06, 60.08, 80 | 10, 35.09, 37.15, 45 | 42, 32.09, 36.05 |
+
+The Xeon 6975P-C and Xeon 8573C take each row's largest cell. With these
+rows every stage one run of `compute-regression.yml` can execute sums to at
+most 1330 s, in those columns.
+
 ## Limitations
 
 - One run of eight jobs on one day, three processor models. The pool also
   holds EPYC 9V45 and other Xeon models, which this run did not reach, and
   the earlier probe's levels on the 9V45 and the Xeon 8370C are not explained
-  here. The confirmation reached two 9V45 jobs and no other Xeon model.
+  here. The confirmation reached two 9V45 jobs and no other Xeon model, the
+  run of the judgment's reading one more 9V45 job.
 - Only `stencil` was traced and launched by position in that run; the other
   four kernels were timed in the campaigns alone. The confirmation launched
   all five by position.
 - The control's rule reads one slow launch in each round, at any positions,
-  as placement: it set `fir` aside so on one 9V45 job of the confirmation.
-  A kernel set aside that way is not judged on that run.
+  as placement: it set `fir` aside so on one 9V45 job of the confirmation,
+  and `records` on the 9V45 job of the judgment's run. A kernel set aside
+  that way is not judged on that run.
 - The position rule, the comparisons of two arms' positions, one against one
   and in order of time, and the comparison of mapping calls are post hoc. S
   has one series a job, and the only two series of one profile are B's and

@@ -152,14 +152,16 @@ performance-retest-comparison   50         50         50         50          -  
 # one kernel, both arms at the 32 positions; a run executes the record once
 # and, with the qualification, three times, and each kernel's round up to four
 # times. Each cell is the rule above, 1.1 times the maximum plus its distance
-# above the median, over that label's runs on its model in the control's
-# confirmation run, 6 to 24 runs a cell, fewer than the rule asks; xeon-8573c,
-# which that run did not reach, takes the row's largest value
+# above the median, over every run of that label on its model that the logs
+# hold: the control's confirmation, the run that confirmed the judgment's
+# reading of its list and three runs of compute-regression.yml by hand, 7 to 32
+# runs a cell, fewer than the rule asks; xeon-8573c, which none of them
+# reached, takes the row's largest value
 # (research/investigations/data-placement/README.md, "Confirmation"). A kernel
 # added to the instrument needs its round's row.
 performance-data-layout         10         10         10         10          -      -
-performance-data-round-mandelbrot 15       15         15         15          -      -
-performance-data-round-records  15         15         10         15          -      -
-performance-data-round-fir      15         15         10         15          -      -
-performance-data-round-quadrature 15       10         10         15          -      -
-performance-data-round-stencil  60         80         45         80          -      -
+performance-data-round-mandelbrot 15       25         15         25          -      -
+performance-data-round-records  15         20         15         20          -      -
+performance-data-round-fir      15         20         10         20          -      -
+performance-data-round-quadrature 15       15         10         15          -      -
+performance-data-round-stencil  65         80         45         80          -      -
