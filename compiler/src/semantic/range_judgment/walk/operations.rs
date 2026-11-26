@@ -2,7 +2,7 @@
 //! [RANGE-2, ENT-3.S7]. The ordinary and range judgments share the S7 table.
 
 use super::*;
-use crate::semantic::entailment::operation_facts::{self, Row, Span};
+use crate::semantic::entailment::operation_facts::{self, Interval, Row, Span};
 
 impl Walker<'_> {
     #[allow(clippy::too_many_arguments)]
@@ -128,7 +128,17 @@ impl Walker<'_> {
         values: &[Linear],
     ) -> Value {
         let value = self.world.opaque(Some(result));
-        let intervals = match self.function.entailment.operation_intervals.get(carrier) {
+        let remedy = super::super::e1::remedy();
+        let recorded = if remedy {
+            Some(Some(Vec::new()))
+        } else {
+            self.function
+                .entailment
+                .operation_intervals
+                .get(carrier)
+                .cloned()
+        };
+        let intervals = match &recorded {
             Some(Some(intervals)) => intervals,
             Some(None) => return Value::Int(value),
             None => {
@@ -141,7 +151,28 @@ impl Walker<'_> {
                 return Value::Int(value);
             }
         };
-        debug_assert_eq!(intervals.len(), values.len());
+        debug_assert!(remedy || intervals.len() == values.len());
+        // E1 remedy: the operand intervals the derivation's own projection
+        // gives, and the row's result range on the result.
+        let mut derived = Vec::new();
+        if remedy {
+            let (units, _) = state.premises(&self.world);
+            for operand_value in values {
+                let unknown = (i128::from(i64::MIN), i128::from(u64::MAX));
+                let (low, high) =
+                    match super::super::facts::interval(&self.world, &units, operand_value) {
+                        Ok(super::super::solver::Projected::Contradictory) => {
+                            return Value::Int(value);
+                        }
+                        Ok(super::super::solver::Projected::Bounds(low, high)) => {
+                            (low.unwrap_or(unknown.0), high.unwrap_or(unknown.1))
+                        }
+                        Err(_) => unknown,
+                    };
+                derived.push(Interval::new(low, high));
+            }
+        }
+        let intervals: &[Interval] = if remedy { &derived[..] } else { &intervals[..] };
         let facts = operation_facts::facts(
             row,
             Span::of(operand),
@@ -149,6 +180,18 @@ impl Walker<'_> {
             intervals,
             None,
         );
+        if remedy && let Some(bounds) = facts.bounds {
+            state.conds.push(literal(
+                value.clone(),
+                Relation::GreaterEqual,
+                Linear::constant(bounds.low),
+            ));
+            state.conds.push(literal(
+                value.clone(),
+                Relation::LessEqual,
+                Linear::constant(bounds.high),
+            ));
+        }
         for relation in facts.relations {
             let operand = values
                 .get(relation.operand)

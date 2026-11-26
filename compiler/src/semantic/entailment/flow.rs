@@ -1379,6 +1379,7 @@ pub(super) fn contract_implies(
     goal: &GoalExpression,
 ) -> FunctionEntailment {
     let _work = super::work::function(&function.name);
+    let _e1 = crate::semantic::range_judgment::e1::OrdinaryTimer::start();
     let mut analyzer = Analyzer::new(context, function);
     analyzer.input.collect_bindings();
     let mut state = ProofFlowState::default();
@@ -1484,6 +1485,7 @@ fn run(function: &CheckedFunction, context: &EntailmentContext<'_>) -> AnalysisR
 fn run_analyzer(mut analyzer: Analyzer<'_, '_>) -> AnalysisRun {
     let function = analyzer.input.function;
     let _work = super::work::function(&function.name);
+    let _e1 = crate::semantic::range_judgment::e1::OrdinaryTimer::start();
     analyzer.input.collect_bindings();
     analyzer.input.collect_postcondition_entry_images();
     let mut state = ProofFlowState {

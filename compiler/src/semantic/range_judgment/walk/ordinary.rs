@@ -527,6 +527,8 @@ impl Walker<'_> {
                     ..Query::default()
                 };
                 let counterfactual = (!reads.is_empty()).then(|| query.clone());
+                let e1_key = self.e1_records(site, subject);
+                let e1_current = super::super::e1::current(e1_key.clone(), &owed);
                 let verdict = facts::judge(
                     &mut self.world,
                     &self.facts,
@@ -535,6 +537,18 @@ impl Walker<'_> {
                     written,
                     query,
                 );
+                drop(e1_current);
+                match &verdict {
+                    Err(Capacity::Arithmetic) => super::super::e1::note(e1_key, "arithmetic"),
+                    Err(Capacity::Atoms) => super::super::e1::note(e1_key, "ceiling-atoms"),
+                    Err(Capacity::Instances) => {
+                        super::super::e1::note(e1_key, "ceiling-instances");
+                    }
+                    Ok(Verdict::Open) if self.imprecise.is_some() => {
+                        super::super::e1::note(e1_key, "imprecise");
+                    }
+                    Ok(_) => {}
+                }
                 let verdict = match verdict {
                     Ok(Verdict::Open) => Ok((
                         Verdict::Open,
@@ -550,6 +564,7 @@ impl Walker<'_> {
                 };
                 match verdict {
                     Ok((_, true)) => {
+                        super::super::e1::note(self.e1_records(site, subject), "footprint");
                         self.issues.push(RangeIssue::Unsupported {
                             node: site.clone(),
                             feature: UnsupportedSemanticFeature::RangeCallFootprint,
@@ -581,6 +596,7 @@ impl Walker<'_> {
                 }
             }
             _ => {
+                super::super::e1::note(self.e1_records(site, subject), "unrepresentable");
                 self.issues.push(RangeIssue::Unsupported {
                     node: site.clone(),
                     feature: UnsupportedSemanticFeature::RangeOrdinaryGoal,
@@ -589,6 +605,24 @@ impl Walker<'_> {
             }
         };
         self.answer_ordinary(site, subject, proved);
+    }
+
+    /// E1: the records posed at `site` with `subject`.
+    pub(super) fn e1_records(
+        &self,
+        site: &NodePath,
+        subject: &ObligationSubject,
+    ) -> super::super::e1::Key {
+        super::super::e1::Key::Records(
+            self.deferred
+                .iter()
+                .filter(|(index, _)| {
+                    let record = &self.function.obligations[*index];
+                    record.site == *site && record.subject == *subject
+                })
+                .map(|(index, _)| *index)
+                .collect(),
+        )
     }
 
     fn ordinary_footprint_losses(
@@ -687,6 +721,7 @@ impl Walker<'_> {
         if !self.has_ordinary(site, subject) {
             return;
         }
+        super::super::e1::note(self.e1_records(site, subject), "arithmetic");
         self.issues.push(RangeIssue::Unsupported {
             node: site.clone(),
             feature: UnsupportedSemanticFeature::RangeArithmetic,

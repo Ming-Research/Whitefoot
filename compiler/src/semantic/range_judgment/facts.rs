@@ -1030,6 +1030,7 @@ pub(super) fn judge(
     written: &[(FactId, Vec<Linear>, Vec<Linear>)],
     mut query: Query,
 ) -> Result<Verdict, Capacity> {
+    let e1_start = super::e1::measuring().then(std::time::Instant::now);
     // Each active fact once, with the guard sets it holds under; an
     // unconditional activation subsumes every guarded one. A tuple is one
     // instance of its fact whatever the number of its guard sets [RANGE-3].
@@ -1245,7 +1246,81 @@ pub(super) fn judge(
             ));
         }
     }
-    localize(world, &atoms, query).judge()
+    let Some(e1_start) = e1_start else {
+        return localize(world, &atoms, query).judge();
+    };
+    let form_nanos = e1_start.elapsed().as_nanos();
+    let goal: BTreeSet<AtomId> = super::e1::goal_atoms()
+        .into_iter()
+        .filter_map(|atom| atoms.iter().position(|held| *held == atom))
+        .map(|position| position as AtomId)
+        .collect();
+    let atom_count = atoms.len();
+    let instances: usize = counts.values().sum();
+    let problem = localize(world, &atoms, query);
+    let judge_start = std::time::Instant::now();
+    let (verdict, measure) = problem.e1_judge(&goal, true)?;
+    let judge_nanos = judge_start.elapsed().as_nanos().saturating_sub(measure.full_nanos);
+    super::e1::judged(
+        atom_count,
+        instances,
+        form_nanos,
+        judge_nanos,
+        verdict == Verdict::Refuted,
+        &measure,
+    );
+    Ok(verdict)
+}
+
+/// E1: the value interval the theory step gives `target` over `units` and
+/// each typed atom's range, with no split.
+pub(super) fn interval(
+    world: &World,
+    units: &[Literal],
+    target: &Linear,
+) -> Result<super::solver::Projected, Capacity> {
+    let mut atoms: BTreeSet<AtomId> = BTreeSet::new();
+    for literal in units {
+        collect_literal(literal, &mut atoms);
+    }
+    collect_linear(target, &mut atoms);
+    let mut query = Query {
+        units: units.to_vec(),
+        ..Query::default()
+    };
+    for atom in &atoms {
+        if let Some(ty) = world.atoms[*atom as usize].ty {
+            let (low, high) = super::walk::integer_range(ty);
+            let value = Linear::atom(*atom);
+            query.units.push(Literal::new(
+                value.clone(),
+                Relation::GreaterEqual,
+                Linear::constant(low),
+            ));
+            query.units.push(Literal::new(
+                value,
+                Relation::LessEqual,
+                Linear::constant(high),
+            ));
+        }
+    }
+    let mut terms: Vec<(AtomId, i128)> = target
+        .terms
+        .iter()
+        .filter_map(|(atom, coefficient)| {
+            atoms
+                .iter()
+                .position(|held| held == atom)
+                .map(|position| (position as AtomId, *coefficient))
+        })
+        .collect();
+    terms.sort_unstable();
+    let local = Linear {
+        terms,
+        constant: target.constant,
+    };
+    let problem = localize(world, &atoms, query);
+    super::solver::project(&problem, &local)
 }
 
 /// Charge one tuple, irrespective of the number of its conclusions.

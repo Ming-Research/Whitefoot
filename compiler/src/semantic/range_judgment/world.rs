@@ -1274,6 +1274,9 @@ pub(super) fn join_states(
             .extend(arm.exposed.iter().map(|(binding, ty)| (*binding, *ty)));
     }
     join_routes(world, join, &arms, &mut out);
+    if super::e1::weakest_join() {
+        e1_weakest_bounds(world, &arms, &mut out);
+    }
     for (location, variant) in &first.variants {
         if arms
             .iter()
@@ -1664,3 +1667,113 @@ pub(super) fn shift_projection(
 
 #[cfg(test)]
 mod tests;
+
+/// E1 remedy+join: for each integer binding the arms hold different values
+/// of, the weakest bound on `v - w` that every non-contradictory arm proves
+/// by the derivation's projection, for `w` zero and each atom an arm's
+/// literal pairs with the arm's value, as an unconditional literal on the
+/// joined value. ENT-5's weakest-bound join, moved onto values.
+fn e1_weakest_bounds(world: &World, arms: &[State], out: &mut State) {
+    use super::solver::Projected;
+    let mut added = Vec::new();
+    for (binding, joined) in &out.values {
+        let Value::Int(joined) = joined else {
+            continue;
+        };
+        let arm_values: Option<Vec<&Linear>> = arms
+            .iter()
+            .map(|arm| match arm.values.get(binding) {
+                Some(Value::Int(value)) => Some(value),
+                _ => None,
+            })
+            .collect();
+        let Some(arm_values) = arm_values else {
+            continue;
+        };
+        if arm_values.iter().all(|value| *value == arm_values[0]) {
+            continue;
+        }
+        // Atoms an arm's literal relates to its value, and that every arm
+        // still names: a value all arms share, such as a parameter.
+        let mut partners: BTreeSet<AtomId> = BTreeSet::new();
+        for (arm, value) in arms.iter().zip(&arm_values) {
+            let own: BTreeSet<AtomId> = value.terms.iter().map(|(atom, _)| *atom).collect();
+            for literal in &arm.conds {
+                let atoms: Vec<AtomId> = literal
+                    .left
+                    .terms
+                    .iter()
+                    .chain(&literal.right.terms)
+                    .map(|(atom, _)| *atom)
+                    .collect();
+                if atoms.iter().any(|atom| own.contains(atom)) {
+                    partners.extend(atoms.iter().filter(|atom| !own.contains(atom)));
+                }
+            }
+        }
+        let shared: BTreeSet<AtomId> = out
+            .values
+            .values()
+            .filter_map(|value| match value {
+                Value::Int(value) => Some(value),
+                _ => None,
+            })
+            .flat_map(|value| value.terms.iter().map(|(atom, _)| *atom))
+            .collect();
+        let mut others = vec![Linear::constant(0)];
+        others.extend(
+            partners
+                .iter()
+                .filter(|atom| shared.contains(atom))
+                .map(|atom| Linear::atom(*atom)),
+        );
+        for other in others {
+            let mut low: Option<Option<i128>> = None;
+            let mut high: Option<Option<i128>> = None;
+            for (arm, value) in arms.iter().zip(&arm_values) {
+                let Some(difference) = value.minus(&other) else {
+                    low = Some(None);
+                    high = Some(None);
+                    break;
+                };
+                match super::facts::interval(world, &arm.conds, &difference) {
+                    Ok(Projected::Contradictory) => {}
+                    Ok(Projected::Bounds(arm_low, arm_high)) => {
+                        low = Some(match (low, arm_low) {
+                            (None, bound) => bound,
+                            (Some(Some(old)), Some(new)) => Some(old.min(new)),
+                            _ => None,
+                        });
+                        high = Some(match (high, arm_high) {
+                            (None, bound) => bound,
+                            (Some(Some(old)), Some(new)) => Some(old.max(new)),
+                            _ => None,
+                        });
+                    }
+                    Err(_) => {
+                        low = Some(None);
+                        high = Some(None);
+                    }
+                }
+            }
+            let Some(difference) = joined.minus(&other) else {
+                continue;
+            };
+            if let Some(Some(low)) = low {
+                added.push(Literal::new(
+                    difference.clone(),
+                    Relation::GreaterEqual,
+                    Linear::constant(low),
+                ));
+            }
+            if let Some(Some(high)) = high {
+                added.push(Literal::new(
+                    difference,
+                    Relation::LessEqual,
+                    Linear::constant(high),
+                ));
+            }
+        }
+    }
+    out.conds.extend(added);
+}

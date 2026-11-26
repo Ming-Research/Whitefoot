@@ -628,3 +628,161 @@ fn a_shared_proof_receipt_cache_reaches_every_declared_source_verdict() {
     );
     assert!(reused > 0 && recorded > 0, "the corpus exercised reuse");
 }
+
+/// E1 (`research/investigations/derivation-ceiling`): every case's source
+/// verdict through the ordinary check path, with the shadow derivation's
+/// counters on. A case whose verdict changes fails the test, so the shadow
+/// is shown to change no verdict. `step` takes every step-th case, for a
+/// sample. The summary is written to the process's standard error directly,
+/// past the test harness's capture, so the job log holds it.
+fn e1_collect(step: usize, programs: bool) {
+    let scratch = std::env::var_os("WHITEFOOT_SCRATCH_ROOT")
+        .map_or_else(std::env::temp_dir, PathBuf::from)
+        .join(format!("e1-{}", std::process::id()));
+    std::fs::create_dir_all(&scratch).expect("E1 scratch directory");
+    let rows = scratch.join("rows.tsv");
+    std::fs::write(&rows, format!("{}\n", whitefoot::e1::HEADER)).expect("E1 header");
+    whitefoot::e1::open(&rows);
+    let started = std::time::Instant::now();
+    let cases = corpus::load();
+    let mut failures = Vec::new();
+    let mut checked = 0;
+    for case in cases.iter().step_by(step) {
+        whitefoot::e1::label(&case.id);
+        let reached = match e1_check(case) {
+            Ok(()) => Verdict::Accept,
+            Err(failure) => failure_verdict(&failure),
+        };
+        let pass = match &case.expect {
+            Expectation::Run(_) => reached == Verdict::Accept,
+            Expectation::Unsupported => true,
+            _ => outcome(case, &reached) == Outcome::Pass,
+        };
+        if !pass {
+            failures.push(format!("{} want {:?} reached {reached:?}", case.id, case.expect));
+        }
+        checked += 1;
+    }
+    let corpus_seconds = started.elapsed().as_secs_f64();
+    let mut program_report = String::new();
+    if programs {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut files: Vec<PathBuf> = std::fs::read_dir(root.join("tests/programs"))
+            .expect("tests/programs")
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.extension().is_some_and(|extension| extension == "wf"))
+            .collect();
+        files.sort();
+        for file in files {
+            let name = file.file_name().unwrap().to_string_lossy().into_owned();
+            whitefoot::e1::label(&format!("program:{name}"));
+            let bytes = std::fs::read(&file).expect("program source");
+            let verdict = check(&[SourceInput::new(&name, &bytes)], CompilerLimits::default());
+            program_report.push_str(&format!(
+                "program {name} {}\n",
+                if verdict.is_ok() { "accepted" } else { "rejected" }
+            ));
+        }
+        let firn = root.join("apps/firn");
+        whitefoot::e1::label("app:firn");
+        let Ok(graph) =
+            form_module_program_graph(&firn.join("modules.wfg"), CompilerLimits::default())
+        else {
+            panic!("firn's graph must form");
+        };
+        let sources = discover_module_sources(&firn, &graph)
+            .unwrap_or_else(|failure| panic!("firn's records: {failure}"));
+        let inputs: Vec<_> = sources
+            .iter()
+            .map(|source| {
+                SourceInput::new(&source.logical_path, &source.bytes)
+                    .in_module(source.module, source.role)
+            })
+            .collect();
+        let verdict = check_module_program(&graph, &inputs, CompilerLimits::default()).and_then(
+            |()| {
+                check_module_entry(
+                    &graph,
+                    &inputs,
+                    ModuleEntry::Named("firn"),
+                    CompilerLimits::default(),
+                )
+            },
+        );
+        program_report.push_str(&format!("app firn {}\n", verdict.is_ok()));
+    }
+    let total_seconds = started.elapsed().as_secs_f64();
+    let script = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../research/investigations/derivation-ceiling/e1_analyze.py");
+    let analysis = Command::new("python3")
+        .arg("-B")
+        .arg(&script)
+        .arg(&rows)
+        .output()
+        .expect("run the E1 analysis");
+    let mut report = format!(
+        "E1 BEGIN\ncases {checked} failures {} corpus_seconds {corpus_seconds:.1} total_seconds {total_seconds:.1}\n{}{program_report}{}{}E1 END\n",
+        failures.len(),
+        failures.iter().map(|line| format!("FAIL {line}\n")).collect::<String>(),
+        String::from_utf8_lossy(&analysis.stdout),
+        String::from_utf8_lossy(&analysis.stderr),
+    );
+    report.push('\n');
+    let _ = std::io::stderr().write_all(report.as_bytes());
+    assert!(failures.is_empty(), "E1 changed verdicts: {failures:?}");
+    assert!(analysis.status.success(), "E1 analysis failed");
+}
+
+/// The source verdict alone: the check path of `build` for every case.
+fn e1_check(case: &Case) -> Result<(), CompilationFailure> {
+    if let Some(root) = case.module_root() {
+        let graph =
+            match form_module_program_graph(&root.join("modules.wfg"), CompilerLimits::default()) {
+                Ok(graph) => graph,
+                Err(ModuleProgramFailure::Compilation(failure)) => return Err(failure),
+                Err(ModuleProgramFailure::Discovery(failure)) => panic!("{}: {failure}", case.id),
+            };
+        let sources = discover_module_sources(&root, &graph)
+            .unwrap_or_else(|failure| panic!("{}: {failure}", case.id));
+        let inputs: Vec<_> = sources
+            .iter()
+            .map(|source| {
+                SourceInput::new(&source.logical_path, &source.bytes)
+                    .in_module(source.module, source.role)
+            })
+            .collect();
+        check_module_program(&graph, &inputs, CompilerLimits::default())?;
+        let entries: Vec<String> = match &case.expect {
+            Expectation::Run(_) | Expectation::Unsupported => vec!["main".to_owned()],
+            _ => graph
+                .entries()
+                .iter()
+                .map(|entry| entry.name().to_owned())
+                .collect(),
+        };
+        for entry in entries {
+            check_module_entry(
+                &graph,
+                &inputs,
+                ModuleEntry::Named(&entry),
+                CompilerLimits::default(),
+            )?;
+        }
+        return Ok(());
+    }
+    let source = case.source();
+    let path = case.logical_path();
+    check(&[SourceInput::new(&path, &source)], CompilerLimits::default())
+}
+
+#[test]
+#[ignore = "E1 experiment: run by name"]
+fn e1_sample() {
+    e1_collect(60, true);
+}
+
+#[test]
+#[ignore = "E1 experiment: run by name"]
+fn e1_full() {
+    e1_collect(1, true);
+}

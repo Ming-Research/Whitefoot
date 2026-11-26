@@ -414,6 +414,11 @@ impl Problem {
         run: &Run,
     ) -> Result<Outcome, Capacity> {
         run.nodes.set(run.nodes.get() + 1);
+        run.max_depth.set(run.max_depth.get().max(depth));
+        if run.nodes.get() > run.limit {
+            run.exhausted.set(true);
+            return Ok(Outcome::Open);
+        }
         // Saturation: decide what the units force, fire what they entail.
         loop {
             if let Some(core) = self.contradiction(&units)? {
@@ -991,6 +996,13 @@ struct Run {
     /// Shared answers, choice probes and read-pair probes are not counted.
     guard_probes: Cell<usize>,
     backjump: bool,
+    /// E1 instrument: the deepest split reached.
+    max_depth: Cell<usize>,
+    /// E1 instrument: a node count past which the search stops, open; only
+    /// the instrument's full case analysis sets one, and its verdict is
+    /// discarded.
+    limit: usize,
+    exhausted: Cell<bool>,
 }
 
 impl Run {
@@ -999,6 +1011,9 @@ impl Run {
             nodes: Cell::new(0),
             guard_probes: Cell::new(0),
             backjump: true,
+            max_depth: Cell::new(0),
+            limit: usize::MAX,
+            exhausted: Cell::new(false),
         }
     }
 }
@@ -1301,6 +1316,10 @@ fn combine_bounds(
     }
     Ok(None)
 }
+
+#[path = "solver_e1.rs"]
+mod e1;
+pub(crate) use e1::{E1Measure, Projected, project};
 
 #[cfg(test)]
 mod tests {

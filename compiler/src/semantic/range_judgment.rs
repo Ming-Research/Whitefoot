@@ -12,6 +12,7 @@
 //! [PAR-2]; it grants nothing by itself.
 
 mod constants;
+pub(crate) mod e1;
 mod facts;
 pub(crate) use constants::judge as judge_constant_invariant;
 mod selection;
@@ -227,8 +228,13 @@ pub(crate) fn judge_program(
                         .is_some_and(|callee| callee.range_facts.has_boundary())
                 })
             {
+                e1_shadow(
+                    functions, nominals, elements, function, selected.get(index).copied(),
+                    constants, scope, &prelude,
+                );
                 return RangeJudgment::default();
             }
+            let e1_walk = std::time::Instant::now();
             let mut walker = walk::Walker::new(
                 functions,
                 nominals,
@@ -256,6 +262,11 @@ pub(crate) fn judge_program(
                 }
                 _ => walker.issues,
             };
+            e1::walk_time(e1_walk.elapsed().as_nanos());
+            e1_shadow(
+                functions, nominals, elements, function, selected.get(index).copied(),
+                constants, scope, &prelude,
+            );
             RangeJudgment {
                 issues,
                 certified: walker.certified,
@@ -340,4 +351,196 @@ fn deferred_records(
         pending.retain(|(index, _)| selected.selects(&function.obligations[*index]));
     }
     pending
+}
+
+/// E1: the shadow walks of one function, one per configuration, posing every
+/// obligation record; their answers and counts go only to the counter file.
+#[allow(clippy::too_many_arguments)]
+fn e1_shadow<'p>(
+    functions: &'p [&'p CheckedFunction],
+    nominals: &'p [CheckedNominal],
+    elements: &'p [super::model::CheckedType],
+    function: &'p CheckedFunction,
+    selected: Option<bool>,
+    constants: &'p [super::model::CheckedConstant],
+    scope: JudgmentScope,
+    prelude: &'p std::collections::BTreeSet<crate::DeclarationId>,
+) {
+    use super::obligations::ObligationSubject;
+    let configs = e1::configs();
+    if configs.is_empty() || selected != Some(true) || function.body.is_none() {
+        return;
+    }
+    let is_prelude = prelude.contains(&function.declaration);
+    let scope_name = match scope {
+        JudgmentScope::Symbolic => "symbolic",
+        JudgmentScope::Concrete => "concrete",
+    };
+    for config in configs {
+        let deferred = (0..function.obligations.len())
+            .map(|index| (index, walk::DeferredAnswer::Pending))
+            .collect();
+        let ((answers, imprecise), counted, nanos) = e1::shadow(config, || {
+            let mut walker = walk::Walker::new(
+                functions,
+                nominals,
+                elements,
+                function,
+                deferred,
+                constants,
+                scope,
+                prelude,
+            );
+            walker.run();
+            (walker.deferred, walker.imprecise.is_some())
+        });
+        if !e1::data() {
+            continue;
+        }
+        let mut by_record: std::collections::BTreeMap<usize, e1::Acc> =
+            std::collections::BTreeMap::new();
+        let mut conditions: std::collections::BTreeMap<
+            usize,
+            (Option<e1::Acc>, Option<e1::Acc>),
+        > = std::collections::BTreeMap::new();
+        let mut condition_answers: std::collections::BTreeMap<usize, &'static str> =
+            std::collections::BTreeMap::new();
+        let mut rows = Vec::new();
+        for (key, acc) in &counted {
+            match key {
+                e1::Key::Records(indices) => {
+                    for index in indices {
+                        by_record.insert(*index, acc.clone());
+                    }
+                }
+                e1::Key::Clause(site) => rows.push(e1::Row {
+                    config,
+                    scope: scope_name,
+                    prelude: is_prelude,
+                    function: &function.name,
+                    record: "-".to_owned(),
+                    rule: "RANGE-3".to_owned(),
+                    kind: "range-clause".to_owned(),
+                    site: site.clone(),
+                    ordinary: "-",
+                    route: "-".to_owned(),
+                    shadow: e1_answer(acc, acc.queries > 0 && acc.refuted == acc.queries, false),
+                    acc: Some(acc),
+                    walk_nanos: nanos,
+                }),
+                e1::Key::Condition(index, truth) => {
+                    let entry = conditions.entry(*index).or_default();
+                    if *truth {
+                        entry.0 = Some(acc.clone());
+                    } else {
+                        entry.1 = Some(acc.clone());
+                    }
+                }
+            }
+        }
+        for (index, (when_true, when_false)) in &conditions {
+            let decided = |acc: &Option<e1::Acc>| {
+                acc.as_ref()
+                    .is_some_and(|acc| acc.queries > 0 && acc.refuted == acc.queries)
+            };
+            let noted = |acc: &Option<e1::Acc>| acc.as_ref().is_some_and(|acc| !acc.notes.is_empty());
+            let answer = match (decided(when_true), decided(when_false)) {
+                (true, true) => "decided-both",
+                (true, false) => "decided-true",
+                (false, true) => "decided-false",
+                (false, false) if noted(when_true) || noted(when_false) => "inconclusive",
+                (false, false) => "undecided",
+            };
+            let default = e1::Acc::default();
+            let merged = when_true
+                .as_ref()
+                .unwrap_or(&default)
+                .merged(when_false.as_ref().unwrap_or(&default));
+            by_record.insert(*index, merged);
+            condition_answers.insert(*index, answer);
+        }
+        for (index, answer) in answers {
+            let record = &function.obligations[index];
+            let ordinary = match function.entailment.answers.get(index).copied().flatten() {
+                Some(answer) if matches!(record.subject, ObligationSubject::Condition) => {
+                    if answer.discharged(&function.entailment) {
+                        "undecided"
+                    } else {
+                        "decided"
+                    }
+                }
+                Some(answer) if answer.discharged(&function.entailment) => "proved",
+                Some(_) => "unproved",
+                None => "unanswered",
+            };
+            let acc = by_record.get(&index);
+            let shadow = match (answer, acc) {
+                _ if condition_answers.contains_key(&index) => {
+                    condition_answers[&index].to_owned()
+                }
+                (walk::DeferredAnswer::Proved, Some(acc)) if acc.queries > 0 => "proved".to_owned(),
+                (walk::DeferredAnswer::Proved, _) => "unreached".to_owned(),
+                (walk::DeferredAnswer::Unproved, _) => "unproved".to_owned(),
+                (walk::DeferredAnswer::Inconclusive, Some(acc)) => {
+                    e1_answer(acc, false, imprecise)
+                }
+                (walk::DeferredAnswer::Inconclusive | walk::DeferredAnswer::Pending, None) => {
+                    format!("not-posed:{}", e1_kind(&record.subject))
+                }
+                (walk::DeferredAnswer::Pending, Some(_)) => "pending".to_owned(),
+            };
+            rows.push(e1::Row {
+                config,
+                scope: scope_name,
+                prelude: is_prelude,
+                function: &function.name,
+                record: index.to_string(),
+                rule: format!("{:?}", record.rule),
+                kind: e1_kind(&record.subject),
+                site: format!("{:?}", record.site),
+                ordinary,
+                route: "-".to_owned(),
+                shadow,
+                acc,
+                walk_nanos: nanos,
+            });
+        }
+        e1::write(&rows);
+    }
+}
+
+fn e1_answer(acc: &e1::Acc, proved: bool, imprecise: bool) -> String {
+    if proved {
+        return "proved".to_owned();
+    }
+    if acc.notes.is_empty() {
+        if imprecise {
+            return "inconclusive:imprecise".to_owned();
+        }
+        return if acc.queries == 0 {
+            "not-posed".to_owned()
+        } else {
+            "unproved".to_owned()
+        };
+    }
+    let notes: Vec<&str> = acc.notes.iter().copied().collect();
+    format!("inconclusive:{}", notes.join(","))
+}
+
+fn e1_kind(subject: &super::obligations::ObligationSubject) -> String {
+    use super::obligations::ObligationSubject;
+    match subject {
+        ObligationSubject::Condition => "condition".to_owned(),
+        ObligationSubject::Source { family, conjunct } => format!("{family:?}#{conjunct}"),
+        ObligationSubject::CallRequirement { subject, .. } => {
+            if subject.is_some() {
+                "call-requirement-type11".to_owned()
+            } else {
+                "call-requirement".to_owned()
+            }
+        }
+        ObligationSubject::LoopInvariant { .. } => "loop-invariant".to_owned(),
+        ObligationSubject::SourceProof => "source-proof".to_owned(),
+        ObligationSubject::Postcondition { .. } => "postcondition".to_owned(),
+    }
 }

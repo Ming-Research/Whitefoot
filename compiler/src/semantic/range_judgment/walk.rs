@@ -146,6 +146,10 @@ pub(super) struct Walker<'program> {
     selected: Vec<bool>,
     active_loops: Vec<CheckedLoopId>,
     atomic: Option<type_invariants::AtomicFacts>,
+    /// E1: the range clause `require` is judging, as its counter key.
+    e1_clause: Option<String>,
+    /// E1: the [OP-5] condition of the match `arms` is about to judge.
+    e1_condition: Option<NodePath>,
 }
 
 /// The largest number of nested loop dry walks; a deeper nest forgets
@@ -252,6 +256,8 @@ impl<'program> Walker<'program> {
             selected: vec![false; function.range_facts.postconditions.len()],
             active_loops: Vec::new(),
             atomic: None,
+            e1_clause: None,
+            e1_condition: None,
         }
     }
 
@@ -553,6 +559,10 @@ impl<'program> Walker<'program> {
                     .cloned(),
             );
             let negation = conclusion_negation(&conclusion.conclusions[0]);
+            let e1_current = self
+                .e1_clause
+                .clone()
+                .map(|key| super::e1::current(super::e1::Key::Clause(key), &negation));
             match negation.as_slice() {
                 [single] => query.units.push(single.clone()),
                 _ => query
@@ -567,7 +577,19 @@ impl<'program> Walker<'program> {
                 &state.guarded,
                 &[],
                 query,
-            )?;
+            );
+            drop(e1_current);
+            if let (Err(capacity), Some(key)) = (&verdict, &self.e1_clause) {
+                super::e1::note(
+                    super::e1::Key::Clause(key.clone()),
+                    match capacity {
+                        Capacity::Arithmetic => "arithmetic",
+                        Capacity::Atoms => "ceiling-atoms",
+                        Capacity::Instances => "ceiling-instances",
+                    },
+                );
+            }
+            let verdict = verdict?;
             if verdict != Verdict::Refuted {
                 // Bounds, clause guards and this conclusion's read domains
                 // all decide whether this one conclusion is owed. Other
@@ -617,6 +639,62 @@ impl<'program> Walker<'program> {
         Ok(None)
     }
 
+    /// E1: an [OP-5] condition is decided `truth` when the state with the
+    /// condition's opposite truth is contradictory; each truth is asked.
+    fn e1_pose_condition(
+        &mut self,
+        state: &State,
+        site: &NodePath,
+        cond: &Cond,
+        tag: Option<&Linear>,
+    ) {
+        if self.dry != 0 || super::e1::config().is_none() {
+            return;
+        }
+        let Some(index) = self.deferred.iter().find_map(|(index, _)| {
+            let record = &self.function.obligations[*index];
+            (record.site == *site && record.subject == ObligationSubject::Condition)
+                .then_some(*index)
+        }) else {
+            return;
+        };
+        for truth in [true, false] {
+            let mut assumed = Vec::new();
+            cond.literals(!truth, &mut assumed);
+            if let Some(tag) = tag {
+                assumed.push(Literal::new(
+                    tag.clone(),
+                    Relation::Equal,
+                    Linear::constant(i128::from(truth)),
+                ));
+            }
+            let (mut units, choices) = state.premises(&self.world);
+            units.extend(assumed.iter().cloned());
+            let query = Query {
+                units,
+                choices,
+                ..Query::default()
+            };
+            let key = super::e1::Key::Condition(index, truth);
+            let current = super::e1::current(key.clone(), &assumed);
+            let verdict = facts::judge(
+                &mut self.world,
+                &self.facts,
+                &state.facts,
+                &state.guarded,
+                &[],
+                query,
+            );
+            drop(current);
+            match verdict {
+                Err(Capacity::Arithmetic) => super::e1::note(key, "arithmetic"),
+                Err(Capacity::Atoms) => super::e1::note(key, "ceiling-atoms"),
+                Err(Capacity::Instances) => super::e1::note(key, "ceiling-instances"),
+                Ok(_) => {}
+            }
+        }
+    }
+
     fn require(
         &mut self,
         state: &State,
@@ -631,7 +709,10 @@ impl<'program> Walker<'program> {
             return;
         }
         let prior_issues = self.issues.len();
-        match self.holds(state, clause, frame) {
+        self.e1_clause = Some(format!("{node:?} {site}"));
+        let held = self.holds(state, clause, frame);
+        self.e1_clause = None;
+        match held {
             Ok(None) => {}
             Ok(Some(_))
                 if self.issues[prior_issues..]
@@ -852,17 +933,20 @@ impl<'program> Walker<'program> {
                 None
             }
             CheckedStatement::Match {
+                condition,
                 scrutinee,
                 match_type,
                 arms,
                 ..
             } => {
                 let fork = state.conds.len();
+                self.e1_condition = condition.clone();
                 let arms_out = self.arms(&mut state, scrutinee, *match_type, arms);
                 join(&mut self.world, fork, arms_out)
             }
             CheckedStatement::ValueMatchLet {
                 node_path,
+                condition,
                 binding,
                 result_type,
                 result_mode,
@@ -873,6 +957,7 @@ impl<'program> Walker<'program> {
             } => {
                 self.cite = node_path.clone();
                 let fork = state.conds.len();
+                self.e1_condition = condition.clone();
                 self.gives.push(Vec::new());
                 let _ = self.arms(&mut state, scrutinee, *match_type, arms);
                 let given = self.gives.pop().unwrap_or_default();
@@ -1065,6 +1150,7 @@ impl<'program> Walker<'program> {
         } else {
             self.eval(state, scrutinee)
         };
+        let e1_condition = self.e1_condition.take();
         // A by-value binder of storage the match does not consume is a copy
         // of the payload, as a `let` of it would be.
         let copied = copies(scrutinee);
@@ -1122,6 +1208,9 @@ impl<'program> Walker<'program> {
                     Value::Bool(cond, tag) => (cond, Some(tag)),
                     _ => (Cond::Unknown, None),
                 };
+                if let Some(site) = &e1_condition {
+                    self.e1_pose_condition(state, site, &cond, tag.as_ref());
+                }
                 for arm in arms {
                     let truth = arm.selection == CheckedMatchSelection::Variant(1);
                     self.region_reachability(&arm.node_path, !cond.excludes(truth));

@@ -24,7 +24,7 @@ pub(crate) use places::{
 };
 mod postcondition;
 mod range_facts;
-mod range_judgment;
+pub(crate) mod range_judgment;
 mod tree;
 
 #[cfg(test)]
