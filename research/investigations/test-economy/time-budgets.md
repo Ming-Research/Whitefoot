@@ -735,8 +735,9 @@ in run 37395370468, with the two build steps swapped, the first took 107.2 s
 and the second 93.2 s. The owner set the budget directly to 130 s on
 2026-10-05, about 10 s over that slowest run, in the same ruling that fixed
 every later raise at 10 s; `performance-baseline-compiler` then kept 105 s, over its slowest run of 97.3 s. Why the first cold build is
-slower was not measured; an untimed warm-up before both builds would remove
-the difference instead of covering it.
+slower was not measured then; an untimed warm-up before both builds would
+remove the difference instead of covering it. The section "The first compiler
+build's extra time (2026-11-25)" below measures it.
 
 **`performance-baseline-compiler` raised to 115 s.** The baseline build
 compiles main's source, which no pull request changes, yet it overran 105 s on
@@ -1623,6 +1624,239 @@ the median, rounded up to 5 s; "The margin of the budget rule" above), applied w
 rows; the owner's numbers are the stated ones, which are 20, 35 and 30 s below those.
 The Xeon 8573C's three builds are 139.9 s at most with a median of 138.2 s, 160 s by the
 rule, so its column is the row's largest class, 165 s.
+
+### The first compiler build's extra time (2026-11-25)
+
+`compute-regression.yml` times the candidate compiler's cold build
+(`performance-candidate-compiler`) as the first heavy step of its job, and
+since the merge-base compiler is cached ("Xeon Platinum 8573C column" above)
+it is usually the only compiler the job builds. The first cold build of a job
+is the slower one whichever compiler it builds ("`performance-candidate-compiler`
+raised to 130 s" above), so the stage's budget covers time that is not the
+candidate's. This section asks where that time goes.
+
+**What the logs already show.** `run-check.pl` runs each stage under
+`/usr/bin/time -p`, so the job logs carry its user and system time. In the two
+dispatched runs that swapped the build order, read again on 2026-11-25:
+
+| run | first build | real s | user s | sys s | second build | real s | user s | sys s |
+|---|---|---:|---:|---:|---|---:|---:|---:|
+| 37395372973 | candidate | 101.55 | 164.15 | 1.54 | baseline | 93.17 | 162.36 | 1.37 |
+| 37395370468 | baseline | 107.10 | 163.19 | 1.56 | candidate | 93.20 | 162.37 | 1.42 |
+
+The first build used about 1% more user time and took 9% and 15% more wall
+time: its extra time is spent waiting, not computing. The host step of a
+2026-11-25 pull request run (45604514931, an Intel Xeon 6975P-C) shows the
+same kind of wait on a smaller scale: `/usr/bin/clang --version`, which reads
+clang's binary and libraries for the first time in the job, took 5.0 s.
+
+**Question and comparison, fixed before measuring.** A temporary workflow
+(`tmp-first-build.yml`, run on the work branch, not kept) builds the
+compiler's current source twice in each of 18 hosted `ubuntu-24.04` jobs, with
+the job's two Cargo jobs, each build into its own empty target directory
+after `cargo fetch`, so the two builds do the same work. Before the first
+build each job applies one of three preparations, six jobs each: none;
+reading every file of the active Rust toolchain (`rustc --print sysroot`) into
+the page cache; or a 60 s wait that reads nothing. Each build records its wall,
+user and system time, major page faults and file-system inputs (GNU `time`),
+and the host's I/O and CPU pressure (`/proc/pressure`), page-ins and
+`/proc/stat` counters around it and around the preparation.
+
+- The cold page cache of the Rust toolchain (rustc, LLVM, the standard
+  library, the linker) is the cause if, with no preparation, the first build
+  takes at least 5% longer than the second in most jobs with user time within
+  3% and far more file-system inputs and I/O stall, while after reading the
+  toolchain the first build is within 3% of the second in at least five of six
+  jobs and its inputs fall to the second's.
+- It is not the cause if reading the toolchain removes less than half of the
+  first build's median excess, or if the 60 s wait removes it as well (median
+  ratio within 3%), which would point to something that passes with time at
+  the start of a job, such as other activity on the host.
+- A preparation is sufficient for the stage if the first build is within 5% of
+  the second in every job of its arm.
+
+**What the experiment leaves out.** Its jobs restore no Cargo cache. The order
+effect it explains was measured in runs whose cache step missed (both runs in
+the table above log `Cache not found` for the `formal-compute` key), so neither
+the writeback of a restored `compiler/target` nor a restored build state can
+account for it. A run whose cache step hits restores the target directory of
+an earlier run of the same pull request, and Cargo's fingerprints then leave
+the locked dependencies built and recompile only the `whitefoot` crate (read
+from Cargo's rules, not observed in a run): a smaller build than a miss, which
+therefore does not set the stage's slowest time. Whether that restore's
+writeback slows the smaller build is not measured.
+
+**Result (2026-11-25).** The experiment ran twice, in runs 45631141666
+(commit `e81a64b67`) and 45632270254 (commit `99850e82c`), each with the 18
+jobs above; the criteria are applied to each run and to the 36 jobs together.
+The jobs landed on whatever hosts the pool gave them, so the arms' CPU models
+differ (below). Ratio is the first build's wall time over the second's; inputs
+are GNU `time`'s file-system inputs (blocks) of the build; the stall is the
+build's `/proc/pressure/io` "full" time. The numbers of each job are in
+[first-build-jobs-2026-11-25.tsv](first-build-jobs-2026-11-25.tsv), from which
+every figure below can be recomputed.
+
+| arm (jobs) | median ratio | range | first build 5% or more longer | median excess s | inputs, first / second (median) | I/O stall s, first / second (median) |
+|---|---:|---|---:|---:|---|---|
+| none (12) | 1.068 | 0.985 to 1.104 | 9 | 7.3 | 366,044 / 12 | 5.27 / 0.00 |
+| toolchain read (12) | 0.999 | 0.979 to 1.015 | 0 | -0.1 | 5,952 / 0 | 0.34 / 0.01 |
+| 60 s wait (12) | 1.050 | 0.988 to 1.085 | 6 | 5.5 | 366,004 / 16 | 3.68 / 0.01 |
+
+Per run, the none arm's median ratio is 1.060 (45632270254) and 1.073
+(45631141666), the toolchain arm's 0.994 and 1.008, the wait arm's 1.035 and
+1.053. Against the criteria fixed above:
+
+- The cold page cache is the cause. With no preparation the first build took
+  5% or more longer in 9 of 12 jobs, and in 8 of those its user time was
+  within 3% of the second's; its inputs were about 366,000 against 12 and its
+  I/O stall 5.3 s against none. After reading the toolchain the first build was
+  within 3% of the second in 12 of 12 jobs, and its inputs fell by 98% (to
+  5,944 to 5,952 in every job, which the second build reads none of; what
+  they are was not traced).
+- The two conditions that reject the cause do not hold. Reading the toolchain
+  removed all of the median excess (7.3 s to -0.1 s), more than half, and the
+  60 s wait did not remove it: its median ratio, 1.050, is outside 3%, and its
+  builds read as many blocks as the none arm's, since a wait reads nothing.
+- The preparation is sufficient: the first build was within 5% of the second in
+  every job of the toolchain arm, the largest ratio being 1.015.
+- The preparation itself took 11.3 to 36.3 s, median 16.7 s, on the 12 hosts,
+  more than the "several to a dozen-odd seconds" the choice between
+  preparations was given. It is outside every labeled stage.
+
+The excess is not the same on every host. In the none arm the Xeon 6975P-C
+(five jobs; it is not a column of the table) took 6.9 to 10.4% longer, the
+EPYC 7763 and 9V74 5.3 to 7.6% (two jobs each), and the two Xeon Platinum 8573C
+jobs 0.985 and 0.999, although their first builds read as many blocks (about
+366,000) and stalled 1.8 and 2.4 s on I/O. The 8573C jobs ran 138 to 140 s for
+both builds, so what the first build lost there did not show as a longer first
+build. The excess therefore depends on the host's disk as well as on the
+cache being cold, and the arms' models were not balanced (the wait arm has
+six Xeon 6975P-C jobs of twelve, the toolchain arm five).
+
+**Two measurements after the preparation is chosen, fixed before they run.**
+Both use temporary workflows on the work branch (`tmp-candidate-samples.yml`,
+`tmp-build-order.yml`, not kept) that do what a `compute-regression.yml` run
+does up to its compiler builds on hosted `ubuntu-24.04` machines: the same
+host check, the merge-base worktree, the same untimed preparation step and the
+same labeled stages and build commands, with no cache restored or saved, so
+every build is into an empty target directory.
+
+- The order check runs one job with the candidate built first and one with the
+  merge-base compiler first, each building both. A job passes if its first
+  build is within 5% of its second. A failing job means the preparation does
+  not remove the order effect, and the preparation is chosen again.
+- The samples budget `performance-candidate-compiler` by the table's rule. A
+  batch is 40 jobs, 20 at a time, and a machine whose CPU model is not a column
+  of the table builds nothing; batches repeat until each of the three EPYC
+  columns and the Xeon 6975P-C column has 20 counted runs, and stop after ten
+  batches (400 jobs, the first included). The stop depends on the counts, never
+  on the times. The Xeon 6975P-C took 16 of the 36 jobs of the first
+  experiment and 50 of the 80 of the second and third batches, which built
+  nothing on it because the table had no column for it; it was given one before
+  the fourth batch and is sampled from then on. A batch after the third names in
+  its commit message the classes that already have 20 counted runs, whose jobs
+  build nothing. A job's log counts only if it shows no cache action and as
+  many `Compiling` lines as a build into an empty target directory (9 at
+  `e7974f0c5`). The rule's value is taken whatever it is: where it is not below
+  the present 160 s (every Linux class, when this was written) the stage's
+  budget does not fall, which is a result, not a failure of the sampling. A class with fewer than 20 counted runs keeps its
+  value, and a Xeon column follows the owner-column rule of
+  `.github/recompute-time-budgets.py`. Only runs after the preparation count;
+  the earlier runs, which include the first build's extra time, are left out.
+  From the second batch each job publishes its sample as a branch of the
+  repository, readable with git when the API's rate limit holds back the logs;
+  the first batch and the order check are read from their logs.
+
+The temporary workflows are removed from the branch before it merges; their
+text is in commits `99850e82c` (the first-build experiment) and `e9afbfb98`
+(the sampling and the order check).
+
+**Result of the order check (2026-11-25).** Run 45682988713 (commit
+`0acced3b9`) ran the two jobs after the preparation, each building both
+compilers cold:
+
+| first build | host | first s | second s | first over second |
+|---|---|---:|---:|---:|
+| merge-base compiler | EPYC 9V45 | 104.54 | 102.94 | +1.6% |
+| candidate | Xeon 6975P-C | 105.92 | 104.11 | +1.7% |
+
+Both jobs are within 5%, so the preparation removes the order effect that the
+two October runs showed (9% and 15% over the second build, table above). Each
+job's two builds show 9 `Compiling` lines. One job ran on each host, so the
+check shows the effect gone on two models, not a comparison between models.
+
+**Result of the sampling (2026-11-25 and 2026-11-26).** Eight batches of 40
+jobs ran, 320 jobs in all, started from commits `0acced3b9` (run 45682988613),
+`55f3b140e` (45684558422), `e45d9cfce` (45684558937), `cae1e3331`
+(45687427581), `fce58e882` (45687428489), `d0a6832d0` (45731415552),
+`95e71b441` (45731415194) and `738e4eaec` (45731415522). The Xeon 6975P-C had
+no column until the fourth batch, so its jobs built nothing in the first three
+and in the fifth and later batches (the fifth names it after `skip:`, the sixth
+to eighth also the two EPYC classes that had 20). The 6975P-C's 23 runs are
+all from the fourth batch. The sixth to eighth batches were started together
+once the first five left the 9V45 at 14 runs, so the stop condition (20 counted
+runs in each of the three EPYC classes and the 6975P-C) held by the seventh and
+the eighth batch's jobs were counted as well. Eight batches are under the cap
+of ten. Every one of the 111 builds exited 0 and shows 9 `Compiling` lines; the
+first batch's were read from its job logs, the others from the published
+branch subjects. No log shows a cache action (the workflow restores and saves
+none). Seven jobs ran on a Xeon Platinum 8370C and one on a Xeon 6973P-C; they are
+not columns of the table and built nothing. The 111 counted builds are listed in
+[candidate-build-samples-2026-11.tsv](candidate-build-samples-2026-11.tsv), from
+which each count, median and maximum below can be recomputed.
+
+Main changed under the work while it was open: the rule gained the distance of
+the maximum above the median ("The margin of the budget rule" above) and the
+owner set the stage per class (section above), so the recompute was run again
+on the merged table, with `.github/recompute-time-budgets.py table --write`
+(window of 50, all runs counted). The column "1.1 x max" is the fixed 10% rule
+the sampling was planned under, which the earlier version of this record gave;
+"rule" is the table's rule now:
+
+| class | counted runs | min s | median s | max s | 1.1 x max | rule | cell on main | new cell |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| epyc-7763 | 24 | 127.15 | 131.5 | 137.00 | 155 | 160 | 165 | 160 |
+| epyc-9v74 | 29 | 104.83 | 109.2 | 139.59 | 155 | 185 | 150 | 185 |
+| epyc-9v45 | 23 | 89.00 | 94.9 | 110.26 | 125 | 140 | 135 | 140 |
+| xeon-6975p | 23 | 103.31 | 107.6 | 109.43 | 125 | 125 | no column (165) | 125 |
+| xeon-8573c | 12 | 115.73 | 138.3 | 146.80 | 165 | 170 | 165 | 185 |
+
+The 8573C cell has 12 runs, so it follows the owner-column rule: the larger of
+the row's largest recomputed class value (185, the 9V74's) and its own 12 runs
+by the rule (170). It therefore rises by 20 s, and so does the value an
+unmapped model takes, since that is the largest Linux cell of the row.
+Three cells rise over the owner's values on main (the 9V74 by 35 s, the 9V45 by
+5 s and the 8573C by 20 s), which is the owner's to accept: the cells the owner
+set are below the rule's on this row, as the section above records for the
+runs it was set from.
+
+What the numbers show:
+
+- The 7763's cold build took 127.15 to 137.00 s with the preparation (116.2 to
+  146.2 s in its nine runs of October without it), so the 93 s of the October
+  pair is not what it takes now, and its cell falls only from 165 to 160 s.
+- The 9V74's cell rises from 150 to 185 s. Four of its 29 builds (132.37,
+  137.28, 138.99 and 139.59 s) took 132 to 140 s against 104.83 to 115.75 s for
+  the other 25, and the rule adds the maximum's distance above the median
+  (30.4 s) to 1.1 times the maximum. Without the four, 25 builds with a median
+  of 108.9 s would give 135 s; with them it is 185 s. They were taken as they
+  are, and no run was repeated. The owner's 150 s is 7.5% over the slowest of
+  the 29.
+- The 9V45's cell rises from 135 to 140 s, which is 27% over its slowest build
+  (110.26 s); the owner's 135 s is 22% over it. The 6975P-C's cell, which had
+  none, is 125 s, 14% over its slowest build (109.43 s), 40 s under the 165 s an
+  unmapped model takes. The 6975P-C took 180 of the 320 jobs (56%), so most of
+  a pull request run's candidate builds are judged by this cell.
+- The 8573C ran 115.73 to 146.80 s in 12 runs and is the slowest class, but its
+  own runs give 170 s, under the row's largest class, so its cell is the
+  9V74's 185 s.
+
+What this leaves out: the builds ran into an empty target directory, so a run
+whose cache step hits builds less and is judged by the same cell; whether the
+cache's writeback slows that smaller build was not measured; the pool's mix of
+CPU models is not controlled (of the 320 jobs, the 6975P-C took 180, the 7763
+50, the 9V74 47, the 9V45 23, the 8573C 12, the 8370C 7 and the 6973P-C 1), so
+these shares are of one day and may change.
 
 ## Daily loop
 
