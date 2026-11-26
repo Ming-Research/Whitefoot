@@ -22,6 +22,12 @@ archive `spec/kernel-spec-<version>.md` marks a milestone: a copy of the active
 file added by a change that edits no rule. The earlier procedure archived the
 outgoing version with every amendment; git holds the rest of the history.
 
+## 2026-11-26 progress is promised while at most as many contexts as drivers compute without waiting
+
+Rules: changed WAIT-2
+
+Summary: WAIT-2 promised that a ready context takes its next step, and that a begun atomic statement whose guard stays true takes effect, only while every context reaches its completion or a wait in finitely many steps, so a single context that computed without waiting withdrew the promise from every other context: the item that asked for this change reports that a script looping in Firn leaves `SCRIPT KILL`, `SHUTDOWN` and every client unserved on a one-driver deployment, which broke no promise of the language. The context half now holds while, at every point of the execution, the contexts that from that point never reach their completion or a wait are at most as many as the invocation's runtime driver count [PRE-2]. The atomic-statement half holds under the same bound and, in addition, while every evaluation of a statement's guard and every execution of its block ends in finitely many steps, since a context that never leaves a block holds that block's objects. No source program changes its acceptance and no conformance verdict changes; the runtime delivers the promise by asking a run that lasts 1 ms beside other contexts of its driver to yield at its next waiting boundary and, one monitor period later, handing that driver to a spare thread from a pool of one per driver, so that each context computing without end holds one thread. Selection ground: the item's requirement of a bounded progress promise that a long computation does not withdraw from the contexts beside it, and the recommended option of the design question progress_wording, which states the two halves with their own conditions, so that a computation outside any block keeps both promises for the others, and a loop inside a block keeps the promise that other contexts take their next steps, such as the one-shot verdict reads and claims a kill uses, instead of adding the bound to the context half alone, which leaves every atomic statement without its promise while one context computes.
+
 ## 2026-10-24 a requirement displaced by a constant gives an exact entry relation
 
 Rules: changed ENT-3.S4, FN-8

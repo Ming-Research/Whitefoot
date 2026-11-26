@@ -226,12 +226,15 @@ Relevant implementation and rationale read for this study:
   selects the eager group prefix from map targets and guard reads, and
   distinguishes first-group acquisition from later-group taking.
 - [Completion bridge](../../../compiler/src/backend/completion/bridge.c),
-  `wf_context_pass`, `WF_CONTEXT_YIELD_PASSES`, `wf_driver_reassign`,
-  `WF_HANDOFF_TAU_NS` and the monitor. Immediately answered legal waits yield
-  after 64 passes when another context is ready. This is not a poll in a
-  computing atomic body. Reassignment currently requires an overdue timer;
-  its threshold is 1,000,000 ns. It does not detect an otherwise ready child
-  that has never run far enough to register its timer.
+  `wf_context_pass`, `wf_monitor_watch`, `wf_driver_reassign`,
+  `WF_HANDOFF_TAU_NS` and the monitor. When this record was written,
+  immediately answered legal waits yielded after 64 passes when another
+  context was ready, and reassignment required an overdue timer, so it did
+  not detect an otherwise ready child that had never run far enough to
+  register its timer. Since item 159 a legal wait yields when the monitor
+  has asked a run of 1,000,000 ns beside another context to yield, and the
+  run loses its driver one monitor period later; neither is a poll in a
+  computing atomic body.
 - [Cancellation decisions](../../../design/language/system-interface/context-cancellation.md)
   and [shared-object decisions](../../../design/language/waiting/shared-objects.md).
   Both record a previous rejection of cancellation that completes an atomic

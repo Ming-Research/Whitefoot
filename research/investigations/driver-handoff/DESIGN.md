@@ -667,3 +667,92 @@ criterion here; the other eleven cells agree within one reporting step.
 Throughput in the rerun: medians 2,442,338 (base), 2,435,532 (handoff),
 2,439,867 (twin) requests per second.
 
+
+## Result: a long run beside other contexts yields, then loses its driver (item 159)
+
+Change: the monitor no longer hands a driver over only past a due deadline
+with no idle driver to borrow it. A context run that has lasted 1 ms while its
+driver holds another context (a host wait of any route, a ready context or an
+ingress commit, the three counts `wf_driver_alone` reads) is asked to yield:
+the monitor moves the driver's service word from OUTSIDE to YIELD, which every
+waiting boundary already loads (`wf_context_pass`), and the run suspends there
+for fairness. A run still going one monitor period (1 ms) after the request
+loses the whole role to a spare, as before. A driver that takes back a run
+that yielded reaps (timers, cancelled waits, ring, helpers, readiness) before
+it resumes anyone. `wf_context_pass` lost its per-context count and the three
+shared loads it made every 64th pass. The owner's questions `handoff_trigger`,
+`yield_check` and `progress_wording` on item 159 chose these, by their
+recommended options, and the WAIT-2 amendment of 2026-11-26 states the
+bounded promise.
+
+What main missed, as seen in fast runs of the witnesses in
+`compiler/tests/programs/busy_driver.rs` on main with the witnesses and no
+runtime change: run
+[45799561898](https://github.com/Ming-Research/Whitefoot/actions/runs/45799561898)
+on a24ab8dbd (main 85bd04026 with the first witnesses) and run
+[45805938592](https://github.com/Ming-Research/Whitefoot/actions/runs/45805938592)
+on dc55a6e07 (main 469944ea4 with the timed witnesses). A status is what the
+witness measures inside the program, in milliseconds, 250 for 250 ms or
+more: the read's duration, its byte arriving at 100 ms; the bounded read's
+duration, its deadline at 50 ms; the time from the firing to the end of the
+watched read; and the time from a context becoming ready to its first step.
+254 is a read that returned the byte sent after the computation instead of
+ending at its deadline or firing.
+
+| Witness (beside a 2 to 3 s computation on the same driver) | io_uring, 1 driver | io_uring, 2 drivers | no ring, 1 driver |
+|---|---|---|---|
+| read whose byte arrives after 100 ms | 250 | 250 (driver 1 borrowed 5,654 times, 0 borrowed terminals) | 250 |
+| read with a 50 ms deadline | 51 (1 reassignment) | 254 (3,656 borrows, 0 borrowed sleeps, 0 reassignments) | 51 to 53 (1 reassignment) |
+| read ended by a watch another context fires | 254 | 254 | 254 |
+| ready context woken by a write, computations on every driver | 250 | 0 of 128 runs placed: the idle driver stole the context | — |
+
+The TCP receive beside a computation inside an atomic statement's block
+(`programs::busy_ring_receive`, from the ring-assist branch) did not release
+the computation within 100 ms in run 45805938592. A borrow serves only due
+sleeps and published records, so the deadline beside an idle driver (the
+second row) and every completion that a reap must find stayed behind the
+computation; only a due deadline with no idle driver was handed over.
+
+With the change, run
+[45805940735](https://github.com/Ming-Research/Whitefoot/actions/runs/45805940735)
+on da2464c8f passed the four busy-driver witnesses in every configuration
+(64 placed runs each for the read and the ready context, 10 for the deadline
+and the cancellation, each within its limit: two handoff cycles of 2 ms and
+40 ms for a shared runner after the byte's arrival or the context becoming
+ready, 100 ms after the deadline or the firing) and the busy-ring receive
+in its 16 runs.
+
+### Plan for the 14900K measurements (written before measuring)
+
+Each comparison builds base (main 469944ea4) and candidate (this change) and
+runs them interleaved on the owner's i9-14900K, with base also under a second
+name as the noise control; a run whose host shows other load is voided under
+the rules of the #122 Firn comparison, and a cell that cannot be decided is
+reported as undecided, not widened.
+
+1. Ready context at one and two drivers, 64 runs each, internal timestamps:
+   one handoff cycle is fixed at 2 ms (the 1 ms threshold plus one monitor
+   period), so every run's ready context must start within 4 ms of becoming
+   ready. Any run over 4 ms rejects the claim that a ready context starts
+   within two handoff cycles.
+2. The polling shape of `tests/programs/lone_timer_writer.wf` (a context
+   looping on atomic statements beside 1 ms sleeps and a read whose byte
+   arrives), 64 runs each in io_uring at one and two drivers and no ring at
+   one: the lateness of the sleeps and of the read, base (yield every 64
+   answered waits) against candidate (yield at the monitor's request).
+   The candidate is expected to be later by about the threshold plus a
+   monitor period (2 to 3 ms) where base yielded within 64 statements; that
+   is the trade the owner took in `yield_check`, recorded, not judged.
+3. The fixed cost of an atomic statement: one context incrementing a shared
+   counter in an unguarded statement, against a C loop that increments a
+   plain counter and one that takes and releases a spin lock around it, base
+   and candidate. The candidate's time per statement above the base twin's
+   spread rejects the claim that the check became cheaper.
+4. Firn GET, SET and MSET at one and two server CPUs and pipeline depths 16
+   and 1 through `io-bench.yml`'s firn comparison, with
+   `WF_SCHED_REPORT=2` yield-request and reassignment counts: in each of the
+   12 cells, a candidate ÷ base median ratio outside the base-twin interval
+   on the slow side rejects the claim that ordinary I/O pays nothing for the
+   change. A nonzero yield-request count under these workloads, whose
+   commands run for microseconds, would show that the trigger fires where no
+   context computes for long, and is reported to the owner.

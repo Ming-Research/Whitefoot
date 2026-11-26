@@ -84,7 +84,9 @@ A guard reaches no path that is or holds a self-changing host handle, which one 
 - rejected: an agent proposed keeping the handle factory readable in guards and waking a guard when the limit is raised; the owner rejected it, because another process can change the limit with no write that wakes a guard.
 
 ### decision begun-statement-eventually-takes-effect
-A begun atomic statement with no guard, or whose guard is true from some point on, eventually takes effect while every context keeps reaching its completion or a wait.
+A begun atomic statement whose guard is absent or true from some point on takes effect while every guard and block ends and at most as many contexts as drivers compute without end.
+- replaced: Promising it only while every context keeps reaching its completion or a wait was on main; the owner changed it, because one context computing without waiting then withdrew the promise from every other, and a looping script left a one-driver server unserved.
+- rejected: an agent proposed bounding only the contexts' next steps by the driver count, keeping every context's reaching a wait as the statements' condition; the owner rejected it, because one context computing outside any block would then withdraw the promise from every atomic statement.
 - rejected: an agent proposed withholding weak fairness, so a statement whose guard stays true may lose the object to others forever; the owner rejected it, because a consumer and its producer must not finish only on a schedule the implementation happened to choose.
 - rejected: an agent proposed strong fairness, so a statement whose guard is true only now and then takes effect; the owner rejected it, because such a guard can be missed on every schedule without the runtime seeing it, and a writer can make the guard stay true instead.
 - rejected: an agent proposed starting, while a guard waits, every call around it that the overlap permission covers; the owner rejected it, because `spawn` states where a context starts and a call that is not spawned runs in order, so no start the writer cannot see is needed.

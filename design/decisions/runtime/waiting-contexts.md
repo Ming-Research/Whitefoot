@@ -27,7 +27,7 @@ A waiting host operation lowers to a start into the running context's one comple
 - rejected: an agent proposed a completion record in the frame of every waiting function that calls the host; the owner rejected it, because a context has at most one host operation pending at a time, so one record per context serves every call it makes.
 
 ### decision parked-frames-skip-the-ring
-A suspended frame registers its context on its pending record without entering the ring, and the driver reaps the ring when no context is ready and after every 64 resumptions.
+A suspended frame registers its context on its pending record without entering the ring, and the driver reaps the ring when no context is ready, after every 64 resumptions and when a run yields.
 - rejected: an agent proposed a ring entry per wait and a scan of parked contexts per wake; the owner rejected it, because they held the compiled server to 0.64 and 0.59 of the hand-written one, and removing both raised it to 0.94 and 1.12 (data: `research/investigations/io-model/WAITS.md`).
 
 ### decision socket-receive-goes-to-the-ring
