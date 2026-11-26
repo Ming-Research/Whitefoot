@@ -22,6 +22,12 @@ archive `spec/kernel-spec-<version>.md` marks a milestone: a copy of the active
 file added by a change that edits no rule. The earlier procedure archived the
 outgoing version with every amendment; git holds the rest of the history.
 
+## 2026-11-26 an executing atomic statement counts as a handle of its object
+
+Rules: changed SHARE-1
+
+Summary: SHARE-1 states that each atomic statement on a shared object counts as one of the object's handles in their end order, from when the statement begins until it completes, and that its completion ends that handle (a statement naming the object through several handles counts once). Before, the paragraph gave the state to a close that was last to end among the handles with no condition, and only a release that was last waited for "no atomic statement on the object is executing", a phrase that nothing defined: by the letter, a context could close the last other handle of a droppable state and take the state while another context's statement on the object, whose block had moved or released its own handle place, was still executing. After, such a close is not last to end and returns `None`, and the state is released once when the last to end is a release or a statement's completion; the release case keeps its meaning, now stated by the same count. A handle to a linear state ends only in a close, which no block contains, so a statement's completion is never the last to end for a linear state and no state is lost. No program's acceptance or rejection changes, no type, diagnostic or grammar rule changes, and the compiler already counts such a statement as a handle, so it is unchanged. Selection ground: the specification lacked the sentence the design tree and the compiler already follow, found when the proof study read the specification. Evidence: conformance case share1-pos-close-leaves-the-state-to-an-executing-statement.
+
 ## 2026-10-24 a requirement displaced by a constant gives an exact entry relation
 
 Rules: changed ENT-3.S4, FN-8
