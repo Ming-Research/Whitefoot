@@ -1885,12 +1885,23 @@ fn a_reference_formed_from_a_parameter_before_the_loop_is_projected_once() {
 
 #[test]
 fn a_reference_to_a_local_owner_is_projected_once() {
+    // `owner` lives in the function's frame and `regs` is its address, so no
+    // part receives the reference as a parameter and `some_part_reloads_a_box`
+    // cannot see a load through it. The arms return from inside the loop, where
+    // the function drops `owner`; that drop frees the box and is no reload.
+    // Every ordinary load of the owner's box carries the box-owner tag, so the
+    // arms must hold none: they receive the box's projection the enclosing
+    // function formed.
     let source = LOCAL_REFERENCE.replace("NAME", "owned");
     let module = emit(source.as_bytes());
     assert_split(&module, "wf_owned", 4);
+    let reloads: Vec<&str> = (0..4)
+        .flat_map(|arm| definition(&module, &format!("wf_owned.arm.{arm}")).lines())
+        .filter(|line| line.contains("= load ptr, ptr ") && line.contains("!tbaa"))
+        .collect();
     assert!(
-        !some_part_reloads_a_box(&module, "wf_owned", 4),
-        "no part reloads a box the loop keeps: {module}"
+        reloads.is_empty(),
+        "no arm loads the owner's box again: {reloads:?}\n{module}"
     );
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");

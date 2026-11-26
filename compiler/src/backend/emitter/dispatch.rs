@@ -1810,16 +1810,18 @@ impl FunctionEmitter<'_, '_> {
         candidates.extend(
             plan.invariants
                 .iter()
-                .filter(|value| {
-                    self.storage.slot(**value).is_none()
-                        && !self
-                            .frame
-                            .slots
-                            .contains_key(&FunctionSlot::Address(**value))
-                })
+                .filter(|value| self.storage.slot(**value).is_none())
                 .map(|value| (None, *value)),
         );
         for (position, parameter) in &candidates {
+            // The address of a frame slot is derived again in every part, so a
+            // part that drops the owner it addresses on the way out of the
+            // loop needs no copy of it, and leaves the box it held until then
+            // unchanged for the loop's other reads.
+            let frame_owned = self
+                .frame
+                .slots
+                .contains_key(&FunctionSlot::Address(*parameter));
             let mut projections: Vec<(usize, usize, IrValueId)> = Vec::new();
             let mut kept_arguments: Vec<IrValueId> = Vec::new();
             let mut pinned = true;
@@ -1886,7 +1888,14 @@ impl FunctionEmitter<'_, '_> {
                                 && onward.is_some_and(|value| root(&value) == *parameter);
                             pinned &= own_place || alias;
                         }
-                        pinned &= !drops.iter().any(|drop| root(&drop.operand()) == *parameter);
+                        let leaves = !plan.region[target.index()] && *target != plan.header;
+                        pinned &= (frame_owned && leaves)
+                            || !drops.iter().any(|drop| root(&drop.operand()) == *parameter);
+                    }
+                    IrTerminator::Return { value, drops } => {
+                        pinned &= root(value) != *parameter
+                            && (frame_owned
+                                || !drops.iter().any(|drop| root(&drop.operand()) == *parameter));
                     }
                     terminator => {
                         pinned &= !terminator
