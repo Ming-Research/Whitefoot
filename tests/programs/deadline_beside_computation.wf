@@ -11,14 +11,14 @@ alias read_next = std::io::read_next;
 alias write_once = std::io::write_once;
 
 fn compute(clock: Clock, stop: DecisionCell) -> result: unit pure waits {
-  doc "Sleeps 20 ms, so that the reader has begun its read, then computes without waiting until stop is decided or three seconds have passed, reading the cell and the clock between batches of arithmetic; it reaches no wait, so it hands its driver to no other context.";
+  doc "Sleeps 20 ms, so that the reader has begun its read, then computes without waiting until stop is decided or two seconds have passed, reading the cell and the clock between batches of arithmetic; it reaches no wait, so it hands its driver to no other context.";
   let begun = now(clock: &clock);
   let wake = instant_after(instant: begun, nanoseconds: 20000000_u64);
   let never = std::time::cancel_never();
   let slept = std::time::sleep_until(deadline: wake, cancel: &never);
   std::time::close_cancel_watch(watch: move never);
   let started = now(clock: &clock);
-  let limit = instant_after(instant: started, nanoseconds: 3000000000_u64);
+  let limit = instant_after(instant: started, nanoseconds: 2000000000_u64);
   let open = Open();
   let state = 1_u64;
   loop @run {
@@ -39,7 +39,7 @@ fn compute(clock: Clock, stop: DecisionCell) -> result: unit pure waits {
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  doc "Reports on standard output that it is about to read, starts a context that computes without waiting once the read has begun, then reads standard input with a deadline 50 ms away while its writer stays silent and the other context computes, and afterwards reads the byte the writer sends late. The exit status is the bounded read's duration in tens of milliseconds, 250 for 2.5 s or more, so the case can tell a deadline that ended the read on time from one held until the computation ended [WAIT-2, PRE-2].";
+  doc "Reports on standard output that it is about to read, starts a context that computes without waiting once the read has begun, then reads standard input with a deadline 50 ms away while its writer stays silent and the other context computes, and afterwards reads the byte the writer sends late. The exit status is the bounded read's duration in milliseconds, 250 for 250 ms or more, and 251 to 254 for an outcome other than the expected one, so the case can tell a deadline that ended the read on time from one held until the computation ended [WAIT-2, PRE-2].";
   let Inputs(args: unused_args, drivers: unused_driver_count, cwd: cwd_directory, stdout: output, stderr: unused_stderr, handles: handles, stdin: input, clock: clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
@@ -107,11 +107,11 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
     return exit_status(code: code);
   }
   let elapsed = nanoseconds_from(earlier: started, later: after);
-  let tens = elapsed / 10000000_u64;
-  if tens >= 250_u64 {
+  let millis = elapsed / 1000000_u64;
+  if millis >= 250_u64 {
     return exit_status(code: 250_u8);
   }
-  let narrowed = cvt.checked::<u64, u8>(tens);
+  let narrowed = cvt.checked::<u64, u8>(millis);
   match narrowed {
     Ok(value: small) => {
       return exit_status(code: small);

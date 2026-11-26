@@ -1,0 +1,130 @@
+alias Clock = std::time::Clock;
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias Instant = std::time::Instant;
+alias exit_status = std::process::exit_status;
+alias instant_after = std::time::instant_after;
+alias instant_reached = std::time::instant_reached;
+alias nanoseconds_from = std::time::nanoseconds_from;
+alias now = std::time::now;
+
+struct Ready {
+  computing: u64;
+  go: u64;
+  written: Instant;
+  first: Instant;
+  begun: u64;
+}
+
+fn spin(clock: Clock, stop: DecisionCell, limit: Instant) -> result: unit pure {
+  doc "Computes without waiting until stop is decided or limit has passed, reading the cell and the clock between batches of arithmetic.";
+  let open = Open();
+  let state = 1_u64;
+  loop @run {
+    for @batch (turn in 0_u64..65536_u64) {
+      let scaled = state *wrap 6364136223846793005_u64;
+      set state = scaled +wrap 1442695040888963407_u64;
+    }
+    let verdict = decision_cell_read(cell: &stop);
+    if verdict != open {
+      break @run;
+    }
+    let at = now(clock: &clock);
+    if instant_reached(deadline: limit, instant: at) {
+      break @run;
+    }
+  }
+  return unit;
+}
+
+fn compute(clock: Clock, stop: DecisionCell, ready: Shared<Ready>, drivers: u64) -> result: unit pure waits {
+  doc "Counts itself among the computing contexts and polls the shared state until as many contexts compute as there are drivers; the first context to see that records the instant and lets the waiting context go. Then it computes without waiting until stop is decided or two seconds have passed, so from the instant on no driver is left to the waiting context unless the runtime hands one over.";
+  atomic counts = &ready {
+    set counts^.computing = counts^.computing +wrap 1_u64;
+  }
+  loop @gather {
+    let counted = 0_u64;
+    atomic counts = &ready {
+      set counted = counts^.computing;
+    }
+    if counted >= drivers {
+      break @gather;
+    }
+  }
+  let at = now(clock: &clock);
+  atomic gate = &ready {
+    if gate^.go == 0_u64 {
+      set gate^.go = 1_u64;
+      set gate^.written = at;
+    }
+  }
+  let limit = instant_after(instant: at, nanoseconds: 2000000000_u64);
+  spin(clock: move clock, stop: move stop, limit: limit);
+  return unit;
+}
+
+fn wait_and_record(clock: Clock, stop: DecisionCell, ready: Shared<Ready>) -> result: unit pure waits {
+  doc "Waits until a computing context lets it go, records the instant of its first step after that, and decides stop so that the computations end.";
+  atomic gate = &ready when gate^.go != 0_u64 {
+    set gate^.begun = 1_u64;
+  }
+  let first = now(clock: &clock);
+  atomic record = &ready {
+    set record^.first = first;
+    set record^.begun = 2_u64;
+  }
+  let winner = claim_written(cell: &stop);
+  return unit;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "Starts a context that waits on a guard, starts one computing context fewer than there are drivers and computes itself, so that as many contexts compute without waiting as there are drivers once the guard is let go. The exit status is the time from letting the guard go to the waiting context's first step in milliseconds, 250 for 250 ms or more or when that context had not started by the time the root's computation ended two seconds later, so the case can tell a ready context that progresses beside computations on every driver from one held until they end [WAIT-2].";
+  let Inputs(args: unused_args, drivers: drivers, cwd: cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: handles, stdin: unused_stdin, clock: clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
+  std::fs::close_directory(factory: &handles, directory: move cwd);
+  let origin = now(clock: &clock);
+  let start = Ready(computing: 0_u64, go: 0_u64, written: origin, first: origin, begun: 0_u64);
+  let ready = shared_new::<Ready>(value: start);
+  let stop = decision_cell_new();
+  let waiter_ready = shared_share::<Ready>(shared: &ready);
+  let waiter_stop = decision_cell_share(cell: &stop);
+  let waiter_clock = std::time::clock_share(clock: &clock);
+  spawn wait_and_record(clock: move waiter_clock, stop: move waiter_stop, ready: move waiter_ready);
+  for @others (index in 1_u64..drivers) {
+    let other_ready = shared_share::<Ready>(shared: &ready);
+    let other_stop = decision_cell_share(cell: &stop);
+    let other_clock = std::time::clock_share(clock: &clock);
+    spawn compute(clock: move other_clock, stop: move other_stop, ready: move other_ready, drivers: drivers);
+  }
+  let root_ready = shared_share::<Ready>(shared: &ready);
+  let root_stop = decision_cell_share(cell: &stop);
+  let root_clock = std::time::clock_share(clock: &clock);
+  compute(clock: move root_clock, stop: move root_stop, ready: move root_ready, drivers: drivers);
+  let state = 0_u64;
+  let written = origin;
+  let first = origin;
+  atomic record = &ready {
+    set state = record^.begun;
+    set written = record^.written;
+    set first = record^.first;
+  }
+  let winner = claim_written(cell: &stop);
+  if state != 2_u64 {
+    return exit_status(code: 250_u8);
+  }
+  let elapsed = nanoseconds_from(earlier: written, later: first);
+  let millis = elapsed / 1000000_u64;
+  if millis >= 250_u64 {
+    return exit_status(code: 250_u8);
+  }
+  let narrowed = cvt.checked::<u64, u8>(millis);
+  match narrowed {
+    Ok(value: small) => {
+      return exit_status(code: small);
+    }
+    Err(error: overflowed) => {
+      return exit_status(code: 250_u8);
+    }
+  }
+}

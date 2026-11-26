@@ -1,0 +1,177 @@
+fn compute_until_killed(state: Shared<DecisionCell>, started: DecisionCell) -> result: unit pure waits {
+  doc "Holds one shared object in one atomic statement, reading it to acquire the hold before publishing entry through an independent decision cell, then polling its verdict without waiting until the receiving context kills it.";
+  atomic cell = &state {
+    let verdict = decision_cell_read(cell: cell);
+    let entered = claim_written(cell: &started);
+    let killed = Killed();
+    loop @computing {
+      if verdict == killed {
+        break @computing;
+      }
+      set verdict = decision_cell_read(cell: cell);
+    }
+  }
+  return unit;
+}
+
+fn busy_ring_port(args: &std::text::Args) -> port: u16 reads(args) {
+  doc "Parses the decimal loopback port the Rust peer supplies as the first argument, returning zero when the argument cannot be copied or is not decimal.";
+  let digits = slots_new::<u8, 16>();
+  for @fill_digits (
+    at in 0_u64..16_u64,
+    invariant grown_digits: digits.len == at
+  ) {
+    place_back(window: &digits, value: 0_u8);
+  }
+  let window = &digits[0_u64..16_u64];
+  let length = 0_u64;
+  match std::text::arg_get(args: args, position: 1_u64) {
+    Ok(value: text) => {
+      match std::text::host_copy_utf8(value: &text, destination: window, start: 0_u64, end: 16_u64) {
+        Ok(value: written) => {
+          set length = written;
+        }
+        Err(error: copy_problem) => {
+          return 0_u16;
+        }
+      }
+    }
+    Err(error: argument_problem) => {
+      return 0_u16;
+    }
+  }
+  let number = 0_u64;
+  let index = 0_u64;
+  loop @parse_port {
+    if index >= length {
+      break @parse_port;
+    }
+    let byte = digits[index];
+    if byte < 48_u8 {
+      return 0_u16;
+    }
+    if byte > 57_u8 {
+      return 0_u16;
+    }
+    let value = byte -wrap 48_u8;
+    let digit = cvt::<u8, u64>(value);
+    let scaled = number *wrap 10_u64;
+    set number = scaled +wrap digit;
+    set index = index +wrap 1_u64;
+  }
+  let masked = iand(number, 65535_u64);
+  return cvt::<u64, u16>(masked);
+}
+
+fn busy_ring_receive(connection: std::net::TcpConnection, factory: std::io::HandleFactory, drivers: u64, split: Bool) -> code: u8 pure waits {
+  doc "Receives one newline on an accepted TCP connection, then kills the child computing in one atomic statement. The direct arm submits immediately after spawn. The split arm spins without waiting until the independent entry verdict is Written, proving that the child ran on a different driver. Status zero requires the computation to have entered before the receive finishes; status 77 is reserved for an invocation without two drivers.";
+  if drivers != 2_u64 {
+    let std::net::TcpConnection(receive: closing_receive, send: closing_send) = move connection;
+    std::net::close_receive(factory: &factory, receive: move closing_receive);
+    std::net::close_send(factory: &factory, send: move closing_send);
+    return 77_u8;
+  }
+  let bytes = array_filled::<u8, 1>(value: 0_u8);
+  let window = &bytes[0_u64..1_u64];
+  let no_deadline = None<std::time::Instant>();
+  let receive_cancel = std::time::cancel_never();
+  let verdict = decision_cell_new();
+  let killer = decision_cell_share(cell: &verdict);
+  let state = shared_new::<DecisionCell>(value: move verdict);
+  let started = decision_cell_new();
+  let observer = decision_cell_share(cell: &started);
+  let written = Written();
+  spawn compute_until_killed(state: move state, started: move started);
+  if split {
+    loop @split_placement {
+      let entered = decision_cell_read(cell: &observer);
+      if entered == written {
+        break @split_placement;
+      }
+    }
+  }
+  let received = std::net::receive_next(receive: &connection.receive, destination: window, start: 0_u64, end: 1_u64, deadline: no_deadline, cancel: &receive_cancel);
+  std::time::close_cancel_watch(watch: move receive_cancel);
+  let code = 0_u8;
+  match received {
+    Ok(value: endpoint) => {
+      if endpoint != 1_u64 {
+        set code = 3_u8;
+      }
+    }
+    Err(error: problem) => {
+      set code = 4_u8;
+    }
+  }
+  if bytes[0_u64] != 10_u8 {
+    set code = 5_u8;
+  }
+  let entered = decision_cell_read(cell: &observer);
+  if entered != written {
+    set code = 6_u8;
+  }
+  let killed = Killed();
+  let winner = claim_killed(cell: &killer);
+  if winner != killed {
+    set code = 7_u8;
+  }
+  let std::net::TcpConnection(receive: closing_receive, send: closing_send) = move connection;
+  std::net::close_receive(factory: &factory, receive: move closing_receive);
+  std::net::close_send(factory: &factory, send: move closing_send);
+  return code;
+}
+
+fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
+  doc "Listens on the loopback port in the first argument, publishes r only after listening succeeds, accepts one peer and closes the listener before starting the busy-ring receive. A second argument selects the split-placement control. An invocation without two drivers exits 77 only after readiness and accepting, so the harness can independently verify native-ring unavailability.";
+  let std::process::Inputs(args: args, drivers: drivers, cwd: directory, stdout: output, handles: factory, ..) = move inputs;
+  let std::fs::Directory(read: read_directory, write: write_directory) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move write_directory);
+  std::fs::close_directory(factory: &factory, directory: move read_directory);
+  let port = busy_ring_port(args: &args);
+  if port == 0_u16 {
+    return std::process::exit_status(code: 1_u8);
+  }
+  let arguments = std::text::args_count(args: &args);
+  let split = arguments > 2_u64;
+  let address = std::net::socket_address_v4(a: 127_u8, b: 0_u8, c: 0_u8, d: 1_u8, port: port);
+  let listening = std::net::tcp_listen(factory: &factory, address: &address);
+  match move listening {
+    Ok(value: listener) => {
+      let bytes = array_filled::<u8, 1>(value: 114_u8);
+      let window = &bytes[0_u64..1_u64];
+      let no_deadline = None<std::time::Instant>();
+      let readiness_cancel = std::time::cancel_never();
+      let readiness = std::io::write_once(factory: &factory, output: &output, source: window, start: 0_u64, end: 1_u64, deadline: no_deadline, cancel: &readiness_cancel);
+      std::time::close_cancel_watch(watch: move readiness_cancel);
+      match readiness {
+        Ok(value: endpoint) => {
+          if endpoint != 1_u64 {
+            std::net::close_listener(factory: &factory, listener: move listener);
+            return std::process::exit_status(code: 2_u8);
+          }
+        }
+        Err(error: problem) => {
+          std::net::close_listener(factory: &factory, listener: move listener);
+          return std::process::exit_status(code: 2_u8);
+        }
+      }
+      let accept_cancel = std::time::cancel_never();
+      let accepted = std::net::tcp_accept(factory: &factory, listener: &listener, deadline: no_deadline, cancel: &accept_cancel);
+      std::time::close_cancel_watch(watch: move accept_cancel);
+      std::net::close_listener(factory: &factory, listener: move listener);
+      match move accepted {
+        Ok(value: next) => {
+          let std::net::AcceptedConnection(connection: connection, peer: unused_peer) = move next;
+          let code = busy_ring_receive(connection: move connection, factory: move factory, drivers: drivers, split: split);
+          return std::process::exit_status(code: code);
+        }
+        Err(error: problem) => {
+          return std::process::exit_status(code: 8_u8);
+        }
+      }
+    }
+    Err(error: problem) => {
+      return std::process::exit_status(code: 9_u8);
+    }
+  }
+}

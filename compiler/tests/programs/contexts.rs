@@ -113,21 +113,33 @@ fn a_context_polling_an_object_lets_the_producer_run_on_one_driver() {
     }
 }
 
-/// With one driver, each timer park leaves exactly one runnable context.
-/// The writer's atomic boundaries must return to service even with an empty
-/// ready queue so the repeated sleeps can expire and the reader can stop it.
-/// The monitor can rescue the old runtime, so this is end-to-end coverage;
-/// `driver_service_test.c` isolates the empty-queue service obligation
-/// without a monitor and rejects the old threshold check deterministically.
+/// With one driver, each timer park leaves exactly one runnable context, the
+/// writer, whose atomic statements answer at once. The monitor asks that run
+/// to yield once it has gone on for 1 ms beside a waiting context, the
+/// writer's next atomic statement suspends, and the driver serves its timers
+/// and its ring before it resumes anyone, so each sleep and the final read
+/// end within two handoff cycles plus a hosted-runner allowance; the exit
+/// status is the largest lateness in milliseconds. With two drivers an idle
+/// driver's borrow moves the reader after its first sleep, so that
+/// configuration checks lateness on whatever placement the run takes.
+/// `driver_service_test.c` isolates the service pass after a yield.
 #[test]
 fn a_periodic_sleeping_reader_progresses_beside_one_busy_writer() {
+    const LIMIT_MS: i32 = 4 + 40;
     let program = build_program(&compile_program("lone_timer_writer.wf"));
-    for settings in [
-        &[("WF_DRIVERS", "1")][..],
-        &[("WF_DRIVERS", "1"), ("WF_IO_NO_NATIVE_RING", "1")][..],
-    ] {
-        let output = program.run_with_settings(None, settings);
-        assert_eq!(output.status.code(), Some(0), "{settings:?}: {output:?}");
+    for (native_ring, drivers) in [(true, "1"), (false, "1"), (true, "2")] {
+        for round in 0..64 {
+            let output = program.run_with_input_after_first_output(
+                b"z",
+                std::time::Duration::from_millis(20),
+                native_ring,
+                &[("WF_DRIVERS", drivers)],
+            );
+            assert!(
+                matches!(output.status.code(), Some(late) if (0..=LIMIT_MS).contains(&late)),
+                "native ring {native_ring}, drivers {drivers}, round {round}: {output:?}"
+            );
+        }
     }
 }
 

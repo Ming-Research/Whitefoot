@@ -25,6 +25,9 @@ mod programs {
     mod contexts;
     #[cfg(target_os = "linux")]
     mod busy_driver;
+    // The witness counts kernel rings, and only Linux runs two drivers.
+    #[cfg(target_os = "linux")]
+    mod busy_ring_receive;
     mod file_replacement;
     mod stop_signals;
     #[cfg(unix)]

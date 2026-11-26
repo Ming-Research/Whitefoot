@@ -1,0 +1,235 @@
+alias Clock = std::time::Clock;
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias Instant = std::time::Instant;
+alias IoError = std::io::IoError;
+alias exit_status = std::process::exit_status;
+alias instant_after = std::time::instant_after;
+alias instant_reached = std::time::instant_reached;
+alias nanoseconds_from = std::time::nanoseconds_from;
+alias now = std::time::now;
+alias read_next = std::io::read_next;
+alias write_once = std::io::write_once;
+
+fn is_cancelled(error: &IoError) -> result: Bool reads(error) {
+  doc "Whether an operation ended on its cancellation watch.";
+  match error^ {
+    NotFound(code: c, origin: o) => {
+      return False();
+    }
+    PermissionDenied(code: c, origin: o) => {
+      return False();
+    }
+    AlreadyExists(code: c, origin: o) => {
+      return False();
+    }
+    NotDirectory(code: c, origin: o) => {
+      return False();
+    }
+    IsDirectory(code: c, origin: o) => {
+      return False();
+    }
+    DirectoryNotEmpty(code: c, origin: o) => {
+      return False();
+    }
+    ReadOnly(code: c, origin: o) => {
+      return False();
+    }
+    ResourceBusy(code: c, origin: o) => {
+      return False();
+    }
+    InvalidInput(code: c, origin: o) => {
+      return False();
+    }
+    InvalidPath(code: c, origin: o) => {
+      return False();
+    }
+    Unsupported(code: c, origin: o) => {
+      return False();
+    }
+    TimedOut(code: c, origin: o) => {
+      return False();
+    }
+    DeadlinePassed() => {
+      return False();
+    }
+    Cancelled() => {
+      return True();
+    }
+    BrokenPipe(code: c, origin: o) => {
+      return False();
+    }
+    WriteZero(code: c, origin: o) => {
+      return False();
+    }
+    UnexpectedEnd(code: c, origin: o) => {
+      return False();
+    }
+    ConnectionRefused(code: c, origin: o) => {
+      return False();
+    }
+    ConnectionReset(code: c, origin: o) => {
+      return False();
+    }
+    ConnectionAborted(code: c, origin: o) => {
+      return False();
+    }
+    NotConnected(code: c, origin: o) => {
+      return False();
+    }
+    AddressInUse(code: c, origin: o) => {
+      return False();
+    }
+    AddressUnavailable(code: c, origin: o) => {
+      return False();
+    }
+    ResourceExhausted(code: c, origin: o) => {
+      return False();
+    }
+    FileTooLarge(code: c, origin: o) => {
+      return False();
+    }
+    NoSpace(code: c, origin: o) => {
+      return False();
+    }
+    QuotaExceeded(code: c, origin: o) => {
+      return False();
+    }
+    CrossDevice(code: c, origin: o) => {
+      return False();
+    }
+    DeviceFailure(code: c, origin: o) => {
+      return False();
+    }
+    Other(code: c, origin: o) => {
+      return False();
+    }
+  }
+}
+
+fn compute(clock: Clock, stop: DecisionCell, source: std::time::CancelSource, fired: Shared<Instant>) -> result: unit pure waits {
+  doc "Sleeps 20 ms, so that the reader has begun its read, records the instant and fires the reader's watch, then computes without waiting until stop is decided or two seconds have passed, reading the cell and the clock between batches of arithmetic; after the firing it reaches no wait, so it hands its driver to no other context.";
+  let begun = now(clock: &clock);
+  let wake = instant_after(instant: begun, nanoseconds: 20000000_u64);
+  let never = std::time::cancel_never();
+  let slept = std::time::sleep_until(deadline: wake, cancel: &never);
+  std::time::close_cancel_watch(watch: move never);
+  let firing = now(clock: &clock);
+  atomic at = &fired {
+    set at^ = firing;
+  }
+  std::time::cancel_fire(source: &source);
+  std::time::close_cancel_source(source: move source);
+  let started = now(clock: &clock);
+  let limit = instant_after(instant: started, nanoseconds: 2000000000_u64);
+  let open = Open();
+  let state = 1_u64;
+  loop @run {
+    for @batch (turn in 0_u64..65536_u64) {
+      let scaled = state *wrap 6364136223846793005_u64;
+      set state = scaled +wrap 1442695040888963407_u64;
+    }
+    let verdict = decision_cell_read(cell: &stop);
+    if verdict != open {
+      break @run;
+    }
+    let at = now(clock: &clock);
+    if instant_reached(deadline: limit, instant: at) {
+      break @run;
+    }
+  }
+  return unit;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "Reports on standard output that it is about to read, starts a context that fires the read's watch once the read has begun and then computes without waiting, and reads standard input with no deadline while its writer stays silent; afterwards it reads the byte the writer sends late. With the writer silent and no deadline, only the firing can end the read with a failure. The exit status is the time from the firing to the read's return in milliseconds, 250 for 250 ms or more, and 251 to 254 for an outcome other than the expected one, so the case can tell a firing served on time from one held until the computation ended [WAIT-2, PRE-2].";
+  let Inputs(args: unused_args, drivers: unused_driver_count, cwd: cwd_directory, stdout: output, stderr: unused_stderr, handles: handles, stdin: input, clock: clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
+  std::fs::close_directory(factory: &handles, directory: move cwd);
+  let bytes = slots_new::<u8, 1>();
+  place_back(window: &bytes, value: 0_u8);
+  let marker = array_filled::<u8, 1>(value: 46_u8);
+  let unbounded = None<Instant>();
+  let wait_cancel_1 = std::time::cancel_never();
+  let wait_outcome_1 = write_once(factory: &handles, output: &output, source: &marker[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: unbounded, cancel: &wait_cancel_1);
+  std::time::close_cancel_watch(watch: move wait_cancel_1);
+  let code = 0_u8;
+  match wait_outcome_1 {
+    Ok(value: written) => {
+      if written != 1_u64 {
+        set code = 251_u8;
+      }
+    }
+    Err(error: problem) => {
+      set code = 251_u8;
+    }
+  }
+  let stop = decision_cell_new();
+  let worker_stop = decision_cell_share(cell: &stop);
+  let worker_clock = std::time::clock_share(clock: &clock);
+  let source = std::time::cancel_source();
+  let watch = std::time::cancel_watch(source: &source);
+  let unfired = now(clock: &clock);
+  let fired = shared_new::<Instant>(value: unfired);
+  let worker_fired = shared_share::<Instant>(shared: &fired);
+  spawn compute(clock: move worker_clock, stop: move worker_stop, source: move source, fired: move worker_fired);
+  let no_deadline = None<Instant>();
+  let destination = &bytes[0_u64..1_u64];
+  let wait_outcome_2 = read_next(factory: &handles, input: &input, destination: destination, start: 0_u64, end: 1_u64, deadline: no_deadline, cancel: &watch);
+  std::time::close_cancel_watch(watch: move watch);
+  let after = now(clock: &clock);
+  let started = unfired;
+  atomic at = &fired {
+    set started = at^;
+  }
+  let winner = claim_written(cell: &stop);
+  match wait_outcome_2 {
+    Ok(value: received) => {
+      set code = 252_u8;
+    }
+    Err(error: stop_reason) => {
+      match stop_reason {
+        ReadEnd() => {
+          set code = 253_u8;
+        }
+        ReadFailed(error: failure) => {
+          let cancelled = is_cancelled(error: &failure);
+          if bnot(cancelled) {
+            set code = 252_u8;
+          }
+        }
+      }
+    }
+  }
+  let later = &bytes[0_u64..1_u64];
+  let unbounded_late = None<Instant>();
+  let wait_cancel_3 = std::time::cancel_never();
+  let wait_outcome_3 = read_next(factory: &handles, input: &input, destination: later, start: 0_u64, end: 1_u64, deadline: unbounded_late, cancel: &wait_cancel_3);
+  std::time::close_cancel_watch(watch: move wait_cancel_3);
+  match wait_outcome_3 {
+    Ok(value: received) => {
+      let unused = received;
+    }
+    Err(error: problem) => {
+      set code = 254_u8;
+    }
+  }
+  if code != 0_u8 {
+    return exit_status(code: code);
+  }
+  let elapsed = nanoseconds_from(earlier: started, later: after);
+  let millis = elapsed / 1000000_u64;
+  if millis >= 250_u64 {
+    return exit_status(code: 250_u8);
+  }
+  let narrowed = cvt.checked::<u64, u8>(millis);
+  match narrowed {
+    Ok(value: small) => {
+      return exit_status(code: small);
+    }
+    Err(error: overflowed) => {
+      return exit_status(code: 250_u8);
+    }
+  }
+}
