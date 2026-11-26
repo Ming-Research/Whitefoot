@@ -1,0 +1,52 @@
+# Temporary: runs driver_service_test.c on the mutant of bridge.c whose pass
+# ignores a yield request (the first run's form of it did not compile), and
+# shows that the test fails on it. Removed before the
+# full check.
+name: tmp-handoff-mutants
+
+on:
+  push:
+    branches: ['wf-try/work-159-26e0fade/**']
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  mutants:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run the driver service test on each mutant
+        env:
+          WHITEFOOT_SCRATCH_ROOT: ${{ runner.temp }}/whitefoot
+        run: |
+          cat > "$RUNNER_TEMP/mutate.py" <<'PY'
+          import subprocess, sys
+          path = "compiler/src/backend/completion/bridge.c"
+          original = open(path).read()
+          MUTANTS = [
+           ("pass-ignores-yield", "    if ((token & ~WF_DRIVER_PHASE_MASK) == (wf_context_outside & ~WF_DRIVER_PHASE_MASK)\n        && (token & WF_DRIVER_PHASE_MASK) != WF_DRIVER_YIELD) return 0;", "    if ((token & ~WF_DRIVER_PHASE_MASK) == (wf_context_outside & ~WF_DRIVER_PHASE_MASK)) return 0;"),
+          ]
+          def run(label):
+              result = subprocess.run(["make", "-C", "compiler", "driver-service-test"],
+                                      capture_output=True, text=True, timeout=600)
+              tail = (result.stdout + result.stderr).strip().splitlines()[-4:]
+              print(f"== {label}: exit {result.returncode}")
+              for line in tail:
+                  print(f"   {line}")
+              return result.returncode
+          failed = run("unmutated") != 0
+          for name, old, new in MUTANTS:
+              assert original.count(old) == 1, name
+              open(path, "w").write(original.replace(old, new))
+              if run(name) == 0:
+                  print(f"!! {name}: the test passed on the mutant")
+                  failed = True
+          open(path, "w").write(original)
+          sys.exit(1 if failed else 0)
+          PY
+          python3 "$RUNNER_TEMP/mutate.py"
