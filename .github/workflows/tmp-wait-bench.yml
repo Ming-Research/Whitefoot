@@ -1,0 +1,86 @@
+# Temporary: research/experiments/runtime-c-stack-probes/wait-bench.sh on
+# GitHub-hosted Linux (the gate's clang 22), macOS with Apple's clang and macOS
+# with the pinned upstream clang 22.1.8, each result also written as one notice.
+# On the pushes the wf-agents engine makes of this work's commits (the
+# `wf-try/work-208-26e0fade/` refs). Removed before the full check (AGENTS.md,
+# "Checks").
+name: tmp-wait-bench
+
+on:
+  push:
+    branches: ['wf-try/work-208-26e0fade/**']
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    name: wait bench (${{ matrix.set }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - set: linux-llvm-22
+            os: ubuntu-24.04
+          - set: apple
+            os: macos-15
+          - set: upstream-22.1.8
+            os: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the compiler
+        env:
+          SET: ${{ matrix.set }}
+        run: |
+          set -euo pipefail
+          case "$SET" in
+            linux-llvm-22)
+              curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+              version=$(tr -d '[:space:]' < .github/llvm-major)
+              sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+              echo "CLANG=/usr/bin/clang-$version" >> "$GITHUB_ENV"
+              echo "SYSROOT=" >> "$GITHUB_ENV"
+              ;;
+            apple)
+              echo "CLANG=/usr/bin/clang" >> "$GITHUB_ENV"
+              echo "SYSROOT=" >> "$GITHUB_ENV"
+              ;;
+            upstream-22.1.8)
+              asset=$(python3 -c 'import json; print(json.load(open(".github/toolchain/llvm-assets.json"))["platforms"]["macos-arm64"]["asset"])')
+              digest=$(python3 -c 'import json; print(json.load(open(".github/toolchain/llvm-assets.json"))["platforms"]["macos-arm64"]["sha256"])')
+              tag=$(python3 -c 'import json; print(json.load(open(".github/toolchain/llvm-assets.json"))["llvm_tag"])')
+              curl --fail --location --retry 3 --max-time 600 \
+                "https://github.com/llvm/llvm-project/releases/download/$tag/$asset" -o "$RUNNER_TEMP/$asset"
+              echo "$digest  $RUNNER_TEMP/$asset" | shasum -a 256 -c -
+              mkdir -p "$RUNNER_TEMP/llvm"
+              tar -xJf "$RUNNER_TEMP/$asset" -C "$RUNNER_TEMP/llvm"
+              root=$(echo "$RUNNER_TEMP"/llvm/*)
+              echo "CLANG=$root/bin/clang" >> "$GITHUB_ENV"
+              echo "SYSROOT=$(/usr/bin/xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
+              ;;
+          esac
+
+      - name: Time the wait under each variant
+        env:
+          SET: ${{ matrix.set }}
+        run: |
+          set +e
+          bench=research/experiments/runtime-c-stack-probes/wait-bench.sh
+          "$CLANG" --version | head -1
+          case "$SET" in
+            linux-llvm-22)
+              bash "$bench" "$CLANG" "$SYSROOT" "$SET" 'none=' 'clash=-fstack-clash-protection' > bench.txt 2>&1 ;;
+            apple)
+              bash "$bench" "$CLANG" "$SYSROOT" "$SET" 'default=' 'stack-check=-fstack-check' 'no-stack-check=-fno-stack-check' > bench.txt 2>&1 ;;
+            upstream-22.1.8)
+              bash "$bench" "$CLANG" "$SYSROOT" "$SET" 'none=' 'clash-cc1=-Xclang -fstack-clash-protection' > bench.txt 2>&1 ;;
+          esac
+          status=$?
+          cat bench.txt
+          cat bench.txt >> "$GITHUB_STEP_SUMMARY"
+          body=$(sed -e 's/%/%25/g' bench.txt | awk '{ printf "%s%%0A", $0 }')
+          echo "::notice title=wait bench $SET::$body"
+          exit $status

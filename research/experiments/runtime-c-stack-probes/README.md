@@ -229,6 +229,46 @@ Defects these runs found in the first trials of the check, each fixed:
   failed the two Linux jobs at the summary line, a `printf` whose quoted text
   held an apostrophe.
 
+## The cost of the probe prologue
+
+Written before the measurement ran.
+
+Question: the probe arguments change the prologue of `wf_file_wait_readiness`,
+the runtime's one frame over a page: from one move of the stack pointer by 32
+KiB to eight steps of one page, each followed by a store. The runtime's file
+adapter calls it (through `wf_context_poll` in `completion/bridge.c`) for
+contexts parked on a socket's readiness, on the hosts that have no kernel
+completion ring for sockets, and each call makes one `poll`. Does the
+prologue change what one call costs by more than the noise of a hosted runner
+can hide?
+
+Comparison: [`wait-bench.c`](wait-bench.c) times calls of the function with
+`COUNT` entries that all name one readable pipe and a timeout of zero, so the
+`poll` answers at once: the cheapest call the function makes, in which the
+prologue's share is largest, and a real wait that blocks costs more. The
+function's translation unit, `completion/file_posix.c`, is compiled as the
+driver compiles it, once per variant, and [`wait-bench.sh`](wait-bench.sh)
+runs the variants in rotating order within each of 15 rounds, for `COUNT` of
+1, 64 and 4096, and reports each variant's median ns per call and the median
+of its per-round ratios to the first variant.
+
+- Linux, LLVM 22: no argument, then `-fstack-clash-protection` (before and
+  after the change).
+- macOS, upstream clang 22.1.8 as the bundle selects it: no argument, then
+  `-Xclang -fstack-clash-protection` (before and after the change).
+- macOS, Apple clang 17: its default, `-fstack-check`, and
+  `-fno-stack-check`. The default is what the function compiled with before
+  the change, and the change names the same method, so those two must give
+  the same assembly and a ratio of one; `-fno-stack-check` shows what
+  Apple's probe costs.
+
+Rejection criteria: the claim that the prologue does not matter is rejected
+if, at `COUNT` 1, the median paired ratio of the probed variant to the
+unprobed one on Linux or on upstream macOS exceeds 1.05, a cost over a twentieth
+of a call that the kernel answers at once. The instrument is too coarse to
+decide if on Apple the median paired ratio of `-fstack-check` to the default
+leaves 0.98 to 1.02, since those two are the same code.
+
 ## Limitations
 
 The runs read assembly; none executes a runtime C frame into the guard page.
