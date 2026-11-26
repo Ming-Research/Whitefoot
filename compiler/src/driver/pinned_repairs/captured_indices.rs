@@ -83,7 +83,8 @@ fn shift(values: &Array<u8, 4>, p: Cursor, b: u64) -> result: unit writes(values
 
 fn main() -> status: std::process::ExitStatus pure {
   let values = array_filled::<u8, 4>(value: 1_u8);
-  shift(values: &values, p: Cursor(k: 1_u64), b: 2_u64);
+  let cursor = Cursor(k: 1_u64);
+  shift(values: &values, p: cursor, b: 2_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#,
@@ -116,7 +117,8 @@ fn shift(values: &Array<u8, 4>, p: Cursor, b: u64) -> result: unit writes(values
 
 fn main() -> status: std::process::ExitStatus pure {
   let values = array_filled::<u8, 4>(value: 1_u8);
-  shift(values: &values, p: Cursor(k: 1_u64), b: 2_u64);
+  let cursor = Cursor(k: 1_u64);
+  shift(values: &values, p: cursor, b: 2_u64);
   return std::process::exit_status(code: 0_u8);
 }
 "#],
