@@ -12,7 +12,7 @@ A program opens by host path only through `HostPaths`, a fieldless value the hos
 - rejected: an agent proposed the existing create-if-missing directory open for host paths; the owner rejected it, because it hides a misconfigured path by creating an empty directory, while a data directory that must exist is refused when missing.
 
 ### decision host-path-lookup-is-the-hosts-own
-Host-path lookup is the host's own lookup from the given directory, following every link and resolving parent components as the host does, while single-name opens never follow a link at the name.
+Host-path lookup is the host's own lookup from the given directory, following every link and resolving parents as the host does, while single-name opens and `open_read`'s lookup never follow a link.
 - rejected: an agent proposed lexical normalization of POSIX paths; the owner rejected it, because it opens a different file than the host when a component is a link, and a path a user names should mean what the host's tools take it to mean.
 
 ### decision host-paths-only-where-a-filesystem-exists
