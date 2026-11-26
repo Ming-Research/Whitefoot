@@ -5,12 +5,13 @@
 #
 #   run.sh STAGE
 #
-# Stages: groups, tools, selftest, arms, hashmap, interp, summary; the
-# workflow decides which groups run. The inputs are
+# Stages: groups, tools, selftest, arms, wallclock, hashmap, interp, summary;
+# the workflow decides which groups run. The inputs are
 # environment variables; OUT, CANDIDATE and RUNNER_KIND (github or 14900k)
 # are required, the others default as the workflow's inputs do:
 #   GROUP_LIST      the groups stage checks the workflow's groups input: names
-#                   of hash_map, interpreters and perf, separated by commas
+#                   of hash_map, interpreters, perf and wallclock, separated by
+#                   commas
 #   BASE            base commit or branch; empty means the merge base with main
 #   CPU             the CPU every timed process is pinned to; empty means 2 on
 #                   the 14900K and 1 on GitHub
@@ -22,6 +23,10 @@
 #   INTERP_FLOOR    interpreter noise floor, as interp.py reduce --floor
 #   PERF            1 to also run perf stat (14900K only; default 1)
 #   PERF_ROUNDS     perf stat rounds (default 5)
+#   INTERP_RESIDUAL_LIMIT   seconds; an interpreter workload whose median
+#                   wall time minus user+sys CPU time is above it is invalid
+#                   data (default: not checked, the residual is printed)
+#   WALLCLOCK_RUNS  launches of each stand-in under each chain (default 20)
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -45,27 +50,28 @@ silverfir_revision=5f248e4420102356be7edadbdb4db2ae105d3270
 coremark_blob=70b4d2165e7fbbd797e47b43032fc06302c1774f
 
 # check_groups LIST: whether LIST selects something to measure. The groups are
-# hash_map, interpreters and perf; perf is measured inside interpreters, so it
-# needs it. A list that names nothing measurable would end in a green job that
-# holds no data.
+# hash_map, interpreters, perf and wallclock; perf is measured inside
+# interpreters, so it needs it. A list that names nothing measurable would end
+# in a green job that holds no data.
 check_groups() {
     local list=${1//[[:space:]]/} name
     local -a names=()
-    local hash_map=0 interpreters=0 counters=0
+    local hash_map=0 interpreters=0 counters=0 wallclock=0
     IFS=, read -ra names <<< "$list"
     for name in ${names[@]+"${names[@]}"}; do
         case "$name" in
         hash_map) hash_map=1 ;;
         interpreters) interpreters=1 ;;
         perf) counters=1 ;;
+        wallclock) wallclock=1 ;;
         *)
-            echo "unknown group '$name': the groups are hash_map, interpreters and perf" >&2
+            echo "unknown group '$name': the groups are hash_map, interpreters, perf and wallclock" >&2
             return 1
             ;;
         esac
     done
-    if [ $((hash_map + interpreters + counters)) = 0 ]; then
-        echo "no group is selected: name at least one of hash_map, interpreters and perf" >&2
+    if [ $((hash_map + interpreters + counters + wallclock)) = 0 ]; then
+        echo "no group is selected: name at least one of hash_map, interpreters, perf and wallclock" >&2
         return 1
     fi
     if [ "$counters" = 1 ] && [ "$interpreters" = 0 ]; then
@@ -119,10 +125,11 @@ selftest)
     python3 -B "$interp" self-test
     # check_groups takes what the groups input may hold and refuses the rest.
     failed=0
-    for list in hash_map interpreters "hash_map, interpreters" hash_map,interpreters,perf interpreters,perf; do
+    for list in hash_map interpreters wallclock "hash_map, interpreters" hash_map,interpreters,perf interpreters,perf \
+        wallclock,hash_map; do
         check_groups "$list" 2>/dev/null || { echo "FAIL groups: '$list' is refused"; failed=1; }
     done
-    for list in "" , perf hash_map,perf hash_map,intepreters "hash_map interpreters" 'hash_map;perf'; do
+    for list in "" , perf hash_map,perf hash_map,intepreters "hash_map interpreters" 'hash_map;perf' wall_clock; do
         if check_groups "$list" 2>/dev/null; then echo "FAIL groups: '$list' is accepted"; failed=1; fi
     done
     if [ "$failed" != 0 ]; then exit 1; fi
@@ -134,6 +141,17 @@ arms)
     rm -rf "$OUT"
     mkdir -p "$OUT"
     bash "$here/arms.sh" "$CANDIDATE" "${BASE:-}" "$OUT"
+    ;;
+
+wallclock)
+    # Names what puts a launched program's wall time on a grid: the host's
+    # timeout and taskset, and two stand-ins launched under each chain. The
+    # one-off confirmation the residual limit of the interpreters group is
+    # chosen from; it builds nothing.
+    dir=$OUT/wallclock
+    rm -rf "$dir"
+    mkdir -p "$dir"
+    python3 -B "$interp" wallclock --out "$dir" --cpu "$cpu" --runs "${WALLCLOCK_RUNS:-20}"
     ;;
 
 hashmap)
@@ -183,7 +201,8 @@ interp)
         if [ "$perf" = 1 ]; then
             python3 -B "$interp" perf --out "$dir" --cpu "$cpu" --rounds "${PERF_ROUNDS:-5}" || perf_status=$?
         fi
-        python3 -B "$interp" reduce --out "$dir" --floor "${INTERP_FLOOR:-}" || status=$?
+        python3 -B "$interp" reduce --out "$dir" --floor "${INTERP_FLOOR:-}" \
+            ${INTERP_RESIDUAL_LIMIT:+--residual-limit "$INTERP_RESIDUAL_LIMIT"} || status=$?
         if [ "$perf_status" != 0 ]; then
             echo "perf stat failed (exit $perf_status): no counter table; see the step's log" >> "$dir/summary.txt"
             if [ "$status" = 0 ]; then status=$perf_status; fi
@@ -195,11 +214,13 @@ interp)
 summary)
     # Appends each group's summary to the job summary (stdout outside CI).
     {
-        for group in hashmap interp; do
+        for group in wallclock hashmap interp; do
+            file=summary.txt
+            if [ "$group" = wallclock ]; then file=wallclock.txt; fi
             echo "## compiler-compare: $group (${RUNNER_KIND:-?})"
             echo
             echo '```text'
-            cat "$OUT/$group/summary.txt" 2>/dev/null || echo "no summary was written (the group did not run or failed)"
+            cat "$OUT/$group/$file" 2>/dev/null || echo "no summary was written (the group did not run or failed)"
             echo '```'
             echo
         done

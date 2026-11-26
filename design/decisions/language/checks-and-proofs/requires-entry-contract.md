@@ -42,6 +42,10 @@ Moving a window publishes an empty source and a destination length at least its 
 Linked declarations and source definitions, a build-selected entry included, have the same call-site requirement boundary.
 - rejected: an agent proposed an exception for the launcher, or an executable requirement check; the owner rejected it, because native linkage cannot justify a proof the ordinary caller lacks.
 
+### decision requirement-entry-projection
+A requirement whose complete goal is one integer comparison establishes an exact two-term relation at body entry when each side is at most one term plus a constant, widening conversions included.
+- rejected: an agent proposed admitting only bare terms, constants and measure terms; the owner rejected it, because the displaced form is sound under mathematical-value comparison and writers' natural `i + 1 <= b` chains would need explicit proof steps.
+
 ### decision requirement-places-at-entry
 A requirement's places are formed at the callee's body entry, after the requirements written before it, so every subscript in such a place owes its bounds obligation there.
 - rejected: an agent proposed forming a requirement's places in each caller's instantiated goal; the owner rejected it, because the fact is established in the callee's entry state, where the caller's proof of the subscript is not available.
