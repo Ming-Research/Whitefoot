@@ -1325,6 +1325,10 @@ fn assert_uses_follow_definitions(function: &IrFunction) {
             IrTerminator::Return { .. } | IrTerminator::Unreachable => Vec::new(),
         }
     };
+    if blocks.is_empty() {
+        // A bodiless function (a host or runtime entry) has nothing to read.
+        return;
+    }
     let mut reachable = vec![false; blocks.len()];
     let mut pending = vec![0];
     while let Some(index) = pending.pop() {
