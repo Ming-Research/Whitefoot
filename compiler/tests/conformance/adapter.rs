@@ -688,21 +688,52 @@ fn e1_collect(step: usize, programs: bool) {
         program_report.push_str(&format!("probe {name} {shown}\n"));
     }
     if programs {
-        let mut files: Vec<PathBuf> = std::fs::read_dir(root.join("tests/programs"))
-            .expect("tests/programs")
-            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-            .filter(|path| path.extension().is_some_and(|extension| extension == "wf"))
-            .collect();
-        files.sort();
-        for file in files {
-            let name = file.file_name().unwrap().to_string_lossy().into_owned();
+        // Each program as its own tests compile it: a single file, except
+        // the raw_deflate drivers, which compile with the three library
+        // files (compiler/tests/programs/raw_deflate*.rs).
+        let programs_root = root.join("tests/programs");
+        let library = ["raw_deflate.wf", "raw_deflate_dynamic.wf", "raw_deflate_dynamic_decode.wf"];
+        let mut files: Vec<String> = Vec::new();
+        for directory in ["", "compute", "containers", "parallel", "windows"] {
+            let mut found: Vec<String> = std::fs::read_dir(programs_root.join(directory))
+                .expect("tests/programs")
+                .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+                .filter(|path| path.extension().is_some_and(|extension| extension == "wf"))
+                .map(|path| {
+                    let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                    if directory.is_empty() { name } else { format!("{directory}/{name}") }
+                })
+                .filter(|name| !library.contains(&name.as_str()))
+                .collect();
+            found.sort();
+            files.extend(found);
+        }
+        for name in files {
             whitefoot::e1::label(&format!("program:{name}"));
-            let bytes = std::fs::read(&file).expect("program source");
-            let verdict = check(&[SourceInput::new(&name, &bytes)], CompilerLimits::default());
-            program_report.push_str(&format!(
-                "program {name} {}\n",
-                if verdict.is_ok() { "accepted" } else { "rejected" }
-            ));
+            let mut group: Vec<String> = Vec::new();
+            if name.starts_with("raw_deflate_") && !name.contains('/') {
+                group.extend(library.iter().map(|&file| file.to_owned()));
+            }
+            group.push(name.clone());
+            let sources: Vec<(String, Vec<u8>)> = group
+                .iter()
+                .map(|file| {
+                    (file.clone(), std::fs::read(programs_root.join(file)).expect("program source"))
+                })
+                .collect();
+            let inputs: Vec<_> = sources
+                .iter()
+                .map(|(file, bytes)| SourceInput::new(file, bytes))
+                .collect();
+            let verdict = check(&inputs, CompilerLimits::default());
+            let shown = match &verdict {
+                Ok(()) => "accepted".to_owned(),
+                Err(failure) => {
+                    let text = format!("rejected {failure}").replace('\n', " ");
+                    text.chars().take(300).collect()
+                }
+            };
+            program_report.push_str(&format!("program {name} {shown}\n"));
         }
         let firn = root.join("apps/firn");
         whitefoot::e1::label("app:firn");

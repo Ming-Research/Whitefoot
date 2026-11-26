@@ -253,7 +253,21 @@ fn main() {
             std::process::exit(1);
         }
     };
-    match driver.join() {
+    let joined = driver.join();
+    // E1 (research/investigations/derivation-ceiling): the timing mode's
+    // phase totals, for the one-core build measurement.
+    if std::env::var_os("WHITEFOOT_E1_TIMING").is_some_and(|value| value == "1")
+        || std::env::var_os("WHITEFOOT_E1").is_some()
+    {
+        let (ordinary, walk, shadow) = whitefoot::e1::timing_totals();
+        eprintln!(
+            "E1-TIMING ordinary_ms={:.1} walk_ms={:.1} shadow_ms={:.1}",
+            ordinary as f64 / 1e6,
+            walk as f64 / 1e6,
+            shadow as f64 / 1e6
+        );
+    }
+    match joined {
         Ok(Ok(())) => {}
         Ok(Err(stop)) => {
             eprintln!("{}", stop.render(format));

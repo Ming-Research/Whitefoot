@@ -1,0 +1,97 @@
+# E1 (research/investigations/derivation-ceiling) criterion (4): one-core
+# cold builds of apps/firn and Redis 7.0.15 on the dedicated 14900K runner.
+# Experiment branch only; never merged.
+name: tmp-e1-time
+
+on:
+  push:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firn-check-time-14900k
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+  E1_CPU: "2"
+  E1_ROUNDS: "1"
+  E1_WARMUP: "0"
+  WHITEFOOT_CHECK_TIMEOUT: "10800"
+
+jobs:
+  timing:
+    runs-on: [self-hosted, 14900k]
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Host
+        run: |
+          set -euo pipefail
+          echo "E1_OUT=$RUNNER_TEMP/e1-time-$GITHUB_RUN_ID" >> "$GITHUB_ENV"
+          if [ -d "$HOME/.cargo/bin" ]; then echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"; fi
+          lscpu | sed -n '1,20p'
+          nproc
+          for tool in clang ld.lld make cc gcc perf taskset python3 cargo; do
+            printf '%s: %s\n' "$tool" "$(command -v "$tool" || echo missing)"
+          done
+          clang --version | head -1 || true
+          cc --version | head -1 || true
+          python3 --version
+          cat /proc/sys/kernel/perf_event_paranoid || true
+          uptime
+
+      - name: Build compilers
+        run: |
+          unset WHITEFOOT_TIME_BUDGET_RECORD
+          perl .github/run-check.pl e1-time/prepare python3 -B research/investigations/derivation-ceiling/e1_time.py prepare
+
+      - name: Fetch Redis
+        run: python3 -B research/investigations/derivation-ceiling/e1_time.py redis
+
+      - name: Count lines
+        run: |
+          unset WHITEFOOT_TIME_BUDGET_RECORD
+          perl .github/run-check.pl e1-time/count python3 -B research/investigations/derivation-ceiling/e1_time.py count
+
+      - name: One-core rounds
+        run: |
+          unset WHITEFOOT_TIME_BUDGET_RECORD
+          perl .github/run-check.pl e1-time/rounds python3 -B research/investigations/derivation-ceiling/e1_time.py rounds
+
+      - name: Profile
+        run: |
+          unset WHITEFOOT_TIME_BUDGET_RECORD
+          perl .github/run-check.pl e1-time/profile python3 -B research/investigations/derivation-ceiling/e1_time.py profile
+
+      - name: Summary
+        if: always()
+        run: python3 -B research/investigations/derivation-ceiling/e1_time.py summary || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e1-time-${{ github.run_id }}
+          path: |
+            ${{ env.E1_OUT }}/times.jsonl
+            ${{ env.E1_OUT }}/counts.json
+            ${{ env.E1_OUT }}/summary.txt
+            ${{ env.E1_OUT }}/perf-report.txt
+            ${{ env.E1_OUT }}/clang-units.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Remove scratch
+        if: always()
+        run: |
+          git worktree remove --force "$E1_OUT/main-tree" 2>/dev/null || true
+          rm -rf "$E1_OUT"

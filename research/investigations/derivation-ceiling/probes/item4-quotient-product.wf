@@ -1,16 +1,17 @@
-fn at_most(value: u64, limit: u64) -> result: unit pure contract {
-  requires value <= limit;
+fn at_most_nine(value: u64) -> result: unit pure contract {
+  requires value <= 9_u64;
 } {
   return unit;
 }
 
 fn probe(total: u64, divisor: u64) -> result: unit pure contract {
   requires 1_u64 <= divisor;
+  requires divisor <= 1152921504606846976_u64;
+  requires total < 10_u64 * divisor;
 } {
-  doc "Item 4: q = a / d gives d * q <= a, which bounds the product's IntegerDomain goal and the later bound.";
+  doc "Item 4: the goal quotient <= 9 on q = total / divisor is rewritten to total <= 10 * divisor - 1, which the requirement gives.";
   let quotient = total / divisor;
-  let product = quotient * divisor;
-  at_most(value: product, limit: total);
+  at_most_nine(value: quotient);
   return unit;
 }
 
