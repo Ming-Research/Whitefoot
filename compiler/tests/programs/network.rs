@@ -5198,6 +5198,88 @@ fn firn_answers_the_value_types_as_redis_does_with_hashes_and_sorted_sets() {
     }
     client.write_all(&batch).expect("send the large sets");
     expect_replies(&mut client, expected.as_bytes(), "the sets of 200 members");
+    // A set of 300 members added in a scattered order, each score held by
+    // four members, so that runs of equal scores, ordered by member as Redis
+    // orders them, cross the tree's node boundaries. Every expected reply is
+    // computed here from Redis's documented order: by score, then by member
+    // bytes; ZRANK counts the members before one, ZREVRANK those after it.
+    let spread = |index: usize| format!("s{index:03}");
+    let mut ordered = (0..300_usize)
+        .map(|index| (index % 75, spread(index)))
+        .collect::<Vec<_>>();
+    ordered.sort();
+    let mut scattered_set = words(&["ZADD", "spread"]);
+    for step in 0..300_usize {
+        let index = step * 7 % 300;
+        scattered_set.push((index % 75).to_string());
+        scattered_set.push(spread(index));
+    }
+    let mut checks = vec![(scattered_set, ":300\r\n".to_owned())];
+    for (rank, (_, member)) in ordered.iter().enumerate() {
+        checks.push((
+            words(&["ZRANK", "spread", member.as_str()]),
+            format!(":{rank}\r\n"),
+        ));
+        checks.push((
+            words(&["ZREVRANK", "spread", member.as_str()]),
+            format!(":{}\r\n", 299 - rank),
+        ));
+    }
+    let bound = |score: usize, open: bool| {
+        if open {
+            format!("({score}")
+        } else {
+            score.to_string()
+        }
+    };
+    for low in (0..75_usize).step_by(4) {
+        let high = low + 3;
+        for (low_open, high_open) in [(false, false), (true, false), (false, true), (true, true)] {
+            let within = ordered
+                .iter()
+                .filter(|(score, _)| {
+                    (if low_open { *score > low } else { *score >= low })
+                        && (if high_open { *score < high } else { *score <= high })
+                })
+                .map(|(_, member)| member.clone())
+                .collect::<Vec<_>>();
+            let min = bound(low, low_open);
+            let max = bound(high, high_open);
+            checks.push((
+                words(&["ZRANGEBYSCORE", "spread", min.as_str(), max.as_str(), "LIMIT", "1", "6"]),
+                array(within.iter().skip(1).take(6).cloned().collect()),
+            ));
+            checks.push((
+                words(&["ZREVRANGEBYSCORE", "spread", max.as_str(), min.as_str(), "LIMIT", "2", "5"]),
+                array(within.iter().rev().skip(2).take(5).cloned().collect()),
+            ));
+            checks.push((
+                words(&["ZCOUNT", "spread", min.as_str(), max.as_str()]),
+                format!(":{}\r\n", within.len()),
+            ));
+        }
+    }
+    checks.push((
+        words(&["ZRANGE", "spread", "(1", "-inf", "BYSCORE", "REV"]),
+        array(ordered[..4].iter().rev().map(|(_, member)| member.clone()).collect()),
+    ));
+    checks.push((
+        words(&["ZRANGE", "spread", "(73", "+inf", "BYSCORE"]),
+        array(ordered[296..].iter().map(|(_, member)| member.clone()).collect()),
+    ));
+    let mut batch = Vec::new();
+    let mut expected = String::new();
+    for (request, reply) in &checks {
+        let request = request.iter().map(String::as_str).collect::<Vec<_>>();
+        batch.extend(resp(&request));
+        expected.push_str(reply);
+    }
+    client.write_all(&batch).expect("send the scattered set");
+    expect_replies(
+        &mut client,
+        expected.as_bytes(),
+        "the scattered set of 300 members",
+    );
     drop(client);
     let (status, _) = finished(child);
     assert_eq!(status, 0);

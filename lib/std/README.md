@@ -23,7 +23,7 @@ modules checked like any other; their interfaces are their documentation.
 | [`std::collections::slab`](collections/slab/module.wfm) | Explicit reserve growth within a bounded backing, lazily materialized slots, generation handles, borrowed lookup/edit, reuse, expiry, exhaustion returning the offered owner, and explicit consumption. Handles are relative to the supplied slab. |
 | [`std::collections::hash_map`](collections/hash_map/module.wfm) | Generic owning keys and values with supplied hash/equality, growing insertion, removal, borrowed lookup/edit, rehash, resumable bounded scan, and explicit consumption. No stable bucket index or payload address. |
 | [`std::collections::priority_queue`](collections/priority_queue/module.wfm) | Growing boxed binary heap with supplied comparison, proved-nonempty borrowed peek and owning pop/replacement, bottom-up heapify, ordered drain, and explicit final consumption. Indexed operations additionally report resident positions and support arbitrary-position removal/replacement. |
-| [`std::collections::ordered_map`](collections/ordered_map/module.wfm) | Owning B-tree with supplied ordering, insertion/replacement, complete deletion and rebalancing, borrowed lookup/edit, ordered and bounded-range visitation, and explicit consumption. |
+| [`std::collections::ordered_map`](collections/ordered_map/module.wfm) | Owning B-tree with supplied ordering, insertion/replacement, complete deletion and rebalancing, borrowed lookup/edit, ordered and bounded-range visitation, positioned cursors that step either way and report their rank, and explicit consumption. The tree itself is private. |
 
 The caller-selected capacity ceiling bounds backing growth, or logical entries
 for the fixed-node ordered map. See [the writing guide](https://github.com/Ming-Research/Whitefoot-kit/blob/main/docs/writing.md#where-should-each-piece-of-data-live)
@@ -152,7 +152,18 @@ tree, and deletion releases merged nodes and contracts the root.
 `ordered_map_lookup` and `ordered_map_edit` use callbacks returning arbitrary
 owned results, with only the value writable during editing. `ordered_map_each`
 visits every pair in order; `ordered_map_range` visits the half-open interval
-`[lower, upper)`. `ordered_map_remove` returns the owned pair. Supply a consuming
+`[lower, upper)`. An `OrderedCursor` is an owned position the caller keeps
+and hands back with the map: `ordered_map_first` and `ordered_map_last` place
+one at either end, and `ordered_map_seek` at the first pair at or after
+(`OrderedAtLeast`) or after (`OrderedAbove`) a probe, or the last at or before
+(`OrderedAtMost`) or before (`OrderedBelow`) it, ordered by a caller function
+that may be the map's own comparison; `ordered_map_step` moves it one pair
+`OrderedForward` or `OrderedBackward`, `ordered_map_read` lends its pair to
+a callback, and `ordered_map_rank` counts the pairs before it by summing whole
+subtrees, not by stepping. The loop stays in the caller, which can stop at any pair, lend one
+pair to several callbacks, or walk two maps together. An insertion or removal
+makes earlier cursors read nothing, rank nothing and refuse to step; editing a value or
+replacing a present key does not. `ordered_map_remove` returns the owned pair. Supply a consuming
 callback to `ordered_map_free` for all remaining keys and values, including
 `nodrop` owners. Comparison consistency determines sorted semantics; progress
 and ownership do not depend on it. The implementation uses fanout 16 and
