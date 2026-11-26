@@ -937,7 +937,7 @@ those hours, and every push queued four macOS jobs; the macOS wait, not the
 jobs, made the slow runs. From this, the gate runs macOS only where its
 answer decides a merge (a ready pull request, `main`, a manual run) and checks
 both platforms per revision in a final job
-([decision](../../../design/compiler/verification.md)).
+([decision](../../../design/decisions/development/verification.md)).
 
 ### Gate only where a pull request is open
 
@@ -951,7 +951,7 @@ none. Every one of these branches was named `claude/`, so a branch name could
 not have told the two apart. `io-hosts.yml` ran on the same pushes.
 
 From this, a push to a branch without an open pull request runs one deciding
-job and skips every check ([decision](../../../design/compiler/verification.md)).
+job and skips every check ([decision](../../../design/decisions/development/verification.md)).
 Two properties of GitHub, documented rather than measured here, shape the
 rule. GitHub starts no pull request run while the pull request conflicts
 with its base, so pull request events cannot be the only trigger. And a
@@ -1305,6 +1305,257 @@ keeps, and the listing holds at most 1,000 runs per query, so collect in parts
 with `--until`. With a shorter window, a class with fewer than 20 runs keeps its
 value, and the Xeon column takes the row's largest class value.
 
+### The margin of the budget rule
+
+**Question.** From 2026-10-20 the gate's first attempt on `main` turned red
+in 22 jobs of 20 runs, every test passing, on overruns of the time budget
+(item #284). The Linux budget of a stage and CPU class was 1.1 times the
+maximum of its recent runs. The question is which budget rule keeps those
+runs green and still turns a stage red that has really slowed. The owner set
+the two criteria beforehand: the 20 runs that were red from budget alone must
+not be red under the new rule, and a stage made 30% slower than its budget
+must fail the gate and pass again once the delay is gone. The comparison of
+rules below was made after a first look at the data, so it is exploratory:
+which rule to prefer was not fixed in advance.
+
+**Sources.** The `== END`, `== BUDGET` and `== OVER BUDGET` lines of the group
+jobs (`unit`, `corpus`, `runtime`, `static`) of `gate.yml`, read with `gh api`
+and `.github/recompute-time-budgets.py`: the 84 runs on `main` since 2026-10-20
+with all their attempts, and the runs of every branch before them, newest first,
+back to 2026-10-21T03:11Z (batches of 450, 300, 250 and 40 runs, each older
+than the one before); then, for the groups `unit`, `corpus` and `runtime`
+only, the 192 runs created from 2026-10-19T01:12Z to 2026-10-21T03:11Z and the
+9 newest runs of 2026-10-14 (the listing has no run between them and
+2026-10-19). Together 2,764 jobs of 537 runs and 8,162 stage times, 7,419 of
+them of mapped classes in rows of the table that exited 0. The limit of the API
+(5,000 requests an hour, shared) stopped the first collection before
+2026-10-21T03:11Z and the second after the 9 runs of 10-14, each run costing 14
+to 44 requests; the samples are scratch and are not kept. The data are mostly
+of 2026-10-19 to 10-29, and November has few gate runs. The rows of the
+`static` group have no run before 2026-10-21T03:11Z.
+
+**The 22 red jobs.** On `main`, 20 runs were red at their first attempt from
+budget alone and 1 from a failing test (run 40028259133). The 22 jobs ran on
+mapped CPU classes (5 on the Xeon Platinum 8573C) and none on an unmapped model.
+Of the 43 stages over a budget in the 26 attempts red from budget alone, the
+median overrun is 1.02 times the budget, the largest of a first attempt 1.108
+times (`compiler/test-corpus` 155.1 s against 140 s on EPYC 9V45) and the
+largest of all 1.157 (a re-run, `compiler/test-build-unit` 202.5 s against 175 s).
+Of the 18 re-runs of those runs, 6 were red from budget alone again.
+
+**Judging them by the new rule.** Command (each stage judged against the 50
+earlier runs of its class, the table recomputed just before the stage; the Xeon
+column, when it has fewer than 20 earlier runs, by the owner column's rule):
+
+    python3 .github/recompute-time-budgets.py replay --samples <files> \
+        --from 2026-10-20 --every 0 --branch main --attempt 1 --list
+
+Result: of the 22 jobs, 20 are cleared by the rule (every stage within its rule
+budget, the red ones within it too), none is still red, and 2 cannot be judged
+because their class has fewer than 20 earlier runs in the samples:
+
+| job | run | class | stage | time | logged budget | earlier runs of its class |
+|---|---|---|---|---:|---:|---:|
+| 118589198409 | 39411199402 | EPYC 7763 | `check/runtime` | 25.1 s | 25 s | 14 |
+| 118874096168 | 39493942006 | EPYC 9V45 | `compiler/test-corpus`, `check/corpus` | 140.1 s, 224.2 s | 140 s, 220 s | 15 |
+
+Their classes lack 6 and 5 earlier runs among the samples. The samples reach
+back to 2026-10-19T01:12Z in full and, for 2026-10-14, only to its newest 9
+runs (created from 09:10Z); the listing shows no gate run between the two days,
+and 21 runs of 10-14 created from 08:27Z to 09:10Z were left uncollected when
+the reserve of the hour's requests was reached. They should hold the runs the
+two jobs lack (inferred: they were not read). Collecting them takes `collect
+--since 2026-10-14 --until 2026-10-14T09:10:00Z --job runtime --job unit --job
+corpus`, about 900 requests at the 44 a run those days cost. Until then the
+claim that the 20 runs stay green rests on 20 judged jobs of 22; the two times
+are within the budgets the table now holds (25.1 s against 35 s on EPYC 7763;
+140.1 s and 224.2 s against 215 s and 315 s on EPYC 9V45), which says nothing
+about the table of that day.
+
+**Judging them by the new table.** The replay asks what a table made by the
+rule from the runs before each stage would have said. The gate's question is
+simpler: would the table now in `.github/time-budgets.txt` have turned these
+jobs red? `against` holds each job that went red as it ran to the budget the
+table gives its CPU model (the largest Linux cell of the row for a model with no
+column, as `run-check.pl` does) and needs no earlier runs. On 2026-11-25, over
+the 101 runs of `main` created since 2026-10-20 (882 jobs, 733 of them first
+attempts; collected that day, the samples are scratch):
+
+    python3 .github/recompute-time-budgets.py against --samples <file> \
+        --from 2026-10-20 --branch main --attempt 1
+
+Result: 23 jobs went red as they ran, the 22 above and one of 2026-11-25 (run
+45604849371, `compiler/test-unit` 161.4 s against 160 s on the Xeon), and all
+23 are within the table: none is over a budget and none cannot be judged. The
+largest share of a budget a red stage takes is 84% on EPYC 7763
+(`compiler/test-build-unit` 193.7 s of 230 s, run 39521731772), 78% on EPYC 9V45
+(`check/unit` 230.5 s of 295 s), 74% on EPYC 9V74 (`compiler/test-build-unit`
+178.8 s of 240 s) and 79% on the Xeon (`compiler/test-unit` 161.4 s of 205 s).
+This covers the two jobs the replay could not judge (72% of 35 s, and 65% and
+71% of 215 s and 315 s). The new table was made from each class's newest 50 runs
+of 2026-11-25, not from the runs before these jobs, so this does not say that a
+table recomputed by the rule on those days would have held them; the replay
+does, for the 20 jobs it judged. With the same 101 runs the replay (`replay
+--from 2026-10-20 --every 0 --branch main --attempt 1 --list`) judges only 5 of
+the 23 jobs, all cleared and the same five `against` shows within, the other 18
+having fewer than 20 earlier runs of their class among the runs of `main`.
+
+**The rules compared.** Replay from 2026-10-22 on (`--every 0`, window 50),
+756 judged jobs (62 for a table 7 days old, `--age 7`); a slowdown multiplies
+the times of every stage of a job. Jobs red:
+
+| rule | no slowdown | +20% | +30% | no slowdown, table 7 days old (62 jobs) | +30%, table 7 days old |
+|---|---:|---:|---:|---:|---:|
+| `max+10` (the former rule) | 5 | 349 | 608 | 0 | 51 |
+| `max+25` | 1 | 12 | 118 | 0 | 21 |
+| `max+30` | 1 | 6 | 42 | 0 | 9 |
+| `spread` (the new rule) | 1 | 146 | 362 | 0 | 38 |
+
+The one job red with no slowdown under `max+25`, `max+30` and `spread` (checked
+with the tool's `Judgment`) is a `compiler/lint` run of 47.96 s on EPYC 9V45,
+run 40855230774 on a branch, against a budget of 45 s and a median of 27.1 s of
+the runs before it: a run that a rule meant to catch slowdown may reasonably
+turn red. Tables 14 and 21 days old judge 25 jobs each, none red under any rule;
+a slowdown of 30% reddens 20, 8, 4 and 16 of the 25 under `max+10`, `max+25`,
+`max+30` and `spread`, too few jobs to tell the rules apart on false reds. A
+scratch script, replaced by this tool, first gave other counts (437, 729 and 544
+judged jobs by its filters); those are withdrawn.
+
+**Headroom.** The budget over the median of a stage's recent runs, less one:
+how much slower a typical run can be before its stage trips (`headroom`
+command, newest 50 runs of each class; the Xeon has 32 runs of `check/unit`).
+
+| stage | class | median s | max s | `max+10` | `max+25` | `max+30` | `spread` |
+|---|---|---:|---:|---:|---:|---:|---:|
+| `check/unit` | epyc-7763 | 350.6 | 375.0 | 415 (+18%) | 470 (+34%) | 490 (+40%) | 440 (+26%) |
+| `check/unit` | epyc-9v74 | 272.3 | 354.6 | 395 (+45%) | 445 (+63%) | 465 (+71%) | 475 (+74%) |
+| `check/unit` | epyc-9v45 | 226.0 | 246.6 | 275 (+22%) | 310 (+37%) | 325 (+44%) | 295 (+31%) |
+| `check/unit` | xeon-8573c | 306.0 | 351.7 | 390 (+27%) | 440 (+44%) | 460 (+50%) | 435 (+42%) |
+| `check/corpus` | epyc-7763 | 374.0 | 396.2 | 440 (+18%) | 500 (+34%) | 520 (+39%) | 460 (+23%) |
+| `check/corpus` | epyc-9v74 | 296.7 | 386.5 | 430 (+45%) | 485 (+63%) | 505 (+70%) | 515 (+74%) |
+| `compiler/lint` | epyc-9v45 | 27.2 | 48.0 | 55 (+102%) | 60 (+121%) | 65 (+139%) | 75 (+176%) |
+
+The design tree refused "one and a half times the slowest recorded run" because
+a typical unit run could grow by 57% before the stage tripped (a sample of seven
+runs). In the newest 50 runs the spread rule keeps three of the four classes of
+the unit group below that (+26% to +42%) and exceeds it on EPYC 9V74 alone,
+whose own runs vary by 30% of the median and which the former rule left at +45%.
+No check sees a slowdown smaller than a stage's headroom: the paired performance
+comparison times compiled workloads and the compiler's build rows, and the
+recompute prints medians without judging them.
+
+**The new table.** `table --write` on the same samples, the gate.yml rows only
+(the rows of the other workflows have no samples and keep their values: the
+hour's requests left too few to read their logs); a `*`
+marks a changed cell. Of the 7,419 stage times of mapped classes, none exceeds
+its new budget or the budget of the table before this change (which carries the
+owner's raise of the same day).
+
+| stage | class | runs | median s | max s | old | new |
+|---|---|---:|---:|---:|---:|---:|
+| `check/static` | epyc-7763 | 50 | 70.6 | 88.4 | 95 | 120 * |
+| `check/static` | epyc-9v74 | 50 | 61.8 | 85.8 | 90 | 120 * |
+| `check/static` | epyc-9v45 | 50 | 53.1 | 74.5 | 90 | 105 * |
+| `check/static` | xeon-8573c | 30 | 66.3 | 85.6 | 95 | 115 * |
+| `repository-invariants` | epyc-7763 | 50 | 25.1 | 25.4 | 35 | 30 * |
+| `repository-invariants` | epyc-9v74 | 50 | 23.3 | 24.9 | 35 | 30 * |
+| `repository-invariants` | epyc-9v45 | 50 | 21.6 | 22.1 | 30 | 25 * |
+| `repository-invariants` | xeon-8573c | 30 | 23.1 | 24.0 | 35 | 30 * |
+| `compiler/lint` | epyc-7763 | 50 | 39.0 | 56.5 | 65 | 80 * |
+| `compiler/lint` | epyc-9v74 | 50 | 33.0 | 53.9 | 60 | 85 * |
+| `compiler/lint` | epyc-9v45 | 50 | 27.2 | 48.0 | 65 | 75 * |
+| `compiler/lint` | xeon-8573c | 30 | 37.9 | 55.7 | 65 | 80 * |
+| `check/unit` | epyc-7763 | 50 | 350.6 | 375.0 | 450 | 440 * |
+| `check/unit` | epyc-9v74 | 50 | 272.3 | 354.6 | 410 | 475 * |
+| `check/unit` | epyc-9v45 | 50 | 226.0 | 246.6 | 300 | 295 * |
+| `check/unit` | xeon-8573c | 32 | 306.0 | 351.7 | 395 | 435 * |
+| `compiler/test-build-unit` | epyc-7763 | 50 | 175.7 | 190.9 | 250 | 230 * |
+| `compiler/test-build-unit` | epyc-9v74 | 50 | 145.2 | 181.1 | 225 | 240 * |
+| `compiler/test-build-unit` | epyc-9v45 | 50 | 122.9 | 139.2 | 180 | 170 * |
+| `compiler/test-build-unit` | xeon-8573c | 33 | 168.6 | 197.8 | 230 | 250 * |
+| `compiler/test-unit` | epyc-7763 | 50 | 175.8 | 186.7 | 215 | 220 * |
+| `compiler/test-unit` | epyc-9v74 | 50 | 130.5 | 173.3 | 195 | 235 * |
+| `compiler/test-unit` | epyc-9v45 | 50 | 102.8 | 114.0 | 135 | 140 * |
+| `compiler/test-unit` | xeon-8573c | 32 | 136.1 | 162.1 | 180 | 205 * |
+| `check/corpus` | epyc-7763 | 50 | 374.0 | 396.2 | 500 | 460 * |
+| `check/corpus` | epyc-9v74 | 50 | 296.7 | 386.5 | 445 | 515 * |
+| `check/corpus` | epyc-9v45 | 50 | 236.3 | 261.8 | 315 | 315 |
+| `check/corpus` | xeon-8573c | 42 | 321.0 | 379.5 | 450 | 480 * |
+| `compiler/test-build-corpus` | epyc-7763 | 50 | 119.5 | 140.4 | 175 | 180 * |
+| `compiler/test-build-corpus` | epyc-9v74 | 50 | 99.1 | 124.1 | 150 | 165 * |
+| `compiler/test-build-corpus` | epyc-9v45 | 50 | 84.5 | 103.2 | 120 | 135 * |
+| `compiler/test-build-corpus` | xeon-8573c | 44 | 116.0 | 141.4 | 160 | 185 * |
+| `compiler/test-corpus` | epyc-7763 | 50 | 253.0 | 268.1 | 330 | 315 * |
+| `compiler/test-corpus` | epyc-9v74 | 50 | 197.6 | 263.2 | 305 | 360 * |
+| `compiler/test-corpus` | epyc-9v45 | 50 | 152.1 | 173.1 | 205 | 215 * |
+| `compiler/test-corpus` | xeon-8573c | 42 | 203.9 | 241.2 | 290 | 305 * |
+| `check/runtime` | epyc-7763 | 50 | 24.0 | 26.4 | 40 | 35 * |
+| `check/runtime` | epyc-9v74 | 50 | 19.4 | 27.9 | 40 | 40 |
+| `check/runtime` | epyc-9v45 | 50 | 16.3 | 21.0 | 30 | 30 |
+| `check/runtime` | xeon-8573c | 45 | 24.2 | 27.6 | 35 | 35 |
+
+**Reproduction.** `collect` takes `--branch` and `--job` prefixes (for example
+`--workflow gate.yml --since 2026-10-19 --until 2026-10-21T03:11:00Z --job unit
+--job corpus --job runtime`) and `--reserve` (default 1,000): it fetches ten
+runs at a time and stops, printing the `--until` to go on from, before the
+hour's requests fall to the reserve. The 5,000 an hour are shared with the
+engine's own calls and with every other agent on the account: the first
+collection of this section spent them all and failed the next test run with
+HTTP 403, and with 1,038 left after the last batch the quota was gone within
+minutes, so a reserve protects the engine only while nobody else spends it.
+`replay` takes `--rule` (`spread`, `max+10`, `max+25`, `max+30`), `--every 0`,
+`--age`, `--branch`, `--attempt` and `--list`; `headroom` prints the headroom
+table; `against` takes `--from`, `--branch` and `--attempt`; `table`, `replay`
+and `against` take every samples file at once. The runs of the
+comparison are those named under Sources; the samples are scratch.
+
+**Limits.** The data are those of one month, mostly of one week, so the
+replay's count of jobs red with no slowdown (1 of 756) cannot tell the
+rules apart there. Wall time only: CPU time was not examined. A rule
+cannot make a stale table current: the table of 2026-10-23 was not recomputed
+before 2026-11-25, and a wider margin only gives it more room. Nothing was
+recomputed for the other workflows' rows (io-hosts, proof, sanitizers, the
+concurrent map's sanitizers and compute-regression), which keep the values of
+the former rule or their provisional ones, each raised by a tenth in the
+owner's raise of 2026-11-25; the sanitizer rows have the most
+jobs and, unlike the gate's, a merge needs them green too. Their runs were
+collected once, on 2026-11-26, with the same tool (`collect --reserve`, the
+newest 80 to 100 finished runs of each workflow since 2026-10-20 or 10-24;
+the collection of `compute-regression.yml` stopped after 50 of its 100 runs
+at a network time-out, and 71 of those 100 were skipped runs).
+`sanitizers.yml`: 116 jobs from the newest 80 runs, all created within 22
+minutes of one another; 32 jobs record a CPU model, and no mapped class has
+more than 3 samples of any stage (EPYC 7763 3, EPYC 9V74 1, EPYC 9V45 1, Xeon
+8573C 2; the unmapped Xeon 6975P-C has up to 9).
+`io-hosts.yml` (112 jobs, 4 samples per stage), `proof.yml` (116 jobs, 78 to
+86 per stage), `map-sanitizers.yml` (212 jobs, 184 and 182 samples of its two
+stages) and `compute-regression.yml` (up to 34 per stage) have more samples,
+but their logs record no CPU model, so `table` has no class to give them and
+no cell can follow the rule. Of the 792 stage times these files hold of
+stages that have a row, 5 exceed the largest Linux value the table gives the
+row: `proof-build` took 97.5 s on 10-24 (table 95 s), `map-tsan` took 51.3 s
+and 50.6 s on 10-22 and 10-24 (table 50 s), and `performance-baseline-compiler`
+took 160.5 s and 163.3 s on main on 11-25 and 10-29 (table 130 s, 150 s on
+Xeon 8573C); one `map-tsan` run on main took 49.6 s of the 50 s. The table
+keeps those rows as they are. A row gets per-class values only when its
+workflow records the CPU model and holds 20 runs of a class. Two of the 22 jobs
+are not judged by the replay (above); `against` holds them to the table, as it
+does the others. A stage made 30% slower than its budget is shown to
+fail by a run of the verdict, not by this replay: see the next paragraph.
+
+**A stage that has slowed.** The owner's second criterion is that a stage 30%
+over its budget fails the gate and passes once the delay is gone. What decides
+it is not the rule but the verdict `run-check.pl --budget-verdict`, which the
+last step of each gate group runs on the record its stages appended to; this
+change touches neither. `.github/test-run-check.sh` (in `make static`) checks
+that verdict against a table of its own: a stage over its Linux budget is
+recorded as enforced and fails the verdict, one within it does not. The check
+with the real table on a hosted runner is a temporary workflow that is not part
+of the branch: a stage labelled `check/runtime` that sleeps 52 s, 1.3 times the
+row's largest Linux budget (40 s), must print `OVER BUDGET: enforced` and fail
+the verdict, and one that sleeps 1 s must pass it. It had not run when this was
+written, the hour's API requests being gone.
+
 ### Gate at ready, not at each draft push
 
 Read from the Actions API on 2026-10-19: the 200 newest `gate.yml` runs, created
@@ -1322,7 +1573,7 @@ first job started at 01:31:20Z, took 1394 s.
 From this, a push to a draft pull request's branch ends after the deciding job
 like a push to a branch with no pull request, and the full check runs once,
 started by hand after the review, and for a pull request marked ready that has
-no such run ([decision](../../../design/compiler/verification.md)). Only a
+no such run ([decision](../../../design/decisions/development/verification.md)). Only a
 manual run counts as the earlier run, because the conclusion of a push, an
 opening or a ready run does not tell a run that checked from one that skipped,
 and a manual run never skips (`.github/gate-scope.sh`). The status board's
@@ -1338,6 +1589,41 @@ every push to a pull request that changes the map's runtime, as the owner
 chose on 2026-10-09 (above): it is path-filtered and rare, and a path-filtered
 workflow that listed `ready_for_review` would be waited for after a ready mark
 even when no path matched.
+
+### Candidate-compiler build budget per processor (2026-11-25)
+
+The `performance-candidate-compiler` stage was 145 s for every Linux class (set
+by the owner on 2026-10-13, then 160 s). On 2026-11-25 the owner set it per
+class: 165 s on the EPYC 7763, 150 s on the 9V74 and 135 s on the 9V45, and the
+Xeon 8573C column takes the larger of the row's largest class and its own runs
+by the rule above (decision `owner-added-columns-take-the-larger-value`).
+
+Replay. `recompute-time-budgets.py collect --workflow compute-regression.yml
+--since 2026-10-13 --limit 150` kept the stage rows of the 150 newest runs
+(runs 39684790607 to 45675708663), 83 rows of this stage. This workflow's job
+logs carry no processor model, so each row takes the `Model name` of the
+`identity.txt` in the retained artifact of its run (188 runs have one). Six runs
+(39734174464, 39736066162, 39904624788, 39922530381, 39925043523, 40051650516)
+were attempted twice and each attempt left its own artifact, created as that
+attempt ended; the twelve rows of those runs take the processor of the artifact
+of their own attempt, not of the run's retained one.
+
+| processor | rows | min s | median s | max s | over 145 s | new budget | over the new budget |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| EPYC 7763 | 40 | 126.8 | 136.2 | 152.0 | 5 | 165 | 0 |
+| EPYC 9V74 | 16 | 101.2 | 124.1 | 144.8 | 0 | 150 | 0 |
+| EPYC 9V45 | 21 | 94.1 | 102.6 | 125.4 | 0 | 135 | 0 |
+| Xeon 8573C | 3 | 112.3 | 138.2 | 139.9 | 0 | 165 | 0 |
+| Xeon 6975P-C (no column) | 3 | 113.8 | 115.7 | 122.2 | 0 | 165 | 0 |
+
+No row is over its class's new budget. All five builds over 145 s were on the 7763.
+The budget rule of the table (1.1 times the maximum plus the maximum's distance above
+the median, rounded up to 5 s; "The margin of the budget rule" above), applied with
+`budget_for` of `recompute-time-budgets.py` to these rows, gives the 7763 185 s from its
+20 newest rows, the 9V74 185 s from its 16 rows and the 9V45 165 s from its 20 newest
+rows; the owner's numbers are the stated ones, which are 20, 35 and 30 s below those.
+The Xeon 8573C's three builds are 139.9 s at most with a median of 138.2 s, 160 s by the
+rule, so its column is the row's largest class, 165 s.
 
 ### The first compiler build's extra time (2026-11-25)
 
@@ -1472,8 +1758,8 @@ every build is into an empty target directory.
   build nothing. A job's log counts only if it shows no cache action and as
   many `Compiling` lines as a build into an empty target directory (9 at
   `e7974f0c5`). The rule's value is taken whatever it is: where it is not below
-  the present 160 s the stage's budget does not fall, which is a result, not a
-  failure of the sampling. A class with fewer than 20 counted runs keeps its
+  the present 160 s (every Linux class, when this was written) the stage's
+  budget does not fall, which is a result, not a failure of the sampling. A class with fewer than 20 counted runs keeps its
   value, and a Xeon column follows the owner-column rule of
   `.github/recompute-time-budgets.py`. Only runs after the preparation count;
   the earlier runs, which include the first build's extra time, are left out.
@@ -1517,39 +1803,53 @@ branch subjects. No log shows a cache action (the workflow restores and saves
 none). Seven jobs ran on a Xeon Platinum 8370C and one on a Xeon 6973P-C; they are
 not columns of the table and built nothing. The 111 counted builds are listed in
 [candidate-build-samples-2026-11.tsv](candidate-build-samples-2026-11.tsv), from
-which each count, median and maximum below can be recomputed. The counts and the
-rule's values (`.github/recompute-time-budgets.py table`, window of 50, all
-runs counted):
+which each count, median and maximum below can be recomputed.
 
-| class | counted runs | min s | median s | max s | rule | before | after |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| epyc-7763 | 24 | 127.15 | 131.5 | 137.00 | 155 | 160 | 155 |
-| epyc-9v74 | 29 | 104.83 | 109.2 | 139.59 | 155 | 160 | 155 |
-| epyc-9v45 | 23 | 89.00 | 94.9 | 110.26 | 125 | 160 | 125 |
-| xeon-6975p | 23 | 103.31 | 107.6 | 109.43 | 125 | 160 | 125 |
-| xeon-8573c | 12 | 115.73 | 138.3 | 146.80 | 165 | 160 | 165 |
+Main changed under the work while it was open: the rule gained the distance of
+the maximum above the median ("The margin of the budget rule" above) and the
+owner set the stage per class (section above), so the recompute was run again
+on the merged table, with `.github/recompute-time-budgets.py table --write`
+(window of 50, all runs counted). The column "1.1 x max" is the fixed 10% rule
+the sampling was planned under, which the earlier version of this record gave;
+"rule" is the table's rule now:
+
+| class | counted runs | min s | median s | max s | 1.1 x max | rule | cell on main | new cell |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| epyc-7763 | 24 | 127.15 | 131.5 | 137.00 | 155 | 160 | 165 | 160 |
+| epyc-9v74 | 29 | 104.83 | 109.2 | 139.59 | 155 | 185 | 150 | 185 |
+| epyc-9v45 | 23 | 89.00 | 94.9 | 110.26 | 125 | 140 | 135 | 140 |
+| xeon-6975p | 23 | 103.31 | 107.6 | 109.43 | 125 | 125 | no column (165) | 125 |
+| xeon-8573c | 12 | 115.73 | 138.3 | 146.80 | 165 | 170 | 165 | 185 |
 
 The 8573C cell has 12 runs, so it follows the owner-column rule: the larger of
-the row's largest recomputed class value (155) and its own largest run by the
-rule (146.80 s gives 165). It therefore rises by 5 s, and so does the value an
+the row's largest recomputed class value (185, the 9V74's) and its own 12 runs
+by the rule (170). It therefore rises by 20 s, and so does the value an
 unmapped model takes, since that is the largest Linux cell of the row.
+Three cells rise over the owner's values on main (the 9V74 by 35 s, the 9V45 by
+5 s and the 8573C by 20 s), which is the owner's to accept: the cells the owner
+set are below the rule's on this row, as the section above records for the
+runs it was set from.
 
 What the numbers show:
 
-- The two classes that took the longest stay near the old value. The 7763's
-  cold build took 127.15 to 137.00 s with the preparation (116.2 to 146.2 s in
-  its nine runs of October without it), so the 93 s of the October pair is not
-  what it takes now, and its cell falls only from 160 to 155 s. Four of the
-  9V74's 29 builds (132.37, 137.28, 138.99 and 139.59 s) took 132 to 140 s
-  against 104.83 to 115.75 s for the other 25; without them its cell would be
-  130 s, with them it is 155 s. They were taken as they are, and no run was
-  repeated.
-- The classes that gain are the 9V45 and the 6975P-C: each cell falls from 160
-  to 125 s, which is 13% and 14% over its slowest build (110.26 and 109.43 s).
-  The 6975P-C took 180 of the 320 jobs (56%), so most of a pull request run's
-  candidate builds are judged by this cell.
-- The 8573C ran 115.73 to 146.80 s in 12 runs and is the slowest class; its
-  cell is set by one run in the tail.
+- The 7763's cold build took 127.15 to 137.00 s with the preparation (116.2 to
+  146.2 s in its nine runs of October without it), so the 93 s of the October
+  pair is not what it takes now, and its cell falls only from 165 to 160 s.
+- The 9V74's cell rises from 150 to 185 s. Four of its 29 builds (132.37,
+  137.28, 138.99 and 139.59 s) took 132 to 140 s against 104.83 to 115.75 s for
+  the other 25, and the rule adds the maximum's distance above the median
+  (30.4 s) to 1.1 times the maximum. Without the four, 25 builds with a median
+  of 108.9 s would give 135 s; with them it is 185 s. They were taken as they
+  are, and no run was repeated. The owner's 150 s is 7.5% over the slowest of
+  the 29.
+- The 9V45's cell rises from 135 to 140 s, which is 27% over its slowest build
+  (110.26 s); the owner's 135 s is 22% over it. The 6975P-C's cell, which had
+  none, is 125 s, 14% over its slowest build (109.43 s), 40 s under the 165 s an
+  unmapped model takes. The 6975P-C took 180 of the 320 jobs (56%), so most of
+  a pull request run's candidate builds are judged by this cell.
+- The 8573C ran 115.73 to 146.80 s in 12 runs and is the slowest class, but its
+  own runs give 170 s, under the row's largest class, so its cell is the
+  9V74's 185 s.
 
 What this leaves out: the builds ran into an empty target directory, so a run
 whose cache step hits builds less and is judged by the same cell; whether the

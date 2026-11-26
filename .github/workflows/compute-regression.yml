@@ -161,7 +161,7 @@ jobs:
           done
           {
             printf 'candidate=%s\nbaseline=%s\n' "$(git rev-parse HEAD)" "$BASE"
-            printf 'native=NATIVE_OPTIMIZATION_FLAGS of compiler/runtime.mk, as the driver passes them; ordinary host runtime; no instrument-only flags\n'
+            printf 'native=NATIVE_OPTIMIZATION_FLAGS of compiler/runtime.mk, as the driver passes them, and one source-path prefix map (tests/performance/Makefile PATH_MAPS) that rewrites only embedded path strings and changes no generated code; ordinary host runtime; no instrument-only flags\n'
             printf 'kernels=%s\n' "$candidate_kernels"
             rustc -vV
             /usr/bin/clang --version
@@ -286,22 +286,6 @@ jobs:
             make -j2 -C tests/performance build BUILD="$RUNNER_TEMP/performance-baseline" \
             ROOT="$RUNNER_TEMP/baseline" WFC="$RUNNER_TEMP/baseline-target/gate/whitefootc" \
             FIXTURES="$RUNNER_TEMP/baseline/tests/programs/compute"
-      # Every host invocation needs a null observation: qualification on an
-      # earlier runner cannot establish this runner's measurement conditions.
-      # Reusing exactly the candidate images also removes construction/layout
-      # differences from the null. Failure means inconclusive evidence, and
-      # stops the comparison; no retry or threshold change selects a pass.
-      - name: Check this host with identical images
-        if: steps.scope.outputs.measure == 'true'
-        run: |
-          status=0
-          WHITEFOOT_CHECK_TIMEOUT=300 perl .github/run-check.pl performance-null \
-            bash tests/performance/compare.sh "$RUNNER_TEMP/performance-candidate" \
-            "$RUNNER_TEMP/performance-candidate" "$RUNNER_TEMP/performance-results/null" || status=$?
-          if [ "$status" -ne 0 ]; then
-            echo 'INCONCLUSIVE: identical-image control failed; no compiler regression verdict is available.' | tee "$RUNNER_TEMP/performance-results/inconclusive.txt"
-            exit "$status"
-          fi
       - name: Qualify explicit slowdown sensitivity
         if: steps.scope.outputs.measure == 'true' && steps.scope.outputs.qualify == 'true'
         run: |
@@ -336,19 +320,30 @@ jobs:
           WHITEFOOT_CHECK_TIMEOUT=300 perl .github/run-check.pl performance-placement-control \
             bash tests/performance/compare.sh "$RUNNER_TEMP/performance-candidate" \
             "$RUNNER_TEMP/performance-shifted" "$RUNNER_TEMP/performance-results/placement"
-      - name: Compare the candidate with its merge base
+      # Judged per kernel by tests/performance/judge.sh: a kernel whose two
+      # executables are byte-identical is the same program and is not timed;
+      # each other kernel is timed against the null control of its own image on
+      # this host (the candidate's image as both arms), so this invocation's
+      # measurement conditions are observed for every verdict. A kernel the
+      # comparison fails while its own null control reads at the threshold has
+      # no verdict yet: it is measured once more, alone, and one that is still
+      # undecided leaves the job passing with an INCONCLUSIVE warning, as no
+      # regression verdict is available (status 3). A failing kernel fails the
+      # job (status 1), and a measurement that did not run refuses it (2). The
+      # script labels each timed round as its own budgeted stage.
+      - name: Judge the candidate against its merge base
         if: steps.scope.outputs.measure == 'true'
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: 300
         run: |
-          WHITEFOOT_CHECK_TIMEOUT=300 perl .github/run-check.pl performance-comparison \
-            bash tests/performance/compare.sh "$RUNNER_TEMP/performance-baseline" \
-            "$RUNNER_TEMP/performance-candidate" "$RUNNER_TEMP/performance-results/comparison"
+          status=0
+          bash tests/performance/judge.sh "$RUNNER_TEMP/performance-baseline" \
+            "$RUNNER_TEMP/performance-candidate" "$RUNNER_TEMP/performance-results/judgment" || status=$?
+          if [ "$status" -ne 0 ] && [ "$status" -ne 3 ]; then exit "$status"; fi
       - name: Publish decisions and visible suspects
         if: always() && steps.scope.outputs.measure == 'true'
         run: |
-          if [ -f "$RUNNER_TEMP/performance-results/inconclusive.txt" ]; then
-            cat "$RUNNER_TEMP/performance-results/inconclusive.txt" >> "$GITHUB_STEP_SUMMARY"
-          fi
-          for run in null slow placement comparison; do
+          for run in judgment slow placement judgment/round1/null judgment/round1/comparison judgment/round2/null judgment/round2/comparison; do
             file="$RUNNER_TEMP/performance-results/$run/verdict.txt"
             if [ -f "$file" ]; then
               { printf '\n### %s\n\n```text\n' "$run"; cat "$file"; printf '\n```\n'; } >> "$GITHUB_STEP_SUMMARY"

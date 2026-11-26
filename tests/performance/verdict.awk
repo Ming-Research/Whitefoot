@@ -1,12 +1,17 @@
-# Paired baseline/candidate ratios, with the whole expected kernel/width matrix.
+# Paired baseline/candidate ratios, with the whole expected matrix of the kernels
+# named by -v kernels="a b ..." (compare.sh reads them from the Makefile).
 # One adverse width is a visible suspect; two in one kernel fail. CPU reports
 # use the wall pair count and never select the blocking verdict.
 function refuse(message) { print "REFUSED: " message; bad=1; exit 2 }
 function positive(value) { return value ~ /^[0-9]+([.][0-9]*)?([eE][+-]?[0-9]+)?$/ && value+0>0 && value+0<1e100 }
 BEGIN {
     FS="[ \t]+"
-    nk=split("mandelbrot records fir quadrature stencil", names, " ")
-    for(k=1;k<=nk;k++) known[names[k]]=1
+    nk=split(kernels, names, " ")
+    if(nk<1) refuse("no kernels named")
+    for(k=1;k<=nk;k++) {
+        if(names[k] !~ /^[a-z][a-z0-9_]*$/ || names[k] in known) refuse("invalid or repeated kernel name " names[k])
+        known[names[k]]=1
+    }
     if(cpus !~ /^[0-9]+$/ || cpus+0<2) refuse("at least two available CPUs required")
     widths[1]=1; widths[2]=2; nw=2
     if(cpus+0>=4) widths[++nw]=4

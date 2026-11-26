@@ -1,0 +1,12 @@
+fn bump(i: u32, b: u32) -> out: u32 pure contract {
+  define d = i + 1_u32;
+  requires cvt::<u32, u64>(d) <= cvt::<u32, u64>(b);
+} {
+  let out = i + 1_u32;
+  return out;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  let out = bump(i: 4294967294_u32, b: 4294967295_u32);
+  return std::process::exit_status(code: 0_u8);
+}
