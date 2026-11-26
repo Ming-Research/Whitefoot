@@ -15,9 +15,15 @@ const DESCRIBED_CLOSE: char = '\u{203a}';
 /// value described in words between two marks no source text contains, never
 /// a stand-in character a reader could take for source. A stretch of text
 /// that holds one is not marked as source, which [`unmark_described`] sees
-/// to when the text becomes a payload field.
+/// to where the payload prints. A description holds no other: the words of
+/// one that names a place already described (`rows[‹parameter #0›]`) lose
+/// the inner marks, so the outer pair is the one description of the value.
 pub(crate) fn described(what: &str) -> String {
-    format!("{DESCRIBED_OPEN}{what}{DESCRIBED_CLOSE}")
+    let words: String = what
+        .chars()
+        .filter(|&character| character != DESCRIBED_OPEN && character != DESCRIBED_CLOSE)
+        .collect();
+    format!("{DESCRIBED_OPEN}{words}{DESCRIBED_CLOSE}")
 }
 
 /// The text with each described value, marks included, replaced by `stand_in`,

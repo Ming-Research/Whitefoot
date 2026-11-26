@@ -1299,6 +1299,35 @@ fn a_call_separation_residual_is_read_by_its_two_paths() {
     assert_eq!(defects.len(), 1, "{defects:?}");
 }
 
+/// A description that names a place already described holds one pair of marks,
+/// so the text check reads the value and reports no defect; a nested pair
+/// written by hand stays a defect.
+#[test]
+fn a_description_that_names_a_described_place_has_one_pair_of_marks() {
+    use crate::diagnostic_repairs::described;
+
+    let nested = described(&format!(
+        "the value of rows[{}] before it was rewritten",
+        described("parameter #0")
+    ));
+    assert_eq!(nested, "\u{2039}the value of rows[parameter #0] before it was rewritten\u{203a}");
+    let defects = with_field(
+        "instantiated_goal",
+        Value::Source(format!("0_u64 < rows^[{nested}].len")),
+    )
+    .text_defects();
+    assert!(defects.is_empty(), "{defects:?}");
+    let defects = with_field(
+        "mechanical_fix",
+        Value::Text(format!("write `rows^[{nested}].len` here")),
+    )
+    .text_defects();
+    assert!(defects.is_empty(), "{defects:?}");
+    let by_hand = format!("0_u64 < rows^[\u{2039}a \u{2039}b\u{203a}\u{203a}].len");
+    let defects = with_field("instantiated_goal", Value::Source(by_hand)).text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+}
+
 /// A backtick-marked stretch that holds a description is read with the
 /// description replaced by a name, so the source around it must be source.
 #[test]
