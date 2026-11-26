@@ -49,6 +49,11 @@ A class's margin grows with its own spread above its median: the unit group's qu
 A Linux column the owner adds for a model with fewer than 20 runs of a stage takes the larger of the row's largest recomputed class budget and the model's own runs by the budget rule.
 - rejected: an agent proposed that the recompute script leave such columns untouched for hand edits; the owner rejected it, because those cells would fall behind as other models rise, bringing back false overruns unless someone remembered to edit them.
 - rejected: an agent proposed dropping the owner-added column and using the unmapped-model fallback; the owner rejected it, because it undoes the column the owner chose, and the fallback ignores the model's own runs where they need more.
+- rejected: an agent proposed setting the Xeon 8573C column of the candidate-compiler build row from that model's own few runs alone; the owner rejected it, because the row's largest value must not be lowered by a model with few runs, as for every other owner-added column.
+
+### decision candidate-compiler-build-budget-is-set-per-processor
+The candidate compiler's build budget in the performance comparison is set by the owner per processor class: 165 s on the EPYC 7763, 150 s on the 9V74, 135 s on the 9V45 and 165 s on the Xeon 8573C.
+- replaced: One budget for every Linux class (145 s, 160 s since the tenth added to every Linux budget) was on main; the owner changed it, because the 145 s had been exceeded four times, up to 152.0 s, and the classes differ in speed (data: `research/investigations/test-economy/time-budgets.md`).
 
 ### decision overruns-fail-only-the-final-verdict
 Hosted CI records a budget overrun without changing the stage's status and fails its final verdict for Linux and Windows overruns or a missing budget row; macOS overruns are only reported.
@@ -90,6 +95,14 @@ The correctness gate and the paired performance checks depend on no research pro
 - replaced: Experimental models, repeated measurements and shared research inputs wired into ordinary verification was on main; the owner changed it, because they had no permanent-test grounds of their own (data: `research/investigations/test-economy/redesign.md`).
 - rejected: an agent proposed relying only on manual review, or withholding research inputs from CI, to keep the boundary; the owner rejected it, because light reference checks catch accidental dependencies with normal complete checkouts.
 
+### decision research-tool-self-tests-run-in-their-manual-workflow
+A research tool's self-tests run as a step of the manual workflow that uses the tool, after the step that extracts what they read, and no gate group runs them.
+- rejected: an agent proposed a gate group that extracts the prototype commit and runs the self-tests each check; the owner rejected it, because the gate stays free of research programs, and the group would tie it to one commit's reachability and add a stage for tools only a manual workflow uses.
+
+### decision manual-workflows-reach-their-prototype-through-a-retention-tag
+A prototype commit that a manual workflow extracts from and tree links name is kept by a retention tag outside the `wf-` prefix; the workflow reaches it only through that tag and checks the commit id.
+- rejected: an agent proposed restoring the prototype's research directory into main so the workflow reads it from the repository; the owner rejected it, because it adds about 40 files and their tests as a copy that only convention keeps unedited, and the tree links naming the commit still need it.
+
 ### decision assertions-live-with-their-contract
 A verification assertion lives with the contract it checks: specification requirements in conformance, whole-program behavior in programs, other compiler obligations in compiler tests.
 - rejected: an agent proposed assigning WF wrappers to Rust unit tests by fixture language; the owner rejected it, because a useful property is placed by what it checks, apart from its fixture language and executable packaging (data: `research/investigations/test-economy/redesign.md`).
@@ -103,6 +116,15 @@ Paired performance compiles each revision's own formal version of the same workl
 - rejected: an agent proposed compiling the current sources with both revisions' compilers; the owner rejected it, because a syntax or ABI change can leave the merge-base compiler unable to build an equivalent workload, giving no comparison at all.
 - rejected: an agent proposed silently skipping a mismatched or unbuildable workload; the owner rejected it, because the absence of comparable evidence is not a passing regression result.
 - rejected: an agent proposed running the code-placement control on every measured comparison; the owner rejected it, because that adds a campaign to each run, while the emitter's own test already fails on a definition without the alignment (data: `research/investigations/code-placement/DESIGN.md`).
+
+### decision paired-timing-skips-byte-identical-images
+Both arms of the paired comparison build their runtime, runner and oracle with one source-path prefix map, and a program whose two linked images are byte-identical is not timed and passes.
+- replaced: Timing all five programs behind one host control was on main; the owner changed it, because the arms' images differed in every retained run through the embedded checkout path, so unchanged programs were timed and failed (data: `research/investigations/identical-code-noise/README.md`).
+
+### decision an-undecided-program-is-retested-once
+A timed program is judged against its own null control; a failing comparison with an adverse null is measured once more alone, and one still undecided is inconclusive and passes the job.
+- replaced: Ending the whole comparison as inconclusive when any host control failed, with no retry, was on main; the owner changed it, because the control reads at the threshold in 2.3% of cells (data: `research/investigations/identical-code-noise/README.md`).
+- rejected: the owner proposed judging an undecided program on the 14900K machine; the owner rejected it, because only the same-host retest can be checked against the 182 retained runs, and the other adds a self-hosted job and queueing.
 
 ### decision conformance-cases-are-only-runnable
 Conformance has only the `runnable` manifest status and pass or fail outcomes; an unexpected unsupported stop fails the case.
