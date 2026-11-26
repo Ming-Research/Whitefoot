@@ -47,7 +47,7 @@ The Windows package is a zip holding a statically linked `whitefootc.exe` and a 
 - rejected: an agent proposed a tar.gz Windows archive like the other platforms; the owner rejected it, because Windows Explorer cannot open it, so users would need an extra command-line step.
 
 ### decision bundled-releases-publish-after-acceptance
-A bundled release is published only after the acceptance workflow passes every check on the exact candidate archive bytes; the workflow's revision supplies the checks but the candidate's own compiler tests.
+A bundled release is published only after the acceptance workflow passes every check on the exact candidate archive bytes; the workflow supplies the checks but the candidate's own compiler tests.
 - rejected: an agent proposed taking the acceptance files from the candidate commit; the owner rejected it, because a candidate commit may predate those files.
 - rejected: an agent proposed publishing before acceptance, or counting a trimming smoke test as qualification; the owner rejected it, because only a check of the delivered archive shows that it finds its own toolchain and keeps native behavior.
 
