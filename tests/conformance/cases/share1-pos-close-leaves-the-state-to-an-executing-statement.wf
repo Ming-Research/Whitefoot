@@ -14,7 +14,7 @@ fn worker(handle: Shared<Box<u8>>) -> result: u8 pure waits {
 
 fn distance_from_nine(found: Option<Box<u8>>) -> result: u8 pure {
   doc "Zero for no state and for the state the statement left, the only state a close can return.";
-  match found {
+  match move found {
     Some(value: kept) => {
       return kept.inner -wrap 9_u8;
     }
