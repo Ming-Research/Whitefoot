@@ -18,7 +18,8 @@ fn compute(clock: Clock, stop: DecisionCell) -> result: unit pure waits {
   let state = 1_u64;
   loop @run {
     for @batch (turn in 0_u64..65536_u64) {
-      set state = state *wrap 6364136223846793005_u64 +wrap 1442695040888963407_u64;
+      let scaled = state *wrap 6364136223846793005_u64;
+      set state = scaled +wrap 1442695040888963407_u64;
     }
     let verdict = decision_cell_read(cell: &stop);
     if verdict != open {
@@ -100,7 +101,8 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
   if code != 0_u8 {
     return exit_status(code: code);
   }
-  let tens = nanoseconds_from(earlier: started, later: after) / 10000000_u64;
+  let elapsed = nanoseconds_from(earlier: started, later: after);
+  let tens = elapsed / 10000000_u64;
   if tens >= 250_u64 {
     return exit_status(code: 250_u8);
   }
