@@ -172,6 +172,52 @@ fn assert_parameter_interfaces(function: &IrFunction) {
     }
 }
 
+/// Where `parameter` is, what type it has, and each edge that feeds it with
+/// the argument's own type and, for a parameter argument, the edges feeding
+/// that in turn, so a failure shows why a parameter stayed.
+fn describe_parameter(function: &IrFunction, parameter: IrValueId) -> String {
+    let blocks = function.blocks();
+    let home = blocks
+        .iter()
+        .position(|block| block.parameters().iter().any(|(value, _)| *value == parameter))
+        .expect("a block declares the parameter");
+    let mut edges = Vec::new();
+    let mut entered_by_match = false;
+    for (index, block) in blocks.iter().enumerate() {
+        match block.terminator() {
+            IrTerminator::Jump {
+                target, arguments, ..
+            } if target.index() == home => {
+                let position = blocks[home]
+                    .parameters()
+                    .iter()
+                    .position(|(value, _)| *value == parameter)
+                    .expect("declared");
+                let argument = arguments[position];
+                edges.push(format!(
+                    "from block {index}: {argument:?}: {:?}",
+                    function.values[argument.index()]
+                ));
+            }
+            IrTerminator::Match { targets, .. } => {
+                entered_by_match |= targets.iter().any(|target| target.block().index() == home);
+            }
+            IrTerminator::IntegerMatch {
+                targets, default, ..
+            } => {
+                entered_by_match |= targets.iter().any(|target| target.block().index() == home)
+                    || default.is_some_and(|block| block.index() == home);
+            }
+            _ => {}
+        }
+    }
+    format!(
+        "{}: {parameter:?}: {:?} in block {home} (match edge: {entered_by_match}) fed by {edges:?}",
+        function.name(),
+        function.values[parameter.index()]
+    )
+}
+
 fn assert_lowered_functions_are_well_formed(overlap: OverlapLowering) {
     let reports = crate::in_parallel(PROGRAMS, |(name, source)| {
         // A failing check panics inside the lowering fixture; the program's
@@ -183,8 +229,8 @@ fn assert_lowered_functions_are_well_formed(overlap: OverlapLowering) {
                     assert_parameter_interfaces(function);
                     assert_uses_follow_definitions(function);
                     let parameters = redundant_block_parameters(function);
-                    if !parameters.is_empty() {
-                        redundant.push(format!("{} {parameters:?}", function.name()));
+                    for parameter in parameters {
+                        redundant.push(describe_parameter(function, parameter));
                     }
                 }
                 redundant
