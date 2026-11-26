@@ -8,6 +8,7 @@
 //! measurement. It is an instrument of an unmerged study branch.
 
 mod families;
+mod lp;
 mod theory;
 
 use std::collections::{HashMap, HashSet};
@@ -232,10 +233,23 @@ enum Split {
 }
 
 #[derive(Clone, Copy, Debug)]
+enum Forced {
+    /// No forced cases.
+    No,
+    /// Forced cases wherever a branch stands, repeated until none is left.
+    All,
+    /// One pass over the joins near at the root, and none below it.
+    Root,
+    /// As `All`, with at most this many decided on one branch.
+    Depth(u32),
+}
+
+#[derive(Clone, Copy, Debug)]
 struct Cfg {
     name: &'static str,
     bnd: Bnd,
-    sat: bool,
+    forced: Forced,
+    lp: bool,
     split: Split,
     latest_first: bool,
     backjump: bool,
@@ -245,7 +259,8 @@ struct Cfg {
 }
 
 const fn cfg(name: &'static str, bnd: Bnd, sat: bool, split: Split) -> Cfg {
-    Cfg { name, bnd, sat, split, latest_first: true, backjump: false, eager: false, exponential: matches!(split, Split::All) }
+    let forced = if sat { Forced::All } else { Forced::No };
+    Cfg { name, bnd, forced, lp: false, split, latest_first: true, backjump: false, eager: false, exponential: matches!(split, Split::All) }
 }
 
 fn configs() -> Vec<Cfg> {
@@ -266,6 +281,10 @@ fn configs() -> Vec<Cfg> {
         cfg("win64", Bnd::Rel, true, Split::Window(64)),
         cfg("win16-nosat", Bnd::Rel, false, Split::Window(16)),
         cfg("win16-nobnd", Bnd::None, true, Split::Window(16)),
+        Cfg { forced: Forced::Root, ..cfg("win16-root", Bnd::Rel, true, Split::Window(16)) },
+        Cfg { forced: Forced::Depth(8), ..cfg("win16-depth8", Bnd::Rel, true, Split::Window(16)) },
+        Cfg { lp: true, ..cfg("bnd-rel-lp", Bnd::Rel, false, Split::None) },
+        Cfg { lp: true, ..cfg("win16-lp", Bnd::Rel, true, Split::Window(16)) },
     ]
 }
 
@@ -285,7 +304,7 @@ struct Engine<'a> {
 
 impl<'a> Engine<'a> {
     fn new(m: &'a Model, cfg: Cfg, deadline: Instant, node_cap: u64) -> Self {
-        let st = Stats { deadline: Some(deadline), ..Stats::default() };
+        let st = Stats { deadline: Some(deadline), use_lp: cfg.lp, ..Stats::default() };
         Engine { m, cfg, st, bounds: vec![None; m.joins.len()], node_cap }
     }
 
@@ -524,7 +543,7 @@ impl<'a> Engine<'a> {
         }
     }
 
-    fn search(&mut self, mut lits: Vec<TL>, mut open: Vec<usize>, mut roots: Vec<V>, budget: u64, depth: u32) -> Res {
+    fn search(&mut self, mut lits: Vec<TL>, mut open: Vec<usize>, mut roots: Vec<V>, budget: u64, depth: u32, mut forced_left: u32) -> Res {
         self.st.nodes += 1;
         if self.st.nodes > self.node_cap {
             self.st.node_cap_hit = true;
@@ -538,39 +557,49 @@ impl<'a> Engine<'a> {
             Some(Err(())) => return Res::Abort,
             None => {}
         }
-        if self.cfg.sat {
-            loop {
-                let near = self.near(&lits, &open, &roots, false);
-                let mut changed = false;
-                for join in near {
-                    let arms = self.m.joins[join].arms.len();
-                    let mut alive = Vec::new();
-                    for arm in 0..arms {
-                        let (lits2, open2, roots2) = self.decide(&lits, &open, &roots, join, arm, 0);
-                        self.st.probes += 1;
-                        match self.contradictory(&lits2, &open2, &roots2) {
-                            Some(Ok(_)) => {}
-                            Some(Err(())) => return Res::Abort,
-                            None => alive.push((lits2, open2, roots2)),
-                        }
+        let passes = match self.cfg.forced {
+            Forced::No => 0,
+            Forced::Root => u32::from(depth == 0),
+            Forced::All | Forced::Depth(_) => u32::MAX,
+        };
+        let mut pass = 0;
+        while pass < passes && forced_left > 0 {
+            pass += 1;
+            let near = self.near(&lits, &open, &roots, false);
+            let mut changed = false;
+            for join in near {
+                let arms = self.m.joins[join].arms.len();
+                let mut alive = Vec::new();
+                for arm in 0..arms {
+                    let (lits2, open2, roots2) = self.decide(&lits, &open, &roots, join, arm, 0);
+                    self.st.probes += 1;
+                    match self.contradictory(&lits2, &open2, &roots2) {
+                        Some(Ok(_)) => {}
+                        Some(Err(())) => return Res::Abort,
+                        None => alive.push((lits2, open2, roots2)),
                     }
-                    if alive.is_empty() {
-                        self.st.leaves += 1;
-                        return Res::Proved(0);
-                    }
-                    if alive.len() == 1 {
-                        let (lits2, open2, roots2) = alive.pop().expect("one arm");
-                        lits = lits2;
-                        open = open2;
-                        roots = roots2;
-                        self.st.forced += 1;
-                        changed = true;
+                }
+                if alive.is_empty() {
+                    self.st.leaves += 1;
+                    return Res::Proved(0);
+                }
+                if alive.len() == 1 {
+                    let (lits2, open2, roots2) = alive.pop().expect("one arm");
+                    lits = lits2;
+                    open = open2;
+                    roots = roots2;
+                    self.st.forced += 1;
+                    forced_left -= 1;
+                    changed = true;
+                    // One pass decides every near join it can; a repeated
+                    // pass starts again from the joins now near.
+                    if passes != 1 || forced_left == 0 {
                         break;
                     }
                 }
-                if !changed {
-                    break;
-                }
+            }
+            if !changed {
+                break;
             }
         }
         let pick = match self.cfg.split {
@@ -590,7 +619,7 @@ impl<'a> Engine<'a> {
         let mut rests = 0u128;
         for arm in 0..arms {
             let (lits2, open2, roots2) = self.decide(&lits, &open, &roots, join, arm, bit);
-            match self.search(lits2, open2, roots2, budget / arms as u64, depth + 1) {
+            match self.search(lits2, open2, roots2, budget / arms as u64, depth + 1, forced_left) {
                 Res::Proved(tags) => {
                     if self.cfg.backjump && bit != 0 && tags & bit == 0 {
                         return Res::Proved(tags);
@@ -619,7 +648,11 @@ impl<'a> Engine<'a> {
             Split::Window(product) => product,
             _ => u64::MAX,
         };
-        let verdict = match self.search(lits, oblig.joins.clone(), roots, budget, 0) {
+        let forced_left = match self.cfg.forced {
+            Forced::Depth(most) => most,
+            _ => u32::MAX,
+        };
+        let verdict = match self.search(lits, oblig.joins.clone(), roots, budget, 0, forced_left) {
             Res::Proved(_) => "proved",
             Res::Unproved => "unproved",
             Res::Abort => "abort",
@@ -749,7 +782,7 @@ fn truth(program: &[Stmt]) -> Option<HashMap<String, bool>> {
     }
 }
 
-const HEADER: &str = "row,family,size,config,obligation,expect,verdict,cone_joins,theory_calls,fm_pairs,fm_elims,probes,forced,nodes,leaves,projections,bound_facts,facts_last_join,facts_max_join,time_ns,note";
+const HEADER: &str = "row,family,size,config,obligation,expect,verdict,cone_joins,theory_calls,fm_pairs,fm_elims,probes,forced,nodes,leaves,projections,bound_facts,facts_last_join,facts_max_join,time_ns,note,lp_pivots";
 
 fn emit(row: &str, family: &str, size: &str, config: &str, name: &str, expect: &str, verdict: &str, cone: usize, st: &Stats, facts: (usize, usize), nanos: u128) {
     let mut note = String::new();
@@ -763,7 +796,7 @@ fn emit(row: &str, family: &str, size: &str, config: &str, name: &str, expect: &
         note.push_str("node-cap ");
     }
     println!(
-        "{row},{family},{size},{config},{name},{expect},{verdict},{cone},{},{},{},{},{},{},{},{},{},{},{},{nanos},{}",
+        "{row},{family},{size},{config},{name},{expect},{verdict},{cone},{},{},{},{},{},{},{},{},{},{},{},{nanos},{},{}",
         st.theory_calls,
         st.fm_pairs,
         st.fm_elims,
@@ -775,7 +808,8 @@ fn emit(row: &str, family: &str, size: &str, config: &str, name: &str, expect: &
         st.bound_facts,
         facts.0,
         facts.1,
-        note.trim()
+        note.trim(),
+        st.lp_pivots
     );
 }
 
@@ -872,24 +906,27 @@ fn check() {
 }
 
 fn dense() {
-    println!("row,n,inequalities,seed,result,fm_pairs,fm_elims,peak_inequalities,time_ns");
+    println!("row,n,inequalities,seed,method,result,fm_pairs,fm_elims,peak_inequalities,lp_pivots,time_ns");
     for n in 4..=14u32 {
         for seed in 1..=3u64 {
             let lits = families::dense(n, seed);
-            let mut st = Stats { deadline: Some(Instant::now() + Duration::from_secs(60)), ..Stats::default() };
-            let start = Instant::now();
-            let result = match theory(&lits, None, &mut st) {
-                Out::Contra(_) => "contradictory",
-                Out::Open(_) => "feasible",
-                Out::Capacity => {
-                    if st.timeout {
-                        "time-guard"
-                    } else {
-                        "capacity"
+            for use_lp in [false, true] {
+                let mut st = Stats { deadline: Some(Instant::now() + Duration::from_secs(60)), use_lp, ..Stats::default() };
+                let start = Instant::now();
+                let result = match theory(&lits, None, &mut st) {
+                    Out::Contra(_) => "contradictory",
+                    Out::Open(_) => "feasible",
+                    Out::Capacity => {
+                        if st.timeout {
+                            "time-guard"
+                        } else {
+                            "capacity"
+                        }
                     }
-                }
-            };
-            println!("dense,{n},{},{seed},{result},{},{},{},{}", lits.len(), st.fm_pairs, st.fm_elims, st.peak, start.elapsed().as_nanos());
+                };
+                let method = if use_lp { "simplex" } else { "elimination" };
+                println!("dense,{n},{},{seed},{method},{result},{},{},{},{},{}", lits.len(), st.fm_pairs, st.fm_elims, st.peak, st.lp_pivots, start.elapsed().as_nanos());
+            }
         }
     }
 }

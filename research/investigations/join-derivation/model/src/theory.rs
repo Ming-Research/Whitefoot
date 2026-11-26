@@ -26,6 +26,8 @@ pub struct Stats {
     pub leaves: u64,
     pub projections: u64,
     pub bound_facts: u64,
+    pub lp_pivots: u64,
+    pub use_lp: bool,
     pub peak: usize,
     pub capacity: bool,
     pub timeout: bool,
@@ -45,6 +47,8 @@ impl Stats {
             leaves: self.leaves - before.leaves,
             projections: self.projections - before.projections,
             bound_facts: self.bound_facts - before.bound_facts,
+            lp_pivots: self.lp_pivots - before.lp_pivots,
+            use_lp: self.use_lp,
             peak: self.peak,
             capacity: self.capacity,
             timeout: self.timeout,
@@ -302,6 +306,30 @@ pub fn theory(input: &[TL], keep: Option<V>, st: &mut Stats) -> Out {
     for (lin, tag) in eqs {
         les.push((lin.scale(-1), tag));
         les.push((lin, tag));
+    }
+    if st.use_lp {
+        let mut rows = Vec::with_capacity(les.len());
+        for (lin, tag) in &les {
+            if lin.t.is_empty() {
+                if lin.c > 0 {
+                    return Out::Contra(*tag);
+                }
+            } else {
+                rows.push(lin.clone());
+            }
+        }
+        return match crate::lp::solve(&rows, keep, st) {
+            crate::lp::Lp::Infeasible => Out::Contra(0),
+            crate::lp::Lp::Feasible | crate::lp::Lp::Unbounded => Out::Open(Vec::new()),
+            crate::lp::Lp::Supremum(numerator, denominator) => {
+                let kept = keep.expect("a supremum has a kept variable");
+                Out::Open(vec![(Lin { t: vec![(kept, denominator)], c: -numerator }, 0)])
+            }
+            crate::lp::Lp::Capacity => {
+                st.capacity = true;
+                Out::Capacity
+            }
+        };
     }
     // Fourier-Motzkin elimination.
     loop {

@@ -58,8 +58,8 @@ jobs:
         working-directory: research/investigations/join-derivation/model
         run: |
           ./target/release/join-derivation-model recount > "$RUNNER_TEMP/measure-2.csv"
-          cut -d, -f1-19,21 "$RUNNER_TEMP/measure-2.csv" | sort > "$RUNNER_TEMP/counts-2.csv"
-          cut -d, -f1-19,21 "$RUNNER_TEMP/measure-1.csv" | sort > "$RUNNER_TEMP/counts-1.csv"
+          cut -d, -f1-19,21-22 "$RUNNER_TEMP/measure-2.csv" | sort > "$RUNNER_TEMP/counts-2.csv"
+          cut -d, -f1-19,21-22 "$RUNNER_TEMP/measure-1.csv" | sort > "$RUNNER_TEMP/counts-1.csv"
           missing=$(comm -23 "$RUNNER_TEMP/counts-2.csv" "$RUNNER_TEMP/counts-1.csv" | wc -l)
           echo "rows of the second count: $(wc -l < "$RUNNER_TEMP/counts-2.csv"); rows not identical in the first: $missing"
           comm -23 "$RUNNER_TEMP/counts-2.csv" "$RUNNER_TEMP/counts-1.csv" | head -20
