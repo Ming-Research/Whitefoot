@@ -1,0 +1,18 @@
+fn pick(marks: &[u64], a: &Slots<u64, 4>, b: &Slots<u64, 4>, x: u64) -> result: u64 reads(a, b) contract {
+  requires a^.len == 4_u64;
+  requires b^.len == 2_u64;
+  requires forall small(k in 0_u64..marks^.len): marks^[k] < 8_u64;
+} {
+  doc "r names a^ or b^; index 3 is inside a^ but past the end of b^, so the read through r is not proved in bounds.";
+  let r = if x < 10_u64 {
+    give &a^;
+  } else {
+    give &b^;
+  }
+  let v = r^[3_u64];
+  return v;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
