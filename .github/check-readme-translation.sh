@@ -2,9 +2,11 @@
 # README.zh-CN.md translates README.md, and a change to one of them is a
 # change to both (AGENTS.md).
 #
-# The working tree is compared with its merge base on MAIN-REF, which is what
+# The working tree is compared with its merge base on BASE-REF, which is what
 # a merge would change in main, and a change to exactly one of the two files
-# is refused. A base without the translation is the change that adds it and
+# is refused. The Makefile passes the commit .github/merge-base.sh chose, the
+# merge base of origin/main and HEAD, so the merge base taken here is that
+# commit itself. A base without the translation is the change that adds it and
 # is not judged. The check sees which files changed, not whether the
 # translation says what README.md says; review judges that.
 # `--self-test` builds a throwaway repository and requires each case to be
@@ -17,7 +19,7 @@ ENGLISH=README.md
 CHINESE=README.zh-CN.md
 
 usage() {
-    echo 'usage: check-readme-translation.sh MAIN-REF | --self-test' >&2
+    echo 'usage: check-readme-translation.sh BASE-REF | --self-test' >&2
     exit 2
 }
 
@@ -27,10 +29,10 @@ fail() {
 }
 
 check() {
-    main_ref=$1
-    git rev-parse --verify --quiet "$main_ref^{commit}" >/dev/null ||
-        fail "$main_ref must name a commit (CI creates a local main ref)"
-    base=$(git merge-base "$main_ref" HEAD) || fail "no merge base with $main_ref"
+    base_ref=$1
+    git rev-parse --verify --quiet "$base_ref^{commit}" >/dev/null ||
+        fail "$base_ref must name a commit (.github/merge-base.sh prints the one to use)"
+    base=$(git merge-base "$base_ref" HEAD) || fail "no merge base with $base_ref"
     short=$(git rev-parse --short "$base")
 
     if ! git cat-file -e "$base:$CHINESE" 2>/dev/null; then

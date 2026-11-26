@@ -270,18 +270,11 @@ jobs:
           python3 --version
           (cd compiler && rustc --version && cargo --version && cargo clippy --version)
 
-      # As in gate.yml: `spec-archives` and `readme-translation` read `main` as
-      # a local ref.
-      - name: Name main as a local ref
-        run: |
-          git branch -f main origin/main
-          git log --oneline -1 main
-
       # The commit's change is what it holds beyond main: its fork point from
       # main is the design review base.
       - name: Select the design review base
         run: |
-          design_review_base=$(git merge-base refs/remotes/origin/main HEAD)
+          design_review_base=$(sh .github/merge-base.sh)
           echo "DESIGN_REVIEW_BASE=$design_review_base" >> "$GITHUB_ENV"
           git log --oneline -1 "$design_review_base"
 
