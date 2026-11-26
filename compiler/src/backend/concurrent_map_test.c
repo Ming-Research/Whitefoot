@@ -4446,7 +4446,9 @@ static void *release_reserves(void *arg) {
  * the swaps go on past their 2,000 rounds until a release has freed bytes.
  * Whether a release falls inside a swap is still the scheduler's, which is
  * why reserves_refused_inside_a_swap puts one there; this run is the race
- * itself under ASan and under TSan (map-sanitizers.yml). */
+ * itself under ASan and under TSan (map-sanitizers.yml), where a swap without
+ * its locks failed it in 5 of 5 runs under each, on both hosted platforms
+ * (research/experiments/map-test-overlap). */
 static void reserves_release_beside_swaps(void) {
     wf_cmap *maps[2] = {wf_cmap_create(1), wf_cmap_create(1)};
     wf_cmap_user *users[2] = {wf_cmap_enter(maps[0]), wf_cmap_enter(maps[1])};
