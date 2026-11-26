@@ -36,7 +36,9 @@ mod toolchain;
 
 pub use toolchain::clang_executable;
 #[doc(hidden)]
-pub use toolchain::{Toolchain, prepare_toolchain, resolved_toolchain};
+pub use toolchain::{
+    Toolchain, prepare_toolchain, resolved_toolchain, runtime_stack_probe_arguments,
+};
 
 /// The stack each worker of [`in_parallel`] runs on, as large as the
 /// compiler driver's own: a worker runs the same recursive checks.
