@@ -6,7 +6,7 @@ name: tmp-handoff-measure
 
 on:
   push:
-    branches: ['wf-try/work-159-26e0fade/**']
+    branches: ['wf-try/work-159-26e0fade/commit/**']
 
 concurrency:
   group: tmp-handoff-measure-14900k
@@ -44,9 +44,17 @@ jobs:
             exit 1
           fi
 
-      - name: Build the base and candidate compilers and Firn images
+      # The host's check lock (run-check.pl) keeps other measurements and
+      # builds that take it off the host while this one runs; one that holds
+      # it makes run-check.pl exit 75 before anything starts, so the step
+      # waits for it, at most five hours, and then holds it throughout.
+      - name: Build and measure, holding the host's check lock
+        env:
+          WHITEFOOT_CHECK_TIMEOUT: "32400"
         run: |
-          mkdir -p "$RUNNER_TEMP/measure/compare"
+          cat >"$RUNNER_TEMP/measure.sh" <<'SCRIPT'
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/measure/compare" "$RUNNER_TEMP/measure/yield"
           git worktree prune
           for side in base candidate; do
             if [ "$side" = base ]; then rev=$BASE_REV; else rev=$GITHUB_SHA; fi
@@ -59,34 +67,31 @@ jobs:
             "$tree/compiler/target/gate/whitefootc" --full-lto \
               --graph "$tree/apps/firn/modules.wfg" --entry firn -o "$RUNNER_TEMP/measure/compare/$side"
           done
-
-      - name: Measure the latencies and the fixed cost
-        env:
-          OUT: ${{ runner.temp }}/measure/yield
-          BASE_WFC: ${{ runner.temp }}/tree-base/compiler/target/gate/whitefootc
-          CAND_WFC: ${{ runner.temp }}/tree-candidate/compiler/target/gate/whitefootc
-          CAND_REV: ${{ github.sha }}
-          WHITEFOOT_CHECK_TIMEOUT: "14400"
-        run: |
-          mkdir -p "$OUT"
-          perl .github/run-check.pl handoff/yield \
-            sh research/experiments/handoff-yield-check/run.sh 2>&1 | tee "$OUT/run.txt"
-
-      - name: Compare Firn images
-        env:
-          OUT: ${{ runner.temp }}/measure/compare
-          IMAGES: base=${{ runner.temp }}/measure/compare/base candidate=${{ runner.temp }}/measure/compare/candidate base-twin=${{ runner.temp }}/measure/compare/base
-          COMPARE_CPUS: "1 2"
-          COMPARE_TESTS: "mset set get"
-          COMPARE_DEPTHS: "16 1"
-          COMPARE_PASSES: "6"
-          COMPARE_SECONDS: "5"
-          COMPARE_QUIET: "0.05"
-          COMPARE_CLIENTS: "2000"
-          WHITEFOOT_CHECK_TIMEOUT: "21600"
-        run: |
-          perl .github/run-check.pl handoff/firn-compare \
-            sh research/experiments/io-completion-bench/redis-bench.sh compare 2>&1 | tee "$OUT/bench.txt"
+          OUT="$RUNNER_TEMP/measure/yield" \
+            BASE_WFC="$RUNNER_TEMP/tree-base/compiler/target/gate/whitefootc" \
+            CAND_WFC="$RUNNER_TEMP/tree-candidate/compiler/target/gate/whitefootc" \
+            BASE_REV="$BASE_REV" CAND_REV="$GITHUB_SHA" \
+            sh research/experiments/handoff-yield-check/run.sh 2>&1 | tee "$RUNNER_TEMP/measure/yield/run.txt"
+          compare="$RUNNER_TEMP/measure/compare"
+          OUT="$compare" \
+            IMAGES="base=$compare/base candidate=$compare/candidate base-twin=$compare/base" \
+            COMPARE_CPUS="1 2" COMPARE_TESTS="mset set get" COMPARE_DEPTHS="16 1" \
+            COMPARE_PASSES=6 COMPARE_SECONDS=5 COMPARE_QUIET=0.05 COMPARE_CLIENTS=2000 \
+            sh research/experiments/io-completion-bench/redis-bench.sh compare 2>&1 | tee "$compare/bench.txt"
+          SCRIPT
+          waited=0
+          while :; do
+            status=0
+            perl .github/run-check.pl handoff/measure bash "$RUNNER_TEMP/measure.sh" || status=$?
+            if [ "$status" -ne 75 ]; then
+              exit "$status"
+            fi
+            if [ "$waited" -ge 18000 ]; then
+              exit 75
+            fi
+            sleep 60
+            waited=$((waited + 60))
+          done
 
       - uses: actions/upload-artifact@v4
         if: always()

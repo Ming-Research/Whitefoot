@@ -5,7 +5,7 @@ name: tmp-test-times
 
 on:
   push:
-    branches: ['wf-try/work-159-26e0fade/**']
+    branches: ['wf-try/work-159-26e0fade/commit/**']
 
 defaults:
   run:
