@@ -4,12 +4,26 @@
 
 use super::*;
 
+/// The kind of a split advice and the reads outside its accumulators' own
+/// updates, without the node path two spellings of one loop necessarily
+/// differ in.
+pub(super) fn advice_shape(advice: &SplitAdvice) -> (&'static str, usize) {
+    match advice {
+        SplitAdvice::None => ("none", 0),
+        SplitAdvice::Eligible => ("eligible", 0),
+        SplitAdvice::DependentAccumulator { outside_reads, .. } => ("dependent", *outside_reads),
+    }
+}
+
 /// The advice of the one loop of `main`, asserted to be refused by condition
 /// one for carrying `accumulators` accumulators.
-fn advice_of_many(source: &[u8], accumulators: usize) -> LoopPermission {
+pub(super) fn advice_of_many(source: &[u8], accumulators: usize) -> LoopPermission {
     let table = permission_of(source);
     let judged = only_loop(&table, "main").clone();
-    let LoopDenial::ManyAccumulators { accumulators: found } = denial(&judged, 1) else {
+    let LoopDenial::ManyAccumulators {
+        accumulators: found,
+    } = denial(&judged, 1)
+    else {
         panic!("expected an accumulator-count denial: {:?}", judged.verdict);
     };
     assert_eq!(*found, accumulators);

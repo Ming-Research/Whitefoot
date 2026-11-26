@@ -2048,13 +2048,7 @@ fn verdict_shape(judged: &LoopPermission) -> VerdictShape {
         judged.verdict.denied_condition(),
         judged.actualization,
         judged.combines.clone(),
-        match &judged.split_advice {
-            SplitAdvice::None => ("none", 0),
-            SplitAdvice::Eligible => ("eligible", 0),
-            SplitAdvice::DependentAccumulator { outside_reads, .. } => {
-                ("dependent", *outside_reads)
-            }
-        },
+        split_advice::advice_shape(&judged.split_advice),
     )
 }
 

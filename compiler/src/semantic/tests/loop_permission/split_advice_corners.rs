@@ -7,22 +7,8 @@
 //! subscript guard, a nested loop's endpoint, a Boolean condition) or through
 //! none, and the advice must follow that, not the spelling.
 
+use super::split_advice::advice_of_many;
 use super::*;
-
-/// The advice of the one loop of `main`, refused by condition one for carrying
-/// `accumulators` accumulators.
-fn advice_of_many(source: &[u8], accumulators: usize) -> LoopPermission {
-    let table = permission_of(source);
-    let judged = only_loop(&table, "main").clone();
-    let LoopDenial::ManyAccumulators {
-        accumulators: found,
-    } = denial(&judged, 1)
-    else {
-        panic!("expected an accumulator-count denial: {:?}", judged.verdict);
-    };
-    assert_eq!(*found, accumulators);
-    judged
-}
 
 fn outside_reads_of(judged: &LoopPermission) -> usize {
     match &judged.split_advice {
