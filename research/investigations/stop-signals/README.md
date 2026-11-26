@@ -190,7 +190,13 @@ Zen 4 (EPYC 9V74) jobs did. The traces show the two 32 MiB grids at relative
 offsets that differ between variants, but also between runs of one variant,
 so one traced run cannot be matched to the timed runs; which cache
 structure the placement defeats is not established, and hosted virtual
-machines expose no performance counters to settle it. The launcher-thread
+machines expose no performance counters to settle it. A later reading of
+this run's samples and traces
+([data placement](../data-placement/README.md#what-the-earlier-probes-data-already-shows))
+finds that each launch of S lands on one of two time levels, that the Xeon
+job's S and P split the same way while its B and N do not, so that job was
+not merely noisy, and that the distance between the two grids follows from
+the order of the mappings. The launcher-thread
 implementation creates no thread before the entry and restores the merge
 base's mapping order; its compute-regression run on an EPYC 9V74 host
 (Whitefoot run 37766132007, head dfcf31b81) passed with stencil at 0.986,

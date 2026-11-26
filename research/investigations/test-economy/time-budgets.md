@@ -2331,14 +2331,20 @@ change `.github/test-gate-both-platforms.sh` or
 | `epyc-9v45` | 1 | 25.73 | 30 | 35 | 25 |
 | `xeon-6975p` | 5 | 25.23 25.33 25.43 25.43 25.53 | 30 | 35 | 30 |
 
-The rule values are `budget_for` of `.github/recompute-time-budgets.py`. The
-`xeon-8573c` class has no run since the split, and takes the row's largest.
-Every class has fewer than 20 runs, so the rule does not set a value from them
-(the table's header); the owner was asked (question `repository-invariants-
-budget`) whether to raise the row to the right-hand column, which the table now
-holds (40 40 35 40 35, `macos` 30), or to shorten the stage by running this
-work's cases beside the existing ones and raise it to the middle column (35 35
-30 35 30).
+The rule values are `budget_for` of `.github/recompute-time-budgets.py`; they
+were a proposal for the owner and are not in the table. The owner did not raise
+the row: Whitefoot #599, merged as 10c976ebb, made `.github/test-run-check.sh`
+run its cases in 14 groups side by side, each with a lock of its own, so that
+the test takes about as long as its slowest group and the stage takes 8 to 14 s
+on every class against the 25 to 30 s above (the owner's figure; it was not
+re-measured here). The cases this work added are in groups of their own in that
+structure: `cpu` (the one-second computing child), `cygwin` (the two Windows
+host cases), `missing_command`, and three for the Windows job's form,
+`windows_form` (the steps against the table rows and the `compiler/build` row),
+`windows_shell` (the default shell, run as the runner runs it) and
+`windows_verdict` (the job's last step). The `repository-invariants` row is main's
+(30 30 25 30 30 30), and the question `repository-invariants-budget` was
+withdrawn.
 
 ## Daily loop
 
