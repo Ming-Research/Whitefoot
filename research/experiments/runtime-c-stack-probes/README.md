@@ -65,8 +65,9 @@ the repository root:
 bash research/experiments/runtime-c-stack-probes/probe.sh /usr/bin/clang "" clash-driver -fstack-clash-protection
 ```
 
-The frame test is `tests::every_runtime_c_frame_over_a_page_is_probed` in
-`compiler/src/bin/whitefootc.rs`, which compiles each runtime C unit with the
+The frame test is `runtime_frames::every_runtime_c_frame_over_a_page_is_probed`
+in `compiler/src/bin/whitefootc/runtime_frames.rs` (during the trials, in
+`compiler/src/bin/whitefootc.rs`), which compiles each runtime C unit with the
 driver's own `unit_arguments` and reads the same report and assembly. On
 macOS it also ran against upstream clang 22.1.8 as the bundle selects it: a
 copy of the test binary in a directory beside a `clang` symlink to the
@@ -139,6 +140,82 @@ every body it read was empty and every large frame counted as unprobed
 whatever the arguments: the red of the earlier trial at `92152974b` with
 `-fstack-clash-protection` was that defect, not a missing probe.
 
+## The implementation's runs
+
+The arguments are chosen by one function,
+`whitefoot::runtime_stack_probe_arguments` (the target's stack-probe record
+and, on Darwin, the helper capability probe of the clang in use), and
+`unit_arguments` appends them for the uncached link, the restricted child
+units and the cached objects alike. The frame test compiles every unit any
+link compiles, the hand-written `ordinary_values.ll` included, with the
+driver's arguments for each, and counts a frame over a page or of dynamic size
+as probed only when its body holds both halves of one inline method (the
+one-page step of the stack pointer and the touch of that page) or references
+`___chkstk_darwin`; a lone store of zero at the stack pointer is what an
+ordinary local's clearing also compiles to.
+
+Run
+[45731597744](https://github.com/Ming-Research/Whitefoot/actions/runs/45731597744)
+at `dbf2ad2ac` (jobs 139614682818 on `ubuntu-24.04` with LLVM 22 and
+139614682219 on `macos-15`), written as notices; each ablated row empties the
+named argument arm and gives `wf_std.text.host_copy_bytes` in
+`ordinary_values.ll` a 65536-byte alloca whose address it stores where its
+callee reads:
+
+| Compiler | Arguments | Result |
+| --- | --- | --- |
+| Linux LLVM 22 | `-fstack-clash-protection` | passes; the body steps `subq $4096, %rsp` and stores `movq $0, (%rsp)` |
+| Linux LLVM 22, ablated | none | fails naming `wf_file_wait_readiness` (32808, static) and `wf_std.text.host_copy_bytes` (65560, static) |
+| Apple clang 17 | `-fstack-check` | passes; the body references `___chkstk_darwin` |
+| Apple clang 17, ablated | `-fno-stack-check` | fails naming `wf_file_wait_readiness` (32832) and `wf_std.text.host_copy_bytes` (65584) |
+| upstream 22.1.8 as packaged | `-Xclang -fstack-clash-protection` | passes; the body steps `sub sp, sp, #1, lsl #12` and stores `str xzr, [sp]` |
+| upstream 22.1.8 as packaged, ablated | none | fails naming `wf_file_wait_readiness` (32832) and `wf_std.text.host_copy_bytes` (65584) |
+
+The Linux definition's body also confirms the x86-64 page step that the plan
+had inferred from LLVM's inline-probe lowering. The hand-written definition
+stayed unprobed under Apple's clang too, whose driver asks cc1 for
+`-fstack-check` by default and was given no probe argument for the IR unit;
+the attribute that makes a probe is part of the IR text, which clang does not
+add when it compiles IR (read from LLVM's behaviour, not tested further). So
+the LLVM unit's frames are covered by this test and by an attribute written in
+its text, not by a compile argument.
+
+With the cc1 option in place, `whitefootc` beside the upstream 22.1.8 clang
+(a package directory holding the compiler and a `clang` symlink) built and ran
+`tests/package-fixtures/waiting.wf` (exit 0) and `stack-exhaustion.wf` (exit
+134 with `{"resource":"stack"}`) in the ordinary, `--full-lto`, `--cache` and
+`--cache --fragments` link modes, which is the same job's second half.
+
+The acceptance script's comparison (`.github/toolchain/check-runtime-frames.sh`)
+was run in the same job on the line the test prints when it runs outside any
+package, which names Apple's `/usr/bin/clang`: it fails with "the runtime was
+compiled by another clang than the package's", status 1. On the line the test
+prints beside the package's clang it passes, status 0.
+
+Defects these runs found in the first trials of the check, each fixed:
+
+- The first ablation of the LLVM unit stored one byte into a 64 KiB alloca.
+  SROA shrinks an alloca that only a volatile store reaches to that byte, so
+  the unit had no large frame and the test rightly reported none (runs
+  [45682401654](https://github.com/Ming-Research/Whitefoot/actions/runs/45682401654)
+  and [45729610330](https://github.com/Ming-Research/Whitefoot/actions/runs/45729610330)
+  held the verdict `failed=1` for that reason, and for the next point). The
+  ablation now keeps the frame by letting its address leave the function.
+- That workflow compared the packaged clang by the symlink's path, while the
+  resolution prints the resolved one (`clang-22`); the comparison is by real
+  path, as the acceptance script's is.
+- The frame test named its assembly and report by each unit's stem, so
+  `ordinary_values.c` and `ordinary_values.ll` shared both and a unit that left
+  no report could have been read through the other's; each unit now writes
+  its own `<file name>.s` and `.su`.
+- The release dry run of `3441d6632`, run
+  [45729610580](https://github.com/Ming-Research/Whitefoot/actions/runs/45729610580),
+  ran the frame check green on both packages (macOS under the host-clang
+  denial, job 139611446773; Linux in the container, jobs 139611446749 and
+  139611446782: the installed package's `clang-22`, one test passed) and then
+  failed the two Linux jobs at the summary line, a `printf` whose quoted text
+  held an apostrophe.
+
 ## Limitations
 
 The runs read assembly; none executes a runtime C frame into the guard page.
@@ -148,4 +225,6 @@ Only Linux x86-64 and macOS arm64 were compiled; Linux AArch64, x86-64
 Darwin and the Windows MinGW target were not. The test compiles each unit
 without link-time optimization; a link with `-flto` keeps each definition's
 attribute in its bitcode, which was read from LLVM's attribute handling and
-not observed here.
+not observed here. The four link modes ran with the cc1 option and the
+programs behaved, which shows the option does not break them, not that the
+linked code carries the probes.
