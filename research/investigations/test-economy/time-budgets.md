@@ -1406,17 +1406,19 @@ jobs above; the criteria are applied to each run and to the 36 jobs together.
 The jobs landed on whatever hosts the pool gave them, so the arms' CPU models
 differ (below). Ratio is the first build's wall time over the second's; inputs
 are GNU `time`'s file-system inputs (blocks) of the build; the stall is the
-build's `/proc/pressure/io` "full" time.
+build's `/proc/pressure/io` "full" time. The numbers of each job are in
+[first-build-jobs-2026-11-25.tsv](first-build-jobs-2026-11-25.tsv), from which
+every figure below can be recomputed.
 
 | arm (jobs) | median ratio | range | first build 5% or more longer | median excess s | inputs, first / second (median) | I/O stall s, first / second (median) |
 |---|---:|---|---:|---:|---|---|
-| none (12) | 1.068 | 0.985 to 1.105 | 9 | 7.4 | 366,044 / 12 | 5.27 / 0.00 |
-| toolchain read (12) | 0.999 | 0.980 to 1.016 | 0 | 0.0 | 5,952 / 0 | 0.33 / 0.01 |
-| 60 s wait (12) | 1.051 | 0.988 to 1.086 | 6 | 5.6 | 366,004 / 16 | 3.68 / 0.01 |
+| none (12) | 1.068 | 0.985 to 1.104 | 9 | 7.3 | 366,044 / 12 | 5.27 / 0.00 |
+| toolchain read (12) | 0.999 | 0.979 to 1.015 | 0 | -0.1 | 5,952 / 0 | 0.34 / 0.01 |
+| 60 s wait (12) | 1.050 | 0.988 to 1.085 | 6 | 5.5 | 366,004 / 16 | 3.68 / 0.01 |
 
 Per run, the none arm's median ratio is 1.060 (45632270254) and 1.073
-(45631141666), the toolchain arm's 0.994 and 1.007, the wait arm's 1.036 and
-1.052. Against the criteria fixed above:
+(45631141666), the toolchain arm's 0.994 and 1.008, the wait arm's 1.035 and
+1.053. Against the criteria fixed above:
 
 - The cold page cache is the cause. With no preparation the first build took
   5% or more longer in 9 of 12 jobs, and in 8 of those its user time was
@@ -1426,19 +1428,19 @@ Per run, the none arm's median ratio is 1.060 (45632270254) and 1.073
   5,944 to 5,952 in every job, which the second build reads none of; what
   they are was not traced).
 - The two conditions that reject the cause do not hold. Reading the toolchain
-  removed all of the median excess (7.4 s to 0.0 s), more than half, and the
-  60 s wait did not remove it: its median ratio, 1.051, is outside 3%, and its
+  removed all of the median excess (7.3 s to -0.1 s), more than half, and the
+  60 s wait did not remove it: its median ratio, 1.050, is outside 3%, and its
   builds read as many blocks as the none arm's, since a wait reads nothing.
 - The preparation is sufficient: the first build was within 5% of the second in
-  every job of the toolchain arm, the largest ratio being 1.016.
+  every job of the toolchain arm, the largest ratio being 1.015.
 - The preparation itself took 11.3 to 36.3 s, median 16.7 s, on the 12 hosts,
   more than the "several to a dozen-odd seconds" the choice between
   preparations was given. It is outside every labeled stage.
 
 The excess is not the same on every host. In the none arm the Xeon 6975P-C
-(five jobs; it is not a column of the table) took 7.0 to 10.5% longer, the
-EPYC 7763 and 9V74 5.4 to 7.6% (two jobs each), and the two Xeon Platinum 8573C
-jobs 0.985 and 0.998, although their first builds read as many blocks (about
+(five jobs; it is not a column of the table) took 6.9 to 10.4% longer, the
+EPYC 7763 and 9V74 5.3 to 7.6% (two jobs each), and the two Xeon Platinum 8573C
+jobs 0.985 and 0.999, although their first builds read as many blocks (about
 366,000) and stalled 1.8 and 2.4 s on I/O. The 8573C jobs ran 138 to 140 s for
 both builds, so what the first build lost there did not show as a longer first
 build. The excess therefore depends on the host's disk as well as on the
