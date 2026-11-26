@@ -18,6 +18,8 @@
 # does, so the job starts the install, compiles, and the stage waits for the
 # install where the tests begin (the Makefile's TOOLCHAIN_READY). The install's
 # output is kept in a file and shown when `wait` returns, whatever the result.
+# On Linux a `wait` with no `start` fails: the clang the image holds is not the
+# one .github/llvm-major pins.
 #
 # Environment: HOST_TOOLCHAIN_DIR (the log and the status file; default under
 # RUNNER_TEMP), HOST_TOOLCHAIN_LIMIT (seconds `wait` waits for the install;
@@ -65,8 +67,16 @@ start() {
 }
 
 wait_for_install() {
-    # No log means no install was started here: nothing to wait for.
-    [ -f "$dir/log" ] || return 0
+    # No log means no install was started: on Linux the LLVM the job needs is
+    # not there to wait for, and whatever clang the image holds is not the one
+    # .github/llvm-major pins; elsewhere `start` installs nothing.
+    if [ ! -f "$dir/log" ]; then
+        if [ "${RUNNER_OS:-}" = Linux ]; then
+            echo "host toolchain: the install was not started (run \`start\` first)" >&2
+            return 1
+        fi
+        return 0
+    fi
     waited=0
     while [ ! -f "$dir/status" ]; do
         if [ "$waited" -ge "$((limit * 5))" ]; then
@@ -139,6 +149,22 @@ self_test() {
     run_case 'macOS installs nothing and checks' ok macOS 'exit 9' true 5 || return 1
     [ ! -e "$work/d$n/log" ] || { echo 'self-test: macOS started an install' >&2; return 1; }
     run_case 'macOS checks too' fail macOS 'exit 9' false 5 || return 1
+    # `wait` without a `start`: on Linux it fails whatever the image holds, on
+    # macOS, where nothing is installed, the check alone decides.
+    HOST_TOOLCHAIN_DIR=$work/never-started
+    HOST_TOOLCHAIN_INSTALL='exit 9'
+    HOST_TOOLCHAIN_CHECK=true
+    HOST_TOOLCHAIN_LIMIT=5
+    RUNNER_OS=Linux
+    export HOST_TOOLCHAIN_DIR HOST_TOOLCHAIN_INSTALL HOST_TOOLCHAIN_CHECK HOST_TOOLCHAIN_LIMIT RUNNER_OS
+    if sh "$me" wait > "$work/out" 2>&1; then
+        echo 'self-test: a Linux wait without a start passed' >&2
+        return 1
+    fi
+    grep -q 'not started' "$work/out" || { echo 'self-test: the missing start is not named' >&2; return 1; }
+    RUNNER_OS=macOS
+    export RUNNER_OS
+    sh "$me" wait > "$work/out" 2>&1 || { echo 'self-test: a macOS wait without a start failed' >&2; cat "$work/out" >&2; return 1; }
     # `start` returns while the install still runs, and the wait then outlasts it.
     HOST_TOOLCHAIN_DIR=$work/background
     HOST_TOOLCHAIN_INSTALL='sleep 1'
