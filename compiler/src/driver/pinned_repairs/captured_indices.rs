@@ -72,7 +72,7 @@ fn need(row: &Slots<u64, 8>) -> result: unit reads(row) contract {
   return unit;
 }
 
-fn inspect(pages: &Array<Slots<u64, 8>, 2>, rows: &[Cursor], selector: &Cursor) -> result: unit reads(pages), reads(rows), reads(selector.next) contract {
+fn inspect(pages: &Array<Slots<u64, 8>, 2>, rows: &[Cursor], selector: &Cursor) -> result: unit reads(pages), reads(selector.next) contract {
   requires selector^.next < 2_u64;
   requires 0_u64 < rows^.len;
 } {
@@ -103,7 +103,7 @@ fn need(row: &Slots<u64, 8>) -> result: unit reads(row) contract {
   return unit;
 }
 
-fn inspect(pages: &Array<Slots<u64, 8>, 2>, rows: &[Cursor], selector: &Cursor) -> result: unit reads(pages), reads(rows), reads(selector.next) contract {
+fn inspect(pages: &Array<Slots<u64, 8>, 2>, rows: &[Cursor], selector: &Cursor) -> result: unit reads(pages), reads(selector.next) contract {
   requires selector^.next < 2_u64;
   requires 0_u64 < rows^.len;
 } {
