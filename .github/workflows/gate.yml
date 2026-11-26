@@ -231,22 +231,13 @@ jobs:
           echo "WHITEFOOT_SCRATCH_ROOT=$RUNNER_TEMP/whitefoot" >> "$GITHUB_ENV"
           echo "WHITEFOOT_TIME_BUDGET_RECORD=$RUNNER_TEMP/time-budget-overruns.txt" >> "$GITHUB_ENV"
 
-      # `spec-archives` and `readme-translation` read `main` as a local ref:
-      # they compare released specification archives, and the README with its
-      # translation, with the merge base. A CI checkout
-      # has the remote-tracking ref only, so name it locally here. On a push to
-      # main the checkout already sits on that branch, and git refuses to force
-      # a branch the worktree has checked out, so the ref is only created when
-      # it is missing.
-      - name: Name main as a local ref
+      # The checks that compare a branch with main read the remote-tracking
+      # ref origin/main (.github/merge-base.sh), which a CI checkout has only
+      # once it is fetched here; no local main branch is made.
+      - name: Fetch main
         run: |
           git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
-          if git symbolic-ref -q HEAD | grep -qx refs/heads/main; then
-            echo "checkout is on main"
-          else
-            git branch -f main origin/main
-          fi
-          git log --oneline -1 main
+          git log --oneline -1 refs/remotes/origin/main
 
       # A main push must compare with its previous tip, not origin/main after
       # checkout. Work branches use their fork point; manual main runs use
@@ -261,7 +252,7 @@ jobs:
           ENGINE_COMMIT: ${{ inputs.commit }}
         run: |
           if [ -n "$ENGINE_COMMIT" ]; then
-            design_review_base=$(git merge-base refs/remotes/origin/main HEAD)
+            design_review_base=$(sh .github/merge-base.sh)
           else
             design_review_base=$(sh design/skill/review-base.sh "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$PUSH_BEFORE")
           fi
