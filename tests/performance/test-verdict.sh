@@ -499,12 +499,12 @@ dp_run compare-leaves-the-set-aside-kernel-unjudged 0 \
 dp_has compare-leaves-the-set-aside-kernel-unjudged "$dp/compare-s/verdict.txt" '^not judged: stencil \(data placement\)$'
 dp_has compare-leaves-the-set-aside-kernel-unjudged "$dp/compare-s/verdict.txt" \
     '^VERDICT: PASS -- 0 kernel\(s\) adverse at two widths; 1 kernel\(s\) not judged \(data placement\)$'
-test "$(grep -c 'not judged (data placement)$' "$dp/compare-s/verdict.txt")" -eq \
-    "$(grep -c '^stencil  *W=.* not judged (data placement)$' "$dp/compare-s/verdict.txt")" &&
-    test "$(grep -c '^stencil  *W=' "$dp/compare-s/verdict.txt")" -ge 2 &&
-    test "$(grep -c '^not judged: ' "$dp/compare-s/verdict.txt")" -eq 1 &&
-    ! grep -E -q '^stencil +W=.* (pass|suspect|FAIL)$' "$dp/compare-s/verdict.txt" ||
-    { cat "$dp/compare-s/verdict.txt" >> "$work/out"; fail 'compare-leaves-the-set-aside-kernel-unjudged: only stencil is not judged'; }
+# Every stencil row and no other row is not judged, and one line names it.
+awk '/^[a-z]+ +W=[124] / { if (($1 == "stencil") != ($NF == "placement)")) { print "row: " $0; bad = 1 }; if ($1 == "stencil") rows++ }
+     /^not judged: / { lines++; if ($0 != "not judged: stencil (data placement)") { print "line: " $0; bad = 1 } }
+     END { if (bad || rows < 2 || lines != 1) { print "rows " rows ", lines " lines; exit 1 } }' \
+    "$dp/compare-s/verdict.txt" >> "$work/out" ||
+    fail 'compare-leaves-the-set-aside-kernel-unjudged: only stencil is not judged'
 dp_has compare-leaves-the-set-aside-kernel-unjudged "$dp/compare-s/manifest.txt" '^set aside=stencil$'
 pass compare-leaves-the-set-aside-kernel-unjudged
 
