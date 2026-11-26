@@ -227,9 +227,8 @@ process wall time of the `--par` image by that of the sequential image of the
 same program, on its own 8,209 keys, at 32 workers. Both images build the same
 33 chunks, so chunk building is in the numerator and the denominator alike:
 removing it cannot lower that ratio and, by shortening both, raises it a
-little. The ratio also predates the demand-driven hand-out of work. It is
-therefore not the measure of this investigation; the whole call on 1,048,593
-keys is.
+little. It is therefore not the measure of this investigation; the whole call
+on 1,048,593 keys is.
 
 ## The lowering the owner selected
 
@@ -388,14 +387,38 @@ holds the transfer.
    writer's copies and keeps the two 2,056-byte copies of the out-of-line
    `partition_block` definitions (call sites: 0).
 
+Those two runs also ran the tests of the selected rule: under main's rule the
+windows test failed on `empty_product`, `over_bound`, `other` and the append,
+and the scatter's oracle test on its assertion about the emitted zero store;
+under the selected rule both passed, and the extended
+`short_lived_windows.wf` passed under both. Each condition the tests guard
+was seen failing once, on a commit made for that run: without the size
+comparison (`4f1e0e7b4`,
+[run 45757883714](https://github.com/Ming-Research/Whitefoot/actions/runs/45757883714))
+the windows test failed on `at_bound` and `byte_other` and on nothing else;
+with the tag store of a large value withheld (`a5bc0f875`,
+[run 45757880667](https://github.com/Ming-Research/Whitefoot/actions/runs/45757880667))
+`short_lived_windows.wf` aborted on a double free.
+
 ### Timing, 2026-11-25
 
 One run of the timing probe, alone in its request, on commit `0ece5c23c`
 (the selected rule; `before` and `twin` through the probe's switch),
 [run 45759881814](https://github.com/Ming-Research/Whitefoot/actions/runs/45759881814)
-on the 14900K runner; its test job took 395 s. Earlier requests were refused
-for an exhausted GitHub API budget (18:35, 19:16, 20:35 and 20:36 UTC) or
-cancelled after waiting ten minutes for a runner (twice around 00:48 UTC).
+on the 14900K machine; its test job took 395 s, of which the probe ran for
+304 s, from 05:22:36 to 05:27:40 UTC on 2026-11-26.
+
+The probe did not have the machine to itself. The machine runs several
+runners, and `fast.yml` gives each job a lock of its own, so that workflow
+keeps no timing apart from other jobs, as its header says. In the probe's
+interval three other jobs of this repository ran on other runners of the
+machine: a `tests` job from 05:22:42 to 05:24:12
+([run 45760139383](https://github.com/Ming-Research/Whitefoot/actions/runs/45760139383)),
+a `static` job from 05:25:50 to 05:27:00
+([run 45760334605](https://github.com/Ming-Research/Whitefoot/actions/runs/45760334605))
+and a `tests` job from 05:27:12
+([run 45760336409](https://github.com/Ming-Research/Whitefoot/actions/runs/45760336409)).
+The list covers this repository's workflow runs only.
 
 Every image built and passed the oracle at one and eight workers. `before`'s
 `--par` module is 145,203 bytes with FNV-1a `7a67fe1ca703ed4d`, the module
@@ -460,6 +483,17 @@ native chain. That fits processes placed on either kind of core of the
 hybrid processor, which the probe does not pin, but this campaign does not
 show it.
 
+At eight workers the campaign could not have resolved an effect of the size
+the one-worker images suggest. `tag-only`'s median at one worker, 0.9090 of a
+15.1 ms call, puts the append's whole-block work near 1.4 ms a call, and
+between 1.0 and 5.3 ms over its interval. The append loop is serial, so at
+eight workers it would cost the same time: about 2.5% of the 56 ms call, and
+under 10% at the far end of that interval, against a twin interval of 0.89
+to 1.16 at that width. This is an estimate from another width, not a
+measurement. The verdict of the criteria stands as fixed. What the campaign
+shows is that the lowering's gain did not resolve in a call of this length,
+not that the clear costs nothing.
+
 ### What the whole call costs now
 
 What follows is measured on one day, on one shared runner, and attributes
@@ -488,6 +522,18 @@ nothing beyond what the images separate.
   chunk building's clears and copies: every image, `in-place-tag-only`
   included, is as slow at eight workers. What the eight-worker call spends
   its time on is not separated by this campaign.
+- On the entry's 8,209 keys, the eight-worker call's wall and process CPU
+  time by pass were, in microseconds: 3,726/21,020, 4,267/32,565,
+  4,216/32,227, 4,032/32,029, 369/420, 1,001/2,377, 3,505/31,455,
+  3,707/31,699 and 4,014/32,001. In six of the seven slow passes the CPU
+  time is about eight times the wall time: all eight lanes were busy for
+  some four milliseconds around 60 µs of work. The campaign does not say
+  what the two fast passes had that the others lacked; other jobs shared the
+  machine for part of the run (see [Timing](#timing-2026-11-25)).
+- What was measured is main's hand-out of that day, in which a range split
+  asks the runtime's `wf__par_split_budget` for its budget. The
+  demand-driven hand-out of pull request 468 was an open draft then and is
+  not what these numbers describe.
 
 The 2026-09-21 split, in which chunk building and the final concatenation
 took about 57% of an eight-worker call of 1.930 ms on the M1 Pro, does not
