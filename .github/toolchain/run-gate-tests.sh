@@ -142,6 +142,17 @@ if [ "$mode" = windows ]; then
 else
   ulimit -c 0
 fi
+if [ "$mode" = linux ]; then
+  # As the gate's "Decline core dumps" step does: on ubuntu-24.04 the kernel
+  # pipes every crash to systemd-coredump, which RLIMIT_CORE cannot decline and
+  # which the crashing task waits for (gate.yml measured 403.7 s for forty
+  # aborting runs against 0.45 s). The tests that run programs that stop with
+  # a fatal signal, the deadlock reports and the resource-exhaustion records,
+  # then pass their 60 s test deadline and fail on this environment, not on the
+  # package's clang. The pattern is part of the record.
+  sudo sysctl -w kernel.core_pattern=core
+  printf 'kernel.core_pattern=%s\n' "$(cat /proc/sys/kernel/core_pattern)" | tee "$logs/core-pattern.txt"
+fi
 export WHITEFOOT_TEST_COMPILER="$package/bin/whitefootc$exe"
 : > "$logs/summary.txt"
 failed=0
