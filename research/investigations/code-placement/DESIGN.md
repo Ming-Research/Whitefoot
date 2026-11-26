@@ -8,8 +8,11 @@ five compute kernels' times independent of where they land, what it costs,
 and whether loop-header alignment adds anything. Its decisions are in
 [design/decisions/compiler/lowering/code-alignment.md](../../../design/decisions/compiler/lowering/code-alignment.md).
 The cost of the aligned layout to `records` on some processors, accepted
-provisionally when the alignment was adopted, is
-[reopened below](#the-aligned-layouts-cost-to-records-reopened).
+provisionally when the alignment was adopted, was
+[measured again below](#the-aligned-layouts-cost-to-records-reopened): it is
+established on the EPYC 9V74 alone, no candidate layout rule met the
+criterion, and the owner accepted the present layout
+([the outcome](#the-outcome)).
 
 ## The observation
 
@@ -240,9 +243,11 @@ the rounds leaning the same way, the regression gate's own threshold.
 
 Finally the event itself: the PR #251 pair, the merge base's runtime against
 the PR's under the aligned compiler, must pass `tests/performance/compare.sh`.
-The workflow's replay step builds the merge base's runtime (`c2e5a180`, its
-`ordinary_values.ll` given the alignment its successors carry) with this
-revision's compiler and flags, and compares it with the `FR` images.
+The workflow's replay step built the merge base's runtime (`c2e5a180`, its
+`ordinary_values.ll` given the alignment its successors carry) with the
+revision's compiler and flags, and compared it with the `FR` images. The step
+was [removed later](#the-sizing-runs), once that runtime no longer linked with
+the compiler's modules.
 
 ## Results
 
@@ -411,6 +416,11 @@ there, `records` at width 1, 0.962886 with four of five pairs lower.
 
 ## Conclusion
 
+These are the conclusions of the October runs, whose shifts moved code by at
+most 96 bytes. The later runs establish a cost of the aligned layout to
+`records` on the EPYC 9V74 and a dependence of the aligned `records` on a
+2048-byte move on the 9V74 and the 9V45 ([the outcome](#the-outcome)).
+
 - **Invariance.** With the module and the runtime aligned (`FR`), no shift
   changed any kernel's time by the gate's rule in any cell of the nine
   decisive runs, on the 14900K, six 7763s, a 9V45 and an 8370C, while the
@@ -448,6 +458,9 @@ there, `records` at width 1, 0.962886 with four of five pairs lower.
   functions or 4 KiB aliasing, can remain: the aligned arms' `m` and `r`
   placements shift by 0 or 64 bytes, and `F`, the module aligned over the
   unaligned runtime, moved under such a shift in one cell of one 7763 run.
+  The later runs measured one such effect: a 2048-byte move changes the
+  aligned `records` at widths 2 and 4 on the EPYC 9V74 and the 9V45
+  ([the outcome](#the-outcome)).
 - Apple's arm64 cores use 128-byte lines. The macOS runner resolves only
   about 20 percent ([compute-runtime results](../compute-runtime/RESULTS.md)),
   so nothing here is measured on arm64.
@@ -460,9 +473,11 @@ there, `records` at width 1, 0.962886 with four of five pairs lower.
 The decision accepted the aligned layout's cost to `records` provisionally,
 on a three-round run. This part asks why the aligned `records` is slower on
 the EPYC 9V74 and whether a deterministic layout exists without that cost.
-What follows was read on 2026-11-25 from the runs above and from one probe;
-the new runs' question, arms and criterion close the section and were fixed
-before any of them ran.
+The subsections before [the next runs](#the-next-runs) were read on
+2026-11-25 from the runs above and from one probe; that subsection states the
+new runs' question, arms and criterion, fixed before any of them ran, the
+subsections after it report those runs, and [the outcome](#the-outcome)
+closes the section.
 
 ### The earlier runs under a 95 percent interval
 
@@ -810,13 +825,14 @@ bytes at 0x270 of the split function, drew at most 2.1 percent. The
 reading is made as fixed above; a rejection would not show that the
 position of this larger loop is without effect.
 
-The replay of PR #251's runtime change can no longer run: `c2e5a1808`'s
+The replay of PR #251's runtime change could no longer run: `c2e5a1808`'s
 runtime does not define `wf__heap_give`, `wf__heap_take` or
-`wf__empty_window`, which this compiler's modules call, so its images do not
-link. An empty `placement_event` given to a dispatch was replaced by the
-input's default in run 45731244532, so every placement job ends failed at
-that step, after every reading and before the artifact's upload, which runs
-regardless.
+`wf__empty_window`, which this compiler's modules call, so its images did
+not link. An empty `placement_event` given to a dispatch was replaced by the
+input's default in run 45731244532, so every placement job that measured from
+then on ended failed at that step, after every reading and before the
+artifact's upload, which ran regardless. The step and its input were removed
+from the placement job after the decisive runs.
 
 ### The decisive runs
 
@@ -1011,3 +1027,52 @@ machines; 20 rounds each. The images are this compiler's under LLVM 22, not
 October's. Only `records` was analyzed by line; the four other kernels
 enter through C2 and the comparison with `FR`. The 14900K runs other works'
 checks beside a placement job, since they take their own locks.
+
+### The outcome
+
+- **The cost.** By the criterion, which is read on the 9V74 jobs, the
+  aligned layout's cost to `records` is established on the EPYC 9V74 alone,
+  at widths 1, 2 and 4: `FR` against `U` is 0.887 to 0.905 at width 1, 0.980
+  to 0.988 at width 2 and 0.955 to 0.968 at width 4 on the seven jobs, every
+  interval wholly below 1, so the aligned `records` takes 10.5 to 12.7, 1.2
+  to 2.0 and 3.3 to 4.7 percent longer. On the other models no interval lies
+  wholly below 1 on the 9V45, the 7763 and the 14900K; on the three Xeon
+  6975P-C jobs the interval at width 1 lies wholly below 1, by 0.5 to 0.7
+  percent, and none at widths 2 and 4.
+- **The cause, as far as the arms locate it.** With the hot function's code
+  unchanged, the 9V74's time follows where that function starts within its
+  64-byte line, in one order at every width: fastest at 32, then 16 and 48,
+  slowest at 0, where the present layout fixes it. The loop reading holds at
+  width 1 and does not account for the cost there, since `O16` is itself
+  wholly slower than `U`. It is rejected at widths 2 and 4: there the hot
+  function is the split function, the table leaves none of its short loops
+  across a line under `FR`, which makes `FR` the arm of fewest crossing loops,
+  and `FR` is still slower than `O48`. Under `FR` the table leaves one of the
+  sequential function's two short loops across a line. The data reading is
+  rejected on every job. The hosted AMD machines expose no counter, and the
+  counts on the Xeon 6975P-C and the 14900K do not name a mechanism.
+- **What the arms leave unlocated.** The present layout's time on `records`
+  changes under a 2048-byte move at widths 2 and 4: on the 9V74 it is faster
+  than at `p0`, by 12 to 13 percent at width 4 on every job and 3.6 to 7.7
+  percent at width 2 on six, and on the 9V45 slower, by 9 to 10 percent at
+  width 4 on every job and 4 to 5 percent at width 2 on two. At width 1 on
+  the 9V74, with the sequential function at 0, the time also varies between
+  processes of one image, the interquartile range of the process times being
+  7.5 to 12.8 percent of their median.
+- **The rules.** None passed. `L32` failed C2 alone, at `m2048` at width 4 on
+  the three 9V45 jobs; `L64` failed the cost alone, at width 1 on the seven
+  9V74 jobs; `A32` and `P` failed more, as listed above. Neither `L32` nor
+  `L64` was compared on a program larger than the kernels, a step the
+  criterion reserves for a rule that passes. Either would have been a host
+  argument, `-falign-loops=32` or `-falign-loops=64`, at each build entry
+  that compiles the module or the runtime; by clang 22's driver sources that
+  argument reaches the compile step only, so a link that generates code would
+  also need the code generator's own `-align-loops` passed to the linker.
+  That was read in the sources and not confirmed in a disassembly.
+- **The choice.** The owner was asked to choose among adopting `L32`,
+  adopting `L64`, accepting the present layout and measuring once more before
+  choosing, and accepted the present layout. The compiler is unchanged, and
+  the two rules not taken are recorded under the decisions the introduction
+  links. The regression comparison builds both of its sides with this layout
+  ([above](#the-regression-comparisons-baseline-now)), so the 9V74's cost is
+  the same on both; the two dependences above are not removed by that.
