@@ -17,6 +17,15 @@ IMAGES := $(addprefix $(BUILD)/,$(KERNELS))
 # Runtime construction belongs to the selected revision, just like its sources.
 include $(ROOT)/compiler/runtime.mk
 
+# The two arms are built from checkouts at different paths, and the runtime's
+# assert messages embed the path of their source file. A prefix map gives both
+# arms the same embedded path, so a program whose code is the same links to the
+# same bytes (compare.sh and judge.sh compare the images); it rewrites path
+# strings only and changes no generated code. Later maps win, and a fixture
+# directory under ROOT is mapped by the second.
+PATH_MAPS := -ffile-prefix-map=$(ROOT)=/wf-root -ffile-prefix-map=$(FIXTURES)=/wf-fixtures
+NATIVE_COMPILE_FLAGS += $(PATH_MAPS)
+
 build: $(IMAGES)
 
 $(BUILD)/%.ll: $(FIXTURES)/%.wf $(FIXTURES)/%_host.ll $(FIXTURES)/host-adapter.awk $(WFC) Makefile
@@ -31,10 +40,10 @@ $(BUILD)/%.o: $(BUILD)/%.ll $(NATIVE_CONFIG)
 
 $(BUILD)/%_oracle.o: $(FIXTURES)/%_oracle.c $(FIXTURES)/oracle.h $(NATIVE_CONFIG) Makefile
 	@mkdir -p "$(dir $@)"
-	$(CLANG) -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic -DWF_ORACLE_NO_MAIN -DWF_ORACLE_PERFORMANCE -c "$<" -o "$@"
+	$(CLANG) -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic $(PATH_MAPS) -DWF_ORACLE_NO_MAIN -DWF_ORACLE_PERFORMANCE -c "$<" -o "$@"
 
 $(BUILD)/runner.o: runner.c $(FIXTURES)/oracle.h $(NATIVE_CONFIG) Makefile
-	$(CLANG) -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic -DWF_ORACLE_NO_MAIN -DWF_ORACLE_PERFORMANCE -c "$<" -o "$@"
+	$(CLANG) -std=c11 -O2 -Wall -Wextra -Werror -Wpedantic $(PATH_MAPS) -DWF_ORACLE_NO_MAIN -DWF_ORACLE_PERFORMANCE -c "$<" -o "$@"
 
 # PLACEMENT_PAD bytes of never-executed code linked ahead of the emitted module
 # move the module and everything after it, as one more imported function ahead

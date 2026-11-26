@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 # Explicit Linux measurement entry, consumed by compute-regression only.
 # This is never called by make check or routine correctness CI.
-# WF_PERFORMANCE_PLACEMENT names the data-placement control's results
-# directory; the kernels its aside.txt lists are timed but not judged.
 set -euo pipefail
 if [[ $# != 3 && $# != 4 ]]; then
     echo 'usage: compare.sh BASELINE_IMAGES CANDIDATE_IMAGES RESULTS [slow]' >&2
@@ -13,24 +11,20 @@ fi
 here=$(cd -- "$(dirname -- "$0")" && pwd)
 baseline=$1; candidate=$2; results=$3
 [[ ! -e $results ]] || { echo 'results must be a fresh directory' >&2; exit 2; }
-aside=
-if [[ -n ${WF_PERFORMANCE_PLACEMENT:-} ]]; then
-    [[ -f $WF_PERFORMANCE_PLACEMENT/aside.txt ]] || {
-        echo "no aside.txt in the data-placement results $WF_PERFORMANCE_PLACEMENT" >&2
-        exit 2
-    }
-    aside=$(cat "$WF_PERFORMANCE_PLACEMENT/aside.txt")
-fi
 mkdir -p "$results/logs"
 cpus=$(nproc)
 ((cpus >= 2)) || { echo 'at least two available CPUs required' >&2; exit 2; }
 widths=(1 2)
 if ((cpus >= 4)); then widths+=(4); fi
-kernels=(mandelbrot records fir quadrature stencil)
+# The kernels are the Makefile's; KERNELS in the environment names fewer for a
+# retest round (judge.sh).
+read -r -a kernels <<< "${KERNELS:-$(sed -n 's/^KERNELS := //p' "$here/Makefile")}"
+((${#kernels[@]} > 0)) || { echo 'no kernels named' >&2; exit 2; }
+cpu_model=$(sh "$here/cpu-model.sh")
 {
     printf 'cpus=%s widths=%s passes=5 warmups=1 calls=5\n' "$cpus" "${widths[*]}"
+    printf 'cpu model: %s\nkernels=%s\n' "$cpu_model" "${kernels[*]}"
     printf 'baseline=%s\ncandidate=%s\ncontrol=%s\n' "$baseline" "$candidate" "${4:-none}"
-    printf 'data placement=%s\nset aside=%s\n' "${WF_PERFORMANCE_PLACEMENT:-none}" "$aside"
     uname -a
     for arm in "$baseline" "$candidate"; do
         sha256sum "${kernels[@]/#/$arm/}"
@@ -67,9 +61,10 @@ for pass in {0..4}; do
         done
     done
 done
-awk -v cpus="$cpus" -f "$here/reduce.awk" "$results/raw.tsv" > "$results/paired.tsv"
+awk -v cpus="$cpus" -v kernels="${kernels[*]}" -f "$here/reduce.awk" "$results/raw.tsv" > "$results/paired.tsv"
 # Do not pipe a decision through tee without preserving its exit status.
 status=0
-awk -v cpus="$cpus" -v aside="$aside" -f "$here/verdict.awk" "$results/paired.tsv" > "$results/verdict.txt" || status=$?
+awk -v cpus="$cpus" -v kernels="${kernels[*]}" -f "$here/verdict.awk" "$results/paired.tsv" > "$results/verdict.txt" || status=$?
+printf 'cpu model: %s\n' "$cpu_model" >> "$results/verdict.txt"
 cat "$results/verdict.txt"
 exit "$status"

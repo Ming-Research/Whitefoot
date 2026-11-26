@@ -297,6 +297,7 @@ impl<'unit> Checker<'_, 'unit> {
                 value: value.expression,
                 displaces_live_value,
                 releases_displaced_storage,
+                atomic_read_out,
             },
             effects,
         ))
@@ -560,6 +561,7 @@ impl<'unit> Checker<'_, 'unit> {
                 // [REF-1] a reference rebinding displaces no owner.
                 displaces_live_value: false,
                 releases_displaced_storage: false,
+                atomic_read_out: false,
             },
             value.effects,
         )))

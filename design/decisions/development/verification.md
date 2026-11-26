@@ -29,18 +29,31 @@ Compiler-backed verification uses the optimized `gate` Cargo profile with debug 
 - rejected: an agent proposed a lower optimization level for the `gate` profile; the owner rejected it, because level 1 built 19% faster but ran the cases 9 to 15% slower, and level 2 saved 1.4%, against a 20% criterion (data: `research/investigations/test-economy/time-budgets.md`).
 
 ### decision stage-budgets-follow-each-cpu-model
-Each labeled stage has a Linux budget per CPU model with at least 20 recorded runs, the maximum of the 20 or more most recent runs plus 10%, rounded up to 5 s; an unmapped model takes the largest.
+A Linux stage budget per CPU model with 20 or more recorded runs is 1.1 times the maximum of the latest 50 plus its distance above their median, rounded up to 5 s; an unmapped model takes the largest.
 - replaced: One budget per runner class at 1.25 times the slowest recorded run was on main; the owner changed it, because Linux runners differ by up to 1.6 times by CPU model, so slow ones tripped on noise and fast ones hid growth (data: `research/investigations/test-economy/time-budgets.md`).
 - rejected: an agent proposed one Linux budget recomputed at the observed maximum plus 10%; the owner rejected it, because a test could slow by 50% on a fast runner without tripping it.
 - rejected: an agent proposed 1.5 times the slowest recorded run; the owner rejected it, because on identical source a typical Ubuntu unit run could then grow by 57%, and the fastest of seven runs by more than double, before its stage tripped.
 - rejected: an agent proposed a 20% margin instead of 10% when the table is recomputed; the owner rejected it, because it gives up catching slowdowns under 30%, while recomputing at 10% already cuts false overruns to about 1%.
 - rejected: an agent proposed budgets taken from the main line's recent stage times per model; the owner rejected it, because two models lack enough main-line runs, so it cannot replace the table, and small steps of growth would be absorbed unseen.
-- rejected: an agent proposed timing every push's gate against its merge base; the owner rejected it, because it doubles every job's builds and cases to detect growth that a fixed budget detects.
+- rejected: an agent proposed timing every push's gate against its merge base; the owner rejected it, because it doubles every job's builds and cases to detect growth that a fixed budget detects beyond a stage's headroom.
+
+### decision a-class-budget-margin-follows-its-own-spread
+A class's margin grows with its own spread above its median: the unit group's quiet classes keep +26% to +42% headroom, under the 57% once refused, and EPYC 9V74, whose runs vary most, +74%.
+- replaced: A margin of 10% over the maximum was on main; the owner changed it, because the gate's first attempt on main turned red in 22 jobs of 20 runs on overruns of at most 1.108 times the budget, every test passing (data: `research/investigations/test-economy/time-budgets.md`).
+- replaced: Refusing headroom past 57% (1.5 times the slowest run) and a 20% margin, as 10% cut false overruns to about 1%, was on main; the owner changed it, because 22 jobs went red at under 1.11 times, and only EPYC 9V74 passes 57% (data: `research/investigations/test-economy/time-budgets.md`).
+- rejected: an agent proposed a fixed 30% over the maximum; the owner rejected it, because it leaves a quiet class +40% to +50% before it trips and sees a 30% slowdown of every stage in 42 of 756 replayed jobs against 362 (data: `research/investigations/test-economy/time-budgets.md`).
+- rejected: an agent proposed a fixed 25% over the maximum; the owner rejected it, because it sees that slowdown in 118 of 756 replayed jobs against 362, with the same single red job with no slowdown (data: `research/investigations/test-economy/time-budgets.md`).
+- rejected: an agent proposed keeping 10% and rerunning an overrun stage once; the owner rejected it, because a stale table fails reruns too (6 of 18 red again) and a real slowdown goes red a gate later (data: `research/investigations/test-economy/time-budgets.md`).
 
 ### decision owner-added-columns-take-the-larger-value
 A Linux column the owner adds for a model with fewer than 20 runs of a stage takes the larger of the row's largest recomputed class budget and the model's own runs by the budget rule.
 - rejected: an agent proposed that the recompute script leave such columns untouched for hand edits; the owner rejected it, because those cells would fall behind as other models rise, bringing back false overruns unless someone remembered to edit them.
 - rejected: an agent proposed dropping the owner-added column and using the unmapped-model fallback; the owner rejected it, because it undoes the column the owner chose, and the fallback ignores the model's own runs where they need more.
+- rejected: an agent proposed setting the Xeon 8573C column of the candidate-compiler build row from that model's own few runs alone; the owner rejected it, because the row's largest value must not be lowered by a model with few runs, as for every other owner-added column.
+
+### decision candidate-compiler-build-budget-is-set-per-processor
+The candidate compiler's build budget in the performance comparison is set by the owner per processor class: 165 s on the EPYC 7763, 150 s on the 9V74, 135 s on the 9V45 and 165 s on the Xeon 8573C.
+- replaced: One budget for every Linux class (145 s, 160 s since the tenth added to every Linux budget) was on main; the owner changed it, because the 145 s had been exceeded four times, up to 152.0 s, and the classes differ in speed (data: `research/investigations/test-economy/time-budgets.md`).
 
 ### decision overruns-fail-only-the-final-verdict
 Hosted CI records a budget overrun without changing the stage's status and fails its final verdict for Linux and Windows overruns or a missing budget row; macOS overruns are only reported.
@@ -82,6 +95,14 @@ The correctness gate and the paired performance checks depend on no research pro
 - replaced: Experimental models, repeated measurements and shared research inputs wired into ordinary verification was on main; the owner changed it, because they had no permanent-test grounds of their own (data: `research/investigations/test-economy/redesign.md`).
 - rejected: an agent proposed relying only on manual review, or withholding research inputs from CI, to keep the boundary; the owner rejected it, because light reference checks catch accidental dependencies with normal complete checkouts.
 
+### decision research-tool-self-tests-run-in-their-manual-workflow
+A research tool's self-tests run as a step of the manual workflow that uses the tool, after the step that extracts what they read, and no gate group runs them.
+- rejected: an agent proposed a gate group that extracts the prototype commit and runs the self-tests each check; the owner rejected it, because the gate stays free of research programs, and the group would tie it to one commit's reachability and add a stage for tools only a manual workflow uses.
+
+### decision manual-workflows-reach-their-prototype-through-a-retention-tag
+A prototype commit that a manual workflow extracts from and tree links name is kept by a retention tag outside the `wf-` prefix; the workflow reaches it only through that tag and checks the commit id.
+- rejected: an agent proposed restoring the prototype's research directory into main so the workflow reads it from the repository; the owner rejected it, because it adds about 40 files and their tests as a copy that only convention keeps unedited, and the tree links naming the commit still need it.
+
 ### decision assertions-live-with-their-contract
 A verification assertion lives with the contract it checks: specification requirements in conformance, whole-program behavior in programs, other compiler obligations in compiler tests.
 - rejected: an agent proposed assigning WF wrappers to Rust unit tests by fixture language; the owner rejected it, because a useful property is placed by what it checks, apart from its fixture language and executable packaging (data: `research/investigations/test-economy/redesign.md`).
@@ -95,6 +116,15 @@ Paired performance compiles each revision's own formal version of the same workl
 - rejected: an agent proposed compiling the current sources with both revisions' compilers; the owner rejected it, because a syntax or ABI change can leave the merge-base compiler unable to build an equivalent workload, giving no comparison at all.
 - rejected: an agent proposed silently skipping a mismatched or unbuildable workload; the owner rejected it, because the absence of comparable evidence is not a passing regression result.
 - rejected: an agent proposed running the code-placement control on every measured comparison; the owner rejected it, because that adds a campaign to each run, while the emitter's own test already fails on a definition without the alignment (data: `research/investigations/code-placement/DESIGN.md`).
+
+### decision paired-timing-skips-byte-identical-images
+Both arms of the paired comparison build their runtime, runner and oracle with one source-path prefix map, and a program whose two linked images are byte-identical is not timed and passes.
+- replaced: Timing all five programs behind one host control was on main; the owner changed it, because the arms' images differed in every retained run through the embedded checkout path, so unchanged programs were timed and failed (data: `research/investigations/identical-code-noise/README.md`).
+
+### decision an-undecided-program-is-retested-once
+A timed program is judged against its own null control; a failing comparison with an adverse null is measured once more alone, and one still undecided is inconclusive and passes the job.
+- replaced: Ending the whole comparison as inconclusive when any host control failed, with no retry, was on main; the owner changed it, because the control reads at the threshold in 2.3% of cells (data: `research/investigations/identical-code-noise/README.md`).
+- rejected: the owner proposed judging an undecided program on the 14900K machine; the owner rejected it, because only the same-host retest can be checked against the 182 retained runs, and the other adds a self-hosted job and queueing.
 
 ### decision kernels-placed-by-their-data-are-not-judged
 A kernel whose arms map differently and whose 32 positions in order of time differ in two rounds is timed but not judged; the job passes with a warning and judges the rest.
@@ -163,3 +193,7 @@ Marking a pull request ready skips the gate and the I/O host checks when its hea
 ### decision performance-comparison-waits-for-ready
 The paired performance comparison runs for a ready pull request, its later pushes and by hand, and shows as skipped for a draft.
 - replaced: Running the comparison on every pull request push was on main; the owner changed it, because it times two compilers and may first build the baseline compiler, for up to 20 minutes, which every push of a draft would repeat.
+
+### decision emitted-llvm-is-verified-explicitly
+The backend tests of indexed marks and fields run the host clang's LLVM verifier on their emitted modules through one shared helper, not only the link.
+- rejected: an agent proposed dropping the explicit verifier calls and relying on clang rejecting invalid IR when it builds the executable; the owner rejected it, because that coverage depends on how the host clang was built and its message is cut from the CI result.

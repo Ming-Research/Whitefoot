@@ -1,0 +1,22 @@
+struct Counter {
+  count: u8;
+}
+
+fn bump(marks: &[u8], i: u64) -> result: u8 reads(marks) contract {
+  requires i < marks^.len;
+  requires forall small(k in 0_u64..marks^.len): marks^[k] < 8_u8;
+} {
+  doc "Replacing s whole leaves r valid, so the write through r makes s.count marks^[i], which small bounds below 8, and 248 + 7 fits in u8.";
+  let s = Counter(count: 0_u8);
+  let r = &s;
+  set s = Counter(count: 9_u8);
+  let m = marks^[i];
+  set r^.count = m;
+  let v = s.count;
+  let w = 248_u8 + v;
+  return w;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
