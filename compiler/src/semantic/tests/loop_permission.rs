@@ -21,13 +21,15 @@ use crate::{SemanticIssueKind, SemanticOutcome, SemanticRule};
 
 use super::super::entailment::{DerivationRootKind, ObligationFamily};
 use super::super::loop_permission::{
-    LoopActualization, LoopCombine, LoopDenial, LoopPermission, LoopVerdict,
+    LoopActualization, LoopCombine, LoopDenial, LoopPermission, LoopVerdict, SplitAdvice,
 };
 use super::super::permission::PermissionMetadata;
 use super::{with_semantics, with_semantics_dark};
 
 mod dispatch;
 mod fields;
+mod split_advice;
+mod split_advice_corners;
 
 /// A loop that only reads its handle still changes the shared control verdict.
 /// Without the boundary judgment its empty write footprint permits a split.
@@ -767,8 +769,9 @@ fn main() -> status: std::process::ExitStatus pure {
 ";
     let judged = permitted(source, "main");
     assert_eq!(judged.combines, vec!["+wrap"]);
-    assert!(
-        !judged.advises_split,
+    assert_eq!(
+        judged.split_advice,
+        SplitAdvice::None,
         "a permitted loop needs no rewrite advice"
     );
 }
@@ -1279,7 +1282,11 @@ fn two_accumulators_are_denied_by_condition_one_and_keep_the_split_advice() {
         panic!("expected an accumulator-count denial");
     };
     assert_eq!(*accumulators, 2);
-    assert!(judged.advises_split, "the rewrite is still available");
+    assert_eq!(
+        judged.split_advice,
+        SplitAdvice::Eligible,
+        "the rewrite is still available"
+    );
     assert_eq!(judged.combines, vec!["+wrap", "ior"]);
 }
 
@@ -2033,7 +2040,7 @@ type VerdictShape = (
     Option<u8>,
     Option<LoopActualization>,
     Vec<&'static str>,
-    bool,
+    (&'static str, usize),
 );
 
 fn verdict_shape(judged: &LoopPermission) -> VerdictShape {
@@ -2041,7 +2048,7 @@ fn verdict_shape(judged: &LoopPermission) -> VerdictShape {
         judged.verdict.denied_condition(),
         judged.actualization,
         judged.combines.clone(),
-        judged.advises_split,
+        split_advice::advice_shape(&judged.split_advice),
     )
 }
 
@@ -3193,7 +3200,7 @@ fn indexed_operations_and_scalar_composition_are_permitted() {
     ] {
         let judged = permitted(source, "reduce");
         assert_eq!(judged.combines, vec![combine]);
-        assert!(!judged.advises_split);
+        assert_eq!(judged.split_advice, SplitAdvice::None);
         assert!(judged.actualization.is_some());
         assert_eq!(judged.indexed.len(), 1);
         let super::super::IndexedFamilyKind::Reduce { op } = judged.indexed[0].kind else {
