@@ -3045,6 +3045,36 @@ static int test_an_address_of_no_admitted_family_stops_with_a_report(
     return 0;
 }
 
+/* A host report of an admitted family is published as it is, including the
+ * zero address: a socket that is not bound yet is reported by the host as
+ * `0.0.0.0:0` or `[::]:0` of its own family, which is the host's report and
+ * not an address of no admitted family.  A refused query (a descriptor that is
+ * no socket) is the host's refusal code with all three scalars zero, not a
+ * stop.  Reference: [PRE-2] `local_address` in `spec/kernel-spec.md` and
+ * POSIX `getsockname`, which answers the family of an unbound socket. */
+static int test_a_zero_address_of_an_admitted_family_is_published(void) {
+    uint64_t low = 1, high = 1;
+    uint32_t tag = 1;
+    int plain = socket(AF_INET, SOCK_STREAM, 0);
+    int wide = socket(AF_INET6, SOCK_STREAM, 0);
+    CHECK(plain >= 0);
+    CHECK(wf__completion_socket_local_address(plain, &low, &high, &tag) == 0);
+    CHECK(low == 0 && high == 0 && tag == 0);
+    CHECK(close(plain) == 0);
+    if (wide >= 0) {
+        low = high = 1;
+        tag = 1;
+        CHECK(wf__completion_socket_local_address(wide, &low, &high, &tag) == 0);
+        CHECK(low == 0 && high == 0 && tag == WF_SOCKET_FAMILY_V6);
+        CHECK(close(wide) == 0);
+    }
+    low = high = 1;
+    tag = 1;
+    CHECK(wf__completion_socket_local_address(-1, &low, &high, &tag) != 0);
+    CHECK(low == 0 && high == 0 && tag == 0);
+    return 0;
+}
+
 #if defined(WF_FILE_HAS_DIRECTORY_NEXT)
 /* The base-position cell after one progressing attempt: the value the Darwin
  * stub above writes, and the caller's own sentinel on a family whose facility
@@ -3218,6 +3248,7 @@ int wf__main_body(int argc, char **argv) {
         RUN_TEST(test_socket_lifecycle_and_the_pair_two_count());
         RUN_TEST(test_process_wide_target_helper_budget());
         RUN_TEST(test_an_address_of_no_admitted_family_stops_with_a_report(argv[1]));
+        RUN_TEST(test_a_zero_address_of_an_admitted_family_is_published());
     }
     if (adapter) {
         RUN_TEST(test_directory_progress_is_internal());
