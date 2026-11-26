@@ -1364,7 +1364,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
 "#,
         rule: "EFF-5",
         sentences: &[
-            "\n  residual: t^[?][i].Some.value.a and t^[?][j].Some.value.a require their captured indices to be distinct\n",
+            "\n  residual: t^[‹a computed value with no source spelling›][i].Some.value.a and t^[‹a computed value with no source spelling›][j].Some.value.a require their captured indices to be distinct\n",
             "\n  mechanical_fix: when the two positions can differ here, prove them distinct before this call; otherwise pass places this call proves do not overlap\n",
         ],
         repaired: &[
