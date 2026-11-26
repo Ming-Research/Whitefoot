@@ -190,12 +190,21 @@ fn recorded_for(toolchain: &Toolchain, clang_version: &str) -> Result<ToolchainF
     recorded_facts::recorded(&text, clang_version)
 }
 
+/// This process's settled LLVM forms, once [`prepare_toolchain`] (or the first
+/// read of the forms) has settled them.
+static FACTS: OnceLock<Result<ResolvedFacts, String>> = OnceLock::new();
+
 fn resolved_facts() -> Result<&'static ResolvedFacts, String> {
-    static FACTS: OnceLock<Result<ResolvedFacts, String>> = OnceLock::new();
     FACTS
         .get_or_init(|| resolve(resolved_toolchain()?))
         .as_ref()
         .map_err(Clone::clone)
+}
+
+/// The forms as already settled, with no resolution, no clang launch and no
+/// probe of its own: a command that never prepared the toolchain has none.
+fn settled_facts() -> Option<&'static ResolvedFacts> {
+    FACTS.get()?.as_ref().ok()
 }
 
 fn probed_facts() -> Result<&'static ToolchainFacts, String> {
@@ -236,11 +245,14 @@ pub struct ToolchainFactsReport {
     pub darwin_stack_probe_helper: Option<bool>,
 }
 
-/// The report of the forms [`prepare_toolchain`] settled.
+/// The report of the forms [`prepare_toolchain`] settled. It only reads what
+/// was settled: a process that never prepared the toolchain (`check`, `fmt`, a
+/// program rejected before native construction) has none, and asking for the
+/// report starts no clang.
 #[doc(hidden)]
 #[must_use]
 pub fn toolchain_facts_report() -> Option<ToolchainFactsReport> {
-    resolved_facts().ok().map(report_of)
+    settled_facts().map(report_of)
 }
 
 fn report_of(resolved: &ResolvedFacts) -> ToolchainFactsReport {
