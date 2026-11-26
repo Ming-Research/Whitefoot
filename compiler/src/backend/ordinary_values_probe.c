@@ -1271,7 +1271,24 @@ static void create_new_probe(wf_inputs *inputs, wf_probe_create_new_file create_
     wf_open_result opened;
     wf_write_result written;
     wf_close_result closed;
+    wf_value exhausted = {{0, 0, 0, 0}};
     FILE *fixture = NULL;
+
+    /* A create refused for want of a handle credit is a failed open, and a
+     * failed POSIX open() creates no file; the name stays free for the next
+     * create, which therefore gives Ok below. */
+    create_new_file(&opened, &exhausted, &inputs->cwd_write, &fresh, 1, fresh.length - 1);
+    assert(opened.tag == 1 && opened.err.error.tag == WF_IO_RESOURCE_EXHAUSTED);
+    assert(exhausted.words[0] == 0);
+#if defined(_WIN32)
+    assert(GetFileAttributesW(L"created-new") == INVALID_FILE_ATTRIBUTES
+           && GetLastError() == ERROR_FILE_NOT_FOUND);
+#else
+    {
+        struct stat absent;
+        assert(lstat("created-new", &absent) != 0 && errno == ENOENT);
+    }
+#endif
 
     create_new_file(&opened, &factory, &inputs->cwd_write, &fresh, 0, 0);
     assert(opened.tag == 1 && opened.err.error.tag == WF_IO_INVALID_PATH && factory.words[0] == 1);

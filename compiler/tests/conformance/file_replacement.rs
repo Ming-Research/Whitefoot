@@ -35,6 +35,7 @@ fn namespace_cases_on_both_host_routes() {
         "syscreate-run-existing-file-kept",
         "syscreate-run-existing-directory",
         "syscreate-run-names",
+        "syscreate-run-below-subdirectory",
     ] {
         let case = cases
             .iter()
