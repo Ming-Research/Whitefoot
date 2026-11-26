@@ -1,0 +1,35 @@
+# Temporary, removed in the commit after the one it dispatches from: starts
+# the decisive runs of research/investigations/code-placement ("The next
+# runs") on the commit the engine pushes. compute-bench.yml is dispatched on a
+# branch, and the engine's ref for a commit lives only while its own check
+# runs, so the dispatch happens on the push itself.
+name: tmp-placement-dispatch
+
+on:
+  push:
+    branches: ['wf-try/work-287-26e0fade/**']
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Dispatch the decisive placement runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          common=(--repo "$GITHUB_REPOSITORY" --ref "$REF" -f experiment=placement
+            -f placement_rounds=20 -f "placement_loop_arms=1=O16:O48 2=FR:O48 4=FR:O48")
+          gh workflow run compute-bench.yml "${common[@]}" -f placement_runner=github \
+            -f placement_jobs=48 -f "placement_models=EPYC 9V74|EPYC 9V45"
+          gh workflow run compute-bench.yml "${common[@]}" -f placement_runner=github \
+            -f placement_jobs=4 -f "placement_models=EPYC 7763|6975P-C"
+          gh workflow run compute-bench.yml "${common[@]}" -f placement_runner=14900k \
+            -f placement_jobs=1
+          echo "dispatched three placement runs on $REF at $GITHUB_SHA"
