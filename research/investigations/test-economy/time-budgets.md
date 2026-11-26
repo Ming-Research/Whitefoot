@@ -1511,6 +1511,11 @@ changed workflow, the two that gave the receipt job the EPYC 7763 ended after
 399 s and 495 s (the second with macOS), the one that gave it the Xeon 6975P-C
 after 334 s.
 
+A fourth run on the final head, Linux only (run 45752662211, commit 75412ab8c),
+was green in every job and ended 328 s after its creation: the matrix jobs
+started 36 s after it, the receipt job took 267 s, the unit parts 210 s to 242 s,
+the final job 23 s.
+
 Not yet measured: the five runs of the question above on pushes to main after the merge. They are appended here,
 each with its job times and the CPU model of its jobs, when they have run.
 
