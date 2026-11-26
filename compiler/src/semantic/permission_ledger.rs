@@ -29,9 +29,12 @@
 //!
 //! A `hint` line survives underneath it for exactly one refusal: a loop this
 //! version declines only because it carries several accumulators is still one
-//! a hand-written recursion can split, and the line says so and names the
-//! condition that refused the loop itself. Every other refusal is a reason the
-//! rewrite would be refused too, and advice a writer cannot safely take is
+//! a hand-written recursion can split when every accumulator is read only by
+//! its own updates, and the line says so and names the condition that refused
+//! the loop itself. When an accumulator is read elsewhere in the body, one
+//! half's result depends on the other half's partial value, so the line says
+//! why the halves cannot be combined instead. Every other refusal is a reason
+//! the rewrite would be refused too, and advice a writer cannot safely take is
 //! worse than silence.
 //!
 //! Nothing here participates in acceptance, in lowering, or in any mandatory
@@ -41,7 +44,7 @@
 
 use crate::NodePath;
 
-use super::loop_permission::{LoopDenial, LoopPermission, LoopVerdict};
+use super::loop_permission::{LoopDenial, LoopPermission, LoopVerdict, SplitAdvice};
 use super::permission::{
     Access, Denial, ExitKind, PairSide, PermissionMetadata, PermissionVerdict, StoragePlace,
 };
@@ -185,9 +188,21 @@ pub(crate) fn render_ledger<Source: LedgerSource>(
                 LOOP,
                 format!("PAR loop        {display_path}:{line}  loop  {verdict:<10}  {detail}"),
             ));
-            if !judged.advises_split {
-                continue;
-            }
+            let explanation = match &judged.split_advice {
+                SplitAdvice::None => continue,
+                SplitAdvice::Eligible => format!(
+                    "a recursive split over its index range would be eligible, combining under {}",
+                    judged.combines.join(", ")
+                ),
+                SplitAdvice::DependentAccumulator {
+                    statement,
+                    outside_reads,
+                } => format!(
+                    "a recursive split over its index range would not combine under {}: the accumulator of {} is read {outside_reads} time(s) outside its own update, so the result of one half depends on the other half's partial value",
+                    judged.combines.join(", "),
+                    source.spelling(statement)?
+                ),
+            };
             let condition = judged
                 .verdict
                 .denied_condition()
@@ -197,8 +212,7 @@ pub(crate) fn render_ledger<Source: LedgerSource>(
                 line,
                 HINT,
                 format!(
-                    "PAR hint        {display_path}:{line}  loop  refused by condition {condition}; a recursive split over its index range would be eligible, combining under {}",
-                    judged.combines.join(", ")
+                    "PAR hint        {display_path}:{line}  loop  refused by condition {condition}; {explanation}"
                 ),
             ));
         }
