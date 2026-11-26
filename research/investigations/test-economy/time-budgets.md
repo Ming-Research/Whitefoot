@@ -1516,6 +1516,62 @@ was green in every job and ended 328 s after its creation: the matrix jobs
 started 36 s after it, the receipt job took 267 s, the unit parts 210 s to 242 s,
 the final job 23 s.
 
+#### Two runs on the head after the test review (commit 5f276229c)
+
+No ref held this head: the engine removes the `wf-try` ref of a call once the
+call has run, and a push of one by hand was not allowed. So `gate.yml` was
+dispatched on the ref `wf-try/work-283-26e0fade/call/57`, which holds 75412ab8c
+and a `gate.yml` with the same bytes as the head's (`git diff` between the two
+commits is empty for that file), with the workflow's `commit` input naming the
+head: every job checked out and ran the head's files. The final job reads the
+runs of the ref's own commit (75412ab8c), not of the head, so its pass says
+only that the head's `gate-both-platforms.sh` found the head's expected job
+names green there; the verdicts on the head are read below from the jobs of
+the two runs themselves.
+
+The Linux-only run (45761258632, created 05:23:18) was green in every job and
+ended 337 s after its creation; the matrix jobs started 32 s to 33 s after it,
+and the final job ran from 313 s to 337 s:
+
+| Job | CPU model | Job | Compile | Tests |
+|---|---|---|---|---|
+| unit 1 of 4 | Xeon 6975P-C | 219 | 151.9 | 39.0 |
+| unit 2 of 4 | EPYC 9V45 | 173 | 128.9 | 31.4 |
+| unit 3 of 4 | Xeon 6975P-C | 202 | 151.6 | 29.1 |
+| unit 4 of 4 | EPYC 9V45 | 165 | 122.9 | 30.1 |
+| corpus walk 1 of 3 | Xeon 8573C | 209 | 137.1 | 55.5 |
+| corpus walk 2 of 3 | Xeon 8573C | 174 | 112.0 | 48.7 |
+| corpus walk 3 of 3 | Xeon 6975P-C | 167 | 97.0 | 45.2 |
+| corpus receipts | Xeon 6975P-C | 276 | 104.9 | 145.9 |
+| corpus rest | EPYC 9V45 | 151 | 88.8 | 50.4 |
+| static | Xeon 6975P-C | 111 | | |
+| runtime | Xeon 6975P-C | 81 | | |
+
+The run with the `macos` input (45761335261, created 05:24:01) was green in
+every job, the final job included, and ended 473 s after its creation. Its jobs
+started 31 s to 33 s after it. The Linux parts took 160 s to 264 s (the receipt
+job 264 s on a Xeon 6975P-C, its test 144.6 s; the slowest other part, unit 2
+of 4, 242 s on an EPYC 7763), `runtime` 57 s and `static` 119 s. The four macOS
+jobs ran each group whole under the group's name and took `static (macos-15)`
+194 s, `unit (macos-15)` 366 s, `corpus (macos-15)` 421 s and `runtime
+(macos-15)` 46 s. On macOS `static` fetched the whole history and `main`, and
+`unit` took one commit and started the toolchain script, which installs
+nothing there. The whole macOS groups reported 3069 unit tests and 41 and 170
+corpus tests, as in the earlier macOS run (45736574792).
+
+The tests run are the same as the whole groups of main at the same sources
+(the branch changes no Rust source or test; its only change under `compiler/`
+is the 13 lines of `compiler/Makefile` that take the part). Main's gate run on
+1caef2cd5 (45757076977), whole groups: the unit job `3074 passed; 0 failed; 0
+ignored`, the corpus job `41 passed` and `201 passed; 1 ignored`. In the
+Linux-only run each unit part listed 3074 tests and ran its share, 769, 769,
+768 and 768, 3074 together. The corpus parts reported `rest` 41 passed and
+199 passed, 1 ignored (241 selected, which is the 243 listed minus the two
+manifest-wide tests), each of the three walk parts and the receipt test 1 passed:
+41 passed and 201 passed, 1 ignored together. Each walk part printed
+`Pass=1052`, 3156 cases, which is the number of lines of
+`tests/conformance/manifest.jsonl` that carry an `"id"` (`grep -c '"id"'`).
+
 Not yet measured: the five runs of the question above on pushes to main after the merge. They are appended here,
 each with its job times and the CPU model of its jobs, when they have run.
 
