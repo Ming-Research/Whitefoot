@@ -34,8 +34,9 @@ proposal of that lowering has to measure again.
 The probes are two ignored tests in `compiler/src/backend/tests/ranges.rs`
 (`stable_scatter_probe_reports_clears_and_copies` and
 `stable_scatter_probe_times_whole_calls`, first committed in `94696cfad`).
-They fail on purpose so that their report reaches the test result, and they
-leave the branch before it merges. The source is the maintained program,
+They fail on purpose so that their report reaches the test result. They left
+the branch with the emitter change; commit `0ece5c23c` holds them as they
+last ran, with the census probe and the emitter change. The source is the maintained program,
 unchanged, built with `--par`.
 
 They run on two commits. On the commit before the emitter change, the
@@ -238,7 +239,9 @@ every inactive payload unwritten, and changing nothing: **in a value of more
 than 128 bytes, a field of an inactive variant that holds constant-capacity
 window storage is not zero-filled; a value of at most 128 bytes is built as
 today.** The choice holds if the probes resolve a cost of the empty slots at
-eight workers; 128 is the bounded transfer's limit. The other two lowerings
+eight workers; 128 is the bounded transfer's limit. They did not (see
+[Timing](#timing-2026-11-25)), so the emitter keeps main's rule and the
+change was taken back. The other two lowerings
 lost on what they would change without a measurement: the second firn's byte
 strings and the ordered map's links, the third also the two consumers of the
 2026-09-23 comparison.
@@ -385,8 +388,108 @@ holds the transfer.
    writer's copies and keeps the two 2,056-byte copies of the out-of-line
    `partition_block` definitions (call sites: 0).
 
-### Timing
+### Timing, 2026-11-25
 
-Not run yet. GitHub refused the requests for an exhausted API budget at
-18:35, 19:16, 20:35 and 20:36 UTC on 2026-11-25, and once refused a push for
-an error of its own storage.
+One run of the timing probe, alone in its request, on commit `0ece5c23c`
+(the selected rule; `before` and `twin` through the probe's switch),
+[run 45759881814](https://github.com/Ming-Research/Whitefoot/actions/runs/45759881814)
+on the 14900K runner; its test job took 395 s. Earlier requests were refused
+for an exhausted GitHub API budget (18:35, 19:16, 20:35 and 20:36 UTC) or
+cancelled after waiting ten minutes for a runner (twice around 00:48 UTC).
+
+Every image built and passed the oracle at one and eight workers. `before`'s
+`--par` module is 145,203 bytes with FNV-1a `7a67fe1ca703ed4d`, the module
+the structure probe reported under main's rule, so `before` is main's
+emission; `after`'s is 145,325 bytes with `b707dcd037d72654`. `no-clear`
+removed two clears from `before`, `tag-only` shortened one transfer of
+`after` and `in-place-tag-only` one of `in-place`.
+
+Ratios over `before` in the same pass, median and 95% interval of nine:
+
+| Image | 1 worker, wall | 1 worker, CPU | 8 workers, wall | 8 workers, CPU | 32 workers, wall |
+| --- | --- | --- | --- | --- | --- |
+| `twin` | 1.0373 [0.8612, 1.3413] | 1.0370 [0.7175, 1.3413] | 0.9286 [0.8926, 1.1599] | 0.9778 [0.9085, 1.1057] | 0.9634 [0.7840, 1.0624] |
+| `after` | 0.9645 [0.8526, 1.4135] | 0.9537 [0.7097, 1.0996] | 0.9588 [0.8606, 1.1068] | 0.9336 [0.8636, 1.0774] | 0.9680 [0.7120, 1.0437] |
+| `no-clear` | 0.9264 [0.8144, 1.6257] | 0.9355 [0.7123, 0.9604] | 1.0674 [0.9067, 1.2131] | 0.9897 [0.8790, 1.0428] | 1.0285 [0.8665, 1.0670] |
+| `headers-only` | 0.9458 [0.7945, 1.0709] | 0.9458 [0.7945, 0.9754] | 0.9471 [0.8907, 1.2021] | 0.9782 [0.9177, 1.0125] | 1.0161 [0.7686, 1.0336] |
+| `tag-only` | 0.9090 [0.6470, 0.9339] | 0.9216 [0.6382, 0.9467] | 0.9306 [0.8985, 1.1458] | 1.0059 [0.9237, 1.1187] | 0.9969 [0.7572, 1.0294] |
+| `in-place` | 0.9075 [0.8167, 1.3714] | 0.9342 [0.7650, 1.3714] | 1.0143 [0.8776, 1.1297] | 0.9753 [0.7524, 1.0387] | 0.9690 [0.8156, 1.0450] |
+| `in-place-tag-only` | 0.8904 [0.6058, 1.0119] | 0.8904 [0.6032, 1.0119] | 0.9323 [0.8866, 1.0265] | 0.9387 [0.7939, 1.0322] | 0.9233 [0.8720, 1.0213] |
+| `sequential` | 0.9838 [0.9495, 1.2999] | 1.0049 [0.9495, 1.1918] | 0.2553 [0.2442, 0.2838] | 0.0422 [0.0381, 0.0734] | 0.1843 [0.1690, 0.2319] |
+
+Per-call medians of `before`, by pass, in microseconds:
+
+| Measure | Median of passes | Smallest | Largest |
+| --- | ---: | ---: | ---: |
+| 1,048,593 keys, 1 worker, wall | 15,086 | 12,331 | 28,214 |
+| 1,048,593 keys, 8 workers, wall | 55,734 | 47,726 | 65,516 |
+| 1,048,593 keys, 8 workers, CPU | 328,400 | 215,218 | 360,420 |
+| 1,048,593 keys, 32 workers, wall | 81,349 | 71,371 | 113,932 |
+| `sequential` at 8 workers, wall | 13,717 | 12,921 | 19,472 |
+| serial native chain, wall | 14,707 | 12,159 | 38,651 |
+| 8,209 keys, 1 worker, wall | 59 | 46 | 69 |
+| 8,209 keys, 8 workers, wall | 3,726 | 369 | 4,267 |
+| 8,209 keys, 32 workers, wall | 5,190 | 1,837 | 6,798 |
+
+Applying the criteria fixed before measuring:
+
+1. Both widths count: the twin's wall interval contains 1 at one and at
+   eight workers.
+2. **The empty slots matter** does not hold: `tag-only`'s wall interval at
+   eight workers, [0.8985, 1.1458], contains 1. Removing the append's
+   whole-block work has no effect at eight workers that this instrument
+   resolves.
+3. **Leaving the inactive payload unwritten is enough for the append** holds
+   by the structure results above.
+4. **The block writer's transfers matter** does not hold:
+   `in-place-tag-only`'s interval at eight workers, [0.8866, 1.0265], does
+   not lie below `tag-only`'s.
+5. **The selected lowering is kept** does not hold: `after`'s wall interval
+   at eight workers, [0.8606, 1.1068], contains 1. Its wall and CPU
+   intervals at one worker do not lie wholly above 1. By the last case of the
+   criteria, the emitter change was taken back; this is the item's second
+   outcome.
+
+At one worker the instrument's spread is about as wide as the effect it was
+built for. `tag-only`'s interval there lies wholly below 1 while `after`'s
+does not, though the two modules differ by construction only in the
+transfer of the `place_back` instance, which the optimized `after` keeps
+whole only in a definition nothing calls. The single-worker samples fall in
+two groups, near 12 to 15 ms and near 20 to 38 ms, in every image and in the
+native chain. That fits processes placed on either kind of core of the
+hybrid processor, which the probe does not pin, but this campaign does not
+show it.
+
+### What the whole call costs now
+
+What follows is measured on one day, on one shared runner, and attributes
+nothing beyond what the images separate.
+
+- The 4,112-byte clear of each appended empty slot is still in main's
+  optimized code (ten `memset`s in the `--par` module, five in the build
+  without it). The copy of 2026-09-21 is gone. Removing the clear, by the
+  selected lowering or by any of the edits, makes no difference resolved at
+  eight workers.
+- The block writer copies about 16 KB for each block of 2 KB of keys
+  (structure item 3 above). Partitioning in place makes no difference
+  resolved at eight workers either.
+- At one worker, the `--par` build's whole call (median 15.1 ms) is close to
+  the sequential build (`sequential` 0.9838 [0.9495, 1.2999]) and to the
+  serial native chain (14.7 ms).
+- At eight workers, the `--par` build's whole call takes about four times as
+  long as the sequential build of the same source (`sequential` 0.2553
+  [0.2442, 0.2838] of `before`) and keeps about six processors busy for it
+  (328 ms of CPU over a 56 ms wall, medians). At 32 workers it is about five
+  times as long (0.1843 [0.1690, 0.2319]). On the entry's 8,209 keys, one
+  call takes a median 3.7 ms at eight workers against 59 µs at one; two of
+  the nine passes took 0.37 and 1.0 ms. The timed interval holds no process
+  startup, so the `--par` build's slowdown against the sequential build is
+  not confined to the small input or to startup. Nor does it come from the
+  chunk building's clears and copies: every image, `in-place-tag-only`
+  included, is as slow at eight workers. What the eight-worker call spends
+  its time on is not separated by this campaign.
+
+The 2026-09-21 split, in which chunk building and the final concatenation
+took about 57% of an eight-worker call of 1.930 ms on the M1 Pro, does not
+describe this machine at present: the eight-worker call is about 56 ms, and
+neither the slot clear nor the block writer's copies resolve in it.

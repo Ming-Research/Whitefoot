@@ -794,51 +794,6 @@ fn host_optimized_module(llvm: &str) -> String {
     String::from_utf8(output.stdout).expect("optimized module is UTF-8")
 }
 
-/// Each clear or copy of at least `at_least` constant bytes in one optimized
-/// module, as `function: operation bytes` lines: a call of `llvm.memset`,
-/// `llvm.memcpy` or `llvm.memmove`, or a store of a zero integer array.
-fn large_constant_transfers(module: &str, at_least: u64) -> Vec<String> {
-    let mut found = Vec::new();
-    let mut function = "";
-    for line in module.lines() {
-        if line.starts_with("define ") {
-            function = line
-                .split_once(" @")
-                .and_then(|(_, rest)| rest.split_once('('))
-                .map_or("", |(name, _)| name);
-            continue;
-        }
-        let line = line.trim();
-        for operation in ["llvm.memset", "llvm.memcpy", "llvm.memmove"] {
-            let Some(at) = line.find(&format!("@{operation}.")) else {
-                continue;
-            };
-            let Some(open) = line[at..].find('(') else {
-                continue;
-            };
-            let bytes = line[at + open + 1..]
-                .split(',')
-                .nth(2)
-                .and_then(|length| length.split_whitespace().next_back())
-                .and_then(|length| length.parse::<u64>().ok());
-            if let Some(bytes) = bytes.filter(|bytes| *bytes >= at_least) {
-                found.push(format!("{function}: {operation} {bytes}"));
-            }
-        }
-        if let Some(rest) = line.strip_prefix("store [")
-            && let Some((count, rest)) = rest.split_once(" x i")
-            && let Some((width, _)) = rest.split_once("] zeroinitializer")
-            && let (Ok(count), Ok(width)) = (count.parse::<u64>(), width.parse::<u64>())
-        {
-            let bytes = count.saturating_mul(width.div_ceil(8));
-            if bytes >= at_least {
-                found.push(format!("{function}: zero store {bytes}"));
-            }
-        }
-    }
-    found
-}
-
 /// Returns the definition of the program's entry inside one optimized module.
 ///
 /// This is `@wf__main_body`, not `@main`. Since the exhaustion floor landed,

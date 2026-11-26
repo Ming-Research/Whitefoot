@@ -359,7 +359,7 @@ pub fn build_app(name: &str, entry: &str) -> CompiledProgram {
 /// every record the graph registers, with the overlap lowering the program
 /// cases use.
 #[cfg(target_os = "linux")]
-pub fn compile_app(root: &Path, name: &str, entry: &str) -> whitefoot::LlvmModule {
+fn compile_app(root: &Path, name: &str, entry: &str) -> whitefoot::LlvmModule {
     let graph =
         whitefoot::form_module_program_graph(&root.join("modules.wfg"), CompilerLimits::default())
             .unwrap_or_else(|failure| panic!("{name}'s graph must form: {failure:?}"));

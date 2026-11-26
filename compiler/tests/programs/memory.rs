@@ -3,10 +3,8 @@ use super::support::{build_program, compile_and_run, compile_program, emitted_fu
 #[test]
 fn short_lived_inline_windows_preserve_values_and_release_only_live_elements() {
     // One native build/run checks frame reuse, take/reinsert, wrapped Ring
-    // cleanup, struct/enum transport and Array fill, and a large enum built
-    // as its window-less variant beside unwritten window storage, then
-    // overwritten, exchanged, taken and dropped. The program checks the heap
-    // baseline after every call, with stale freed pointers in raw slots.
+    // cleanup, struct/enum transport and Array fill. The program checks the
+    // heap baseline after every call, with stale freed pointers in raw slots.
     let program = build_program(&compile_program("short_lived_windows.wf"));
     let output = program.run_with_settings(None, &[("WF_DRIVERS", "1")]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
@@ -148,92 +146,4 @@ fn a_call_result_sharing_a_copied_input_reads_the_original_input() {
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     assert!(output.stdout.is_empty(), "{output:?}");
     assert!(output.stderr.is_empty(), "{output:?}");
-}
-
-/// Research probe for the scatter's chunk building
-/// (`research/investigations/scatter-chunk-building/DESIGN.md`): the byte
-/// length and a 64-bit FNV-1a of the text of each emitted module whose
-/// construction the selected lowering must leave alone (firn and the hash
-/// map, slab and ordered map programs) or must change (the scatter, the
-/// dynamic inflate and the block pool), for comparing two commits. It always
-/// fails, so that its table reaches the test result.
-#[cfg(target_os = "linux")]
-#[test]
-#[ignore = "research probe: reports emitted modules' lengths and hashes"]
-fn stable_scatter_probe_reports_module_census() {
-    use super::support::{
-        compile_app, compile_program_with_overlap, compile_programs, compile_sources,
-        compile_sources_with_cli_parallel_defaults,
-    };
-    let firn = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("the compiler package lives directly under the repository root")
-        .join("apps")
-        .join("firn");
-    let hash_map: [(&str, &[u8]); 1] = [(
-        "containers/hash-map-program.wf",
-        include_bytes!("../../../tests/programs/containers/hash-map-program.wf"),
-    )];
-    let slab: [(&str, &[u8]); 2] = [
-        (
-            "containers/slab-membership-program.wf",
-            include_bytes!("../../../tests/programs/containers/slab-membership-program.wf"),
-        ),
-        (
-            "containers/slab-program.wf",
-            include_bytes!("../../../tests/programs/containers/slab-program.wf"),
-        ),
-    ];
-    let ordered_map: [(&str, &[u8]); 1] = [(
-        "containers/ordered-map-program.wf",
-        include_bytes!("../../../tests/programs/containers/ordered-map-program.wf"),
-    )];
-    let modules: Vec<(&str, whitefoot::LlvmModule)> = vec![
-        ("firn", compile_app(&firn, "firn", "firn")),
-        ("hash-map sequential", compile_sources(&hash_map)),
-        (
-            "hash-map parallel",
-            compile_sources_with_cli_parallel_defaults(&hash_map),
-        ),
-        ("slab sequential", compile_sources(&slab)),
-        (
-            "slab parallel",
-            compile_sources_with_cli_parallel_defaults(&slab),
-        ),
-        ("ordered-map sequential", compile_sources(&ordered_map)),
-        (
-            "ordered-map parallel",
-            compile_sources_with_cli_parallel_defaults(&ordered_map),
-        ),
-        (
-            "scatter sequential",
-            compile_program("compute/radix_scatter.wf"),
-        ),
-        (
-            "scatter --par",
-            compile_program_with_overlap("compute/radix_scatter.wf"),
-        ),
-        (
-            "raw deflate dynamic",
-            compile_programs(&[
-                "raw_deflate.wf",
-                "raw_deflate_dynamic.wf",
-                "raw_deflate_dynamic_decode.wf",
-                "raw_deflate_vectors.wf",
-            ]),
-        ),
-        ("block pool", compile_program("block_pool.wf")),
-    ];
-    let table = modules
-        .iter()
-        .map(|(name, module)| {
-            let hash = module
-                .bytes()
-                .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
-                    (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
-                });
-            format!("{name}\t{}\t{hash:016x}", module.len())
-        })
-        .collect::<Vec<_>>();
-    panic!("module census\n{}", table.join("\n"));
 }

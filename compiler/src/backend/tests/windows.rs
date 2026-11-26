@@ -383,18 +383,9 @@ fn shared_empty_windows_skip_construction_and_zero_transfer_stores() {
 }
 
 /// One compilation covers recursive layout selection and initialization
-/// boundaries: active window fields, which construction copies in, and the
-/// window fields of an inactive variant in an enum value of more than 128
-/// bytes are left out of the zero stores; every other byte, and every byte
-/// of a value of at most 128 bytes, is zeroed. Its native run checks the
-/// shifted byte/window sentinels, the variants built beside an unwritten
-/// window and the appended empty values. Its host-optimized module catches a
-/// whole-value copy into a window slot that outlives the removed clear:
-/// that copy is in the emitted text with or without the clear, so only the
-/// optimized module can show that appending an empty wide value moves no
-/// more than its tag.
+/// boundaries; its native run checks the shifted byte/window sentinels.
 #[test]
-fn aggregate_construction_omits_copied_and_large_inactive_window_fields() {
+fn aggregate_construction_omits_only_copied_window_fields() {
     let source = br#"struct Holder {
   prefix: u64;
   slots: Slots<u32, 64>;
@@ -439,21 +430,6 @@ enum ByteChoice {
   ByteOther(bytes: Array<u8, 32>);
 }
 
-enum AtBound {
-  Kept(value: Slots<u64, 14>);
-  Bare();
-}
-
-enum OverBound {
-  Kept(value: Slots<u64, 15>);
-  Bare();
-}
-
-enum Wide {
-  Kept(value: Slots<u64, 256>);
-  Bare();
-}
-
 fn byte_choice(value: Slots<u8, 4>) -> result: ByteChoice pure {
   let prefix = BytePrefix(first: 129_u8, second: 193_u8, third: 251_u8, fourth: 131_u8, fifth: 197_u8);
   return ByteChoice::ByteActive(prefix: prefix, value: move value, suffix: 253_u8);
@@ -495,101 +471,7 @@ fn plain() -> result: Plain pure {
   return Plain(values: values, marker: 41_u64);
 }
 
-fn byte_other() -> result: ByteChoice pure {
-  let bytes = array_filled::<u8, 32>(value: 43_u8);
-  return ByteChoice::ByteOther(bytes: bytes);
-}
-
-fn at_bound() -> result: AtBound pure {
-  return AtBound::Bare();
-}
-
-fn over_bound() -> result: OverBound pure {
-  return OverBound::Bare();
-}
-
-fn append_bare(count: u64) -> result: u64 pure contract {
-  requires count <= 64_u64;
-} {
-  let wides = box_slots_new::<Wide>(capacity: count);
-  for (
-    index in 0_u64..count,
-    invariant filled: wides.inner.len >= index,
-    invariant bounded: wides.inner.len <= index,
-    invariant spare: wides.inner.cap - wides.inner.len + index >= count
-  ) {
-    let vacant = Wide::Bare();
-    place_back(window: &wides.inner, value: move vacant);
-  }
-  invariant appended: wides.inner.len >= count;
-  let bare = 0_u64;
-  for (index in 0_u64..count) {
-    let slot = &wides.inner[index];
-    match slot^ {
-      Kept(..) => {
-      }
-      Bare() => {
-        set bare = bare +wrap 1_u64;
-      }
-    }
-  }
-  return bare;
-}
-
 fn main() -> status: std::process::ExitStatus pure {
-  let empty = empty_product();
-  match move empty {
-    Active(..) => {
-      return std::process::exit_status(code: 11_u8);
-    }
-    Empty() => {
-    }
-  }
-  let others = other();
-  match move others {
-    Active(..) => {
-      return std::process::exit_status(code: 12_u8);
-    }
-    Other(bytes: filled) => {
-      if filled[0_u64] != 31_u64 {
-        return std::process::exit_status(code: 13_u8);
-      }
-      if filled[63_u64] != 31_u64 {
-        return std::process::exit_status(code: 14_u8);
-      }
-    }
-  }
-  let small = byte_other();
-  match move small {
-    ByteActive(..) => {
-      return std::process::exit_status(code: 15_u8);
-    }
-    ByteOther(bytes: filled) => {
-      if filled[31_u64] != 43_u8 {
-        return std::process::exit_status(code: 16_u8);
-      }
-    }
-  }
-  let bound = at_bound();
-  match move bound {
-    Kept(..) => {
-      return std::process::exit_status(code: 17_u8);
-    }
-    Bare() => {
-    }
-  }
-  let beyond = over_bound();
-  match move beyond {
-    Kept(..) => {
-      return std::process::exit_status(code: 18_u8);
-    }
-    Bare() => {
-    }
-  }
-  let appended = append_bare(count: 3_u64);
-  if appended != 3_u64 {
-    return std::process::exit_status(code: 19_u8);
-  }
   let bytes = slots_new::<u8, 4>();
   place_back(window: &bytes, value: 171_u8);
   place_back(window: &bytes, value: 173_u8);
@@ -709,65 +591,13 @@ fn main() -> status: std::process::ExitStatus pure {
             "{choice}"
         );
     }
-    // What follows depends on the 128-byte bound. Each mismatch is collected,
-    // so that one run reports all of them.
-    let mut mismatches = Vec::new();
-    // Product (296 bytes) and OverBound (136) are product-laid-out values
-    // over 128 bytes whose only payload holds a window: building the other
-    // variant zeroes the tag alone.
-    for name in ["empty_product", "over_bound"] {
+    for name in ["empty_product", "other", "plain"] {
         let stores = zero_stores(name);
-        if stores != ["store i8 zeroinitializer"] {
-            mismatches.push(format!("{name}: {stores:?}"));
-        }
-    }
-    // Building Choice's other variant leaves the inactive view's window at
-    // [16, 280) unwritten and zeroes the rest of the 520-byte union.
-    let stores = zero_stores("other");
-    if stores
-        != [
-            "store [16 x i8] zeroinitializer",
-            "store [240 x i8] zeroinitializer",
-        ]
-    {
-        mismatches.push(format!("other: {stores:?}"));
-    }
-    let other = emitted_body(&module, "other");
-    for offset in [0, 280] {
-        if !other.lines().any(|line| {
-            line.contains("getelementptr inbounds i8, ptr %wf.result")
-                && line.ends_with(&format!(", i64 {offset}"))
-        }) {
-            mismatches.push(format!("other: no zero store at offset {offset}"));
-        }
-    }
-    // AtBound is exactly 128 bytes and ByteChoice 40: each keeps the one
-    // zero store of the whole value beside its inactive window.
-    for name in ["at_bound", "byte_other", "plain"] {
-        let stores = zero_stores(name);
-        if stores.len() != 1 || !stores[0].starts_with("store %wf.t.") {
-            mismatches.push(format!("{name}: {stores:?}"));
-        }
-    }
-    // Wide (2,064 bytes) is this source's one value of 2,048 bytes or more.
-    // The out-of-line window placement copies whatever value it is given,
-    // so a whole copy may remain only in a function nothing calls.
-    let optimized = host_optimized_module(&module);
-    for transfer in large_constant_transfers(&optimized, 2048) {
-        let function = transfer
-            .split_once(": ")
-            .map_or("", |(function, _)| function);
-        let call = format!("@{function}(");
-        if optimized
-            .lines()
-            .any(|line| line.contains("call ") && line.contains(&call))
-        {
-            mismatches.push(format!("appending an empty Wide: {transfer}"));
-        }
+        assert_eq!(stores.len(), 1, "{name}: {stores:?}");
+        assert!(stores[0].starts_with("store %wf.t."), "{name}: {stores:?}");
     }
     let output = compile_and_run(&module);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
-    assert!(mismatches.is_empty(), "{mismatches:#?}");
 }
 
 /// A take changes the descriptor even when no element bytes exist. Ring's
