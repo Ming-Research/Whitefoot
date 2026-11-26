@@ -21,7 +21,10 @@ appears() {
     attempt=0
     while [ ! -s "$1" ]; do
         attempt=$((attempt + 1))
-        test "$attempt" -lt 500 || return 1
+        if [ "$attempt" -ge 200 ]; then
+            echo "$1 was not written" >&2
+            return 1
+        fi
         sleep 0.01
     done
 }
@@ -30,11 +33,17 @@ appears() {
 # wrapper killed is gone at once; one it left behind lives for its 30 seconds.
 gone() {
     pid=$(cat "$1")
-    test -n "$pid" || return 1
+    if [ -z "$pid" ]; then
+        echo "$1 holds no process id" >&2
+        return 1
+    fi
     attempt=0
     while kill -0 "$pid" 2>/dev/null; do
         attempt=$((attempt + 1))
-        test "$attempt" -lt 100 || return 1
+        if [ "$attempt" -ge 100 ]; then
+            echo "process $pid of $1 is still running" >&2
+            return 1
+        fi
         sleep 0.01
     done
 }
