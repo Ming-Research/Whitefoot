@@ -53,6 +53,12 @@ sync_source() {
     fi
     git -C "$dir/src" fetch --quiet --no-tags "$checkout" HEAD
     test "$(git -C "$dir/src" rev-parse FETCH_HEAD)" = "$commit"
+    # A forced checkout writes again each file whose times or inode differ
+    # from what the index recorded, as after a copy from main or a touch, and
+    # cargo would then see it as newer than its build. The refresh reads those
+    # files and records them as they are where their content is the same, so
+    # the checkout writes only the files the commit changes.
+    git -C "$dir/src" update-index -q --refresh > /dev/null || :
     git -C "$dir/src" checkout --quiet --force --detach "$commit"
     git -C "$dir/src" clean -ffdxq
     echo "$dir/src is at $commit"
