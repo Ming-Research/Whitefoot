@@ -380,4 +380,38 @@ Refuted if the WIN count at k = 64 exceeds 8 times the count at k = 16.
 
 ## Changes after the first measurement
 
-None yet.
+The first measurement is run 45907910884 (model) and the probe job of run
+45906624486. Two of its results led to additions. The hypotheses below were
+written after those results and before the measurement of what they add
+(model commit `8cf761bf3`).
+
+- H2 failed on ADDENDS: from k = 24 the model's elimination reaches its
+  capacity. H10 failed: under WIN, one unproved question of OP5 costs work
+  that grows with the square of the chain, because forced cases cascade down
+  the whole chain before the question is found open.
+
+**H11. A simplex decision of the theory step gives the same verdicts and
+has no such growth.** The model gains a second decision of step 3's last
+condition, an exact simplex method with Bland's rule (`model/src/lp.rs`),
+used by the candidates `bnd-rel-lp` and `win16-lp`.
+Prediction: wherever both finish, each `-lp` candidate has the verdict of its
+elimination twin on every family and size, and on the small instances agrees
+with the exhaustive evaluation; ADDENDS is proved at every size; its pivot
+count on ADDENDS at k = 64 is at most 64 times the count at k = 16; on
+DENSE(n) it decides every instance up to n = 14.
+Refuted by one differing verdict, by an ADDENDS size it does not finish, or
+by faster growth.
+What it cannot show: a polynomial worst-case bound for the simplex method
+itself, which Bland's rule does not give. The bound rests on the verdict
+being a linear-programming feasibility question.
+
+**H12. Bounding the forced cases removes the quadratic cost of an unproved
+question, at a stated loss.** Two forms are added, both with P = 16:
+`win16-root` runs one pass of forced cases over the joins near at the root
+and none below; `win16-depth8` lets at most 8 joins be decided by forced
+cases on one branch.
+Prediction: under both, the pair count of the last OP5 question at k = 64
+is at most 8 times the count at k = 16. `win16-root` proves FLAGS(m) and
+MIX(k) at every size and FLAGCHAIN(k) only up to k = 5. `win16-depth8`
+proves FLAGS(m) and FLAGCHAIN(k) up to 12 and not from 14.
+Refuted by a pair count that grows faster, or by a verdict that differs.
