@@ -277,8 +277,9 @@ program execution.
   `firn-check-time.yml` (Firn's check on the 14900K runner) on request, which
   are experiments and never a gate.
 - The wf-agents engine (`wf-agents.toml`) starts `fast.yml` by hand to run
-  the Rust tests an agent names, and the `static` and `runtime` groups when
-  named. Before it merges a work, it starts `gate.yml`, `io-hosts.yml`,
+  the Rust tests and conformance cases an agent names, and the `static` and
+  `runtime` groups when named; it keeps each work's build on the 14900K, and
+  `fast-state.yml` keeps main's build there after each push to `main`. Before it merges a work, it starts `gate.yml`, `io-hosts.yml`,
   `sanitizers.yml`, `proof.yml`, `map-sanitizers.yml` and
   `design-readiness.yml` by hand on the commit to merge. Each such run reports
   its results as JUnit XML (`.github/junit.py`); each file's header says how.

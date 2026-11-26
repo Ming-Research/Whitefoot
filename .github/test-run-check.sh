@@ -70,6 +70,18 @@ test "$status" -eq 124
 test ! -e "$work/lock"
 if kill -0 "$(cat "$work/child")" 2>/dev/null; then exit 1; fi
 
+# A group that ignores TERM is killed once its grace has passed: at once with
+# none, where the default grace would take 2 seconds more.
+status=0
+started=$(perl -MTime::HiRes=time -e 'printf "%.3f", time')
+WHITEFOOT_CHECK_TIMEOUT=1 WHITEFOOT_CHECK_KILL_AFTER=0 perl "$runner" grace sh -c \
+    'trap "" TERM; sleep 30 & echo $! > "$1"; wait' sh "$work/grace-child" \
+    > "$work/grace.log" 2>&1 || status=$?
+test "$status" -eq 124
+perl -MTime::HiRes=time -e 'exit(time - $ARGV[0] < 2.5 ? 0 : 1)' "$started"
+test ! -e "$work/lock"
+if kill -0 "$(cat "$work/grace-child")" 2>/dev/null; then exit 1; fi
+
 perl "$runner" signal perl "$runner" nested sh -c \
     'sleep 30 & echo $! > "$1"; wait' sh "$work/signal-child" \
     > "$work/signal.log" 2>&1 &

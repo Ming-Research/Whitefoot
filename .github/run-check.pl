@@ -68,6 +68,10 @@ my $host = $hosts{$^O} // $^O;
 my %report_only = map { $_ => 1 } grep { length } split /,/, $ENV{WHITEFOOT_BUDGET_REPORT_ONLY} // '';
 my $limit = $ENV{WHITEFOOT_CHECK_TIMEOUT} // 1800;
 $limit =~ /^\d+$/ && $limit > 0 or die "WHITEFOOT_CHECK_TIMEOUT must be positive seconds\n";
+# How long a stopped group has between TERM and KILL. The fast workflow gives
+# a test stopped for time 10 seconds, as the wf-agents engine's projects do.
+my $kill_after = $ENV{WHITEFOOT_CHECK_KILL_AFTER} // 2;
+$kill_after =~ /^\d+$/ or die "WHITEFOOT_CHECK_KILL_AFTER must be whole seconds\n";
 my $started = clock_gettime(CLOCK_MONOTONIC);
 my $next_report = $started + 30;
 my ($cancelled, $stopping);
@@ -119,7 +123,7 @@ while (1) {
         kill 'TERM', $ENV{WHITEFOOT_CHECK_OWNER} if !$owns_lock;
         kill 'TERM', -$group;
     }
-    if (defined $stopping && $now - $stopping >= 2) {
+    if (defined $stopping && $now - $stopping >= $kill_after) {
         kill 'KILL', -$group;
         waitpid($child, 0) if !defined $status;
         last;

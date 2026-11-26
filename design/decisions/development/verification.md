@@ -57,8 +57,13 @@ A Linux column the owner adds for a model with fewer than 20 runs of a stage tak
 - rejected: an agent proposed setting the Xeon 8573C column of the candidate-compiler build row from that model's own few runs alone; the owner rejected it, because the row's largest value must not be lowered by a model with few runs, as for every other owner-added column.
 
 ### decision candidate-compiler-build-budget-is-set-per-processor
-The candidate compiler's build budget in the performance comparison is set by the owner per processor class: 165 s on the EPYC 7763, 150 s on the 9V74, 135 s on the 9V45 and 165 s on the Xeon 8573C.
+The candidate compiler's build budget follows the table's rule per processor class over cold builds after the toolchain warm-up: 160 s on the EPYC 7763, 185 s on the 9V74, 140 s on the 9V45.
 - replaced: One budget for every Linux class (145 s, 160 s since the tenth added to every Linux budget) was on main; the owner changed it, because the 145 s had been exceeded four times, up to 152.0 s, and the classes differ in speed (data: `research/investigations/test-economy/time-budgets.md`).
+- replaced: A budget the owner set per class (165, 150, 135 and 165 s) was on main; the owner changed it, because it was set from builds whose first took 7% longer than a second, which loosened it (data: `research/investigations/test-economy/time-budgets.md`).
+
+### decision the-xeon-6975p-has-a-budget-column
+The budget table has a column for the Xeon 6975P-C, which took 56% of the sampled hosted jobs; it is an owner column whose cells started at each row's largest Linux value.
+- rejected: an agent proposed no column for it, leaving it on each row's largest class value; the owner rejected it, because the candidate-build cell would then not tighten for most runs (data: `research/investigations/test-economy/time-budgets.md`).
 
 ### decision overruns-fail-only-the-final-verdict
 Hosted CI records a budget overrun without changing the stage's status and fails its final verdict for Linux and Windows overruns or a missing budget row; macOS overruns are only reported.
@@ -130,6 +135,10 @@ Both arms of the paired comparison build their runtime, runner and oracle with o
 A timed program is judged against its own null control; a failing comparison with an adverse null is measured once more alone, and one still undecided is inconclusive and passes the job.
 - replaced: Ending the whole comparison as inconclusive when any host control failed, with no retry, was on main; the owner changed it, because the control reads at the threshold in 2.3% of cells (data: `research/investigations/identical-code-noise/README.md`).
 - rejected: the owner proposed judging an undecided program on the 14900K machine; the owner rejected it, because only the same-host retest can be checked against the 182 retained runs, and the other adds a self-hosted job and queueing.
+
+### decision performance-comparison-warms-the-toolchain-first
+The paired performance comparison fetches the locked crates and reads the Rust toolchain in one untimed step before its first compiler build, outside every labeled stage.
+- rejected: an agent proposed building the candidate compiler once untimed first, as the kernel images are; the owner rejected it, because it removes any first-use cost but adds a cold build of 89 to 147 s per run (data: `research/investigations/test-economy/candidate-build-samples-2026-11.tsv`).
 
 ### decision conformance-cases-are-only-runnable
 Conformance has only the `runnable` manifest status and pass or fail outcomes; an unexpected unsupported stop fails the case.
