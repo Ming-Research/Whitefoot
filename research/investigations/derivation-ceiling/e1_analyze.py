@@ -345,8 +345,12 @@ def declared():
     manifest = Path(__file__).resolve().parents[3] / "tests/conformance/manifest.jsonl"
     out = {}
     for line in manifest.read_text().splitlines():
-        if line.strip():
-            case = json.loads(line)
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        case = json.loads(line)
+        # Rule-coverage lines carry no case.
+        if "id" in case and "expect" in case:
             out[case["id"]] = case["expect"]["kind"]
     return out
 
@@ -394,14 +398,16 @@ def verdicts(by_config):
             else:
                 want = {"run": "accept", "accept": "accept", "reject": "reject"}.get(
                     expect.get(label, "?"), "other")
+            today = "accept" if state["today"] else "reject"
             for verdict in ("today", "handoff", "alone"):
                 got = "accept" if state[verdict] else "reject"
                 table[(verdict, want, got)] += 1
-                if verdict == "alone" and want == "accept" and got == "reject":
-                    examples["accept->reject"].append(label)
-                if verdict == "alone" and want == "reject" and got == "accept":
-                    examples["reject->accept"].append(label)
-            if state["unposed"] and want == "accept" and not state["alone"]:
+                # Against today's verdict read from the same records: a
+                # case rejected by a rule outside entailment has no record
+                # that says so, and its declared verdict cannot change here.
+                if verdict != "today" and got != today:
+                    examples[f"{verdict} today={today} reached={got}"].append(label)
+            if state["unposed"] and today == "accept" and not state["alone"]:
                 table[("alone-with-unposed", want, "reject")] += 1
         print(f"  -- {config}")
         for (verdict, want, got), count in sorted(table.items()):
