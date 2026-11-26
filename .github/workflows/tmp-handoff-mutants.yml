@@ -1,0 +1,60 @@
+# Temporary: runs driver_service_test.c on mutants of bridge.c that each
+# remove one condition of the handoff trigger, the pass check or the service
+# after a yield, and shows that the test fails on each. Removed before the
+# full check.
+name: tmp-handoff-mutants
+
+on:
+  push:
+    branches: ['wf-try/work-159-26e0fade/**']
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  mutants:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run the driver service test on each mutant
+        env:
+          WHITEFOOT_SCRATCH_ROOT: ${{ runner.temp }}/whitefoot
+        run: |
+          cat > "$RUNNER_TEMP/mutate.py" <<'PY'
+          import subprocess, sys
+          path = "compiler/src/backend/completion/bridge.c"
+          original = open(path).read()
+          MUTANTS = [
+           ("alone-ignored", "    if (now - sighting->since < WF_HANDOFF_TAU_NS || wf_driver_alone(driver))\n        return WF_WATCH_NONE;", "    if (now - sighting->since < WF_HANDOFF_TAU_NS)\n        return WF_WATCH_NONE;"),
+           ("no-request", "    if (phase == WF_DRIVER_OUTSIDE) {\n        uint64_t expected = token;", "    if (phase == WF_DRIVER_OUTSIDE) {\n        return WF_WATCH_NONE;\n        uint64_t expected = token;"),
+           ("pass-ignores-yield", "        && (token & WF_DRIVER_PHASE_MASK) != WF_DRIVER_YIELD) return 0;", "        && (token & WF_DRIVER_PHASE_MASK) != 8u) return 0;"),
+           ("no-reap-after-yield", "        if (next->disposition == WF_HAND_BACK_FAIR) wf_driver_reap(driver);", ""),
+           ("handoff-without-period", "    if (now - sighting->requested < WF_MONITOR_PERIOD_NS) return WF_WATCH_NONE;", ""),
+           ("handoff-claims-current-word", "    uint64_t outside = token;\n    uint64_t probe", "    uint64_t outside = atomic_load_explicit(&driver->service_token, memory_order_acquire);\n    uint64_t probe"),
+           ("return-ignores-yield", "    expected = base | WF_DRIVER_YIELD;\n    return atomic_compare_exchange_strong_explicit", "    expected = base | WF_DRIVER_OUTSIDE;\n    return atomic_compare_exchange_strong_explicit"),
+           ("handoff-when-alone", "    if (claimed && !wf_driver_alone(driver)) {", "    if (claimed) {"),
+           ("borrow-refuses-yield", "    if (!wf_driver_phase_outside(*outside)) return 0;", "    if ((*outside & WF_DRIVER_PHASE_MASK) != WF_DRIVER_OUTSIDE) return 0;"),
+          ]
+          def run(label):
+              result = subprocess.run(["make", "-C", "compiler", "driver-service-test"],
+                                      capture_output=True, text=True, timeout=600)
+              tail = (result.stdout + result.stderr).strip().splitlines()[-4:]
+              print(f"== {label}: exit {result.returncode}")
+              for line in tail:
+                  print(f"   {line}")
+              return result.returncode
+          failed = run("unmutated") != 0
+          for name, old, new in MUTANTS:
+              assert original.count(old) == 1, name
+              open(path, "w").write(original.replace(old, new))
+              if run(name) == 0:
+                  print(f"!! {name}: the test passed on the mutant")
+                  failed = True
+          open(path, "w").write(original)
+          sys.exit(1 if failed else 0)
+          PY
+          python3 "$RUNNER_TEMP/mutate.py"
