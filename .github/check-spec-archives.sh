@@ -1,9 +1,12 @@
 #!/bin/sh
 # The specification's title, its change log and its released archives.
 #
-# The working tree is compared with its merge base on MAIN-REF, which is what
+# The working tree is compared with its merge base on BASE-REF, which is what
 # a merge would change in main: an archive or log entry main added after this
-# branch's fork is not a deletion here. The specification carries no version,
+# branch's fork is not a deletion here. The Makefile passes the commit
+# .github/merge-base.sh chose, the merge base of origin/main and HEAD, so the
+# merge base taken here is that commit itself; a ref that is not an ancestor of
+# HEAD is reduced to the one that is. The specification carries no version,
 # so two branches that amend it write no line in common to claim one; the
 # version of an entry is derived from spec/log.md (spec-version.sh). Rules:
 #   - spec/kernel-spec.md starts with the line `# Kernel Specification` and
@@ -38,7 +41,7 @@ TITLE='# Kernel Specification'
 HERE=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 usage() {
-    echo 'usage: check-spec-archives.sh MAIN-REF | --require-approval BASE | --self-test' >&2
+    echo 'usage: check-spec-archives.sh BASE-REF | --require-approval BASE | --self-test' >&2
     exit 2
 }
 
@@ -70,10 +73,10 @@ canonical_entries() {
 }
 
 check() {
-    main_ref=$1
-    git rev-parse --verify --quiet "$main_ref^{commit}" >/dev/null ||
-        fail "$main_ref must name a commit (CI creates a local main ref)"
-    base=$(git merge-base "$main_ref" HEAD) || fail "no merge base with $main_ref"
+    base_ref=$1
+    git rev-parse --verify --quiet "$base_ref^{commit}" >/dev/null ||
+        fail "$base_ref must name a commit (.github/merge-base.sh prints the one to use)"
+    base=$(git merge-base "$base_ref" HEAD) || fail "no merge base with $base_ref"
     short=$(git rev-parse --short "$base")
 
     test "$(head -n 1 spec/kernel-spec.md)" = "$TITLE" ||

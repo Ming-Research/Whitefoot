@@ -76,6 +76,12 @@ Local correctness checks and the hosted correctness jobs use one Makefile group 
 A green hosted gate on the exact revision to be merged, a head current with main, is that revision's `make check`; a local run reproduces a failure or stands in when CI is down.
 - rejected: an agent proposed that every author run the full gate locally before handing work back; the owner rejected it, because the hosted jobs run the same Makefile groups and recipes, while a local run repeats them on one host at the author's cost.
 
+### decision branch-checks-share-one-merge-base
+The checks that compare a branch with main read the merge base of origin/main and HEAD, which one script fetches first unless GITHUB_ACTIONS=true, then reads as checked out, and names in each run.
+- replaced: Taking the specification archives' and the README translation's merge base with the local branch main was on main; the owner changed it, because a stale local main charged a branch that had merged newer origin/main with archives and log entries it never added.
+- replaced: Comparing the specification's readiness with origin/main's latest commit was on main; the owner changed it, because main's later changes then read as the branch's own and asked it for log entries it did not owe.
+- rejected: an agent proposed taking the local origin/main as it stands and naming the base in the output; the owner rejected it, because a stale origin/main puts the base before the fork point once the branch has merged newer main, so the same false reports stay and the base can differ from CI's.
+
 ### decision research-stays-out-of-daily-ci
 The correctness gate and the paired performance checks depend on no research program, script, fixture or dataset; what they need is moved into formal tests, and research runs only when asked.
 - replaced: Experimental models, repeated measurements and shared research inputs wired into ordinary verification was on main; the owner changed it, because they had no permanent-test grounds of their own (data: `research/investigations/test-economy/redesign.md`).
