@@ -76,10 +76,8 @@ fn inspect(rows: &Array<Slots<u64, 8>, 2>, p: Cursor) -> result: unit reads(rows
   requires p.k < 2_u64;
 } {
   let wr = &rows^[p.k];
-  if 0_u64 < wr^.len {
-    set p.k = 1_u64;
-    need(row: wr);
-  }
+  set p.k = 1_u64;
+  need(row: wr);
   return unit;
 }
 
@@ -105,10 +103,9 @@ fn need(row: &Slots<u64, 8>) -> result: unit reads(row) contract {
 fn inspect(rows: &Array<Slots<u64, 8>, 2>, p: Cursor) -> result: unit reads(rows) contract {
   requires p.k < 2_u64;
 } {
-  let k0 = p.k;
-  let wr = &rows^[k0];
+  let wr = &rows^[p.k];
+  set p.k = 1_u64;
   if 0_u64 < wr^.len {
-    set p.k = 1_u64;
     need(row: wr);
   }
   return unit;
