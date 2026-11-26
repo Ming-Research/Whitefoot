@@ -63,14 +63,11 @@ jobs:
           # The design-tree skill's lint and CI base script, design/skill.
           submodules: true
 
-      - name: Name main as a local ref
+      # The checks that compare a branch with main read the remote-tracking
+      # ref origin/main (.github/merge-base.sh); no local main branch is made.
+      - name: Fetch main
         run: |
           git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
-          if git symbolic-ref -q HEAD | grep -qx refs/heads/main; then
-            echo "checkout is on main"
-          else
-            git branch -f main origin/main
-          fi
 
       # A pull request checks out its merge commit, so the review base is
       # main's tip; a main push compares with its previous tip. A run the
@@ -82,7 +79,7 @@ jobs:
           ENGINE_COMMIT: ${{ inputs.commit }}
         run: |
           if [ -n "$ENGINE_COMMIT" ]; then
-            design_review_base=$(git merge-base refs/remotes/origin/main HEAD)
+            design_review_base=$(sh .github/merge-base.sh)
           else
             design_review_base=$(sh design/skill/review-base.sh "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$PUSH_BEFORE")
           fi
