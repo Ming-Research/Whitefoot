@@ -1469,9 +1469,38 @@ number of manifest lines that carry an `id` (the other 13 lines are coverage
 annotations the loader leaves out); the receipt test reported 6312 checks,
 twice 3156.
 
-Not yet measured: the five runs of the question above, with the final job. They
-are appended here, each with its job times and the CPU model of its jobs, when
-they have run.
+#### The workflow itself, on the head
+
+Two hand-started runs of the changed `gate.yml` followed on the head
+(commit 52a0ac19b), with the temporary workflow removed.
+
+The first, Linux only (run 45734952693), was green in every job, the final job
+included, and ended 399 s after its creation. Its selection job ran 19 s, the
+check for a temporary workflow 4 s, and the matrix jobs started 34 s to 35 s
+after the creation; the final job took 23 s. The receipt job took 336 s: it ran
+on an AMD EPYC 7763, where the compile took 121.2 s and the receipt test
+202.8 s. The other jobs took 147 s to 239 s (the unit parts 205 s to 239 s, the
+slowest on the same CPU model).
+
+The second, with the `macos` input (run 45736574792), was green in every job and
+the final job passed, with macOS running each group whole under the group's
+name (`static (macos-15)`, `unit (macos-15)`, `corpus (macos-15)`,
+`runtime (macos-15)`, the names `compiler-release.yml` looks for). It ended
+495 s after its creation, set by the macOS corpus job (429 s). Its Linux jobs
+began 34 s after the creation; the receipt job took 353 s, again on an
+AMD EPYC 7763 (compile 134.0 s, receipt test 203.7 s).
+
+The receipt test over the same 3156 cases took 144.7 s to 146.8 s on the Xeon
+6975P-C in three runs and 202.8 s to 203.7 s on the EPYC 7763 in two; it runs on
+one thread, so only the CPU's speed shortens it. On the faster CPU the receipt
+job took 268 s to 272 s and the run's last matrix job ended 293 s after the
+creation, with the final job to follow (the first two runs had no final job).
+On the EPYC 7763 the run ended 399 s after its creation. Whether a run is within
+360 s therefore depends on the CPU model the receipt job is given, unless the
+receipt test, whose verdicts must stay, takes less time or its job a faster host.
+
+Not yet measured: the five runs of the question above on pushes to main after the merge. They are appended here,
+each with its job times and the CPU model of its jobs, when they have run.
 
 ## Daily loop
 
