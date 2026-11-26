@@ -1349,29 +1349,27 @@ by the rule above (decision `owner-added-columns-take-the-larger-value`).
 Replay. `recompute-time-budgets.py collect --workflow compute-regression.yml
 --since 2026-10-13 --limit 150` kept the stage rows of the 150 newest runs
 (runs 39684790607 to 45675708663), 83 rows of this stage. This workflow's job
-logs carry no processor model, so each row takes the `Model name` of the same
-run's `identity.txt` in the retained artifact (188 runs have one); an artifact
-belongs to one attempt of a run, so a row of an earlier attempt of a rerun is
-attributed approximately.
+logs carry no processor model, so each row takes the `Model name` of the
+`identity.txt` in the retained artifact of its run (188 runs have one). Six runs
+(39734174464, 39736066162, 39904624788, 39922530381, 39925043523, 40051650516)
+were attempted twice and each attempt left its own artifact, created as that
+attempt ended; the twelve rows of those runs take the processor of the artifact
+of their own attempt, not of the run's retained one.
 
 | processor | rows | min s | median s | max s | over 145 s | new budget | over the new budget |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| EPYC 7763 | 40 | 97.7 | 135.6 | 152.0 | 5 | 165 | 0 |
-| EPYC 9V74 | 17 | 100.2 | 120.7 | 144.8 | 0 | 150 | 0 |
-| EPYC 9V45 | 20 | 94.1 | 105.8 | 144.1 | 0 | 135 | 1 |
+| EPYC 7763 | 40 | 126.8 | 136.2 | 152.0 | 5 | 165 | 0 |
+| EPYC 9V74 | 16 | 101.2 | 124.1 | 144.8 | 0 | 150 | 0 |
+| EPYC 9V45 | 21 | 94.1 | 102.6 | 125.4 | 0 | 135 | 0 |
 | Xeon 8573C | 3 | 112.3 | 138.2 | 139.9 | 0 | 165 | 0 |
 | Xeon 6975P-C (no column) | 3 | 113.8 | 115.7 | 122.2 | 0 | 165 | 0 |
 
-All five builds over 145 s were on the 7763. The one build over its new budget
-is the 144.1 s row of run 39922530381 (2026-10-23, a pull request), a run with
-two attempts whose other attempt took 108.85 s; which attempt the artifact's
-9V45 belongs to is not known, so that row may be a 7763 build. The 9V45's other
-19 rows are 134 s at most, and its seven newest are 123.4 s at most. The rule
-would give the 9V45 140 s from its newest seven (123.42 s plus 10%, rounded up
-to 5 s), the 9V74 150 s from its newest seven (135.26 s) and the 7763 170 s
-from its 20 newest (151.98 s); the owner's numbers are the stated ones. The Xeon
-8573C's three builds are 139.9 s at most, 155 s by the rule, so its column is the
-row's largest class, 165 s.
+No row is over its class's new budget. All five builds over 145 s were on the 7763.
+The rule would give the 7763 170 s from its 20 newest rows (151.98 s plus 10%, rounded
+up to 5 s), the 9V74 160 s from its newest seven (144.79 s) and the 9V45 140 s from its
+newest seven (125.37 s); the owner's numbers are the stated ones, which are 5, 10 and 5 s
+below those. The Xeon 8573C's three builds are 139.9 s at most, 155 s by the rule, so its
+column is the row's largest class, 165 s.
 
 ## Daily loop
 
