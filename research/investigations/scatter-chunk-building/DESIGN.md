@@ -33,7 +33,8 @@ proposal of that lowering has to measure again.
 
 The probes are two ignored tests in `compiler/src/backend/tests/ranges.rs`
 (`stable_scatter_probe_reports_clears_and_copies` and
-`stable_scatter_probe_times_whole_calls`, first committed in `94696cfad`).
+`stable_scatter_probe_times_whole_calls`, first committed in `3da68b19a` and
+made to go on past a failed variant in `94696cfad`).
 They fail on purpose so that their report reaches the test result. They left
 the branch with the emitter change; commit `0ece5c23c` holds them as they
 last ran, with the census probe and the emitter change. The source is the maintained program,
