@@ -111,11 +111,13 @@ pub(super) fn prune_block_parameters(
 /// neither is left), so a loop-carried parameter that a branch of the body
 /// sets back to its value before the loop, or a counted loop's carried
 /// bounds, merge with the value they carry although no parameter's arguments
-/// are all equal as written. A
-/// parameter stays when its incoming values differ, when an incoming argument
-/// has another type than the parameter, when no `Jump` reaches its block, when
-/// its block is the entry or the target of a `Match` or `IntegerMatch` (which
-/// carry no arguments), and when only a cycle of parameters feeds it.
+/// are all equal as written.
+///
+/// A parameter stays when its incoming values differ, when an incoming
+/// argument has another type than the parameter, when no `Jump` reaches its
+/// block, when its block is the entry or the target of a `Match` or
+/// `IntegerMatch` (which carry no arguments), and when only a cycle of
+/// parameters feeds it.
 ///
 /// Uses of a removed parameter are rewritten everywhere a runtime operand or
 /// an operand-indexed record names it: instructions, jump arguments, cleanup
@@ -190,7 +192,7 @@ pub(super) fn merge_equal_block_parameters(
             }
         }
     }
-    let replacement = settle_parameters(&incoming, &is_parameter, &fixed);
+    let replacement = settle_parameters(&incoming, &is_parameter, &fixed)?;
     if replacement.iter().all(Option::is_none) {
         return Ok(());
     }
@@ -239,21 +241,23 @@ pub(super) fn merge_equal_block_parameters(
 
 /// For each parameter, the value it is replaced by, or `None` where it stays.
 ///
-/// A candidate is a parameter not in `fixed`, which stays whatever feeds it. A candidate whose incoming
-/// arguments, once the replacements found so far are applied and the
-/// candidate itself is left out, are one value is replaced by that value;
-/// replacing it can make the candidates it feeds trivial in turn. Candidates
-/// that feed only each other may still carry one value: a strongly connected
-/// component of the forwarding graph with exactly one value entering from
-/// outside is replaced by that value. The two steps alternate until neither
-/// replaces anything, so a copy of a varying parameter is replaced although
-/// the varying parameters it belongs to are not, and no answer rests on a
-/// guess about a parameter that later turns out to vary.
+/// A candidate is a block parameter not in `fixed`; a parameter in `fixed`
+/// stays whatever feeds it, though it may be the value a candidate is
+/// replaced by. A candidate whose incoming arguments, once the replacements
+/// found so far are applied and the candidate itself is left out, are one
+/// value is replaced by that value; replacing it can make the candidates it
+/// feeds trivial in turn. Candidates that feed only each other may still carry
+/// one value: a strongly connected component of the forwarding graph with
+/// exactly one value entering from outside is replaced by that value. The two
+/// steps alternate until neither replaces anything, so a copy of a varying
+/// parameter is replaced although the varying parameters it belongs to are
+/// not, and no answer rests on a guess about a parameter that later turns out
+/// to vary.
 fn settle_parameters(
     incoming: &[Vec<IrValueId>],
     is_parameter: &[bool],
     fixed: &[bool],
-) -> Vec<Option<IrValueId>> {
+) -> Result<Vec<Option<IrValueId>>, LoweringFailure> {
     fn find(parent: &mut [usize], value: usize) -> usize {
         let mut root = value;
         while parent[root] != root {
@@ -316,7 +320,10 @@ fn settle_parameters(
         let mut stack: Vec<usize> = Vec::new();
         let mut components: Vec<Vec<usize>> = Vec::new();
         let mut counter = 0usize;
-        for root in (0..count).filter(|index| candidate[*index] && parent[*index] == *index) {
+        let standing: Vec<usize> = (0..count)
+            .filter(|index| candidate[*index] && parent[*index] == *index)
+            .collect();
+        for root in standing {
             if order[root] != unvisited {
                 continue;
             }
@@ -404,9 +411,11 @@ fn settle_parameters(
         .map(|index| {
             let root = find(&mut parent, index);
             if root == index {
-                None
+                Ok(None)
             } else {
                 IrValueId::from_index(root)
+                    .map(Some)
+                    .ok_or(LoweringFailure::CounterOverflow)
             }
         })
         .collect()
