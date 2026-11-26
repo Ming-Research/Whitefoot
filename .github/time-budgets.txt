@@ -13,14 +13,15 @@
 # follows the rule had 20 to 50 of them; research/investigations/test-economy/
 # time-budgets.md, "The margin of the budget rule"). The rows of the other
 # workflows (io-hosts, proof, sanitizers, map-sanitizers, compute-regression)
-# were not recomputed: the newest runs collected of them on 2026-11-26 give no
-# class 20 samples of a stage, and the logs of all but sanitizers name no CPU
-# model, so a run cannot be given a class. Each holds the value it had under
+# were not recomputed, except performance-candidate-compiler (below): the newest
+# runs collected of them on 2026-11-26 give no class 20 samples of a stage, and
+# the logs of all but sanitizers name no CPU model, so a run cannot be given a
+# class. Each of those holds the value it had under
 # the former rule, a fixed 10% over the maximum, or the provisional value noted
 # at it, raised by a tenth, rounded up to 5 s, in the owner's raise of
 # 2026-11-25 (cells at the 10 s floor were not raised). A cell with fewer than
 # 20 runs of its class keeps its value, except in a column the owner added (see
-# xeon-8573c below).
+# xeon-8573c and xeon-6975p below).
 # A model with fewer than 20 runs has no column unless the owner adds one. An
 # unmapped model uses the stage's largest Linux class budget and is reported by
 # name. Unsampled rows
@@ -50,65 +51,75 @@ cpu epyc-9v45  AMD EPYC 9V45 96-Core Processor
 # sanitizer programs rows, none for the others). Only
 # performance-baseline-compiler rises above the largest class. Evidence:
 # research/investigations/test-economy/time-budgets.md.
-# performance-candidate-compiler is set per class by the owner (165 s on
-# epyc-7763, 150 s on epyc-9v74, 135 s on epyc-9v45), in place of one budget for
-# every class (145 s, set on 2026-10-13, 160 s since the owner's raise of
-# 2026-11-25); the 145 s had been exceeded four times in the recent runs (152.0 s
-# at most), and the classes differ in speed. Its xeon-8573c column follows the
-# rule for a model with too few runs: the larger of the largest class and the
-# model's own runs by the rule, which is the 165 s, its three builds having taken
-# 139.9 s at most (research/investigations/test-economy/time-budgets.md, the
-# candidate-compiler section).
+# performance-candidate-compiler was recomputed on 2026-11-26 by the rule above
+# over the cold builds of the candidate compiler sampled for item 289 after the
+# untimed toolchain warm-up (24, 29 and 23 runs on the three EPYC classes, 23 on
+# xeon-6975p, 12 on this CPU; research/investigations/test-economy/
+# time-budgets.md, "The first compiler build's extra time"). The owner had set it
+# per class (165 s on epyc-7763, 150 s on epyc-9v74, 135 s on epyc-9v45) from runs
+# made without the warm-up, whose first build took about 7% longer than a second.
+# Its xeon-8573c cell is the largest class, 185 s, its own 12 runs giving 170 s.
 cpu xeon-8573c INTEL(R) XEON(R) PLATINUM 8573C
+# xeon-6975p was added on 2026-11-25 (item 289): the hosted pool had moved to
+# this model, 16 of the 36 jobs of one experiment and 50 of the 80 of two
+# sampling batches, and without a column it took each row's largest class value.
+# It follows the rule of xeon-8573c above. Until a row has 20 runs on this CPU,
+# its value is the larger of the row's largest recomputed class value and, where
+# a run on this CPU was found, that run's budget by the rule above. Every row
+# other than performance-candidate-compiler started at the largest of its Linux
+# cells before the column existed, which is the value an unmapped model had.
+# performance-candidate-compiler has 23 runs on this CPU and follows the rule
+# like a class.
+cpu xeon-6975p Intel(R) Xeon(R) 6975P-C
 
-label                           epyc-7763  epyc-9v74  epyc-9v45  xeon-8573c  macos  windows
+label                           epyc-7763  epyc-9v74  epyc-9v45  xeon-8573c  xeon-6975p  macos  windows
 
 # gate.yml, static group
-check/static                    120        120        105        115         125    -
-repository-invariants           30         30         25         30          30     -
-spec-archives                   10         10         10         10          10     -
-readme-translation              10         10         10         10          10     -
-spec-prose-integrity            10         10         10         10          10     -
-guidance                        10         10         10         10          10     -
-source-size                     10         10         10         10          10     -
-design-lint                     10         10         10         10          15     -
-safety-claims                   10         10         10         10          10     -
-conformance                     10         10         10         10          10     -
-performance-instrument          10         10         10         10          10     -
-compiler/lint                   80         85         75         80          75     -
+check/static                    120        120        105        115         120         125    -
+repository-invariants           30         30         25         30          30          30     -
+spec-archives                   10         10         10         10          10          10     -
+readme-translation              10         10         10         10          10          10     -
+spec-prose-integrity            10         10         10         10          10          10     -
+guidance                        10         10         10         10          10          10     -
+source-size                     10         10         10         10          10          10     -
+design-lint                     10         10         10         10          10          15     -
+safety-claims                   10         10         10         10          10          10     -
+conformance                     10         10         10         10          10          10     -
+performance-instrument          10         10         10         10          10          10     -
+compiler/lint                   80         85         75         80          85          75     -
 
 # gate.yml, unit group: the library in test mode, then its cases
-check/unit                      440        475        295        435         425    -
-compiler/test-build-unit        230        240        170        250         300    -
-compiler/test-unit              220        235        140        205         175    -
+check/unit                      440        475        295        435         475         425    -
+compiler/test-build-unit        230        240        170        250         250         300    -
+compiler/test-unit              220        235        140        205         235         175    -
 
 # gate.yml, corpus group: the ordinary library, the CLI and corpus harnesses,
 # then their cases
-check/corpus                    460        515        315        480         360    -
-compiler/test-build-corpus      180        165        135        185         175    -
-compiler/test-corpus            315        360        215        305         205    -
+check/corpus                    460        515        315        480         515         360    -
+compiler/test-build-corpus      180        165        135        185         185         175    -
+compiler/test-corpus            315        360        215        305         360         205    -
 
 # gate.yml, runtime group. The epyc-9v45 value was owner-set to 20 s on
 # 2026-10-13 (15 s failed eleven runs that did not touch the runtime, at most
 # 16.84 s); the 2026-10-21 and 2026-10-23 recomputations gave 25 s and the
 # 2026-11-25 one gives 30 s.
-check/runtime                   35         40         30         35          30     -
+check/runtime                   35         40         30         35          40          30     -
 
 # io-hosts.yml, completion-linux
-linux-runtime                   60         60         60         60          -      -
-linux-asan-ubsan                25         25         25         25          -      -
-linux-default-tsan              10         10         10         10          -      -
-linux-deque-tsan                10         10         10         10          -      -
-linux-runtime-tsan              10         10         10         10          -      -
+linux-runtime                   60         60         60         60          60          -      -
+linux-asan-ubsan                25         25         25         25          25          -      -
+linux-default-tsan              10         10         10         10          10          -      -
+linux-deque-tsan                10         10         10         10          10          -      -
+linux-runtime-tsan              10         10         10         10          10          -      -
 
 # proof.yml: the Lean model's sentence coverage (building and running its
 # checker), the build of its model, proofs and conformance harness, and its run
 # over the conformance cases. Provisional until 20 runs are recorded: 1.5 times
 # the longest run of the stage's current content, rounded up to 5 s, under the
 # 10 s floor (coverage 2.7 s, build 55.5 s, conformance run 5.2 s).
-proof-coverage                  10         10         10         10          -      -
-proof-build                     95         95         95         95          -      -
-proof-conformance               10         10         10         10          -      -
+proof-coverage                  10         10         10         10          10          -      -
+proof-build                     95         95         95         95          95          -      -
+proof-conformance               10         10         10         10          10          -      -
 
 # sanitizers.yml: the corpus target under one sanitizer, building its test
 # binary, as one conformance shard of three or the rest of the target.
@@ -117,14 +128,14 @@ proof-conformance               10         10         10         10          -  
 # 20 or more runs was set by the former rule on 2026-10-23. xeon-8573c, with 13
 # and 8 runs of the two programs rows, takes the row's largest class value (its
 # own runs give less).
-compiler/corpus-asan-conformance 460        360        260        320         -      -
-compiler/corpus-asan-programs   465        420        290        465         -      -
-compiler/corpus-tsan-conformance 355        365        300        350         -      -
-compiler/corpus-tsan-programs   450        420        310        450         -      -
+compiler/corpus-asan-conformance 460        360        260        320         460         -      -
+compiler/corpus-asan-programs   465        420        290        465         465         -      -
+compiler/corpus-tsan-conformance 355        365        300        350         365         -      -
+compiler/corpus-tsan-programs   450        420        310        450         450         -      -
 
 # map-sanitizers.yml, on changes to the concurrent map's runtime or test
-map-asan                        35         35         35         35          20     -
-map-tsan                        50         50         50         50          45     -
+map-asan                        35         35         35         35          35          20     -
+map-tsan                        50         50         50         50          50          45     -
 
 # compute-regression.yml: the candidate's cold compiler build and, unless the
 # merge-base compiler is restored from the cache of its main commit, that
@@ -135,14 +146,14 @@ map-tsan                        50         50         50         50          45 
 # the threshold, a retest round of the two. A stage that has no kernel to time
 # does not run and records nothing; the retest rows have the budget of the
 # round they repeat, five kernels at the most.
-performance-candidate-compiler  165        150        135        165         -      -
-performance-baseline-compiler   130        130        130        150         -      -
-performance-candidate-images    10         10         10         10          -      -
-performance-baseline-images     10         10         10         10          -      -
-performance-null                50         50         50         50          -      -
-performance-slow-control        65         65         65         65          -      -
-performance-shifted-images      10         10         10         10          -      -
-performance-placement-control   50         50         50         50          -      -
-performance-comparison          50         50         50         50          -      -
-performance-retest-null         50         50         50         50          -      -
-performance-retest-comparison   50         50         50         50          -      -
+performance-candidate-compiler  160        185        140        185         125         -      -
+performance-baseline-compiler   130        130        130        150         150         -      -
+performance-candidate-images    10         10         10         10          10          -      -
+performance-baseline-images     10         10         10         10          10          -      -
+performance-null                50         50         50         50          50          -      -
+performance-slow-control        65         65         65         65          65          -      -
+performance-shifted-images      10         10         10         10          10          -      -
+performance-placement-control   50         50         50         50          50          -      -
+performance-comparison          50         50         50         50          50          -      -
+performance-retest-null         50         50         50         50          50          -      -
+performance-retest-comparison   50         50         50         50          50          -      -
