@@ -57,7 +57,12 @@ fn main() -> status: std::process::ExitStatus pure {
 ```
 
 ```whitefoot-output
-placeholder
+reserved.wf:2:7: error[FORM-3]: UnexpectedToken
+  source:   let copy = 1_u8;
+  marker:       ^^^^
+  expected: ["IDENT", "TYPEID", "pkg", "std", "("]
+  found: "copy"
+  mechanical_fix: `copy` is reserved: it is a fixed word of the grammar of a type parameter's capability bound [GRAM-2], and IDENT excludes every fixed grammar word [FORM-3]; rename this name, at its declaration and at every use, to a spelling that is not reserved, such as `copy_value`
 ```
 
 The repaired program:
@@ -99,7 +104,13 @@ fn main() -> status: std::process::ExitStatus pure {
 ```
 
 ```whitefoot-output
-placeholder
+lookup.wf:10:15: error[MOD-5]: QualifiedNameNotFound
+  source:   return pkg::missing();
+  marker:               ^^^^^^^
+  spelling: missing
+  module: pkg
+  role: IdentifierCallee
+  mechanical_fix: replace `missing` with an accessible name declared in `pkg` for this grammar position: `alpha`, `main`, `zeta` [MOD-5]
 ```
 
 The repaired program calls a function the module does declare:
@@ -141,7 +152,11 @@ fn make() -> result: Slots<u8> pure {
 ```
 
 ```whitefoot-output
-placeholder
+placement.wf:1:22: error[TYPE-9]: InvalidRestrictedTypePlacement
+  source: fn make() -> result: Slots<u8> pure {
+  marker:                      ^^^^^^^^^
+  spelling: Slots<u8>
+  mechanical_fix: wrap it in a Box, or write the constant-capacity form
 ```
 
 The repaired program gives the type its constant capacity:
@@ -176,7 +191,12 @@ fn main() -> status: std::process::ExitStatus pure {
 ```
 
 ```whitefoot-output
-placeholder
+operation.wf:2:14: error[OP-1]: InvalidOperation
+  source:   let code = cvt.wrap::<f64, u8>(1.0_f64);
+  marker:              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  operation: cvt.wrap
+  operand_types: ["f64", "u8"]
+  mechanical_fix: `cvt.wrap` needs integer source and destination types (integer primitives or type parameters with the `Int` bound); replace this conversion with `cvt.checked::<f64, u8>(x)`, using the same operand for `x`, and handle its `Result` with an exhaustive `match`
 ```
 
 The repaired program uses the checked conversion, which returns a `Result`
@@ -224,7 +244,12 @@ fn main() -> status: std::process::ExitStatus pure {
 ```
 
 ```whitefoot-output
-placeholder
+bounds.wf:2:12: error[OP-4]: UndischargedBoundsObligation
+  source:   return b^[i];
+  marker:            ^^^
+  residual: i < b^.len
+  disposition: Unproved
+  mechanical_fix: add `requires i < b^.len;` to the `contract` of `get`, which each caller then establishes; or guard the access with `if i < b^.len` where skipping it is the intended behavior, adding to the effect row any read that condition makes which the row does not yet declare
 ```
 
 The repaired program reads the element only where the condition holds:
@@ -279,7 +304,14 @@ fn main() -> status: std::process::ExitStatus pure {
 ```
 
 ```whitefoot-output
-placeholder
+contract.wf:8:11: error[FN-8]: UndischargedCallRequirement
+  source:   let r = small(x: y);
+  marker:           ^^^^^^^^^^^
+  concrete_callee: small
+  requires_clause: contract.wf:2:3 "requires x < 10_u64;"
+  instantiated_goal: y < 10_u64
+  disposition: Unproved
+  mechanical_fix: add `requires y < 10_u64;` to the `contract` of `caller`, which each caller then establishes; or guard the call with `if y < 10_u64` where skipping it is the intended behavior
 ```
 
 The repaired program has the caller require the same fact, so each of its
@@ -333,7 +365,13 @@ fn pass(p: Parcel) -> result: Parcel pure {
 ```
 
 ```whitefoot-output
-placeholder
+ownership.wf:6:10: error[OWN-1]: BareAffineUse
+  source:   return p;
+  marker:          ^
+  binding: p
+  ty: Parcel
+  reason: `p` has type Parcel; its type Parcel is declared non-copy
+  mechanical_fix: write `move p`
 ```
 
 The repaired program writes the move:
@@ -371,7 +409,10 @@ fn leak() -> result: i32 pure {
 ```
 
 ```whitefoot-output
-placeholder
+escape.wf:3:10: error[REF-3]: EscapingReference
+  source:   return &local;
+  marker:          ^^^^^^
+  mechanical_fix: return an index and let the caller form the reference
 ```
 
 The repaired program returns the value:
@@ -402,7 +443,7 @@ struct Cell {
   value: i32;
 }
 
-fn clear(c: &Cell) -> result: unit reads(c) {
+fn zero_cell(c: &Cell) -> result: unit reads(c) {
   set c^.value = 0_i32;
   return unit;
 }
@@ -419,7 +460,7 @@ struct Cell {
   value: i32;
 }
 
-fn clear(c: &Cell) -> result: unit writes(c.value) {
+fn zero_cell(c: &Cell) -> result: unit writes(c.value) {
   set c^.value = 0_i32;
   return unit;
 }
@@ -459,7 +500,12 @@ fn main() -> status: std::process::ExitStatus pure {
 ```
 
 ```whitefoot-output
-placeholder
+alias.wf:13:3: error[EFF-5]: OverlappingCallEffects
+  source:   copy_across(source: &a, destination: &a);
+  marker:   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  first: a.value
+  second: a.value
+  mechanical_fix: pass places that do not overlap, or pass the shared place through one argument only
 ```
 
 The repaired program passes two different cells:
@@ -512,7 +558,12 @@ fn main() -> status: std::process::ExitStatus pure {
 ```
 
 ```whitefoot-output
-placeholder
+waiting.wf:2:3: error[WAIT-1]: WaitingCallOutsideWaitingFunction
+  source:   std::fs::close_directory(factory: factory, directory: move directory);
+  marker:   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  callee: std::fs::close_directory
+  context: a function that does not wait
+  mechanical_fix: write `waits` after the enclosing function's effect row, so the call stands in a waiting function; each caller of that function then waits in turn, up to an entry that waits
 ```
 
 The repaired program declares the wait:
@@ -561,7 +612,11 @@ fn pick(c: Color) -> result: i32 pure {
 ```
 
 ```whitefoot-output
-placeholder
+arms.wf:8:3: error[ERR-2]: NonExhaustiveMatch
+  source:   match c {
+  marker:   ^^^^^^^^^
+  missing_variants: ["Blue"]
+  other_sites: [arms.wf:8:3 missing [Blue]]
 ```
 
 The repaired program names all three variants:
