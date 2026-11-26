@@ -410,9 +410,11 @@ fn separation_defects(label: &str, text: &str, defects: &mut Vec<String>) {
 
 /// The text with each description and each specified call-argument datum
 /// replaced by a name, so the source around them can be read as source; `None`
-/// where a description is not closed.
+/// where a description is not closed. A description is one value, so its name
+/// stands apart from what is written beside it: two descriptions, or a
+/// description and a name, side by side stay two names and are not read as one.
 fn named_parts(text: &str) -> Option<String> {
-    let described = crate::diagnostic_repairs::replace_described(text, DESCRIBED_NAME)?;
+    let described = crate::diagnostic_repairs::replace_described(text, " described ")?;
     Some(crate::diagnostic_repairs::replace_call_argument_datums(&described, DESCRIBED_NAME))
 }
 

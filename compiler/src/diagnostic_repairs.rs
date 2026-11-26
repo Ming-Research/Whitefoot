@@ -62,19 +62,25 @@ pub(crate) fn call_argument_datum(argument: impl std::fmt::Display) -> String {
 
 /// The text with each exact [`call_argument_datum`] form (the words, a decimal
 /// ordinal of one or more digits, the words) replaced by `stand_in`, so that
-/// the source around the datum can be read as source.
+/// the source around the datum can be read as source. The datum is a phrase of
+/// its own: the same words glued to a longer word on either side are not it.
 pub(crate) fn replace_call_argument_datums(text: &str, stand_in: &str) -> String {
+    let in_word = |c: char| c.is_alphanumeric() || c == '_';
     let mut replaced = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(at) = rest.find(CALL_ARGUMENT_DATUM_OPEN) {
         let after = &rest[at + CALL_ARGUMENT_DATUM_OPEN.len()..];
         let digits = after.bytes().take_while(|byte| byte.is_ascii_digit()).count();
+        let begins = !text[..text.len() - rest.len() + at]
+            .chars()
+            .next_back()
+            .is_some_and(in_word);
         // The closing words end the datum: a longer word is not the datum.
         let closed = after[digits..]
             .strip_prefix(CALL_ARGUMENT_DATUM_CLOSE)
-            .filter(|tail| !tail.starts_with(|c: char| c.is_alphanumeric() || c == '_'));
+            .filter(|tail| !tail.starts_with(in_word));
         match closed {
-            Some(tail) if digits > 0 => {
+            Some(tail) if digits > 0 && begins => {
                 replaced.push_str(&rest[..at]);
                 replaced.push_str(stand_in);
                 rest = tail;
