@@ -66,6 +66,9 @@ pub(crate) struct PartAbi {
 /// `"no_callee_saved_registers"` on definitions and calls alike, the
 /// attribute removes that preservation from the chain and the enclosing
 /// function, which keeps the C convention, preserves RBP once around it.
+/// Definitions and calls both carry it: a callee that saves nothing under a
+/// call that still counts on RBP surviving would be wrong code. The enclosing
+/// definition does not, because its own callers count on the C convention.
 /// Every other target and host gets no attribute.
 pub(crate) fn convention_for(facts: &crate::toolchain::ToolchainFacts, triple: &str) -> PartAbi {
     let aarch64 = triple.starts_with("aarch64");

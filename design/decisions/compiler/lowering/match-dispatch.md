@@ -22,9 +22,6 @@ The parts use `preserve_none` where a run-time probe finds the host clang takes 
 ### decision dispatch-parts-save-no-rbp-where-the-host-honors-it
 On x86-64, every part's definition and every call into or between the parts carries `no_callee_saved_registers` where a run-time probe shows the host honors it, so handlers do not save RBP.
 - rejected: an agent proposed the GHC convention for the x86-64 parts, which saves nothing and needs no probe; the owner rejected it, because it passes 10 integer registers against 11, so a loop needing 11 moves a value to the frame, a cost not yet measured.
-- rejected: an agent proposed taking the host's acceptance of the attribute as support; the owner rejected it, because LLVM accepts unknown string attributes, so the probe must inspect the generated code for no RBP save in the handlers and one in the C entry.
-- rejected: an agent proposed the attribute on definitions only, or on the enclosing function; the owner rejected it, because a caller would still count on RBP surviving, and the enclosing function saves it once around the chain.
-- rejected: an agent proposed changing the tail jump to drop its extra load and register copy; the owner rejected it, because LLVM 22 limits the target to a register class with one register free and folds the load only up to six registers (data: `research/investigations/match-dispatch/DESIGN.md`).
 
 ### decision a-dispatch-slot-that-never-crosses-a-transfer-belongs-to-its-part
 The enclosing function owns the frame and passes it to every part; a frame slot whose contents never cross a transfer between parts is each using part's own allocation.
