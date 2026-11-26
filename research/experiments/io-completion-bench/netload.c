@@ -35,7 +35,13 @@
  * One line on stdout, tab separated:
  *
  *   connect_us=  exchange_us=  roundtrips=  rt_per_s=  bytes_per_s=
- *   p50_us=  p90_us=  p99_us=  max_us=
+ *   p50_us=  p90_us=  p99_us=  max_us=  client_busy_max_pct=
+ *
+ * client_busy_max_pct is the largest share of the exchange phase, as
+ * /proc/stat counts it, that any one CPU this process may run on spent doing
+ * anything but idle or waiting for I/O. A client whose busiest CPU is nearly
+ * saturated limits the rate it reports, so a table that compares servers
+ * checks it; -1 means the counters could not be read.
  *
  * bytes_per_s counts the payload once, not once per direction: a round trip of
  * BYTES bytes counts BYTES. */
@@ -43,6 +49,7 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <pthread.h>
+#include <sched.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -342,6 +349,72 @@ static void *client_main(void *raw) {
     return NULL;
 }
 
+/* The jiffies one CPU spent busy and in all, from /proc/stat, for every CPU
+ * this process may run on. */
+#define CPU_SLOTS 1024
+struct cpu_counters {
+    uint64_t busy[CPU_SLOTS];
+    uint64_t total[CPU_SLOTS];
+    int allowed[CPU_SLOTS];
+    int readable;
+};
+
+static void read_cpu_counters(struct cpu_counters *into, int fill_allowed) {
+    if (fill_allowed) {
+        cpu_set_t mask;
+        memset(into->allowed, 0, sizeof into->allowed);
+        if (sched_getaffinity(0, sizeof mask, &mask) == 0) {
+            for (int cpu = 0; cpu < CPU_SLOTS && cpu < CPU_SETSIZE; cpu++) {
+                into->allowed[cpu] = CPU_ISSET(cpu, &mask) ? 1 : 0;
+            }
+        }
+    }
+    into->readable = 0;
+    FILE *stat = fopen("/proc/stat", "r");
+    if (stat == NULL) {
+        return;
+    }
+    char line[512];
+    while (fgets(line, sizeof line, stat) != NULL) {
+        int cpu = -1;
+        unsigned long long user_time = 0, nice_time = 0, system_time = 0, idle = 0, iowait = 0;
+        unsigned long long irq = 0, softirq = 0, steal = 0;
+        if (strncmp(line, "cpu", 3) != 0 || line[3] < '0' || line[3] > '9') {
+            continue;
+        }
+        if (sscanf(line, "cpu%d %llu %llu %llu %llu %llu %llu %llu %llu", &cpu, &user_time,
+                &nice_time, &system_time, &idle, &iowait, &irq, &softirq, &steal) < 5 ||
+            cpu < 0 || cpu >= CPU_SLOTS) {
+            continue;
+        }
+        uint64_t all = user_time + nice_time + system_time + idle + iowait + irq + softirq + steal;
+        into->total[cpu] = all;
+        into->busy[cpu] = all - idle - iowait;
+        into->readable = 1;
+    }
+    fclose(stat);
+}
+
+/* The busiest allowed CPU's busy share between two readings, in percent, or
+ * -1 when a reading failed or no allowed CPU advanced. */
+static double busiest_share(const struct cpu_counters *before, const struct cpu_counters *after) {
+    if (!before->readable || !after->readable) {
+        return -1.0;
+    }
+    double most = -1.0;
+    for (int cpu = 0; cpu < CPU_SLOTS; cpu++) {
+        if (!before->allowed[cpu] || after->total[cpu] <= before->total[cpu]) {
+            continue;
+        }
+        double share = 100.0 * (double)(after->busy[cpu] - before->busy[cpu]) /
+                       (double)(after->total[cpu] - before->total[cpu]);
+        if (share > most) {
+            most = share;
+        }
+    }
+    return most;
+}
+
 int main(int argc, char **argv) {
     if (argc < 5) {
         fprintf(stderr, "usage: netload PORT CONNECTIONS ROUNDTRIPS BYTES [--threads T]\n");
@@ -418,12 +491,16 @@ int main(int argc, char **argv) {
     struct timespec connect_start;
     struct timespec connect_end;
     struct timespec exchange_end;
+    static struct cpu_counters cpus_at_connect_end;
+    static struct cpu_counters cpus_at_exchange_end;
     pthread_barrier_wait(&gate);
     clock_gettime(CLOCK_MONOTONIC, &connect_start);
     pthread_barrier_wait(&gate);
     clock_gettime(CLOCK_MONOTONIC, &connect_end);
+    read_cpu_counters(&cpus_at_connect_end, 1);
     pthread_barrier_wait(&gate);
     clock_gettime(CLOCK_MONOTONIC, &exchange_end);
+    read_cpu_counters(&cpus_at_exchange_end, 0);
     for (uint64_t at = 0; at < threads; at++) {
         pthread_join(clients[at].thread, NULL);
     }
@@ -438,11 +515,13 @@ int main(int argc, char **argv) {
     double bytes_per_second =
         exchange_seconds > 0.0 ? (double)total * (double)option_bytes / exchange_seconds : 0.0;
     printf("connect_us=%llu\texchange_us=%llu\troundtrips=%llu\trt_per_s=%.1f"
-           "\tbytes_per_s=%.1f\tp50_us=%u\tp90_us=%u\tp99_us=%u\tmax_us=%u\n",
+           "\tbytes_per_s=%.1f\tp50_us=%u\tp90_us=%u\tp99_us=%u\tmax_us=%u"
+           "\tclient_busy_max_pct=%.1f\n",
            (unsigned long long)connect_us, (unsigned long long)exchange_us,
            (unsigned long long)total, per_second, bytes_per_second,
            percentile(latency_us, total, 50), percentile(latency_us, total, 90),
-           percentile(latency_us, total, 99), total > 0 ? latency_us[total - 1] : 0);
+           percentile(latency_us, total, 99), total > 0 ? latency_us[total - 1] : 0,
+           busiest_share(&cpus_at_connect_end, &cpus_at_exchange_end));
     fflush(stdout);
     free(payloads);
     free(latency_us);
