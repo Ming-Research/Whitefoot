@@ -22,8 +22,8 @@ fn bump(marks: &[u64], x: u64, y: u8) -> result: u8 pure contract {
     }
   }
   match e {
-    Full(count: held) => {
-      let w = 251_u8 + held;
+    Full(count: held_count) => {
+      let w = 251_u8 + held_count;
       return w;
     }
     Empty() => {
