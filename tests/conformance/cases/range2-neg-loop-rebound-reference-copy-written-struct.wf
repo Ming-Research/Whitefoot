@@ -1,0 +1,25 @@
+struct Counter {
+  count: u8;
+}
+
+fn bump(marks: &[u64], n: u64, y: u8) -> result: u8 pure contract {
+  requires forall small(k in 0_u64..marks^.len): marks^[k] < 8_u64;
+} {
+  doc "After the loop r names s or t, and so does its copy q, so the write through q may make s.count y, which may be 9.";
+  let s = Counter(count: 1_u8);
+  let t = Counter(count: 1_u8);
+  let r = &s;
+  for (i in 0_u64..n) {
+    set r = &t;
+  }
+  set s.count = 1_u8;
+  let q = r;
+  set q^.count = y;
+  let v = s.count;
+  let w = 251_u8 + v;
+  return w;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
