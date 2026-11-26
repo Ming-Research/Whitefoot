@@ -90,7 +90,8 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "EFF-5",
         sentences: &[
-            "\n  first: values^[\u{2039}the value of p.k before it was rewritten\u{203a}]\n",
+            "\n  residual: values^[\u{2039}the value of p.k before it was rewritten\u{203a}] and values^[b] require their captured indices to be distinct\n",
+            "\n  mechanical_fix: when the two positions can differ here, prove them distinct before this call; otherwise pass places this call proves do not overlap\n",
         ],
         repaired: &[br#"struct Cursor {
   k: u64;
