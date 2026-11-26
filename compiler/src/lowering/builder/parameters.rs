@@ -102,30 +102,16 @@ pub(super) fn prune_block_parameters(
     Ok(needed)
 }
 
-/// What the merge knows of one block parameter while it iterates.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Merge {
-    /// No incoming value reaches it from outside: only a cycle of parameters
-    /// feeds it.
-    Unknown,
-    /// Every incoming edge carries this value, directly or through parameters
-    /// that carry it.
-    Same(IrValueId),
-    /// Two incoming edges carry different values, or the parameter is not
-    /// fed by `Jump` edges alone.
-    Varies,
-}
-
 /// Replace every block parameter whose incoming `Jump` edges all carry one
 /// value, directly or through other such parameters, by that value, and
 /// remove it with its incoming arguments.
 ///
-/// The decision is the greatest fixed point over the whole function, settled
-/// by [`settle_parameters`] one strongly connected component of the
-/// forwarding graph at a time, so a
-/// loop-carried parameter that a branch of the body sets back to its value
-/// before the loop, or a counted loop's carried bounds, merge with the value
-/// they carry although no parameter's arguments are all equal as written. A
+/// The decision covers the whole function ([`settle_parameters`] removes
+/// trivial parameters and cycles of parameters with one entering value until
+/// neither is left), so a loop-carried parameter that a branch of the body
+/// sets back to its value before the loop, or a counted loop's carried
+/// bounds, merge with the value they carry although no parameter's arguments
+/// are all equal as written. A
 /// parameter stays when its incoming values differ, when an incoming argument
 /// has another type than the parameter, when no `Jump` reaches its block, when
 /// its block is the entry or the target of a `Match` or `IntegerMatch` (which
@@ -144,7 +130,7 @@ pub(super) fn merge_equal_block_parameters(
     let count = function.values.len();
     let mut is_parameter = vec![false; count];
     let mut incoming = vec![Vec::new(); count];
-    let mut state = vec![Merge::Unknown; count];
+    let mut fixed = vec![false; count];
     let mut fed_by_jump = vec![false; function.blocks.len()];
     let mut matched = vec![false; function.blocks.len()];
     for block in &function.blocks {
@@ -173,7 +159,7 @@ pub(super) fn merge_equal_block_parameters(
                         .get(argument.index())
                         .ok_or(LoweringFailure::InvalidCheckedProgram)?;
                     if *argument_type != function.values[parameter.index()] {
-                        state[parameter.index()] = Merge::Varies;
+                        fixed[parameter.index()] = true;
                     }
                     incoming[parameter.index()].push(*argument);
                 }
@@ -200,22 +186,12 @@ pub(super) fn merge_equal_block_parameters(
     for (block_index, block) in function.blocks.iter().enumerate() {
         for (parameter, _) in &block.parameters {
             if block_index == 0 || !fed_by_jump[block_index] || matched[block_index] {
-                state[parameter.index()] = Merge::Varies;
+                fixed[parameter.index()] = true;
             }
         }
     }
-    settle_parameters(&incoming, &is_parameter, &mut state);
-    let mut replacement: Vec<Option<IrValueId>> = vec![None; count];
-    let mut merged = false;
-    for (index, merge) in state.iter().enumerate() {
-        if is_parameter[index]
-            && let Merge::Same(value) = *merge
-        {
-            replacement[index] = Some(value);
-            merged = true;
-        }
-    }
-    if !merged {
+    let replacement = settle_parameters(&incoming, &is_parameter, &fixed);
+    if replacement.iter().all(Option::is_none) {
         return Ok(());
     }
     // A surviving value is never itself merged: it is defined by an
@@ -261,113 +237,179 @@ pub(super) fn merge_equal_block_parameters(
     Ok(())
 }
 
-/// Decide every candidate parameter at once. A candidate is a parameter not
-/// already `Varies`; its incoming arguments form a forwarding graph, whose
-/// strongly connected components are settled in dependency order, so a
-/// component only ever reads components that are final.
+/// For each parameter, the value it is replaced by, or `None` where it stays.
 ///
-/// A component's terminals are the arguments reaching it from outside it: a
-/// value that is no parameter, a parameter that is kept as it is, and for a
-/// candidate parameter of an earlier component the value that component
-/// settled on (itself where it varies, nothing where only a cycle feeds it).
-/// One terminal merges the whole component into it, several make every member
-/// vary, none leaves the component unknown. Deciding by terminals alone keeps
-/// a parameter's answer from resting on an assumption about itself that a
-/// later change upstream would have to take back.
-fn settle_parameters(incoming: &[Vec<IrValueId>], is_parameter: &[bool], state: &mut [Merge]) {
-    let count = state.len();
-    let candidate: Vec<bool> = (0..count)
-        .map(|index| is_parameter[index] && state[index] == Merge::Unknown)
-        .collect();
-    let unvisited = usize::MAX;
-    let mut order = vec![unvisited; count];
-    let mut low = vec![0usize; count];
-    let mut on_stack = vec![false; count];
-    let mut component_of = vec![unvisited; count];
-    let mut stack: Vec<usize> = Vec::new();
-    let mut counter = 0usize;
-    let mut components = 0usize;
-    for root in (0..count).filter(|index| candidate[*index]) {
-        if order[root] != unvisited {
-            continue;
+/// A candidate is a parameter not in `fixed`, which stays whatever feeds it. A candidate whose incoming
+/// arguments, once the replacements found so far are applied and the
+/// candidate itself is left out, are one value is replaced by that value;
+/// replacing it can make the candidates it feeds trivial in turn. Candidates
+/// that feed only each other may still carry one value: a strongly connected
+/// component of the forwarding graph with exactly one value entering from
+/// outside is replaced by that value. The two steps alternate until neither
+/// replaces anything, so a copy of a varying parameter is replaced although
+/// the varying parameters it belongs to are not, and no answer rests on a
+/// guess about a parameter that later turns out to vary.
+fn settle_parameters(
+    incoming: &[Vec<IrValueId>],
+    is_parameter: &[bool],
+    fixed: &[bool],
+) -> Vec<Option<IrValueId>> {
+    fn find(parent: &mut [usize], value: usize) -> usize {
+        let mut root = value;
+        while parent[root] != root {
+            root = parent[root];
         }
-        order[root] = counter;
-        low[root] = counter;
-        counter += 1;
-        stack.push(root);
-        on_stack[root] = true;
-        let mut work: Vec<(usize, usize)> = vec![(root, 0)];
-        while let Some(&(node, edge)) = work.last() {
-            if let Some(argument) = incoming[node].get(edge) {
-                work.last_mut().expect("a node being visited").1 += 1;
-                let next = argument.index();
-                if !candidate[next] {
+        let mut walk = value;
+        while parent[walk] != root {
+            let next = parent[walk];
+            parent[walk] = root;
+            walk = next;
+        }
+        root
+    }
+    let count = fixed.len();
+    let candidate: Vec<bool> = (0..count)
+        .map(|index| is_parameter[index] && !fixed[index])
+        .collect();
+    let mut users: Vec<Vec<usize>> = vec![Vec::new(); count];
+    for parameter in (0..count).filter(|index| candidate[*index]) {
+        for argument in &incoming[parameter] {
+            if is_parameter[argument.index()] {
+                users[argument.index()].push(parameter);
+            }
+        }
+    }
+    let mut parent: Vec<usize> = (0..count).collect();
+    let mut pending: Vec<usize> = (0..count).filter(|index| candidate[*index]).collect();
+    loop {
+        while let Some(parameter) = pending.pop() {
+            if parent[parameter] != parameter {
+                continue;
+            }
+            let mut only = None;
+            let mut several = false;
+            for argument in &incoming[parameter] {
+                let value = find(&mut parent, argument.index());
+                if value == parameter {
                     continue;
                 }
-                if order[next] == unvisited {
-                    order[next] = counter;
-                    low[next] = counter;
-                    counter += 1;
-                    stack.push(next);
-                    on_stack[next] = true;
-                    work.push((next, 0));
-                } else if on_stack[next] {
-                    low[node] = low[node].min(order[next]);
-                }
-                continue;
-            }
-            work.pop();
-            if let Some(&(parent, _)) = work.last() {
-                low[parent] = low[parent].min(low[node]);
-            }
-            if low[node] != order[node] {
-                continue;
-            }
-            let mut members = Vec::new();
-            loop {
-                let member = stack.pop().expect("a component's root is on the stack");
-                on_stack[member] = false;
-                component_of[member] = components;
-                members.push(member);
-                if member == node {
-                    break;
+                match only {
+                    None => only = Some(value),
+                    Some(first) if first != value => {
+                        several = true;
+                        break;
+                    }
+                    Some(_) => {}
                 }
             }
-            let mut terminal: Option<IrValueId> = None;
-            let mut varies = false;
-            for member in &members {
+            if let (false, Some(value)) = (several, only) {
+                parent[parameter] = value;
+                pending.extend(users[parameter].iter().copied());
+            }
+        }
+        // Strongly connected components of the candidates still standing,
+        // dependencies first.
+        let unvisited = usize::MAX;
+        let mut order = vec![unvisited; count];
+        let mut low = vec![0usize; count];
+        let mut on_stack = vec![false; count];
+        let mut stack: Vec<usize> = Vec::new();
+        let mut components: Vec<Vec<usize>> = Vec::new();
+        let mut counter = 0usize;
+        for root in (0..count).filter(|index| candidate[*index] && parent[*index] == *index) {
+            if order[root] != unvisited {
+                continue;
+            }
+            order[root] = counter;
+            low[root] = counter;
+            counter += 1;
+            stack.push(root);
+            on_stack[root] = true;
+            let mut work: Vec<(usize, usize)> = vec![(root, 0)];
+            while let Some(&(node, edge)) = work.last() {
+                if let Some(argument) = incoming[node].get(edge) {
+                    work.last_mut().expect("a node being visited").1 += 1;
+                    let next = find(&mut parent, argument.index());
+                    if next == node || !candidate[next] {
+                        continue;
+                    }
+                    if order[next] == unvisited {
+                        order[next] = counter;
+                        low[next] = counter;
+                        counter += 1;
+                        stack.push(next);
+                        on_stack[next] = true;
+                        work.push((next, 0));
+                    } else if on_stack[next] {
+                        low[node] = low[node].min(order[next]);
+                    }
+                    continue;
+                }
+                work.pop();
+                if let Some(&(up, _)) = work.last() {
+                    low[up] = low[up].min(low[node]);
+                }
+                if low[node] != order[node] {
+                    continue;
+                }
+                let mut members = Vec::new();
+                loop {
+                    let member = stack.pop().expect("a component's root is on the stack");
+                    on_stack[member] = false;
+                    members.push(member);
+                    if member == node {
+                        break;
+                    }
+                }
+                components.push(members);
+            }
+        }
+        let mut changed = false;
+        let mut inside = vec![usize::MAX; count];
+        for (number, members) in components.iter().enumerate() {
+            for member in members {
+                inside[*member] = number;
+            }
+            let mut outside = None;
+            let mut several = false;
+            'members: for member in members {
                 for argument in &incoming[*member] {
-                    let next = argument.index();
-                    let reaches = if !candidate[next] {
-                        Some(*argument)
-                    } else if component_of[next] == components {
-                        None
-                    } else {
-                        match state[next] {
-                            Merge::Same(value) => Some(value),
-                            Merge::Varies => Some(*argument),
-                            Merge::Unknown => None,
+                    let value = find(&mut parent, argument.index());
+                    if value == *member || inside[value] == number {
+                        continue;
+                    }
+                    match outside {
+                        None => outside = Some(value),
+                        Some(first) if first != value => {
+                            several = true;
+                            break 'members;
                         }
-                    };
-                    match (terminal, reaches) {
-                        (_, None) => {}
-                        (None, reaches) => terminal = reaches,
-                        (Some(first), Some(other)) if first != other => varies = true,
-                        (Some(_), Some(_)) => {}
+                        Some(_) => {}
                     }
                 }
             }
-            let settled = match (varies, terminal) {
-                (true, _) => Merge::Varies,
-                (false, Some(value)) => Merge::Same(value),
-                (false, None) => Merge::Unknown,
-            };
-            for member in members {
-                state[member] = settled;
+            if let (false, Some(value)) = (several, outside) {
+                for member in members {
+                    parent[*member] = value;
+                    pending.extend(users[*member].iter().copied());
+                }
+                changed = true;
             }
-            components += 1;
+        }
+        if !changed {
+            break;
         }
     }
+    (0..count)
+        .map(|index| {
+            let root = find(&mut parent, index);
+            if root == index {
+                None
+            } else {
+                IrValueId::from_index(root)
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -760,12 +802,12 @@ mod tests {
     #[test]
     fn an_inner_loop_that_only_passes_on_a_swapped_value_merges_into_it() {
         // 0 and 1 values, 2 condition. The outer header parameters 3 and 4
-        // swap on every trip, so each varies although the optimistic reading
-        // of the entry alone says 3 is 0. The inner header parameter 5 is
-        // entered with 3 and passes itself on: it is 3, whichever of 3's
-        // readings was tried first.
-        let types = [WORD, WORD, B, WORD, WORD, WORD];
-        let build = |inner: &[u32], enter: &[u32], back: &[u32]| {
+        // swap on every trip, so each varies. The inner header parameter 5 is
+        // entered with 3 and gets back the join parameter 6, which only
+        // copies it: the two feed each other and carry 3, although the outer
+        // parameter they carry varies.
+        let types = [WORD, WORD, B, WORD, WORD, WORD, WORD];
+        let build = |inner: &[u32], join: &[u32], enter: &[u32], pass: &[u32], back: &[u32]| {
             function_of(
                 &types,
                 3,
@@ -774,14 +816,15 @@ mod tests {
                     block(&types, &[3, 4], vec![], branch(2, 2, 5)),
                     block(&types, &[], vec![], jump(3, enter)),
                     block(&types, inner, vec![], branch(2, 4, 6)),
-                    block(&types, &[], vec![], jump(3, back)),
+                    block(&types, &[], vec![], jump(7, pass)),
                     block(&types, &[], vec![], ret(3)),
                     block(&types, &[], vec![], jump(1, &[4, 3])),
+                    block(&types, join, vec![], jump(3, back)),
                 ],
             )
         };
-        let before = build(&[5], &[3], &[5]);
-        assert_eq!(merged(before), build(&[], &[], &[]));
+        let before = build(&[5], &[6], &[3], &[5], &[6]);
+        assert_eq!(merged(before), build(&[], &[], &[], &[], &[]));
     }
 
     #[test]
