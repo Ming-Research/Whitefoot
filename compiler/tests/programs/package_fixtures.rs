@@ -139,10 +139,14 @@ fn a_check_starts_no_clang_of_the_package_beside_the_compiler() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// A package of stand-ins: a `clang` that logs its arguments, prints the
-/// version line given and exits 0, a manifest when given, and the compiler under
-/// test. Its builds fail (the stand-in makes no object); what these tests read
-/// is which commands the compiler started in the package and what it said.
+/// A package of stand-ins: a `clang` that logs its arguments, reads the module
+/// the compiler pipes to it, prints the version line given and exits 0, a
+/// manifest when given, and the compiler under test. The stand-in makes no
+/// object; what these tests read is which commands the compiler started in the
+/// package and what it said. It reads its standard input to the end when the
+/// compiler pipes a module (`-x ir -`): the compiler writes the whole module
+/// before it waits, so a clang that exited first would fail that write when it
+/// lost the race and not when it won, and the status of a build would vary.
 struct StandInPackage {
     root: std::path::PathBuf,
     log: std::path::PathBuf,
@@ -172,7 +176,7 @@ impl StandInPackage {
         write_script(
             &bin.join("clang"),
             &format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = --version ]; then printf '{version_printf}'; fi\nexit 0\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\ncase \" $* \" in *\" - \"*) cat > /dev/null ;; esac\nif [ \"$1\" = --version ]; then printf '{version_printf}'; fi\nexit 0\n",
                 log.display()
             ),
         );
@@ -353,7 +357,13 @@ fn a_record_that_cannot_be_taken_probes_and_the_note_names_why() {
             notes[0]
         );
         // The note changes neither the verdict nor the status.
-        assert_eq!(built.status.code(), json.status.code(), "{tag}");
+        assert_eq!(
+            built.status.code(),
+            json.status.code(),
+            "{tag}: text build said {:?}, json build said {:?}",
+            String::from_utf8_lossy(&built.stderr),
+            String::from_utf8_lossy(&json.stderr)
+        );
     }
 }
 
