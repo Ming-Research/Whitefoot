@@ -9,7 +9,7 @@ name: tmp-hash-shrink-merge
 
 on:
   push:
-    branches: [claude/hash-shrink, work-141-26e0fade]
+    branches: [claude/hash-shrink, work-141-26e0fade, 'wf-try/work-141-26e0fade/**']
   workflow_dispatch:
 
 permissions:
