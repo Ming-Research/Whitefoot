@@ -55,6 +55,19 @@ own compile line (`-O2 -g -Wall -Wextra -Werror -Wpedantic -pthread`).
   1.5 s late, in the sources before the change and in the sources after it, 5
   runs each. The old sources must fail 5 of 5 with the assertion's own message;
   the changed sources must pass 5 of 5.
+- C7, controls of the tests added after the first hand-in: registered at the
+  test review's request, before it was measured. The tests are
+  `swap_hook_runs_once_under_the_locks`, `reserves_refused_inside_a_self_swap`
+  and `owed_is_bounded`, each with its own focused path in the test
+  (`swap-hook`, `release-inside-self-swap`, `owed-bound`). Each path must pass
+  5 of 5 runs on the sources as they are. Then, on one copy of the sources for
+  each wrong behaviour, 5 runs must fail 5 of 5, with the test's own message:
+  the hook after the exchange began; the hook before the locks are taken; the
+  hook run twice; the hook never run (all four on `swap-hook`); the swap's locks
+  deleted (on `release-inside-self-swap`, and on `swap-hook`); `owed`'s 10 s
+  bound made 100 s; the early return of `owed` for an act already made
+  deleted (both on `owed-bound`). A run that fails for another reason, by
+  timeout or at compile time, does not count.
 
 ## Results
 
@@ -124,6 +137,32 @@ with `no release met a reserve beside the swaps (rounds) (2000, 0)`. The
 changed sources passed 5 of 5 in each case. C6 holds: each old assertion
 fails whenever the second thread arrives after the first has finished, and
 the changed test waits for it.
+
+### C7, controls of the tests added after the first hand-in
+
+Run 45748160597 on commit `d8879bb2c`, ubuntu-24.04 (the workflow's other
+steps ran on this head as well, with the same results as above: C2 0 of 50
+and 0 of 200, C3, C4 and C6 as before, C1 0 of 50 and 0 of 200). The macOS
+result is added below when its job has ended.
+
+| path | sources as they are | wrong behaviour | runs failed | message |
+| --- | --- | --- | --- | --- |
+| `swap-hook` | 0 of 5 failed | hook after the exchange began | 5 of 5 | `a swap's hook ran after the exchange began` |
+| `swap-hook` | | hook before the locks | 5 of 5 | `a swap's hook ran without a map's lock` |
+| `swap-hook` | | hook run twice | 5 of 5 | `a swap did not run its hook once (pair, calls) (0, 2)` |
+| `swap-hook` | | hook never run | 5 of 5 | `a swap did not run its hook once (pair, calls) (0, 0)` |
+| `swap-hook` | | swap's locks deleted | 5 of 5 | `a swap's hook ran without a map's lock` |
+| `release-inside-self-swap` | 0 of 5 failed | swap's locks deleted | 5 of 5 | `a release inside a swap of a map with itself freed a reserve (bytes) (512, 0)` |
+| `owed-bound` | 0 of 5 failed | bound 10 s made 100 s | 5 of 5 | `a wait 11 s old for an act did not end the test with exit status 1 (signal or status + 1000) (1007, 0)` |
+| `owed-bound` | | early return deleted | 5 of 5 | `a wait for an act already made asked again or started its clock (answer, calls) (1, 0)` |
+
+C7 holds on Linux: each wrong behaviour is caught by its own test with its own
+message. Two behaviours are not covered: a swap that takes the lock of a map
+swapped with itself twice would wait for ever and end at the test's 120 s alarm
+instead of a message, and a bound made 11 s instead of 10 s is not told apart
+by the child that is 10 s old, whose integer-second difference may or may not
+reach 11. The whole binary on Linux, with the three tests in it, ran in 2 s
+(plain), 7 s (ASan+UBSan) and 23 s (TSan).
 
 ## Limits
 
