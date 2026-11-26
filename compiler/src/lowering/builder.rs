@@ -221,10 +221,14 @@ pub(crate) fn lower_checked_from(
     let (synthesized, mut actualization) = synthesis.into_inner().finish()?;
     functions.extend(synthesized);
     // Once every body and cleanup is complete, remove unobserved forwarding
-    // before work estimates and backend storage planning see the graph.
-    // This changes neither source signatures nor instruction definitions.
+    // and then merge each block parameter whose incoming edges all carry one
+    // value into that value, before work estimates and backend storage
+    // planning see the graph. This changes neither source signatures nor
+    // instruction definitions; merging rewrites the operands that named a
+    // removed parameter.
     for function in &mut functions {
         parameters::prune_block_parameters(function, 0, &[])?;
+        parameters::merge_equal_block_parameters(function)?;
     }
     let weights = split::assign_weights(&mut functions);
     if call_grain == CallGrain::WorkUnit {
