@@ -8,7 +8,7 @@
 use std::process::Command;
 
 use super::support::{build_program, compile_program, fixture_directory};
-use crate::support::{CLANG, run_command};
+use crate::support::{clang_link, run_command};
 
 #[test]
 fn stop_requests_and_default_termination_on_both_host_routes() {
@@ -21,7 +21,7 @@ fn stop_requests_and_default_termination_on_both_host_routes() {
         .join(format!("stop_signals_driver{}", std::env::consts::EXE_SUFFIX));
     std::fs::write(&source, include_str!("stop_signals_driver.c")).expect("host oracle source");
     let built = run_command(
-        Command::new(CLANG)
+        clang_link()
             .args(["-std=c11", "-Wall", "-Wextra", "-Werror", "-Wpedantic"])
             .arg(&source)
             .arg("-o")

@@ -5,7 +5,7 @@
 //! pin the shape around them: the summary line, the marked source line,
 //! related positions, escaping, and the complete JSON object.
 
-use super::{DiagnosticFormat, Value, render_driver_failure, write_text};
+use super::{DiagnosticFormat, Value, render_driver_failure, render_driver_note, write_text};
 use crate::{CompilationFailure, CompilerLimits, SourceInput, check};
 
 mod match_sites;
@@ -674,6 +674,19 @@ fn a_driver_stop_is_one_sentence_in_text_and_an_envelope_in_json() {
     assert_eq!(
         render_driver_failure("Invocation", message, DiagnosticFormat::Json),
         r#"{"category":"Invocation","stage":"Driver","detail":{"message":"cannot read \"missing.wf\": No such file or directory (os error 2)"}}"#
+    );
+}
+
+#[test]
+fn a_driver_note_is_one_note_line_in_text_and_a_note_envelope_in_json() {
+    let message = "the clang answers were not taken (\"x\")";
+    assert_eq!(
+        render_driver_note("Toolchain", message, DiagnosticFormat::Text),
+        format!("whitefootc: note: {message}")
+    );
+    assert_eq!(
+        render_driver_note("Toolchain", message, DiagnosticFormat::Json),
+        r#"{"kind":"Note","category":"Toolchain","stage":"Driver","detail":{"message":"the clang answers were not taken (\"x\")"}}"#
     );
 }
 

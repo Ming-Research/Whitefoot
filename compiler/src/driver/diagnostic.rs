@@ -85,6 +85,30 @@ pub fn render_driver_failure(category: &str, message: &str, format: DiagnosticFo
     }
 }
 
+/// Renders a note the command-line driver gives beside a result that is not a
+/// stop: something a writer may want to know that did not change the verdict.
+///
+/// The text form is one `note:` line; the JSON form is the envelope of a driver
+/// stop with the kind `Note`, so a reader that parses stops also reads it.
+#[must_use]
+pub fn render_driver_note(category: &str, message: &str, format: DiagnosticFormat) -> String {
+    match format {
+        DiagnosticFormat::Text => format!("whitefootc: note: {message}"),
+        DiagnosticFormat::Json => Record {
+            kind: Some("Note".to_owned()),
+            at: None,
+            detail: vec![("message", Value::Text(message.to_owned()))],
+            expected: None,
+        }
+        .json(&Head {
+            verdict: String::new(),
+            category,
+            stage: "Driver",
+            rule: None,
+        }),
+    }
+}
+
 /// The envelope the driver owns for one record.
 pub(super) struct Head<'envelope> {
     /// The summary line's verdict: `error[RULE]` for a source rejection, and

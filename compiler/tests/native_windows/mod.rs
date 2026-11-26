@@ -11,8 +11,8 @@ use whitefoot::{
 
 use crate::programs::support::{compile_program_with_overlap, fixture_directory};
 use crate::support::{
-    CLANG, LINK_LIBRARIES, append_runtime_objects, observe_layout, run_command, spine_source,
-    wide_frame_source,
+    LINK_LIBRARIES, append_runtime_objects, clang, clang_link, observe_layout, run_command,
+    spine_source, wide_frame_source,
 };
 
 fn native_link(
@@ -25,7 +25,7 @@ fn native_link(
     let observer = directory.join("observer.c");
     std::fs::write(&observer, host).expect("write native observer");
     let executable = directory.join(if small { "small.exe" } else { "native.exe" });
-    let mut command = Command::new(CLANG);
+    let mut command = clang_link();
     command
         .arg(module)
         .arg("-x")
@@ -66,7 +66,7 @@ fn native_link(
             )
             .expect("test stack reservation");
             let result = run_command(
-                Command::new(CLANG)
+                clang()
                     .args(HOST_OPTIMIZATION_ARGUMENTS)
                     .arg("-c")
                     .arg(&source)
@@ -156,7 +156,7 @@ fn entry_and_worker_stacks_have_real_reservations_guarantees_and_exhaustion_boun
         let assembly = directory.path().join("ledger.s");
         std::fs::write(&module, llvm).expect("stack geometry module");
         let result = run_command(
-            Command::new(CLANG)
+            clang()
                 .arg(&module)
                 .args(HOST_OPTIMIZATION_ARGUMENTS)
                 .args(["-S", "-fstack-usage", "-Wno-override-module", "-o"])

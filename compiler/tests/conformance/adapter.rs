@@ -51,7 +51,8 @@ use whitefoot::{
 };
 
 use crate::support::{
-    PROGRAM_DEADLINE, ProgramChild, append_runtime_objects, require_sanitized, sanitized, sanitizer,
+    PROGRAM_DEADLINE, ProgramChild, append_runtime_objects, clang_link, require_sanitized, sanitized,
+    sanitizer,
 };
 
 use super::corpus::{
@@ -379,7 +380,7 @@ fn link(module: &str, directory: &Path) -> PathBuf {
     let executable = directory.join("case");
     require_sanitized(module);
     std::fs::write(&assembly, module).expect("write the case's emitted module");
-    let mut command = Command::new("/usr/bin/clang");
+    let mut command = clang_link();
     command.arg("-x").arg("ir").arg(&assembly);
     command.arg("-pthread");
     let needs_heap = whitefoot::module_requires_heap_runtime(module);

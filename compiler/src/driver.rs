@@ -27,7 +27,9 @@ use cache::Fields;
 pub use cache::{BuildCache, content_digest, running_compiler_identity};
 pub(crate) use diagnostic::Place;
 use diagnostic::{Anchor, Head, Record};
-pub use diagnostic::{DiagnosticFormat, rejection_kinds, render_driver_failure};
+pub use diagnostic::{
+    DiagnosticFormat, rejection_kinds, render_driver_failure, render_driver_note,
+};
 pub use packages::{
     FormattedFile, ModuleProgramFailure, form_module_program_graph, format_module_program,
 };

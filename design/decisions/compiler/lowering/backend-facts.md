@@ -13,6 +13,11 @@ The backend gives LLVM a checked fact as an attribute, flag, metadata or assumpt
 Reference parameters get `noalias` from EFF-5 disjointness except for `swap`, `dereferenceable` from the target's guaranteed referent size, and only exact arithmetic gets no-wrap flags.
 - rejected: an agent proposed the same attributes for every operation; the owner rejected it, because the language layout ceiling is an upper bound, not a guaranteed extent, and wrapping operations admit operands that overflow on purpose.
 
+### decision a-counted-loops-hidden-increment-is-exact
+A counted loop's hidden unit increment is lowered as an exact operation and emitted with `add nuw`; source `+wrap` and the updates lowering itself synthesizes stay wrapping adds.
+- replaced: Lowering the hidden increment as a wrapping add was on main; the owner changed it, because the true guard `binder < upper` already makes it representable [FN-1], and without the flag LLVM cannot compute the trip count and unrolls only twice.
+- rejected: an agent proposed the same flag on every update lowering synthesizes, such as range splitting's width, midpoint and budget decrement and the byte probe's advance; the owner rejected it, because the checker never judged those updates and the specification has no rule for them.
+
 ### decision a-range-reference-crosses-calls-as-pointer-and-count
 A contiguous range-reference parameter crosses every call as its element pointer and count, and the pointer gets the reference facts except `dereferenceable`.
 - rejected: an agent proposed withholding EFF-5 disjointness from range references; the owner rejected it, because with the fact on the element pointer the host vectorizer drops its runtime overlap check (data: `research/investigations/range-reference-facts/DESIGN.md`).
@@ -25,7 +30,7 @@ A run-reference parameter passes its directory pointer at cell + 24, origin and 
 - rejected: an agent proposed giving it the contiguous range's element-pointer facts; the owner rejected it, because disjoint runs of one `Paged` share one directory, so a promise of exclusive access would be false.
 
 ### decision clang-forms-are-probed-when-whitefootc-runs
-`whitefootc` probes the clang it hands modules to, once per process, for the no-capture spelling and the result type of `llvm.coro.end`, and falls back to the older form.
+`whitefootc` probes its clang once per process for the no-capture spelling and the result type of `llvm.coro.end`, unless its package records them, and falls back to the older form.
 - replaced: Probing the forms when the compiler was built was on main; the owner changed it, because a compiler built against one clang runs where clang accepts other forms: a macOS release built where clang took the `void` call emitted it to Apple clang 21, which refuses it.
 - rejected: an agent proposed pinning LLVM for these forms; the owner rejected it, because the supported hosts span both forms.
 - rejected: an agent proposed inferring support from a vendor's version number; the owner rejected it, because version strings do not tell which syntax that clang accepts.

@@ -117,6 +117,11 @@ static _Noreturn void wf_cmap_refuse(const char *reason) {
 #ifndef WF_CMAP_FINISHING
 #define WF_CMAP_FINISHING(map) ((void)0)
 #endif
+/* And a swap of two maps' entries that holds both maps' locks, before it
+ * exchanges anything. */
+#ifndef WF_CMAP_SWAPPING
+#define WF_CMAP_SWAPPING(a, b) ((void)0)
+#endif
 
 /* The pauses a keyed statement waits for cells, with each retry it makes
  * counted as one, over every probe and table it tries, past which it holds
@@ -2491,6 +2496,7 @@ void wf_cmap_swap(wf_cmap *a, wf_cmap *b, uint64_t tag_offset, uint32_t tag_widt
     lock_map(first);
     if (b != a)
         lock_map(first == a ? b : a);
+    WF_CMAP_SWAPPING(a, b);
     table *current = atomic_load_explicit(&a->current, memory_order_relaxed);
     atomic_store_explicit(&a->current, atomic_load_explicit(&b->current, memory_order_relaxed),
                           memory_order_relaxed);

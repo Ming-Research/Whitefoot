@@ -1,0 +1,290 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias HandleFactory = std::io::HandleFactory;
+alias IoError = std::io::IoError;
+alias DirectoryRead = std::fs::DirectoryRead;
+alias DirectoryWrite = std::fs::DirectoryWrite;
+
+fn copy_name(args: &std::text::Args, position: u64, destination: &[u8]) -> next: u64 reads(args), writes(destination) contract {
+  ensures next <= destination^.len;
+} {
+  match std::text::arg_get(args: args, position: position) {
+    Ok(value: text) => {
+      let length = destination^.len;
+      match std::text::host_copy_name_bytes(value: &text, destination: destination, start: 0_u64, end: length) {
+        Ok(value: end) => {
+          return end;
+        }
+        Err(error: problem) => {
+          return 0_u64;
+        }
+      }
+    }
+    Err(error: problem) => {
+      return 0_u64;
+    }
+  }
+}
+
+fn kind(error: &IoError) -> result: u8 reads(error) {
+  match error^ {
+    NotFound(code: c, origin: o) => {
+      return 3_u8;
+    }
+    PermissionDenied(code: c, origin: o) => {
+      return 0_u8;
+    }
+    AlreadyExists(code: c, origin: o) => {
+      return 1_u8;
+    }
+    NotDirectory(code: c, origin: o) => {
+      return 0_u8;
+    }
+    IsDirectory(code: c, origin: o) => {
+      return 0_u8;
+    }
+    DirectoryNotEmpty(code: c, origin: o) => {
+      return 0_u8;
+    }
+    ReadOnly(code: c, origin: o) => {
+      return 0_u8;
+    }
+    ResourceBusy(code: c, origin: o) => {
+      return 0_u8;
+    }
+    InvalidInput(code: c, origin: o) => {
+      return 0_u8;
+    }
+    InvalidPath(code: c, origin: o) => {
+      return 2_u8;
+    }
+    Unsupported(code: c, origin: o) => {
+      return 0_u8;
+    }
+    TimedOut(code: c, origin: o) => {
+      return 0_u8;
+    }
+    DeadlinePassed() => {
+      return 0_u8;
+    }
+    Cancelled() => {
+      return 0_u8;
+    }
+    BrokenPipe(code: c, origin: o) => {
+      return 0_u8;
+    }
+    WriteZero(code: c, origin: o) => {
+      return 0_u8;
+    }
+    UnexpectedEnd(code: c, origin: o) => {
+      return 0_u8;
+    }
+    ConnectionRefused(code: c, origin: o) => {
+      return 0_u8;
+    }
+    ConnectionReset(code: c, origin: o) => {
+      return 0_u8;
+    }
+    ConnectionAborted(code: c, origin: o) => {
+      return 0_u8;
+    }
+    NotConnected(code: c, origin: o) => {
+      return 0_u8;
+    }
+    AddressInUse(code: c, origin: o) => {
+      return 0_u8;
+    }
+    AddressUnavailable(code: c, origin: o) => {
+      return 0_u8;
+    }
+    ResourceExhausted(code: c, origin: o) => {
+      return 0_u8;
+    }
+    FileTooLarge(code: c, origin: o) => {
+      return 0_u8;
+    }
+    NoSpace(code: c, origin: o) => {
+      return 0_u8;
+    }
+    QuotaExceeded(code: c, origin: o) => {
+      return 0_u8;
+    }
+    CrossDevice(code: c, origin: o) => {
+      return 0_u8;
+    }
+    DeviceFailure(code: c, origin: o) => {
+      return 0_u8;
+    }
+    Other(code: c, origin: o) => {
+      return 0_u8;
+    }
+  }
+}
+
+fn check_bytes(factory: &HandleFactory, root: &DirectoryRead, name: &[u8], count: u64, first: u8, second: u8) -> result: u8 reads(root), reads(name), writes(factory) waits {
+  match std::fs::open_file(factory: factory, root: root, name: name, start: 0_u64, end: name^.len) {
+    Ok(value: opened) => {
+      let bytes = array_filled::<u8, 4>(value: 255_u8);
+      let outcome = 0_u8;
+      match std::fs::read_at(factory: factory, file: &opened, destination: &bytes[0_u64..2_u64], file_offset: 0_u64, start: 0_u64, end: 2_u64) {
+        Ok(value: next) => {
+          if next != count {
+            set outcome = 31_u8;
+          }
+        }
+        Err(error: stop) => {
+          match stop {
+            ReadEnd() => {
+              if count != 0_u64 {
+                set outcome = 32_u8;
+              }
+            }
+            ReadFailed(error: problem) => {
+              set outcome = 33_u8;
+            }
+          }
+        }
+      }
+      match std::fs::read_at(factory: factory, file: &opened, destination: &bytes[2_u64..4_u64], file_offset: count, start: 0_u64, end: 2_u64) {
+        Ok(value: next) => {
+          set outcome = 34_u8;
+        }
+        Err(error: stop) => {
+          match stop {
+            ReadEnd() => {
+            }
+            ReadFailed(error: problem) => {
+              set outcome = 35_u8;
+            }
+          }
+        }
+      }
+      std::fs::close_read(factory: factory, file: move opened);
+      if count > 0_u64 {
+        if bytes[0_u64] != first {
+          set outcome = 36_u8;
+        }
+      }
+      if count > 1_u64 {
+        if bytes[1_u64] != second {
+          set outcome = 37_u8;
+        }
+      }
+      return outcome;
+    }
+    Err(error: problem) => {
+      return 30_u8;
+    }
+  }
+}
+
+fn refused(factory: &HandleFactory, writer: &DirectoryWrite, name: &[u8], start: u64, end: u64, created: u8, wrong: u8) -> result: u8 reads(name), writes(factory), writes(writer) waits contract {
+  requires start <= end;
+  requires end <= name^.len;
+} {
+  match std::fs::create_new_file(factory: factory, root: writer, name: name, start: start, end: end) {
+    Ok(value: file) => {
+      std::fs::close_write(factory: factory, file: move file);
+      return created;
+    }
+    Err(error: problem) => {
+      let found = kind(error: &problem);
+      if found != 2_u8 {
+        return wrong;
+      }
+      return 0_u8;
+    }
+  }
+}
+
+fn nothing_below(factory: &HandleFactory, reader: &DirectoryRead, folder: &[u8], leaf: &[u8]) -> result: u8 reads(reader), reads(folder), reads(leaf), writes(factory) waits {
+  match std::fs::open_directory(factory: factory, root: reader, name: folder, start: 0_u64, end: folder^.len) {
+    Ok(value: opened) => {
+      let outcome = 0_u8;
+      match std::fs::open_file(factory: factory, root: &opened, name: leaf, start: 0_u64, end: leaf^.len) {
+        Ok(value: file) => {
+          std::fs::close_read(factory: factory, file: move file);
+          set outcome = 41_u8;
+        }
+        Err(error: problem) => {
+          let found = kind(error: &problem);
+          if found != 3_u8 {
+            set outcome = 42_u8;
+          }
+        }
+      }
+      std::fs::close_directory(factory: factory, directory: move opened);
+      return outcome;
+    }
+    Err(error: problem) => {
+      return 40_u8;
+    }
+  }
+}
+
+fn make_folder(factory: &HandleFactory, writer: &DirectoryWrite, folder: &[u8]) -> result: u8 reads(writer), reads(folder), writes(factory) waits {
+  match std::fs::open_directory_write(factory: factory, root: writer, name: folder, start: 0_u64, end: folder^.len) {
+    Ok(value: opened) => {
+      std::fs::close_directory_write(factory: factory, directory: move opened);
+      return 0_u8;
+    }
+    Err(error: problem) => {
+      return 10_u8;
+    }
+  }
+}
+
+fn exercise(factory: &HandleFactory, reader: &DirectoryRead, writer: &DirectoryWrite, dot: &[u8], dots: &[u8], folder: &[u8], path: &[u8], leaf: &[u8]) -> result: u8 reads(reader), reads(dot), reads(dots), reads(folder), reads(path), reads(leaf), writes(factory), writes(writer) waits {
+  let outcome = refused(factory: factory, writer: writer, name: dot, start: 0_u64, end: dot^.len, created: 20_u8, wrong: 21_u8);
+  if outcome != 0_u8 {
+    return outcome;
+  }
+  set outcome = refused(factory: factory, writer: writer, name: dots, start: 0_u64, end: dots^.len, created: 22_u8, wrong: 23_u8);
+  if outcome != 0_u8 {
+    return outcome;
+  }
+  set outcome = refused(factory: factory, writer: writer, name: dot, start: 0_u64, end: 0_u64, created: 24_u8, wrong: 25_u8);
+  if outcome != 0_u8 {
+    return outcome;
+  }
+  set outcome = make_folder(factory: factory, writer: writer, folder: folder);
+  if outcome != 0_u8 {
+    return outcome;
+  }
+  set outcome = refused(factory: factory, writer: writer, name: path, start: 0_u64, end: path^.len, created: 26_u8, wrong: 27_u8);
+  if outcome != 0_u8 {
+    return outcome;
+  }
+  let absent = nothing_below(factory: factory, reader: reader, folder: folder, leaf: leaf);
+  return absent;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(args: args, drivers: unused_driver_count, cwd: directory, stdout: out, stderr: errors, handles: factory, stdin: input, clock: clock, wall_clock: wall, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
+  let std::fs::Directory(read: reader, write: writer) = move directory;
+  let dot = array_filled::<u8, 64>(value: 0_u8);
+  let dot_end = copy_name(args: &args, position: 1_u64, destination: &dot[0_u64..64_u64]);
+  let dots = array_filled::<u8, 64>(value: 0_u8);
+  let dots_end = copy_name(args: &args, position: 2_u64, destination: &dots[0_u64..64_u64]);
+  let folder = array_filled::<u8, 64>(value: 0_u8);
+  let folder_end = copy_name(args: &args, position: 3_u64, destination: &folder[0_u64..64_u64]);
+  let path = array_filled::<u8, 64>(value: 0_u8);
+  let path_end = copy_name(args: &args, position: 4_u64, destination: &path[0_u64..64_u64]);
+  let leaf = array_filled::<u8, 64>(value: 0_u8);
+  let leaf_end = copy_name(args: &args, position: 5_u64, destination: &leaf[0_u64..64_u64]);
+  let outcome = 99_u8;
+  let dot_present = dot_end > 0_u64;
+  let dots_present = dots_end > 0_u64;
+  let folder_present = folder_end > 0_u64;
+  let path_present = path_end > 0_u64;
+  let leaf_present = leaf_end > 0_u64;
+  let first = band(dot_present, dots_present);
+  let second = band(folder_present, path_present);
+  let names = band(first, second);
+  if band(names, leaf_present) {
+    set outcome = exercise(factory: &factory, reader: &reader, writer: &writer, dot: &dot[0_u64..dot_end], dots: &dots[0_u64..dots_end], folder: &folder[0_u64..folder_end], path: &path[0_u64..path_end], leaf: &leaf[0_u64..leaf_end]);
+  }
+  std::fs::close_directory(factory: &factory, directory: move reader);
+  std::fs::close_directory_write(factory: &factory, directory: move writer);
+  return std::process::exit_status(code: outcome);
+}

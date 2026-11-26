@@ -11,7 +11,14 @@
 # The workflow revision supplies the maintained runner and witness, even when
 # the candidate predates them; unsupported witness behavior fails qualification
 # without changing expectations. Candidate bytes and manifest identity stay fixed.
-# One check comes from the candidate's own source: the runtime's frame test
+# Each archive's own clang also runs the gate's compiler tests and conformance
+# cases (selected-clang-tests): the candidate commit's test executables are
+# placed in the extracted package and run there with every host clang denied
+# (.github/toolchain/run-gate-tests.sh). Those tests are the candidate commit's
+# own, so a candidate whose commit has no such support, or whose manifest holds
+# no recorded clang answers, fails qualification like any unsupported behavior;
+# no exception is made for a release made before they existed.
+# Another check comes from the candidate's own source: the runtime's frame test
 # (compiler/src/bin/whitefootc/runtime_frames.rs), built from the verified
 # commit and run beside each installed package's clang by
 # .github/toolchain/check-runtime-frames.sh, because the runtime's C is compiled
@@ -416,16 +423,162 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+  # The gate's compiler tests and conformance cases, run with the clang the
+  # archive carries (Linux and macOS: the gate's unit and corpus groups).
+  selected-clang-tests:
+    name: Gate tests with the packaged clang (${{ matrix.platform }})
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux-x86_64
+            mode: linux
+            archive: whitefootc-linux-x86_64-bundled.tar.gz
+          - os: macos-15
+            platform: macos-arm64
+            mode: macos
+            archive: whitefootc-macos-arm64-bundled.tar.gz
+    steps:
+      # The recipe is the workflow revision's; the compiler and its tests are
+      # the candidate commit's, which built the archive's compiler.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: recipe
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          path: source
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: package-acceptance-inputs
+          path: candidate
+
+      - name: Install the Rust toolchain
+        run: |
+          rustup default stable
+          cargo --version
+
+      - name: Extract the exact archive
+        env:
+          ARCHIVE: ${{ matrix.archive }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/package"
+          tar -xzf "candidate/$ARCHIVE" -C "$RUNNER_TEMP/package"
+          test -x "$RUNNER_TEMP/package/bin/whitefootc"
+
+      - name: Run the compiler tests with the packaged clang
+        env:
+          MODE: ${{ matrix.mode }}
+        run: |
+          bash recipe/.github/toolchain/run-gate-tests.sh "$MODE" \
+            "$RUNNER_TEMP/package" source "$RUNNER_TEMP/gate-tests"
+
+      - name: Record the run
+        if: always()
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          COMMIT: ${{ needs.prepare.outputs.commit }}
+        run: |
+          {
+            echo "### Gate compiler tests with the packaged clang ($PLATFORM), candidate $COMMIT"
+            echo
+            echo '```text'
+            cat "$RUNNER_TEMP/gate-tests/clang-version.txt" "$RUNNER_TEMP/gate-tests/recorded-answers.txt" \
+              "$RUNNER_TEMP/gate-tests/summary.txt" 2>/dev/null || echo 'the run produced no record'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selected-clang-tests-${{ matrix.platform }}
+          path: ${{ runner.temp }}/gate-tests/
+          if-no-files-found: warn
+          retention-days: 7
+
+  # Windows: the gate runs no corpus there, so the cases the Windows I/O host
+  # check runs.
+  selected-clang-tests-windows:
+    name: Gate tests with the packaged clang (windows-x86_64)
+    needs: prepare
+    if: needs.prepare.outputs.windows == 'true'
+    runs-on: windows-2025
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: recipe
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          path: source
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: package-acceptance-inputs
+          path: candidate
+
+      - name: Install the Rust toolchain
+        run: |
+          rustup default stable
+          cargo --version
+
+      - name: Extract the exact archive
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/package"
+          7z x -y "-o$(cygpath -w "$RUNNER_TEMP/package")" candidate/whitefootc-windows-x86_64-bundled.zip > /dev/null
+          test -f "$RUNNER_TEMP/package/bin/whitefootc.exe"
+
+      - name: Run the Windows compiler tests with the packaged clang
+        run: |
+          bash recipe/.github/toolchain/run-gate-tests.sh windows \
+            "$RUNNER_TEMP/package" source "$RUNNER_TEMP/gate-tests"
+
+      - name: Record the run
+        if: always()
+        env:
+          COMMIT: ${{ needs.prepare.outputs.commit }}
+        run: |
+          {
+            echo "### Gate compiler tests with the packaged clang (windows-x86_64), candidate $COMMIT"
+            echo
+            echo '```text'
+            cat "$RUNNER_TEMP/gate-tests/clang-version.txt" "$RUNNER_TEMP/gate-tests/recorded-answers.txt" \
+              "$RUNNER_TEMP/gate-tests/summary.txt" 2>/dev/null || echo 'the run produced no record'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selected-clang-tests-windows-x86_64
+          path: ${{ runner.temp }}/gate-tests/
+          if-no-files-found: warn
+          retention-days: 7
+
   qualification:
     name: Exact archive qualification result
     if: always()
-    needs: [prepare, linux, macos, windows]
+    needs: [prepare, linux, macos, windows, selected-clang-tests, selected-clang-tests-windows]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       qualified: ${{ steps.result.outputs.qualified }}
     steps:
-      - name: Require both Linux modes, verified macOS isolation and the Windows container
+      - name: Require both Linux modes, verified macOS isolation, the Windows container and the gate tests with the packaged clang
         id: result
         env:
           PREPARE: ${{ needs.prepare.result }}
@@ -434,18 +587,25 @@ jobs:
           ISOLATION: ${{ needs.macos.outputs.isolation }}
           HAS_WINDOWS: ${{ needs.prepare.outputs.windows }}
           WINDOWS: ${{ needs.windows.result }}
+          TESTS: ${{ needs.selected-clang-tests.result }}
+          WINDOWS_TESTS: ${{ needs.selected-clang-tests-windows.result }}
         run: |
           # A release without a Windows archive has no Windows job to wait for.
           windows_ok=false
           if [ "$HAS_WINDOWS" != true ] || [ "$WINDOWS" = success ]; then
             windows_ok=true
           fi
+          # The gate tests run with every archive's own clang, Windows's too.
+          tests_ok=false
+          if [ "$TESTS" = success ] && { [ "$HAS_WINDOWS" != true ] || [ "$WINDOWS_TESTS" = success ]; }; then
+            tests_ok=true
+          fi
           qualified=false
-          if [ "$PREPARE" = success ] && [ "$LINUX" = success ] && [ "$MACOS" = success ] && [ "$ISOLATION" = verified ] && [ "$windows_ok" = true ]; then
+          if [ "$PREPARE" = success ] && [ "$LINUX" = success ] && [ "$MACOS" = success ] && [ "$ISOLATION" = verified ] && [ "$windows_ok" = true ] && [ "$tests_ok" = true ]; then
             qualified=true
           fi
           echo "qualified=$qualified" >> "$GITHUB_OUTPUT"
-          echo "Exact bundled archive qualification: $qualified (inputs=$PREPARE; Linux=$LINUX; macOS=$MACOS; isolation=$ISOLATION; Windows archive=$HAS_WINDOWS, result=$WINDOWS)." >> "$GITHUB_STEP_SUMMARY"
-          if [ "$PREPARE" != success ] || [ "$LINUX" != success ] || [ "$MACOS" != success ] || [ "$windows_ok" != true ]; then
+          echo "Exact bundled archive qualification: $qualified (inputs=$PREPARE; Linux=$LINUX; macOS=$MACOS; isolation=$ISOLATION; Windows archive=$HAS_WINDOWS, result=$WINDOWS; gate tests with the packaged clang: Linux and macOS=$TESTS, Windows=$WINDOWS_TESTS)." >> "$GITHUB_STEP_SUMMARY"
+          if [ "$PREPARE" != success ] || [ "$LINUX" != success ] || [ "$MACOS" != success ] || [ "$windows_ok" != true ] || [ "$tests_ok" != true ]; then
             exit 1
           fi
