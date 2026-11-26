@@ -59,60 +59,59 @@ fn main() -> status: std::process::ExitStatus pure {
 "#],
     },
     RepairPair {
-        // The index is the field place `p.k`, so a write to `p.k` leaves a superseded place rather than a superseded binding, and the description names the place.
-        name: "requirement-after-index-place-write.wf",
-        rejected: br#"struct Cursor {
+        // The reference's index is the field place `p.k`, which is rewritten before the write the reference must stay apart from, so the path the rejection names holds a superseded place and the description names that place.
+        name: "reference-preservation-after-index-place-write.wf",
+        rejected: br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct BystanderRecord {
+  value: u8;
+}
+
+struct Cursor {
   k: u64;
 }
 
-fn need(row: &Slots<u64, 8>) -> result: unit reads(row) contract {
-  requires 0_u64 < row^.len;
-} {
-  let value = row^[0_u64];
-  return unit;
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
 }
 
-fn inspect(rows: &Array<Slots<u64, 8>, 2>, p: Cursor) -> result: unit reads(rows) contract {
-  requires p.k < 2_u64;
+fn inspect(values: &Array<BystanderRecord, 4>, p: Cursor, j: u64) -> result: u8 reads(values), writes(values[j]) contract {
+  requires p.k < 4_u64;
+  requires j < 4_u64;
 } {
-  let wr = &rows^[p.k];
+  let selected = &values^[p.k].value;
   set p.k = 1_u64;
-  need(row: wr);
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
+  set values^[j] = BystanderRecord(value: 9_u8);
+  return selected^;
 }
 "#,
-        rule: "FN-8",
-        sentences: &[
-            "\n  instantiated_goal: 0_u64 < rows^[\u{2039}the value of p.k before it was rewritten\u{203a}].len\n",
-        ],
-        repaired: &[br#"struct Cursor {
+        rule: "REF-2",
+        sentences: &[],
+        repaired: &[br#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+struct BystanderRecord {
+  value: u8;
+}
+
+struct Cursor {
   k: u64;
 }
 
-fn need(row: &Slots<u64, 8>) -> result: unit reads(row) contract {
-  requires 0_u64 < row^.len;
-} {
-  let value = row^[0_u64];
-  return unit;
+fn main() -> status: ExitStatus pure {
+  return exit_status(code: 0_u8);
 }
 
-fn inspect(rows: &Array<Slots<u64, 8>, 2>, p: Cursor) -> result: unit reads(rows) contract {
-  requires p.k < 2_u64;
+fn inspect(values: &Array<BystanderRecord, 4>, p: Cursor, j: u64) -> result: u8 reads(values), writes(values[j]) contract {
+  requires p.k < j;
+  requires j < 4_u64;
 } {
-  let wr = &rows^[p.k];
+  let k0 = p.k;
+  let selected = &values^[k0].value;
   set p.k = 1_u64;
-  if 0_u64 < wr^.len {
-    need(row: wr);
-  }
-  return unit;
-}
-
-fn main() -> status: std::process::ExitStatus pure {
-  return std::process::exit_status(code: 0_u8);
+  set values^[j] = BystanderRecord(value: 9_u8);
+  return selected^;
 }
 "#],
     },
