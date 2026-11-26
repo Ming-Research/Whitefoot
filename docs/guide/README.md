@@ -1,7 +1,7 @@
 # User guide
 
 - [Getting started](getting-started.md)
-- Language tour — to come
+- [Language tour](language-tour.md)
 - Standard library reference — to come
 - [Fixing rejections](fixing-rejections.md)
 
