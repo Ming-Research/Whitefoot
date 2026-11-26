@@ -327,7 +327,8 @@ leaves, require allocations and releases, check zero budget, and fail each of
 the two sibling-field slab acquisitions. Lowering assertions pin one shared
 length capture and separate scalar projections. The ordinary program test
 also runs the fixture's sequential and unmodified-runtime parallel builds.
-These are authored execution tests, not executed results in this worktree.
+The results of these tests, and the wrong implementation that fails each, are
+under [Verification of the evidence list](#verification-of-the-evidence-list).
 
 ### Found along the way
 
@@ -336,18 +337,20 @@ These are authored execution tests, not executed results in this worktree.
   otherwise a sibling write could escape the indexed root's policy.
 - Fixed: the permission ledger now names constant marks when there are no
   binary operations, instead of reporting no accumulator.
-- Pending qualification: the existing TODO entry is updated from an interface
-  stop to CI qualification. Paged storage and the downstream recount remain
-  deferred on their previous grounds.
+- Qualification of constant marks and record fields is recorded under
+  [Verification of the evidence list](#verification-of-the-evidence-list).
+  Paged storage and the downstream recount remain deferred on their previous
+  grounds.
 
 ### Verification status
 
 All five extensions are on PR #290's branch with the specification at v0.106
-and the approval logged in spec/log.md and design/log.md. Source acceptance,
-intended denials, IR validity and native values are established by that PR's
-gate run on its merged head; nothing was built or run locally. Snowghost's
-recount of its 32 candidate loops with these forms is recorded under
-[Copied cells and helper calls](#copied-cells-and-helper-calls).
+and the approval logged in spec/log.md and design/log.md. Which gate test
+establishes each item of the evidence list, and which wrong implementation
+fails it, is recorded under
+[Verification of the evidence list](#verification-of-the-evidence-list).
+Snowghost's recount of its 32 candidate loops with these forms is recorded
+under [Copied cells and helper calls](#copied-cells-and-helper-calls).
 
 The two paragraphs below record the implementation-time review of the
 uncommitted extensions 3 and 4, before they were committed.
@@ -367,9 +370,111 @@ change if the affine family were omitted. The positive field fixture adds
 `different_maps` with `count[i]` and `enabled[i+1]`, and semantic/lowering
 assertions require both families and their shared count. The reviewer inspected
 these fixes and found no remaining issue within scope. These expected counts
-are test assertions, not observed results. Typechecking, ordinary WF checking,
-LLVM validation, native observations and full safety qualification remain
-unverified. No additional architecture decision was required.
+are test assertions, not observed results. At that review nothing had been
+typechecked, built or run; the later runs are recorded below. No additional
+architecture decision was required.
+
+### Verification of the evidence list
+
+Measured on 2026-11-25 and 2026-11-26 on the CI machine through `fast.yml`,
+which builds the test binaries with the `gate` profile and runs the named
+tests as the gate's `unit` (`cargo test --lib`) and `corpus` (`--bins --test
+'*'`) groups run them. This section draws no performance conclusion.
+
+Every test below passed unmodified, with the other tests of the list, on
+`7507f65cf9683c62b9576e2d477c7190dbb8f77c`. Each wrong implementation was
+a small edit to a copy of that revision (or of its parent, which differs only
+in the denial test naming its cases), never committed to the branch; two
+edits that fail different tests (W3 with W8) shared one copy. A test is
+counted only if it failed for the reason named.
+
+| Evidence item | Test (group) | Wrong implementations that fail it |
+| --- | --- | --- |
+| Ordinary source passes the check | `semantic::tests::loop_permission::indexed_marks_and_record_fields_retain_their_family_contracts` (unit) | W1, W2 |
+| Forms that must be refused are refused | `semantic::tests::loop_permission::indexed_marks_and_fields_deny_mixed_updates_and_root_reads` (unit) | W3, W4, W5, W6 |
+| Emitted LLVM is valid | `backend::tests::indexed_reductions::indexed_marks_and_fields_execute_private_dense_slabs_and_nested_joins` and `backend::tests::indexed_reductions::indexed_field_family_acquisition_failure_releases_earlier_sibling_slabs` (unit); `backend::tests::indexed_reductions::llvm_verifier_helper_rejects_a_value_that_does_not_dominate_its_use` shows the check can fail | W7 |
+| Dense mask and field-chunked private storage are correct | `backend::tests::indexed_reductions::indexed_marks_and_fields_execute_private_dense_slabs_and_nested_joins` (unit); `programs::parallel::indexed_histogram_and_extrema_preserve_sequential_results` (corpus) corroborates | W8, W9 |
+| Nested loops and the unsplit execution are correct | `backend::tests::indexed_reductions::indexed_marks_and_fields_execute_private_dense_slabs_and_nested_joins` (unit) | W10, W11 |
+| Every acquired private store is released after an allocation failure | `backend::tests::indexed_reductions::indexed_field_family_acquisition_failure_releases_earlier_sibling_slabs` (field slabs) and `backend::tests::indexed_reductions::indexed_marks_and_fields_execute_private_dense_slabs_and_nested_joins` (mask slabs) (unit) | W12 |
+
+The wrong implementations and what each test reported:
+
+- W1, `indexed_combine` in `semantic/loop_permission.rs`: the branch that
+  returns a mark family for a constant is disabled. The family test panicked
+  `expected an eligible permitted loop` with the loop denied by "each indexed
+  write requires an admitted operation directly or through one fresh,
+  unchanged, single-use temporary". The conformance adapter test
+  (`conformance::adapter::the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path`,
+  corpus) still passed: a denied loop is compiled and run sequentially, so its
+  `run` verdicts for `par2-pos-indexed-marks`, `par2-pos-indexed-constant-mark`
+  and `par2-pos-indexed-fields` show only that the ordinary checker accepts
+  those sources and they reach their declared result. The family test is the
+  one that fails when the loop is not admitted with its family.
+- W2, `indexed_combine`: a target with record fields is denied. The family
+  test failed at the `different_maps` loop, denied instead of
+  `PermittedEligible`.
+- W3, `record_indexed_kind`: the check that every update of one family has the
+  same kind is disabled. The denial test failed with `mark-constants must be
+  denied, got PermittedEligible`.
+- W4, `record_indexed_kind`: kinds differ only when both are marks or both are
+  operations, so a mark mixed with an operation is tolerated. Failed with
+  `mark-operation must be denied, got PermittedEligible`.
+- W5, the root-occurrence check (`reads != expected_reads`): disabled. Failed
+  with `mark-subscript-read must be denied, got PermittedEligible`.
+- W6, the same check: one extra read is tolerated whenever a family has a
+  field. Failed with `field-sibling-read must be denied, got
+  PermittedEligible`.
+- W7, `emit_indexed_finish` in `backend/emitter/indexed.rs`: after the combine
+  loop of a reduction family, an `add` uses the loop body's `.index` value,
+  which does not dominate the loop exit. Both backend tests failed with
+  `marks_fields is not well-formed LLVM` and `indexed_fields is not
+  well-formed LLVM`, the clang message being `invalid LLVM IR input:
+  Instruction does not dominate all uses!`; the verifier self-test passed, as
+  it should. The same edit applied to the tests as they were before this work
+  also failed both tests, when the executable was built ("clang rejected
+  emitted LLVM"; the clang message itself is not in the result). So the CI
+  host's clang already rejects this violation when it builds the executable;
+  the explicit `-fverify-intermediate-code` run does not rely on the host's
+  default and names the violation.
+- W8, `emit_indexed_mark_finish`: the scan over a cell's leaf masks starts
+  from "marked" instead of "unmarked", so unmarked cells receive the constant.
+  The backend test reported exit code 1 (`marks_one`: a cell that must keep
+  its seed changed) with `indexed allocations=2 leaves=4`. The program test
+  also failed, at four workers, with exit code 1.
+- W9, `indexed_pointer`: the branches of the `.field` select are swapped, so a
+  dense private slab is addressed at the source field offset and the source
+  layout at zero. The backend test aborted with `free(): invalid next size
+  (normal)` (no exit code) and the program test failed at one worker with
+  exit code 4 (`field_values`).
+- W10, `emit_indexed_mark_finish`: the join passes a false private flag when
+  it stores into its destination, so a nested join writes the constant into
+  the enclosing mask instead of setting it. The backend test reported exit
+  code 5 (`nested_families`) with every other function correct
+  (`indexed allocations=22 leaves=36`). The program test passed.
+- W11, `emit_indexed_finish`: the branch on whether the split is active enters
+  the combine on both edges, so a zero budget combines storage that was never
+  taken. The backend test passed its forced-leaf run and failed its zero-budget
+  run with exit code 110. The program test passed.
+- W12, `emit_indexed_release`: the first acquired store is not released. With
+  allocation 2 failing, the field test reported exit code 111 instead of 90,
+  and so did the mask runs of the marks-and-fields test. Before this work the
+  marks-and-fields test had no failing-allocation run: with the same edit
+  applied to the earlier tests the field test failed and the marks test
+  passed, so the mask path had no test.
+
+Limits of this verification:
+
+- Of the five denial cases, `par2-neg-indexed-field-whole-write` has no
+  wrong implementation of its own; the other four each fail the test in turn.
+  The first failing case ends the test, so W3 to W6 were applied separately.
+- W6 was first applied together with the field-offset edit (W9): it denied
+  the `field_values` loop, so the backend test failed at its first allocation
+  count (0 instead of 2) before any value was read. W9 was then run alone.
+- The program test passed under W10 and W11: its unmodified-runtime runs do
+  not reach nested or zero-budget execution, and it is corroboration only for
+  mark and field values (W8, W9).
+- The helper-call root-block failure path, copied-cell forms, saturation and
+  Paged storage are outside this list and were not examined here.
 
 ## Copied cells and helper calls
 
