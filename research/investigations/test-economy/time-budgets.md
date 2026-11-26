@@ -1499,6 +1499,18 @@ On the EPYC 7763 the run ended 399 s after its creation. Whether a run is within
 360 s therefore depends on the CPU model the receipt job is given, unless the
 receipt test, whose verdicts must stay, takes less time or its job a faster host.
 
+A third hand-started run, Linux only, on the head after main's change to the
+merge base choice (run 45750511818, commit ab5a8648a), was green in every job,
+the final job included, and ended 334 s after its creation. Its matrix jobs
+started 35 s after the creation and the final job took 23 s. The receipt job
+took 272 s on a Xeon 6975P-C (compile 102.8 s, receipt test 145.2 s); the unit
+parts took 199 s to 215 s, the corpus parts 146 s to 174 s, `static` 129 s and
+`runtime` 71 s (on an EPYC 7763), so no part other than the receipt job went
+over 4 min 30 s, and the receipt job went 2 s over it. Of the three runs of the
+changed workflow, the two that gave the receipt job the EPYC 7763 ended after
+399 s and 495 s (the second with macOS), the one that gave it the Xeon 6975P-C
+after 334 s.
+
 Not yet measured: the five runs of the question above on pushes to main after the merge. They are appended here,
 each with its job times and the CPU model of its jobs, when they have run.
 
