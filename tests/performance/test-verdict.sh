@@ -205,6 +205,7 @@ judge_run() {
     set +e
     WF_PERF_CPUS=4 WF_PERF_MEASURE="sh $work/stub-measure.sh" WF_PERF_RUN_CHECK="sh $work/stub-check.sh" \
         WF_TEST_J="$judge_dir" WHITEFOOT_CPUINFO="$work/cpuinfo" KERNELS="$all" \
+        env -u WF_PERFORMANCE_PLACEMENT ${placement:+"WF_PERFORMANCE_PLACEMENT=$placement"} \
         bash "$here/judge.sh" "$judge_dir/base" "$judge_dir/cand" "$judge_dir/out" > "$work/out" 2>&1
     status=$?
     set -e
@@ -310,6 +311,56 @@ judge_setup stencil
 mkdir -p "$judge_dir/out"
 judge_run judge-results-directory-must-be-fresh 2 'results must be a fresh directory'
 judge_pass judge-results-directory-must-be-fresh
+
+# WF_PERFORMANCE_PLACEMENT names the data-placement control's results, whose
+# aside.txt lists the kernels it set aside (README.md, "Data placement"). Such a
+# kernel is not timed and has no verdict on this host; the others are judged as
+# before, and an image that is identical stays the same program.
+placement=$work/placement; mkdir -p "$placement"
+judge_ran() { [ "$(cat "$judge_dir/count")" = "$1" ] || { echo "FAIL $2: $(cat "$judge_dir/count") measurement(s), expected $1" >&2; cat "$work/out" >&2; exit 1; }; }
+echo 'mandelbrot stencil' > "$placement/aside.txt"
+judge_setup records stencil
+put 1 records; save 1
+put 2 records; save 2
+judge_run judge-a-kernel-set-aside-is-not-timed 0 'VERDICT: PASS -- 3 image(s) identical, 1 timed, 1 not judged (data placement)'
+judge_ran 2 judge-a-kernel-set-aside-is-not-timed
+labels_are 'performance-null performance-comparison' || { echo 'FAIL judge-a-kernel-set-aside-is-not-timed: stages' >&2; exit 1; }
+[ "$(cat "$judge_dir/calls")" = "$(printf '1 KERNELS=records\n2 KERNELS=records')" ] ||
+    { echo 'FAIL judge-a-kernel-set-aside-is-not-timed: stencil was measured' >&2; cat "$judge_dir/calls" >&2; exit 1; }
+grep -x -F -q 'not judged: stencil (data placement)' "$judge_dir/out/verdict.txt"
+grep -x -F -q 'mandelbrot: identical image, not timed, pass' "$judge_dir/out/verdict.txt"
+! grep -F -q 'not judged: mandelbrot' "$judge_dir/out/verdict.txt"
+judge_pass judge-a-kernel-set-aside-is-not-timed
+
+echo stencil > "$placement/aside.txt"
+judge_setup records stencil
+put 1 records; save 1
+put 2 records; adverse records; save 2
+judge_run judge-a-kernel-set-aside-leaves-the-others-judged 1 'VERDICT: FAIL -- records (round 1)'
+grep -x -F -q 'not judged: stencil (data placement)' "$judge_dir/out/verdict.txt"
+judge_pass judge-a-kernel-set-aside-leaves-the-others-judged
+
+# The usual run sets no kernel aside: an empty list judges as no list does.
+echo > "$placement/aside.txt"
+judge_setup stencil
+put 1 stencil; save 1
+put 2 stencil; save 2
+judge_run judge-an-empty-placement-list-judges-every-kernel 0 'VERDICT: PASS -- 4 image(s) identical, 1 timed'
+! grep -F -q 'not judged' "$judge_dir/out/verdict.txt"
+judge_pass judge-an-empty-placement-list-judges-every-kernel
+
+# A list it cannot read is refused before anything is measured.
+for refusal in 'missing:no aside.txt in the data-placement results' 'sorting:unknown kernel set aside: sorting' \
+        'stencil stencil:kernel set aside twice: stencil'; do
+    list=${refusal%%:*}; message=${refusal#*:}
+    if [ "$list" = missing ]; then rm -f "$placement/aside.txt"; else echo "$list" > "$placement/aside.txt"; fi
+    judge_setup stencil
+    judge_run "judge-refuses-a-placement-list ($list)" 2 "REFUSED: $message"
+    judge_ran 0 "judge-refuses-a-placement-list ($list)"
+    [ ! -e "$judge_dir/out" ] || { echo "FAIL judge-refuses-a-placement-list ($list): results written" >&2; exit 1; }
+    judge_pass "judge-refuses-a-placement-list ($list)"
+done
+placement=
 
 fail() {
     echo "FAIL $1" >&2
