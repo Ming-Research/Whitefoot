@@ -861,6 +861,36 @@ mod tests {
     }
 
     #[test]
+    fn a_copy_inside_a_cycle_that_two_values_enter_is_replaced_by_the_parameter_it_copies() {
+        // 0 and 1 values, 2 condition. The header parameter 3 is entered with
+        // 0 and gets back the join parameter 4, which takes 3 or 1, and the
+        // copy 5, which only passes 3 on. 3, 4 and 5 form one cycle that the
+        // values 0 and 1 enter, so the cycle as a whole carries no one value
+        // and none of its members is replaced as part of it, yet 5 is 3.
+        let types = [WORD, WORD, B, WORD, WORD, WORD];
+        let build = |copy: &[u32], pass: &[u32], back: &[u32]| {
+            function_of(
+                &types,
+                3,
+                vec![
+                    block(&types, &[], vec![], jump(1, &[0])),
+                    block(&types, &[3], vec![], branch(2, 2, 3)),
+                    block(&types, &[], vec![], branch(2, 4, 5)),
+                    block(&types, &[], vec![], ret(3)),
+                    block(&types, &[], vec![], jump(6, &[3])),
+                    block(&types, &[], vec![], jump(6, &[1])),
+                    block(&types, &[4], vec![], branch(2, 7, 8)),
+                    block(&types, &[], vec![], jump(1, &[4])),
+                    block(&types, &[], vec![], jump(9, pass)),
+                    block(&types, copy, vec![], jump(1, back)),
+                ],
+            )
+        };
+        let before = build(&[5], &[3], &[5]);
+        assert_eq!(merged(before), build(&[], &[], &[3]));
+    }
+
+    #[test]
     fn a_parameter_with_another_type_than_its_arguments_is_kept() {
         let types = [WORD, B];
         let function = function_of(
