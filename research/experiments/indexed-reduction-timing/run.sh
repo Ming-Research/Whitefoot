@@ -75,7 +75,11 @@ done
     sha256sum "$work"/bin/* "$here"/histogram*.wf
 } > "$work/manifest.txt"
 
-# run_one CELLS BUILD K [REPORT]: sets wall and sum for one process.
+# run_one CELLS BUILD K [REPORT]: sets wall and sum for one process. No
+# `timeout` stands between the two clock readings: a helper that polls for the
+# child's exit (a 0.1 s step in some coreutils builds) puts the exit on its own
+# grid, and the process wall times of 0.02 s differences would carry it. The
+# job's own time limit bounds a process that does not end.
 run_one() {
     local cells=$1 build=$2 k=$3 binary w start end
     case $build in
@@ -86,7 +90,7 @@ run_one() {
     esac
     start=$(date +%s%N)
     env -u WF_SPLIT_WORK -u WF_SCHED_REPORT WF_WORKERS="$w" ${4:+WF_SCHED_REPORT=2} \
-        taskset -c "$cpus" timeout 120s "$work/bin/$binary-$cells" "$k" \
+        taskset -c "$cpus" "$work/bin/$binary-$cells" "$k" \
         > "$work/out.bin" 2> "$work/err.txt"
     end=$(date +%s%N)
     wall=$((end - start))
