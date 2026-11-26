@@ -342,6 +342,49 @@ The first group is the same text under both rules and the second differs, as
 selected rule the four raw deflate tests, the block pool's test and the hash
 map, slab and ordered map tests in both lowering modes passed.
 
+### Structure with every list and call site, 2026-11-25
+
+Two more runs of the structure probe as `9282c7d81` reports it, on the
+14900K runner, after main had been merged into the branch with no change to
+the emitter, the target layout or storage selection:
+
+- main's rule: commit `74de62e27`, the branch with the emitter change taken
+  back,
+  [run 45757882131](https://github.com/Ming-Research/Whitefoot/actions/runs/45757882131);
+- the selected rule: commit `13a9f4847`,
+  [run 45757884913](https://github.com/Ming-Research/Whitefoot/actions/runs/45757884913).
+
+Their `--par` modules have the lengths and hashes of the first two runs
+(145,203 bytes, `7a67fe1ca703ed4d`; 145,325 bytes, `b707dcd037d72654`), so
+those merges left the scatter's emission unchanged. A call-site count of 0
+below means that no function of the optimized module calls the function that
+holds the transfer.
+
+1. Under main's rule, what the optimized `--par` module holds and its
+   `tag-only` edit lacks is ten 4,112-byte `memset`s, five in
+   `wf_radix_scatter` and five in `wf__par_seq_radix_scatter` (each called
+   once), and the 4,120-byte `memcpy` of
+   `place_back$instance$bf6eebe3abbd4940` (call sites: 0). The `memset`s are
+   the append's clear of item 2 above; `no-clear` removes two emitted clears,
+   one in each of those two functions.
+2. Under the selected rule, the only such difference is the 4,120-byte
+   `memcpy` of that `place_back` instance, whose transfer is the one the
+   `tag-only` edit shortens (`tag-only: 1 transfers shortened`). Nothing in
+   the optimized module calls it: the append inlined into the scatter's root
+   keeps no clear and no copy of 2,048 bytes or more. By the criterion
+   above, leaving the inactive payload unwritten is enough for the append;
+   the difference is an out-of-line definition, not code that runs.
+3. Under both rules, every other constant clear or copy of 2,048 bytes or
+   more belongs to the block writer or to the entry: the two 2,056-byte
+   copies of its result in `wf_partition_block` (3 call sites), and
+   `write_chunk`'s copies of
+   2,056, 2,056, 4,112 and 4,119 bytes inlined twice into
+   `wf__par_chunk_radix_scatter.1` and `wf__par_seq__par_chunk_radix_scatter.1`
+   (each called once), and the entry's 65,672-byte clear of the input in
+   `wf_main` and `wf__par_seq_main`. The in-place control removes the block
+   writer's copies and keeps the two 2,056-byte copies of the out-of-line
+   `partition_block` definitions (call sites: 0).
+
 ### Timing
 
 Not run yet. GitHub refused the requests for an exhausted API budget at
