@@ -1814,35 +1814,64 @@ translated instruction at load time and promises, on success,
 The interpreter requires this fact. Its match on the current instruction
 then excludes the last index in every sequential arm; the code is read-only
 through the loop. Taken branches retain their existing target checks.
-This uses specification v0.143's variant relation directly, with no local
-copy or repeated invariant to help the checker. A refusal or poor lowering
-stops this part of the experiment and calls for a minimal semantic witness,
-not a source workaround.
+This uses the active specification's variant relation ([RANGE-1], v0.169
+when this was written; the conformance case `range3-pos-variant-final-stop`
+has the same shape on a payload-free enum), with no local copy or repeated
+invariant to help the checker. The load check names every other variant in
+its own arm because an enum `match` has no wildcard arm [ERR-2]; the
+generator writes them, 362 arms and 315 more generated lines in all. A
+refusal by the checker or poor lowering stops this part of the experiment:
+the minimal semantic witness and the refusal (rule and span) are recorded
+here and reported, the interpreter source stays as it is, and no workaround
+and no failing test case is added.
 
-**Comparison fixed before measuring.** The temporary manual-only
-`.github/workflows/v2h-seq-bounds.yml` builds the baseline generator and
-templates from a recorded main revision and the candidate with the same
-branch compiler. A byte-copy of the old executable is the twin control.
-On the 14900K, compare seven rotating, interleaved rounds at each of 2000
-and 20000 CoreMark iterations, recording each process's user plus system
-CPU time and the paired new/old and twin/old ratios (lower is faster).
-Validate every result against the list, matrix and state CRCs and the
-independently recorded final CRCs above: 0x4983 at 2000 and 0x382f at 20000.
-Retain the old and new disassembly of three sequential handlers to check
-that the successor comparison and conditional branch actually disappear.
+**Comparison fixed before measuring.** `.github/workflows/interpreter-compare.yml`
+builds the base interpreter source (the candidate's merge base with main)
+and the candidate's with the candidate commit's one compiler, and times the
+base, a byte copy of the base (the twin) and the candidate in interleaved
+rounds pinned to CPU 2 of the 14900K, 10 rounds per size, at 2000 and at
+20000 CoreMark iterations. Every launch checks the list, matrix and state
+CRCs and the final CRC (0x4983 at 2000, 0x382f at 20000).
 
-**Rejection criterion and current evidence.** Keep the change only if both
-sizes show a stable CPU-time reduction beyond the byte-copy twin's noise,
-the three inspected handlers lose the successor check, every result is
-correct, and the change adds no complexity or maintenance cost and fits
-the interpreter's architecture. A gain indistinguishable from twin noise,
-an unstable gain, a wrong result, or a proof workaround rejects adoption;
-there is no fixed percentage threshold. Source preparation is not evidence
-of compiler acceptance or performance. This worktree step runs no compiler
-or experiment locally and has no CI result yet; the temporary workflow is
-removed before the branch is ready. Its new stages have no measured time
-budgets yet: the first CI samples must supply that evidence, and the
-workflow reports wrapper times without claiming a time-budget verdict.
+- The instrument's ratio is candidate over base **wall time**, the median of
+  the per-round ratios with a distribution-free 95% interval; the plan first
+  written for this experiment named user+sys CPU time, and wall time with a
+  residual check replaces it because that is what the instrument computes.
+  The user+sys times of `time.tsv` are recorded beside it as a supplementary
+  ratio and judge nothing.
+- Validity of the timing: a run that is judged is given `residual_limit`
+  0.005 s (wall time minus user+sys CPU time, median over the launches). A
+  run whose median residual is above it, or whose wall times fall on a 0.1 s
+  grid, is invalid data: it is not counted, it is reported, and its numbers
+  are not reinterpreted. Every run's residual median and maximum are copied
+  into the record with the run id.
+- The floor: for each size, the first run is given no floor and measures it
+  (the median over rounds of |twin/base - 1|, a property of the twin and the
+  base alone, so the candidate being another source does not enter it); the
+  candidate ratio of that run is recorded and decides nothing. The deciding
+  run of the size is given that floor. It counts only if its twin spread is
+  not above the floor and its residual check holds; otherwise it is not
+  counted and is rerun, as many times as that takes, each run recorded.
+- Machine code: the handlers of `Copy`, `Copy2`, `I32Add`, `I32AddA`,
+  `BrIf`, `BrUnless`, `BrIfC` and `BrUnlessC` are disassembled from the base
+  and candidate images built by a hosted runner, and the compare and
+  conditional-jump counts of each pair are read, with the full text of `Copy`
+  and `BrIf`.
+
+**Rejection criterion.** Keep the change only if, in a counted deciding run
+at each of the two sizes, the candidate's 95% interval lies wholly below 1
+(the instrument's improvement verdict, which needs the twin interval to
+contain 1 with a half-width below 2%), the inspected handlers lose the
+successor comparison, every result is correct, and the change adds no
+complexity or maintenance cost and fits the interpreter's architecture. A
+verdict of no change or regression at either size, a gain that is
+unstable across the counted runs, a wrong result, invalid timing data, or a
+proof workaround rejects adoption: the interpreter sources go back to main's
+and only this record is merged. There is no fixed percentage threshold.
+
+**Evidence.** Source preparation is not evidence of compiler acceptance or
+performance. Results, run ids and the verdict are added below after the
+measurements; this section's criteria are not changed after them.
 
 ### Constructor and runtime-boundary audit
 
