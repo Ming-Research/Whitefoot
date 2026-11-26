@@ -305,6 +305,33 @@ def main(path):
                 above = sum(1 for row in posed if row[candidate] > value)
                 print(f"      above {value}: {above}", end="")
             print()
+        # Exploratory, not a candidate DESIGN.md fixed: the bits of the
+        # product of the root's case counts, which bounds the full analysis's
+        # leaves whatever each item's case count.
+        for row in posed:
+            row["product_bits"] = (row["product"] - 1).bit_length() if row["product"] > 1 else 0
+        print(f"    product_bits    {quantiles([row['product_bits'] for row in posed])}"
+              " (exploratory)")
+        print(f"    product_bits histogram {histogram([row['product_bits'] for row in posed])}")
+        # At each value: the records above it, and the slowest record it admits.
+        for candidate, values in (("n1", (8, 13, 16, 32, 41, 54)), ("n3", (8, 13, 16, 32, 54)),
+                                  ("product_bits", (8, 12, 16, 20, 32, 64))):
+            for value in values:
+                above = [row for row in posed if row[candidate] > value]
+                within = [row for row in posed if row[candidate] <= value]
+                worst = max(within, key=lambda row: row["judge_ns"] + row["form_ns"], default=None)
+                labels = len({row["label"] for row in above})
+                text = (f"    at {candidate}<={value}: above {len(above)} records in {labels} labels;")
+                if worst:
+                    text += (f" slowest admitted {(worst['judge_ns'] + worst['form_ns']) / 1e6:.1f} ms"
+                             f" {worst['label']} {worst['function']} {worst['kind']}"
+                             f" {candidate}={worst[candidate]} atoms={worst['atoms']}"
+                             f" full={worst['full_nodes']}")
+                print(text)
+                if 0 < len(above) <= 12:
+                    for row in above:
+                        print(f"      ABOVE {row['label']} {row['scope']} {row['function']}"
+                              f" {row['kind']} {candidate}={row[candidate]} shadow={row['shadow']}")
 
     print("\n== criterion (5): probes")
     probe_keys = sorted({k for config in CONFIGS for k in by_config[config]
