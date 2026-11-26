@@ -190,7 +190,7 @@ qualify() {
             else
                 echo "FAIL: the 32 positions set aside: $aside"; failed=1
             fi
-            printf '\nwith the candidate arm at position 1:\n'
+            printf '\nthe candidate against itself at the 32 positions:\n'
             cat "$results/moved/verdict.txt"
         fi
     } > "$results/verdict.txt"
