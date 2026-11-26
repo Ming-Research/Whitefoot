@@ -1965,8 +1965,14 @@ void wf__body_exit_share(wf_value *result, const wf_value *capability) {
 }
 
 /* The floor runtime's one latch for every record that ends the process, which
- * every link carries (`wf_floor.c`, `wf_floor_windows.c`). */
-volatile int *wf__floor_record_latch(void);
+ * every program link carries (`wf_floor.c`, `wf_floor_windows.c`). A runtime
+ * probe linked without the floor takes this latch of its own, as an emitted
+ * module linked without the floor does; the floor's definition replaces it. */
+static volatile int wf__exit_fallback_latch;
+
+__attribute__((weak)) volatile int *wf__floor_record_latch(void) {
+    return &wf__exit_fallback_latch;
+}
 
 /* Ends the process with the status at once, from whichever thread runs the
  * calling context [WAIT-2]. The exit first takes the floor's record latch, so
