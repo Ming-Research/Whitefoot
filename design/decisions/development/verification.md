@@ -29,13 +29,21 @@ Compiler-backed verification uses the optimized `gate` Cargo profile with debug 
 - rejected: an agent proposed a lower optimization level for the `gate` profile; the owner rejected it, because level 1 built 19% faster but ran the cases 9 to 15% slower, and level 2 saved 1.4%, against a 20% criterion (data: `research/investigations/test-economy/time-budgets.md`).
 
 ### decision stage-budgets-follow-each-cpu-model
-Each labeled stage has a Linux budget per CPU model with at least 20 recorded runs, the maximum of the 20 or more most recent runs plus 10%, rounded up to 5 s; an unmapped model takes the largest.
+A Linux stage budget per CPU model with 20 or more recorded runs is 1.1 times the maximum of the latest 50 plus its distance above their median, rounded up to 5 s; an unmapped model takes the largest.
 - replaced: One budget per runner class at 1.25 times the slowest recorded run was on main; the owner changed it, because Linux runners differ by up to 1.6 times by CPU model, so slow ones tripped on noise and fast ones hid growth (data: `research/investigations/test-economy/time-budgets.md`).
 - rejected: an agent proposed one Linux budget recomputed at the observed maximum plus 10%; the owner rejected it, because a test could slow by 50% on a fast runner without tripping it.
 - rejected: an agent proposed 1.5 times the slowest recorded run; the owner rejected it, because on identical source a typical Ubuntu unit run could then grow by 57%, and the fastest of seven runs by more than double, before its stage tripped.
 - rejected: an agent proposed a 20% margin instead of 10% when the table is recomputed; the owner rejected it, because it gives up catching slowdowns under 30%, while recomputing at 10% already cuts false overruns to about 1%.
 - rejected: an agent proposed budgets taken from the main line's recent stage times per model; the owner rejected it, because two models lack enough main-line runs, so it cannot replace the table, and small steps of growth would be absorbed unseen.
-- rejected: an agent proposed timing every push's gate against its merge base; the owner rejected it, because it doubles every job's builds and cases to detect growth that a fixed budget detects.
+- rejected: an agent proposed timing every push's gate against its merge base; the owner rejected it, because it doubles every job's builds and cases to detect growth that a fixed budget detects beyond a stage's headroom.
+
+### decision a-class-budget-margin-follows-its-own-spread
+A class's margin grows with its own spread above its median: the unit group's quiet classes keep +26% to +42% headroom, under the 57% once refused, and EPYC 9V74, whose runs vary most, +74%.
+- replaced: A margin of 10% over the maximum was on main; the owner changed it, because the gate's first attempt on main turned red in 22 jobs of 20 runs on overruns of at most 1.108 times the budget, every test passing (data: `research/investigations/test-economy/time-budgets.md`).
+- replaced: Refusing headroom past 57% (1.5 times the slowest run) and a 20% margin, as 10% cut false overruns to about 1%, was on main; the owner changed it, because 22 jobs went red at under 1.11 times, and only EPYC 9V74 passes 57% (data: `research/investigations/test-economy/time-budgets.md`).
+- rejected: an agent proposed a fixed 30% over the maximum; the owner rejected it, because it leaves a quiet class +40% to +50% before it trips and sees a 30% slowdown of every stage in 42 of 756 replayed jobs against 362 (data: `research/investigations/test-economy/time-budgets.md`).
+- rejected: an agent proposed a fixed 25% over the maximum; the owner rejected it, because it sees that slowdown in 118 of 756 replayed jobs against 362, with the same single red job with no slowdown (data: `research/investigations/test-economy/time-budgets.md`).
+- rejected: an agent proposed keeping 10% and rerunning an overrun stage once; the owner rejected it, because a stale table fails reruns too (6 of 18 red again) and a real slowdown goes red a gate later (data: `research/investigations/test-economy/time-budgets.md`).
 
 ### decision owner-added-columns-take-the-larger-value
 A Linux column the owner adds for a model with fewer than 20 runs of a stage takes the larger of the row's largest recomputed class budget and the model's own runs by the budget rule.
@@ -163,3 +171,7 @@ Marking a pull request ready skips the gate and the I/O host checks when its hea
 ### decision performance-comparison-waits-for-ready
 The paired performance comparison runs for a ready pull request, its later pushes and by hand, and shows as skipped for a draft.
 - replaced: Running the comparison on every pull request push was on main; the owner changed it, because it times two compilers and may first build the baseline compiler, for up to 20 minutes, which every push of a draft would repeat.
+
+### decision emitted-llvm-is-verified-explicitly
+The backend tests of indexed marks and fields run the host clang's LLVM verifier on their emitted modules through one shared helper, not only the link.
+- rejected: an agent proposed dropping the explicit verifier calls and relying on clang rejecting invalid IR when it builds the executable; the owner rejected it, because that coverage depends on how the host clang was built and its message is cut from the CI result.
