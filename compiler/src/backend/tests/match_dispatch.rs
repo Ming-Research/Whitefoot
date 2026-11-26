@@ -3763,13 +3763,16 @@ fn the_attribute_removes_every_rbp_save_from_the_parts_it_is_written_on() {
 /// x86-64 System V (psABI 3.2.1): the enclosing function keeps the C
 /// convention, so values its caller holds in callee-saved registers
 /// (RBX, RBP, R12-R15) across a call survive a split loop whose parts save
-/// nothing. Eight values derived from the first result stay live across the
-/// second call and are combined afterwards; the expected total is computed
-/// here from the same formulas.
+/// nothing. The loop is the replacing interpreter, whose parts use RBP as a
+/// scratch register without the attribute. `main` derives eight values from
+/// the first run's result, keeps them live across the second run, and
+/// combines them afterwards; the expected total is computed here from the
+/// same formulas. An iteration adds 3 + 144 (the even extras) on `Add`, 156
+/// (the odd extras) on `Dec` and 1 + 100 to the replaced box, 404 in all.
 #[test]
 fn a_caller_s_callee_saved_values_survive_a_split_loop() {
-    let first = 3000_u64;
-    let second = 7_u64 + 3 * 10;
+    let first = 1000_u64 * 404;
+    let second = 10_u64 * 404;
     let multiples = [3_u64, 5, 7, 11];
     let masks = [1234_u64, 77, 4096, 99];
     let expected = multiples
@@ -3777,30 +3780,70 @@ fn a_caller_s_callee_saved_values_survive_a_split_loop() {
         .map(|multiple| first.wrapping_mul(*multiple))
         .chain(masks.iter().map(|mask| first ^ mask))
         .fold(second, u64::wrapping_add);
-    let mut check = String::new();
+    let extras = (0..24)
+        .map(|index| format!("e{index}: {}_u64", index + 1))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut live = String::new();
     for (index, multiple) in multiples.iter().enumerate() {
-        check.push_str(&format!("\n    let m{index} = r *wrap {multiple}_u64;"));
+        live.push_str(&format!("\n        let m{index} = v *wrap {multiple}_u64;"));
     }
     for (index, mask) in masks.iter().enumerate() {
-        check.push_str(&format!("\n    let x{index} = ixor(r, {mask}_u64);"));
+        live.push_str(&format!("\n        let x{index} = ixor(v, {mask}_u64);"));
     }
-    check.push_str("\n    let s = run(code: &code, start: 0_u64, seed: 7_u64, steps: 10_u64);");
-    check.push_str("\n    let t0 = s +wrap m0;");
+    let mut combine = String::from("let t0 = w +wrap m0;");
     let mut previous = "t0".to_owned();
     for (number, value) in ["m1", "m2", "m3", "x0", "x1", "x2", "x3"].iter().enumerate() {
         let next = format!("t{}", number + 1);
-        check.push_str(&format!("\n    let {next} = {previous} +wrap {value};"));
+        combine.push_str(&format!("\n            let {next} = {previous} +wrap {value};"));
         previous = next;
     }
-    check.push_str(&format!(
-        "\n    if {previous} == {expected}_u64 {{\n      return exit_status(code: 0_u8);\n    }}\n    \
-         return exit_status(code: 1_u8);"
-    ));
-    let source = INTERPRETER
-        .replace("RESULT", "u64")
-        .replace("FAILED", "0_u64")
-        .replace("DONE", "acc")
-        .replace("CHECK", check.trim_start());
+    let prefix = REPLACING
+        .split("fn main()")
+        .next()
+        .expect("the interpreter precedes main");
+    let source = format!(
+        r#"{prefix}fn main() -> status: ExitStatus pure {{
+  let code = box_slots_new::<Op>(capacity: 4_u64);
+  let c0 = Op::Add(k: 3_u64);
+  let p0 = push(code: &code, op: c0);
+  let c1 = Op::Dec();
+  let p1 = push(code: &code, op: c1);
+  let c2 = Op::Jnz(t: 0_u64);
+  let p2 = push(code: &code, op: c2);
+  let c3 = Op::Halt();
+  let p3 = push(code: &code, op: c3);
+  let regs = box_slots_new::<u64>(capacity: 1_u64);
+  place_back(window: &regs.inner, value: 0_u64);
+  if code.inner.len > 0_u64 {{
+    let r = run(code: &code, regs: &regs, start: 0_u64, seed: 0_u64, steps: 1000_u64, {extras});
+    match r {{
+      Done(value: v) => {{{live}
+        let again = box_slots_new::<u64>(capacity: 1_u64);
+        place_back(window: &again.inner, value: 0_u64);
+        let s = run(code: &code, regs: &again, start: 0_u64, seed: 0_u64, steps: 10_u64, {extras});
+        match s {{
+          Done(value: w) => {{
+            {combine}
+            if {previous} == {expected}_u64 {{
+              return exit_status(code: 0_u8);
+            }}
+            return exit_status(code: 1_u8);
+          }}
+          Failed() => {{
+            return exit_status(code: 3_u8);
+          }}
+        }}
+      }}
+      Failed() => {{
+        return exit_status(code: 3_u8);
+      }}
+    }}
+  }}
+  return exit_status(code: 2_u8);
+}}
+"#
+    );
     let module = emit(source.as_bytes());
     let output = compile_and_run(&module);
     assert!(output.status.success(), "{output:?}");
