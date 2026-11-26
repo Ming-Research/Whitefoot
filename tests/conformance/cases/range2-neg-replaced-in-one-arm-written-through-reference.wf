@@ -1,0 +1,22 @@
+struct Counter {
+  count: u8;
+}
+
+fn bump(marks: &[u64], c: u64, x: u8) -> result: u8 pure contract {
+  requires forall small(k in 0_u64..marks^.len): marks^[k] < 8_u64;
+} {
+  doc "Replacing s whole in one arm leaves r valid on both paths, so the write through r makes s.count x, which may be 9.";
+  let s = Counter(count: 1_u8);
+  let r = &s;
+  if c < 10_u64 {
+    set s = Counter(count: 1_u8);
+  }
+  set r^.count = x;
+  let v = s.count;
+  let w = 251_u8 + v;
+  return w;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
