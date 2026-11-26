@@ -168,7 +168,7 @@ start() {
                 >"$OUT/server.log" 2>&1 &
             ;;
         image-*)
-            WF_DRIVERS=$(cpu_count "$SERVER_CPUS") taskset -c "$SERVER_CPUS" \
+            WF_SCHED_REPORT=2 WF_DRIVERS=$(cpu_count "$SERVER_CPUS") taskset -c "$SERVER_CPUS" \
                 "$(image_path "${1#image-}")" "$PORT" 0 - "${IDLE:-0}" \
                 >"$OUT/server.log" 2>&1 &
             ;;
@@ -548,7 +548,10 @@ compare_client() {
 # the run; every sample is kept as compare.csv's line,pass,cpus,test,depth,
 # requests,rps,server_cpu_us_per_request,p50_ms,p99_ms, and each test's
 # request count is sized from the
-# fastest image's pilot so that every image runs the same count.
+# fastest image's pilot so that every image runs the same count. Each image
+# runs with WF_SCHED_REPORT=2, which only prints the scheduler's counters as
+# the server exits, and compare-sched.txt keeps each measured pass's driver
+# lines as name,pass,cpus,line.
 if [ "$MODE" = compare ]; then
     total=$(nproc)
     tests=${COMPARE_TESTS:-mset set get}
@@ -603,6 +606,7 @@ if [ "$MODE" = compare ]; then
                         tee -a "$OUT/compare.csv"
                 done <"$sizes"
                 stop
+                grep '^driver: ' "$OUT/server.log" | sed "s/^/$name,$pass,$n,/" >>"$OUT/compare-sched.txt" || true
             done
             pass=$((pass + 1))
         done
