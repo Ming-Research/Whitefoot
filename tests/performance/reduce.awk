@@ -1,4 +1,5 @@
-# Complete five-kernel, two-arm matrix. Sample zero is the unrecorded warmup;
+# Complete two-arm matrix of the kernels named by -v kernels="a b ..." (compare.sh
+# reads them from the Makefile's KERNELS). Sample zero is the unrecorded warmup;
 # each process median uses samples 1..5, then arms are paired by pass 0..4.
 function refuse(message) { print "REFUSED: " message > "/dev/stderr"; bad=1; exit 2 }
 function median(a, n, i,j,x) {
@@ -7,8 +8,12 @@ function median(a, n, i,j,x) {
 }
 BEGIN {
     FS="[ \t]+"; OFS="\t"
-    nk=split("mandelbrot records fir quadrature stencil", names, " ")
-    for(k=1;k<=nk;k++) known[names[k]]=1
+    nk=split(kernels, names, " ")
+    if(nk<1) refuse("no kernels named")
+    for(k=1;k<=nk;k++) {
+        if(names[k] !~ /^[a-z][a-z0-9_]*$/ || names[k] in known) refuse("invalid or repeated kernel name " names[k])
+        known[names[k]]=1
+    }
     if(cpus !~ /^[0-9]+$/ || cpus+0<2) refuse("at least two available CPUs required")
     widths[1]=1; widths[2]=2; nw=2
     if(cpus+0>=4) widths[++nw]=4
