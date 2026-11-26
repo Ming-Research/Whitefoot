@@ -1916,6 +1916,56 @@ runs it was set on, as a Windows value is raised only by the owner. The new
 image the Makefile builds for the step did not push `windows-test-images` past
 its row: 8.94 to 11.95 s against 15 s.
 
+**The branch's own workflow (2026-11-26).** The engine's full check starts
+`io-hosts.yml` by hand on main's copy of the file with the branch's commit, so
+its Windows job is main's job, which has no wrapper, no step ids and no verdict
+step, and it cannot show the new wiring. The copies of the job above are not
+the workflow itself either. Three manual runs, `gh workflow run io-hosts.yml
+--ref <branch>` on branches that `run_tests` published, so that GitHub ran each
+commit's own copy of the workflow, were read once they had ended. Their
+`event` is `workflow_dispatch` and their `headSha` the commit named, as
+`gh run view` gives them; the Windows logs were read with
+`gh run view <run> --log --job <job>`.
+
+| Run | Commit | Differs from the head a75b4997f by | Conclusion | Failed steps |
+|---|---|---|---|---|
+| 45809134331 | a75b4997f | nothing (the head) | success | none |
+| 45809139326 | b2313b365 | `windows-test-images` at 1 s in the Windows column | failure | `completion-windows`: "Hold every stage to its time budget" |
+| 45809143681 | db31cc2f3 | the job's default shell plain `bash` | failure | `completion-windows`: "Hold every stage to its time budget" |
+
+- **The head.** Every job that ran passed (`completion-linux` and
+  `completion-windows`; "Test results" is skipped in a manual run without the
+  engine's request). On an AMD EPYC 7763, the Windows log has one `START` line
+  and one `END` line, `== END <label>: <s> s, exit 0 ==`, for each of 17
+  labels, and the 17 labels sorted equal the 17 `windows-*` rows of the table
+  (`cmp`). The `END` times in seconds, in step order of the table: 11.98, 0.44,
+  12.65, 11.65, 1.49, 0.11, 1.41, 0.32, 0.43, 0.11, 2.88, 45.40 for the
+  bounded connect, 0.32, 0.22, 303.17 for the program-case build, 43.86 for the
+  program cases and 20.47, each within its row. The log has no `real`, `user` or
+  `sys` line and no `OVER BUDGET` line, and the verdict step printed
+  `time budgets: every recorded stage finished within its budget`.
+- **The 1 s row.** On an AMD EPYC 9V74 the only failed step of the run was the
+  verdict step. The log has the 17 `START` and 17 `END` lines with the labels of
+  the table, and one `== OVER BUDGET: enforced: windows-test-images took 9.6 s,
+  over its 1 s windows budget ==` line after that stage's `END` line (9.59 s,
+  exit 0). The verdict step's output is `== TIME BUDGETS EXCEEDED ==` with a
+  single entry, `ENFORCED: windows-test-images took 9.6 s, over its 1 s windows
+  budget`, and exit code 1; the stage itself kept its status 0, as the decision
+  that overruns fail only the final verdict says.
+- **The plain shell.** On an AMD EPYC 9V74 the only failed step of the run was
+  the verdict step, which printed `no stage ran under run-check.pl: the time
+  budget record '/d/a/_temp/time-budget-overruns.txt' does not exist` and exited
+  1. The log has no `== START` and no `== END` line, and every other step
+  passed: a job whose default shell does not reach the wrapper does not stay
+  green.
+
+These runs hold for a head whose `.github/run-check.pl`,
+`.github/workflows/io-hosts.yml` and Windows rows are those of a75b4997f
+(`git diff 1b58e6b97 a75b4997f` is empty for the first two, which the merge of
+main did not touch, and the rows are the same); a later change to any of them
+needs the three runs again on a new head, each probe made as a child of it.
+The probe commits are not on the branch.
+
 ## Daily loop
 
 One edit, measured in the local container with the new defaults: an unused
