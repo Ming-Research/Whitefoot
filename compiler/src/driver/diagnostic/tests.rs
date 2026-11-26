@@ -1371,3 +1371,267 @@ fn a_bounds_residual_is_held_as_a_source_relation() {
     assert!(matches!(held, Some(Value::Source(_))), "{held:?}");
     assert!(failure.text_defects().is_empty(), "{:?}", failure.text_defects());
 }
+
+// Adversarial tests of the text check and the kind list. Their reference is
+// the acceptance of the work (the check reads a source-relation field as
+// source with each description a name, and two words, names or literals side
+// by side are a defect), the words [FN-8] fixes for the evaluated-value datum
+// (spec/kernel-spec.md, "argument #N pre-transfer value"), and the rendering
+// the record already gives a `Value::Text`.
+
+/// A description is read as a name; two names with nothing between them are
+/// two names side by side, however the stand-in is spliced into the text.
+#[test]
+fn descriptions_and_names_side_by_side_are_not_one_name() {
+    use crate::diagnostic_repairs::{SeparationForm, described};
+
+    let first = described("the value of a before it was rewritten");
+    let second = described("the value of b before it was rewritten");
+    for text in [
+        format!("rows^[{first}{second}].len"),
+        format!("rows{first}.len"),
+        format!("{first}rows < 10_u64"),
+    ] {
+        let defects = with_field("residual", Value::Source(text.clone())).text_defects();
+        assert_eq!(defects.len(), 1, "{text}: {defects:?}");
+    }
+    let text = SeparationForm::DISTINCT_INDICES.render(&format!("rows^[{first}{second}]"), "values^[c]");
+    let defects = with_field("residual", Value::Separation(text.clone())).text_defects();
+    assert_eq!(defects.len(), 1, "{text}: {defects:?}");
+    // Separated by punctuation they are two places and not a defect.
+    let text = SeparationForm::DISTINCT_INDICES
+        .render(&format!("rows^[{first}][{second}]"), "values^[c]");
+    let defects = with_field("residual", Value::Separation(text.clone())).text_defects();
+    assert!(defects.is_empty(), "{text}: {defects:?}");
+}
+
+/// [FN-8] fixes the words `argument #N pre-transfer value`; the same words
+/// glued to the end of a longer word are not that datum.
+#[test]
+fn the_specified_datum_is_not_found_inside_a_longer_word() {
+    use crate::diagnostic_repairs::replace_call_argument_datums;
+
+    for unchanged in [
+        "xargument #0 pre-transfer value",
+        "a_argument #3 pre-transfer value.n",
+        "argument # pre-transfer value",
+        "argument #-1 pre-transfer value",
+        "argument #1 pre-transfer values",
+        "argument #1 pre-transfer value_x",
+    ] {
+        assert_eq!(replace_call_argument_datums(unchanged, "D"), unchanged);
+    }
+    assert_eq!(
+        replace_call_argument_datums("0_u64 < argument #7 pre-transfer value.len", "D"),
+        "0_u64 < D.len"
+    );
+    assert_eq!(
+        replace_call_argument_datums(
+            "argument #1 pre-transfer value + argument #22 pre-transfer value",
+            "D"
+        ),
+        "D + D"
+    );
+    assert_eq!(
+        replace_call_argument_datums("\u{e9} argument #1 pre-transfer value \u{fc}", "D"),
+        "\u{e9} D \u{fc}"
+    );
+    let defects = with_field(
+        "instantiated_goal",
+        Value::Source("xargument #0 pre-transfer value < 10_u64".to_owned()),
+    )
+    .text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+    // In a backtick stretch the exact datum is read as a name, a near miss is not.
+    let defects = with_field(
+        "mechanical_fix",
+        Value::Text("write `argument #0 pre-transfer value < 10_u64` here".to_owned()),
+    )
+    .text_defects();
+    assert!(defects.is_empty(), "{defects:?}");
+    let defects = with_field(
+        "mechanical_fix",
+        Value::Text("write `argument #x pre-transfer value < 10_u64` here".to_owned()),
+    )
+    .text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+}
+
+/// A source relation inside a list or a structured payload element is read
+/// like one in a field of its own, and its defect names the inner label.
+#[test]
+fn a_source_relation_nested_in_a_payload_is_read() {
+    let defects = with_field(
+        "residual",
+        Value::List(vec![
+            Value::Source("rows^[i]".to_owned()),
+            Value::Source("rows element at k".to_owned()),
+        ]),
+    )
+    .text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+    let defects = with_field(
+        "detail",
+        Value::Variant(
+            "Inner",
+            vec![("inner", Value::Source("rows element at k".to_owned()))],
+        ),
+    )
+    .text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+    assert!(defects[0].starts_with("inner:"), "{defects:?}");
+    let defects = with_field(
+        "detail",
+        Value::Fields(vec![("inner", Value::Text("rows^[?]".to_owned()))]),
+    )
+    .text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+}
+
+/// A `?` hides in no description, and a description holding a backtick
+/// cannot leave the source around it unread.
+#[test]
+fn a_description_hides_neither_a_question_mark_nor_a_stretch_boundary() {
+    use crate::diagnostic_repairs::described;
+
+    let asking = described("what is the value of k?");
+    let defects = with_field("mechanical_fix", Value::Text(format!("write {asking} here")))
+        .text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+    let defects = with_field("residual", Value::Source(format!("rows^[{asking}].len")))
+        .text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+    let ticked = described("the value of `k` before it was rewritten");
+    let defects = with_field(
+        "mechanical_fix",
+        Value::Text(format!("write `rows^[{ticked}].len` here")),
+    )
+    .text_defects();
+    assert!(!defects.is_empty(), "{defects:?}");
+}
+
+/// The descriptions are found, and only well-formed ones.
+#[test]
+fn descriptions_are_replaced_only_where_they_are_closed() {
+    use crate::diagnostic_repairs::replace_described;
+
+    assert_eq!(replace_described("", "N").as_deref(), Some(""));
+    assert_eq!(replace_described("plain", "N").as_deref(), Some("plain"));
+    assert_eq!(
+        replace_described("a\u{2039}x\u{203a}b\u{2039}\u{203a}c", "N").as_deref(),
+        Some("aNbNc")
+    );
+    assert_eq!(
+        replace_described("\u{2039}\u{e9}\u{fc} words\u{203a}", "N").as_deref(),
+        Some("N")
+    );
+    for open in [
+        "\u{2039}x",
+        "x\u{203a}",
+        "\u{2039}a\u{2039}b\u{203a}\u{203a}",
+        "\u{203a}\u{2039}x\u{203a}",
+    ] {
+        assert_eq!(replace_described(open, "N"), None, "{open:?}");
+    }
+}
+
+/// Only the stretches that hold a description lose their backticks.
+#[test]
+fn only_a_stretch_holding_a_description_is_unmarked() {
+    use crate::diagnostic_repairs::unmark_described;
+
+    assert_eq!(
+        unmark_described("`a` and `b\u{2039}x\u{203a}` and `c`"),
+        "`a` and b\u{2039}x\u{203a} and `c`"
+    );
+    assert_eq!(unmark_described("`a` and `c`"), "`a` and `c`");
+    assert_eq!(unmark_described(""), "");
+}
+
+/// A source value, a separation residual and a text print alike, in the text
+/// and the JSON rendering, alone and inside a list; a stretch that holds a
+/// description is printed without its backticks and with its marks.
+#[test]
+fn source_values_print_as_text_does() {
+    use crate::diagnostic_repairs::described;
+
+    let hidden = described("a computed value with no source spelling");
+    for text in [
+        format!("rows^[{hidden}].len"),
+        "plain `b` text, \"q\" and \\ \u{e9}".to_owned(),
+        format!("write `rows^[{hidden}].len` here, then `k`"),
+    ] {
+        let as_text = with_field("field", Value::Text(text.clone()));
+        let in_list = with_field("field", Value::List(vec![Value::Text(text.clone())]));
+        for make in [Value::Source as fn(String) -> Value, Value::Separation] {
+            let other = with_field("field", make(text.clone()));
+            assert_eq!(other.to_string(), as_text.to_string(), "{text}");
+            assert_eq!(
+                other.render(DiagnosticFormat::Json),
+                as_text.render(DiagnosticFormat::Json),
+                "{text}"
+            );
+            let listed = with_field("field", Value::List(vec![make(text.clone())]));
+            assert_eq!(listed.to_string(), in_list.to_string(), "{text}");
+            assert_eq!(
+                listed.render(DiagnosticFormat::Json),
+                in_list.render(DiagnosticFormat::Json),
+                "{text}"
+            );
+        }
+    }
+    let printed = with_field(
+        "field",
+        Value::Source(format!("write `rows^[{hidden}].len` here, then `k`")),
+    )
+    .to_string();
+    assert!(
+        printed.contains(&format!("write rows^[{hidden}].len here, then `k`")),
+        "{printed}"
+    );
+}
+
+/// The kind a record prints is the kind its summary line names and is in the
+/// list of rejection kinds, which is sorted, has no repeat and names only
+/// kinds: no variant of a field's classification, and no capability stop.
+#[test]
+fn the_kind_a_record_prints_is_listed_and_the_list_is_well_formed() {
+    let kinds = crate::rejection_kinds();
+    let mut sorted = kinds.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(kinds, sorted);
+    for kind in &kinds {
+        assert!(
+            kind.chars().next().is_some_and(|first| first.is_ascii_uppercase())
+                && kind.chars().all(|character| character.is_ascii_alphanumeric()),
+            "{kind}"
+        );
+    }
+    for not_a_kind in [
+        "Function", "Binding", "Module", "Label", "Base", "Backedge", "Generics", "Refuted",
+        "Unproved", "SemanticUnsupported",
+    ] {
+        assert!(!kinds.contains(&not_a_kind), "{not_a_kind}");
+    }
+    let mut printed = 0;
+    for (name, source) in [
+        ("bounds.wf", BOUNDS),
+        ("incomplete.wf", b"fn".as_slice()),
+        ("byte.wf", b"#".as_slice()),
+        ("utf8.wf", b"\xff\xfe".as_slice()),
+        ("layout.wf", b"fn  main() {}\n".as_slice()),
+    ] {
+        let Err(failure) = check(&[SourceInput::new(name, source)], CompilerLimits::default())
+        else {
+            panic!("{name} must be rejected");
+        };
+        if let Some(kind) = failure.kind_name() {
+            let rendered = failure.to_string();
+            assert!(rendered.contains(&format!("]: {kind}")), "{name}: {rendered}");
+            assert!(kinds.contains(&kind), "{name}: {kind} is not listed");
+            printed += 1;
+        }
+    }
+    assert!(printed >= 3, "{printed}");
+}
