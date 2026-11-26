@@ -117,7 +117,8 @@ pub(super) fn prune_block_parameters(
 /// argument has another type than the parameter, when no `Jump` reaches its
 /// block, when its block is the entry or the target of a `Match` or
 /// `IntegerMatch` (which carry no arguments), and when only a cycle of
-/// parameters feeds it.
+/// parameters feeds it: no value enters such a cycle, so its copies collapse
+/// into one parameter that feeds itself, which has nothing to be replaced by.
 ///
 /// Uses of a removed parameter are rewritten everywhere a runtime operand or
 /// an operand-indexed record names it: instructions, jump arguments, cleanup
@@ -875,20 +876,24 @@ mod tests {
     }
 
     #[test]
-    fn a_cycle_nothing_outside_enters_and_a_block_no_jump_reaches_keep_their_parameters() {
-        // 0 value; 2 and 3 only feed each other; block 3 is reached by no edge.
+    fn a_cycle_no_value_enters_keeps_one_parameter_and_an_unreached_block_keeps_its_own() {
+        // 0 value; 2 and 3 only feed each other and no value enters them;
+        // block 3 is reached by no edge. 3 is a copy of 2, so it is replaced
+        // by it; 2 has no value to be replaced by and stays, feeding itself.
         let types = [WORD, B, WORD, WORD, WORD];
-        let function = function_of(
-            &types,
-            2,
-            vec![
-                block(&types, &[], vec![], ret(0)),
-                block(&types, &[2], vec![], jump(2, &[2])),
-                block(&types, &[3], vec![], jump(1, &[3])),
-                block(&types, &[4], vec![], ret(4)),
-            ],
-        );
-        assert_eq!(merged(function.clone()), function);
+        let build = |second: &[u32], forward: &[u32], back: &[u32]| {
+            function_of(
+                &types,
+                2,
+                vec![
+                    block(&types, &[], vec![], ret(0)),
+                    block(&types, &[2], vec![], jump(2, forward)),
+                    block(&types, second, vec![], jump(1, back)),
+                    block(&types, &[4], vec![], ret(4)),
+                ],
+            )
+        };
+        assert_eq!(merged(build(&[3], &[2], &[3])), build(&[], &[], &[2]));
     }
 
     #[test]
