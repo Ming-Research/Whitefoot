@@ -6,7 +6,9 @@
 # --jq would print it; it answers only the queries the script must make
 # (workflow gate.yml, the head_sha, filter=latest, --paginate). FAKE_FAIL_FIRST
 # makes that many calls fail before it answers, and FAKE_FAIL_ALWAYS makes
-# every call fail. Waits are zero, so each case takes a moment.
+# every call fail. GATE_RUN_RESULT, set per case, is the result of the run's own
+# group matrix: `success` is judged without a listing, anything else lists as
+# before. Waits are zero, so each case takes a moment.
 set -eu
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 script=$here/gate-both-platforms.sh
@@ -248,5 +250,59 @@ gate GATE_JOBS="$spaced"
 [ "$status" -ne 0 ] || fail 'k3: expected a failure for a missing job with spaces in its name'
 [ "$listings" -eq 4 ] || fail "k3: expected 4 listings, got $listings"
 want k3 '^MISSING corpus proof receipts (ubuntu-24.04): no gate job$'
+
+# GATE_RUN_RESULT is the result of this run's own group jobs (gate.yml gives
+# it `needs.gate.result`). Only `success` is taken for the verdict without a
+# listing: GitHub may show a finished job complete minutes late, and a group
+# listed too late must not read as absent in a run whose groups all passed.
+
+# (l1) A run whose groups did not succeed still reads the listing: a group
+# absent from every listing fails after 4 listings.
+newcase l1
+jobs "$FAKE_DIR/jobs.1" 'corpus (ubuntu-24.04)=absent'
+gate GATE_RUN_RESULT=failure
+[ "$status" -ne 0 ] || fail 'l1: expected a failure for a missing group in a failed run'
+[ "$listings" -eq 4 ] || fail "l1: expected 4 listings, got $listings"
+want l1 '^MISSING corpus (ubuntu-24.04): no gate job$'
+
+# (l3) A cancelled run is not a success: the listing is read, once when it is
+# complete and green.
+newcase l3
+jobs "$FAKE_DIR/jobs.1"
+gate GATE_RUN_RESULT=cancelled
+[ "$status" -eq 0 ] || fail 'l3: expected the green listing to pass'
+[ "$listings" -eq 1 ] || fail "l3: expected 1 listing, got $listings"
+want l3 '^ok      corpus (macos-15)$'
+
+# (m2) The verdict of a run whose groups all succeeded needs no GitHub call:
+# with every call failing, it still passes.
+newcase m2
+jobs "$FAKE_DIR/jobs.1"
+gate GATE_RUN_RESULT=success FAKE_FAIL_ALWAYS=1
+[ "$status" -eq 0 ] || fail 'm2: expected a pass on the success of the run'
+[ ! -s "$FAKE_DIR/calls" ] || fail 'm2: expected no gh call'
+
+# (m1) A run whose groups all succeeded passes on its own result: the listing
+# never shows the finished group `corpus (ubuntu-24.04)` complete, and no
+# listing is made.
+newcase m1
+jobs "$FAKE_DIR/jobs.1" 'corpus (ubuntu-24.04)=absent'
+gate GATE_RUN_RESULT=success
+[ "$status" -eq 0 ] || fail 'm1: expected a pass on the success of the run'
+[ "$listings" -eq 0 ] || fail "m1: expected no listing, got $listings"
+want m1 '^ok      corpus (ubuntu-24.04)$'
+want m1 '^ok      corpus (macos-15)$'
+want m1 '^ok      static (ubuntu-24.04)$'
+
+# (m3) The names a successful run prints are the whole job names, spaces and
+# all, as for a run that has parts: one line a job, no listing.
+newcase m3
+jobs "$FAKE_DIR/jobs.1"
+gate GATE_RUN_RESULT=success GATE_JOBS="$spaced" FAKE_FAIL_ALWAYS=1
+[ "$status" -eq 0 ] || fail 'm3: expected a pass on the success of the run'
+[ ! -s "$FAKE_DIR/calls" ] || fail 'm3: expected no gh call'
+want m3 '^ok      unit 1 of 3 (ubuntu-24.04)$'
+want m3 '^ok      corpus proof receipts (ubuntu-24.04)$'
+[ "$(grep -c '^ok  ' "$work/out")" -eq 4 ] || fail 'm3: expected one ok line for each of the four jobs'
 
 echo 'test-gate-both-platforms: ok'

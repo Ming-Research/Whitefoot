@@ -5,9 +5,25 @@
 # the latest completed job of a name decides, so a re-run run supersedes an
 # earlier one. Each expected `<name> (<os>)` must have concluded success.
 #
-# GitHub's API is sometimes flaky, and a listing taken while jobs are being
-# recorded can lack some of them, so a flaky answer must not read as a red
-# gate:
+# A run whose own group jobs all succeeded needs no listing. GitHub may record
+# a finished job as complete minutes late: run 39607651901's corpus job ended
+# 13:40:45 and the listing showed no completed entry for it for the 98 s this
+# script listed, so a group that had passed read as absent; in run 40115097375
+# the runtime job's steps ended 17:14:20 and it was recorded complete 17:24:40
+# (research/investigations/test-economy/time-budgets.md). The run's own result
+# is not late: GATE_RUN_RESULT is `needs.gate.result` of the run's job
+# matrix, `success` exactly when every job (every group, or every part of a
+# group that runs in parts) on every platform the run was asked for succeeded,
+# so the verdict is that result, with no GitHub call. A
+# group job that GitHub stops at its time limit without having recorded it
+# complete ends `cancelled` and has no result: the run is then not `success`,
+# this script reads the listing as below, finds no completed job and fails;
+# only a re-run settles it.
+#
+# Otherwise (a group failed, was cancelled or was skipped, or GATE_RUN_RESULT
+# is not set) the revision's runs are read. GitHub's API is sometimes flaky,
+# and a listing taken while jobs are being recorded can lack some of them, so
+# a flaky answer must not read as a red gate:
 # - every `gh api` call is tried up to 5 times, waiting 1, 2, 4 and 8 times
 #   GATE_RETRY_WAIT seconds (default 5: 5, 10, 20, 40 s) between tries; a call
 #   that fails every time fails the step, naming the call;
@@ -21,9 +37,10 @@
 #
 # It reads GH_TOKEN, HEAD_SHA, GATE_JOBS (a JSON array of the expected job
 # names, `<name> (<os>)`, as .github/gate-matrix.sh gives them: a name may hold
-# spaces, so each is read as one) and GITHUB_REPOSITORY, uses RUNNER_TEMP (or a fresh temporary directory) for
-# scratch files, and queries GitHub with `gh`. .github/test-gate-both-platforms.sh
-# exercises it.
+# spaces, so each is read as one), GATE_RUN_RESULT (the run's group matrix
+# result, optional) and GITHUB_REPOSITORY, uses RUNNER_TEMP (or a fresh
+# temporary directory) for scratch files, and queries GitHub with `gh`.
+# .github/test-gate-both-platforms.sh exercises it.
 set -eu
 
 wait_retry=${GATE_RETRY_WAIT:-5}
@@ -38,6 +55,14 @@ trap 'rm -rf "$work"' EXIT
 # so it is read a line at a time and never split on white space.
 printf '%s\n' "$GATE_JOBS" | jq -er '.[]' > "$work/expected"
 test -s "$work/expected"
+
+if [ "${GATE_RUN_RESULT:-}" = success ]; then
+    while IFS= read -r name; do
+        echo "ok      $name"
+    done < "$work/expected"
+    echo "$HEAD_SHA: every job of this run succeeded; no listing is needed"
+    exit 0
+fi
 
 # api LABEL ARGS...: gh api with retries; the answer goes to $work/answer.
 api() {

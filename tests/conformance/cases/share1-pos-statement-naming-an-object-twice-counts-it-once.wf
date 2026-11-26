@@ -1,0 +1,41 @@
+alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+fn worker(first: Shared<Box<u8>>, second: Shared<Box<u8>>) -> result: u8 pure waits {
+  doc "One statement names the object through two handles and its block ends both before it touches the state: the statement counts once, so the state outlives the block and the statement's completion ends exactly the one handle it counted.";
+  let seen = 0_u8;
+  atomic a = &first, b = &second {
+    release::<Shared<Box<u8>>>(value: move first);
+    release::<Shared<Box<u8>>>(value: move second);
+    swap(first: a, second: b);
+    set a^.inner = 9_u8;
+    set seen = a^.inner;
+  }
+  return seen;
+}
+
+fn held_value(found: Option<Box<u8>>) -> result: u8 pure {
+  doc "The state a close returned, or zero when the close was not the last to end.";
+  match move found {
+    Some(value: kept) => {
+      return kept.inner;
+    }
+    None() => {
+      return 0_u8;
+    }
+  }
+}
+
+fn main() -> status: ExitStatus pure waits {
+  doc "SHARE-1: the worker's statement has completed when the starter joins it, so the object's only handle left is the starter's, its close is the last to end and returns the state the statement wrote. A statement that counted its object once and ended two handles, or counted twice and ended one, would leave that close not last and give None.";
+  let boxed = box_new::<u8>(value: 7_u8);
+  let cell = shared_new::<Box<u8>>(value: move boxed);
+  let one = shared_share::<Box<u8>>(shared: &cell);
+  let two = shared_share::<Box<u8>>(shared: &cell);
+  let seen = spawn worker(first: move one, second: move two);
+  let joined = seen -wrap 9_u8;
+  let closed = shared_close::<Box<u8>>(shared: move cell);
+  let state_value = held_value(found: move closed);
+  let total = state_value +wrap joined;
+  return exit_status(code: total);
+}
