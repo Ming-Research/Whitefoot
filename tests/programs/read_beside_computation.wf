@@ -11,7 +11,12 @@ alias read_next = std::io::read_next;
 alias write_once = std::io::write_once;
 
 fn compute(clock: Clock, stop: DecisionCell) -> result: unit pure waits {
-  doc "Computes without waiting until stop is decided or three seconds have passed, reading the cell and the clock between batches of arithmetic; it reaches no wait, so it hands its driver to no other context.";
+  doc "Sleeps 20 ms, so that the reader has begun its read, then computes without waiting until stop is decided or three seconds have passed, reading the cell and the clock between batches of arithmetic; it reaches no wait, so it hands its driver to no other context.";
+  let begun = now(clock: &clock);
+  let wake = instant_after(instant: begun, nanoseconds: 20000000_u64);
+  let never = std::time::cancel_never();
+  let slept = std::time::sleep_until(deadline: wake, cancel: &never);
+  std::time::close_cancel_watch(watch: move never);
   let started = now(clock: &clock);
   let limit = instant_after(instant: started, nanoseconds: 3000000000_u64);
   let open = Open();
@@ -34,15 +39,11 @@ fn compute(clock: Clock, stop: DecisionCell) -> result: unit pure waits {
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  doc "Starts a context that computes without waiting, reports on standard output that it is about to read, then reads one byte of standard input with no deadline. The byte arrives while the other context computes. The exit status is the read's duration in tens of milliseconds, 250 for 2.5 s or more, so the case can tell a read that returned when its byte arrived from one held until the computation ended [WAIT-2].";
+  doc "Reports on standard output that it is about to read, starts a context that computes without waiting once the read has begun, then reads one byte of standard input with no deadline. The byte arrives while the other context computes. The exit status is the read's duration in tens of milliseconds, 250 for 2.5 s or more, so the case can tell a read that returned when its byte arrived from one held until the computation ended [WAIT-2].";
   let Inputs(args: unused_args, drivers: unused_driver_count, cwd: cwd_directory, stdout: output, stderr: unused_stderr, handles: handles, stdin: input, clock: clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
   std::fs::close_directory(factory: &handles, directory: move cwd);
-  let stop = decision_cell_new();
-  let worker_stop = decision_cell_share(cell: &stop);
-  let worker_clock = std::time::clock_share(clock: &clock);
-  spawn compute(clock: move worker_clock, stop: move worker_stop);
   let bytes = slots_new::<u8, 1>();
   place_back(window: &bytes, value: 0_u8);
   let marker = array_filled::<u8, 1>(value: 46_u8);
@@ -61,6 +62,10 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
       set code = 251_u8;
     }
   }
+  let stop = decision_cell_new();
+  let worker_stop = decision_cell_share(cell: &stop);
+  let worker_clock = std::time::clock_share(clock: &clock);
+  spawn compute(clock: move worker_clock, stop: move worker_stop);
   let started = now(clock: &clock);
   let no_deadline = None<Instant>();
   let destination = &bytes[0_u64..1_u64];

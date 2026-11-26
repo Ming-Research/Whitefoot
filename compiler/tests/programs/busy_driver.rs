@@ -17,17 +17,25 @@ use super::support::{CompiledProgram, build_program, compile_program};
 
 const RUNS: usize = 6;
 
-/// The driver-1 `stolen_contexts` count of a scheduler report on standard
-/// error, or `None` when the report has no driver 1.
-fn stolen_by_second_driver(stderr: &[u8]) -> Option<u64> {
+/// A counter of driver 1 in a scheduler report on standard error, or `None`
+/// when the report has no driver 1.
+fn second_driver_count(stderr: &[u8], counter: &str) -> Option<u64> {
     let text = String::from_utf8_lossy(stderr);
+    let prefix = format!("{counter}=");
     text.lines()
         .filter(|line| line.starts_with("driver: index=1 "))
         .find_map(|line| {
             line.split_whitespace()
-                .find_map(|field| field.strip_prefix("stolen_contexts="))
-                .map(|count| count.parse::<u64>().expect("a stolen-context count"))
+                .find_map(|field| field.strip_prefix(prefix.as_str()))
+                .map(|count| count.parse::<u64>().expect("a driver counter"))
         })
+}
+
+/// Whether driver 1 took the computing context: it stole it while it was
+/// ready, or completed its first sleep by a borrow and so queued it on itself.
+fn computation_moved(stderr: &[u8]) -> bool {
+    second_driver_count(stderr, "stolen_contexts").unwrap_or(0) != 0
+        || second_driver_count(stderr, "borrowed_sleeps").unwrap_or(0) != 0
 }
 
 /// Runs `program` `RUNS` times and returns, for each run, its exit status and
@@ -46,7 +54,7 @@ fn runs(
                 native_ring,
                 &[("WF_DRIVERS", drivers), ("WF_SCHED_REPORT", "2")],
             );
-            let shared = drivers == "1" || stolen_by_second_driver(&output.stderr) == Some(0);
+            let shared = drivers == "1" || !computation_moved(&output.stderr);
             (
                 output.status.code(),
                 shared,
@@ -61,10 +69,17 @@ fn runs(
 fn judge(case: &str, results: &[(Option<i32>, bool, String)], limit: i32) -> Option<String> {
     let summary = results
         .iter()
-        .map(|(code, shared, _)| format!("{code:?}{}", if *shared { "" } else { " (split)" }))
+        .map(|(code, shared, stderr)| {
+            let drivers = stderr
+                .lines()
+                .filter(|line| line.starts_with("driver: "))
+                .collect::<Vec<_>>()
+                .join(" | ");
+            format!("{code:?}{} [{drivers}]", if *shared { "" } else { " (split)" })
+        })
         .collect::<Vec<_>>()
-        .join(", ");
-    eprintln!("{case}: {summary}");
+        .join("\n  ");
+    eprintln!("{case}:\n  {summary}");
     if !results.iter().any(|(_, shared, _)| *shared) {
         return Some(format!("{case}: no run put both contexts on one driver: {summary}"));
     }
