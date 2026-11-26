@@ -768,3 +768,25 @@ widened. The scripts are `research/experiments/handoff-yield-check/` and
    percent is reported as undecided. A nonzero yield-request count under these workloads, whose
    commands run for microseconds, would show that the trigger fires where no
    context computes for long, and is reported to the owner.
+
+### The runtime test fails on each removed condition
+
+`driver_service_test.c` was built and run on mutants of `bridge.c`, each
+removing one condition the change rests on, by a temporary workflow on a
+hosted runner (runs
+[45813884231](https://github.com/Ming-Research/Whitefoot/actions/runs/45813884231)
+and [45815096128](https://github.com/Ming-Research/Whitefoot/actions/runs/45815096128),
+the second for the pass mutant, whose first form did not compile). The
+unmutated test passed in both; every mutant failed:
+
+| Mutant | Failing check |
+|---|---|
+| the monitor ignores that the role is alone | `driver_service_test.c:1037`, an alone run is asked to yield |
+| the monitor never asks to yield | `:1062`, no request after 1 ms beside a sleeper |
+| a pass ignores a yield request | `:259`, the requested pass does not suspend |
+| no reap after a yield | `:690`, the due sleep is still pending after the yield |
+| handoff without waiting a monitor period | `:1066`, handed over before the period ended |
+| the handoff claims the current word, not the one it saw | `:980`, a borrowed role is claimed |
+| a return ignores a YIELD word | the test's 30 s guard, in the yield-service phase: the run never gets its driver back |
+| handoff when the role became alone | `:1016`, the alone role is handed over |
+| a borrow refuses a YIELD word | `:649`, a requested role cannot be borrowed |
