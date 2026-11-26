@@ -129,6 +129,19 @@ pub fn prepare_toolchain() -> Result<(), String> {
     probed_facts().map(|_| ())
 }
 
+/// The clang arguments that give every definition of the runtime's own C
+/// units the stack-probing method the emitted definitions carry: the target's
+/// record and, on Darwin, the helper capability this host's clang was probed
+/// for (`TargetLayout::runtime_stack_probe_arguments`). Reading the probed
+/// facts prepares the toolchain, so a packaged-mode failure is returned.
+#[doc(hidden)]
+pub fn runtime_stack_probe_arguments() -> Result<&'static [&'static str], String> {
+    let facts = probed_facts()?;
+    let target = crate::target::TargetLayout::host()
+        .map_err(|failure| format!("the host target has no stack probe record: {failure:?}"))?;
+    Ok(target.runtime_stack_probe_arguments(facts.darwin_stack_probe_helper))
+}
+
 /// Internal invariant: every production path prepares before reading facts.
 ///
 /// `backend::emitter::emit_module` prepares before its stack attributes and
