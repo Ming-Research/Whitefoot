@@ -305,11 +305,15 @@ overflow check or trap to the exact operation.
 
 ## Where next
 
+- The [language tour](language-tour.md) goes through the language one
+  concept at a time, with a program for each.
 - The [README](../../README.md) introduces safety, performance and the
   language's basic forms. Its [Try it section](../../README.md#try-it)
   lists compiler options and source-build steps.
 - [Integers](../articles/integers.md) covers exact, wrapping, checked and
   saturating arithmetic, and explicit conversions.
+- [Fixing rejections](fixing-rejections.md) groups the rejections by what
+  they protect and shows one repair for each group.
 - [What a rejection tells you](../articles/what-a-rejection-tells-you.md)
   explains diagnostics and how to use their repair suggestions.
 - [Proofs without a solver, by hand](../articles/proofs-by-hand.md)
