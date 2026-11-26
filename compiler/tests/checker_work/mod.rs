@@ -87,7 +87,7 @@ fn repeat(op: Op, limit: u64) -> out: u64 pure {
 "#;
 
 fn check(source: &Path, output: Option<&Path>) -> Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_whitefootc"));
+    let mut command = Command::new(crate::compiler_under_test());
     command
         .arg("--check")
         .arg(source)
