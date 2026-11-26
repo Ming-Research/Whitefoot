@@ -178,12 +178,14 @@ fn require_beside_reader(
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
-/// The byte comes 100 ms after the program reports it is about to read, so
-/// the read's own duration, its exit status, is 100 ms plus its lateness.
+/// The byte comes 40 ms after the program reports it is about to read, when
+/// the other context has computed for about 20 ms, past the 1 ms after which
+/// the runtime acts; the read's own duration, its exit status, is 40 ms plus
+/// its lateness.
 #[test]
 fn a_read_whose_byte_arrives_returns_beside_a_computation() {
     let program = build_program(&compile_program("read_beside_computation.wf"));
-    require_beside_reader(&program, "read", 64, 100 + HANDOFF_LIMIT_MS, Duration::from_millis(100));
+    require_beside_reader(&program, "read", 64, 40 + HANDOFF_LIMIT_MS, Duration::from_millis(40));
 }
 
 /// The read's deadline is 50 ms away while the other context would compute for

@@ -122,13 +122,16 @@ fn a_context_polling_an_object_lets_the_producer_run_on_one_driver() {
 /// status is the largest lateness in milliseconds. With two drivers an idle
 /// driver's borrow moves the reader after its first sleep, so that
 /// configuration checks lateness on whatever placement the run takes.
-/// `driver_service_test.c` isolates the service pass after a yield.
+/// `driver_service_test.c` isolates the service pass after a yield. Each run
+/// checks seventeen waits, and a driver that served nothing after a yield
+/// would make every sleep about 64 yields late, so eight runs a
+/// configuration find it.
 #[test]
 fn a_periodic_sleeping_reader_progresses_beside_one_busy_writer() {
     const LIMIT_MS: i32 = 4 + 40;
     let program = build_program(&compile_program("lone_timer_writer.wf"));
     for (native_ring, drivers) in [(true, "1"), (false, "1"), (true, "2")] {
-        for round in 0..64 {
+        for round in 0..8 {
             let output = program.run_with_input_after_first_output(
                 b"z",
                 std::time::Duration::from_millis(20),
