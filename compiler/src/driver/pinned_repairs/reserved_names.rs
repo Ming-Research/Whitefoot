@@ -19,7 +19,7 @@ pub(super) const RESERVED_NAMES: &[RepairPair] = &[
 "#,
         rule: "FORM-3",
         sentences: &[
-            "mechanical_fix: `copy` is reserved: it is a fixed word of the grammar of a type parameter's capability bound [GRAM-2], and IDENT excludes every fixed grammar word [FORM-3]; rename this name, at its declaration and at every use, to a spelling that is not reserved, such as `copy_value`\n",
+            "\n  mechanical_fix: `copy` is reserved: it is a fixed word of the grammar of a type parameter's capability bound [GRAM-2], and IDENT excludes every fixed grammar word [FORM-3]; rename this name, at its declaration and at every use, to a spelling that is not reserved, such as `copy_value`\n",
         ],
         repaired: &[br#"fn main() -> status: std::process::ExitStatus pure {
   let copy_value = 1_u8;
@@ -36,7 +36,7 @@ pub(super) const RESERVED_NAMES: &[RepairPair] = &[
 "#,
         rule: "FORM-3",
         sentences: &[
-            "mechanical_fix: `checked` is reserved: it is a mode word, the mode suffix of the operation spellings `+checked`, `-checked`, `*checked`, `/checked`, `%checked`, `ineg.checked`, `cvt.checked` and `iabs.checked`, and no declaration may use a mode word [OP-1, FORM-3]; rename this name, at its declaration and at every use, to a spelling that is not reserved, such as `checked_value`\n",
+            "\n  mechanical_fix: `checked` is reserved: it is a mode word, the mode suffix of the operation spellings `+checked`, `-checked`, `*checked`, `/checked`, `%checked`, `ineg.checked`, `cvt.checked` and `iabs.checked`, and no declaration may use a mode word [OP-1, FORM-3]; rename this name, at its declaration and at every use, to a spelling that is not reserved, such as `checked_value`\n",
         ],
         repaired: &[br#"fn main() -> status: std::process::ExitStatus pure {
   let checked_value = 1_u8;
@@ -59,7 +59,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "FORM-3",
         sentences: &[
-            "mechanical_fix: `is` is reserved: it is a fixed word of the grammar of a routed postcondition's result route [GRAM-2] and a range variant relation [GRAM-5], and IDENT excludes every fixed grammar word [FORM-3]; rename this name, at its declaration and at every use, to a spelling that is not reserved, such as `is_value`\n",
+            "\n  mechanical_fix: `is` is reserved: it is a fixed word of the grammar of a routed postcondition's result route [GRAM-2] and a range variant relation [GRAM-5], and IDENT excludes every fixed grammar word [FORM-3]; rename this name, at its declaration and at every use, to a spelling that is not reserved, such as `is_value`\n",
         ],
         repaired: &[br#"fn pass(is_value: u8) -> result: u8 pure {
   return is_value;
@@ -84,7 +84,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "FORM-3",
         sentences: &[
-            "mechanical_fix: `wrap` is reserved: it is a mode word, the mode suffix of the operation spellings `+wrap`, `-wrap`, `*wrap`, `ineg.wrap`, `cvt.wrap`, `ishl.wrap`, `ishr.wrap` and `iabs.wrap`, and no declaration may use a mode word [OP-1, FORM-3]; rename this name, at its declaration and at every use, to a spelling that is not reserved, such as `wrap_value`\n",
+            "\n  mechanical_fix: `wrap` is reserved: it is a mode word, the mode suffix of the operation spellings `+wrap`, `-wrap`, `*wrap`, `ineg.wrap`, `cvt.wrap`, `ishl.wrap`, `ishr.wrap` and `iabs.wrap`, and no declaration may use a mode word [OP-1, FORM-3]; rename this name, at its declaration and at every use, to a spelling that is not reserved, such as `wrap_value`\n",
         ],
         repaired: &[br#"fn pass(wrap_value: u8) -> result: u8 pure {
   return wrap_value;
@@ -110,7 +110,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "FORM-3",
         sentences: &[
-            "mechanical_fix: `held` is reserved: it is a fixed word of the grammar of a held clause [GRAM-2], and IDENT excludes every fixed grammar word [FORM-3]; rename this name, at its declaration and at every use, to a spelling that is not reserved, such as `held_value`\n",
+            "\n  mechanical_fix: `held` is reserved: it is a fixed word of the grammar of a held clause [GRAM-2], and IDENT excludes every fixed grammar word [FORM-3]; rename this name, at its declaration and at every use, to a spelling that is not reserved, such as `held_value`\n",
         ],
         repaired: &[br#"struct Gauge {
   held_value: u8;
@@ -138,7 +138,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "FORM-3",
         sentences: &[
-            "mechanical_fix: `sat` is reserved: it is a mode word, the mode suffix of the operation spellings `+sat`, `-sat` and `*sat`, and no declaration may use a mode word [OP-1, FORM-3]; rename this name, at its declaration and at every use, to a spelling that is not reserved, such as `sat_value`\n",
+            "\n  mechanical_fix: `sat` is reserved: it is a mode word, the mode suffix of the operation spellings `+sat`, `-sat` and `*sat`, and no declaration may use a mode word [OP-1, FORM-3]; rename this name, at its declaration and at every use, to a spelling that is not reserved, such as `sat_value`\n",
         ],
         repaired: &[br#"struct Meter {
   sat_value: u8;
@@ -169,7 +169,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "FORM-3",
         sentences: &[
-            "mechanical_fix: `held` is reserved: it is a fixed word of the grammar of a held clause [GRAM-2], and IDENT excludes every fixed grammar word [FORM-3]; rename this name, at its declaration and at every use, to a spelling that is not reserved, such as `held_value`\n",
+            "\n  mechanical_fix: `held` is reserved: it is a fixed word of the grammar of a held clause [GRAM-2], and IDENT excludes every fixed grammar word [FORM-3]; rename this name, at its declaration and at every use, to a spelling that is not reserved, such as `held_value`\n",
         ],
         repaired: &[br#"fn probe(found: Option<u8>) -> result: u8 pure {
   match found {

@@ -27,7 +27,9 @@ use cache::Fields;
 pub use cache::{BuildCache, content_digest, running_compiler_identity};
 pub(crate) use diagnostic::Place;
 use diagnostic::{Anchor, Head, Record};
-pub use diagnostic::{DiagnosticFormat, render_driver_failure, render_driver_note};
+pub use diagnostic::{
+    DiagnosticFormat, rejection_kinds, render_driver_failure, render_driver_note,
+};
 pub use packages::{
     FormattedFile, ModuleProgramFailure, form_module_program_graph, format_module_program,
 };
@@ -691,6 +693,23 @@ impl CompilationFailure {
     #[must_use]
     pub fn location(&self) -> Option<SourceLocation> {
         self.record.location()
+    }
+
+    /// Returns the kind name this record's summary line prints, such as
+    /// `UndischargedBoundsObligation`: absent for a stop that prints none.
+    #[must_use]
+    pub fn kind_name(&self) -> Option<&str> {
+        self.record.kind()
+    }
+
+    /// Returns what is wrong with the words of this record, one sentence per
+    /// defect and none when its payload text is sound: a `?` standing for a
+    /// value the text does not write, and a stretch the text marks as source
+    /// with backticks that is not source text. The writer's own source bytes
+    /// the record quotes are not read.
+    #[must_use]
+    pub fn text_defects(&self) -> Vec<String> {
+        self.record.text_defects()
     }
 
     /// Returns the exact numbered source rule the first rejection cites.

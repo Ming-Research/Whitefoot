@@ -2554,20 +2554,6 @@ impl<'unit> TypeContext<'unit> {
                 Some((ResolvedTarget::Prelude(id), _)) if id == BuiltinPreludeId::EQ => {
                     GenericBound::Eq
                 }
-                Some((
-                    ResolvedTarget::Source {
-                        class: DeclarationClass::BuiltinBound,
-                        ..
-                    },
-                    coordinate,
-                )) => {
-                    return self.declarations.issue_at(
-                        SemanticRule::Fn3,
-                        node,
-                        coordinate,
-                        SemanticIssueKind::SourceContractGenericBound,
-                    );
-                }
                 Some(_) => return Err(SemanticCompilerFailure::InvalidResolution.into()),
             },
         )

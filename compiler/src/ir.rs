@@ -12,6 +12,10 @@
 pub struct IrValueId(pub(crate) u32);
 
 impl IrValueId {
+    pub(crate) fn from_index(index: usize) -> Option<Self> {
+        u32::try_from(index).ok().map(Self)
+    }
+
     #[must_use]
     pub const fn ordinal(self) -> u32 {
         self.0

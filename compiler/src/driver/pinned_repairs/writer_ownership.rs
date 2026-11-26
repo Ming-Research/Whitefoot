@@ -231,8 +231,7 @@ fn main() -> status: std::process::ExitStatus pure {
         sentences: &[
             "\n  live_predecessor: the implicit false edge of this `if` (no `else` is written)\n",
             "\n  dead_predecessor: the `if` branch\n",
-            "consume it on every predecessor, on none, or commit a value back into it",
-            "write `release::<Box<u8>>(value: move pool);` before the code that needs it released and remove the conditional consume",
+            "\n  mechanical_fix: every predecessor of a join agrees on a binding's live-or-dead status: consume it on every predecessor, on none, or commit a value back into it before the predecessor that consumed it reaches the join; alternatively, if this owner is no longer needed, consume it unconditionally outside the `if`: write `release::<Box<u8>>(value: move pool);` before the code that needs it released and remove the conditional consume\n",
         ],
         repaired: JOIN_REPAIRED,
     },

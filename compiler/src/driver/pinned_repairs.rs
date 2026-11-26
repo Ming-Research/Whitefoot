@@ -6,8 +6,13 @@
 //! and the repair it carries, one program for each alternative the pair
 //! carries out, which must be accepted with the repaired construct live.
 //! Adding or rewording a repair means adding or updating a pair here or in
-//! its family module. Constructor, ownership, placement and linear-exit
-//! repairs are pinned in `remaining_repairs`, including multi-module fields.
+//! its family module. Every rejection kind the compiler lists has at least
+//! one pair, and a kind added without one fails
+//! `every_rejection_kind_has_a_repair_pair`; `kind_coverage` holds the pairs
+//! of kinds that no repair family above reaches. Constructor, ownership,
+//! placement and linear-exit repairs are pinned in `remaining_repairs`, and
+//! the rejections of a module program in `module_pairs` and
+//! `module_kind_pairs`.
 
 use super::{CompilationFailureKind, CompilerLimits, compile};
 use crate::SourceInput;
@@ -26,8 +31,11 @@ mod entry_formers;
 mod floats;
 mod harness;
 mod interface_applications;
+mod kind_coverage;
 mod lexical_syntax;
 mod lost_header_relations;
+mod module_kind_pairs;
+mod module_pairs;
 mod postcondition_places;
 mod prelude_opaque;
 mod proof_place_spellings;
@@ -194,7 +202,7 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "FORM-7",
         sentences: &[
             "]: InvalidTextItem\n",
-            "\n  reason: each character has exactly one spelling: the printable ASCII byte itself, `\\\\`, `\\n`, `\\t`, `\\r` or the escaped quote, and `\\u{H}` in lowercase hexadecimal without leading zeros for every other value\n",
+            "\n  reason: each character has exactly one spelling: the printable ASCII byte itself, `\\\\`, `\\n`, `\\t`, `\\r` or the escaped quote, and a `\\u{e9}`-style escape, in lowercase hexadecimal without leading zeros, for every other value\n",
             "\n  mechanical_fix: write `A` in place of `\\u{41}`\n",
         ],
         repaired: &[br#"fn main() -> status: std::process::ExitStatus pure {
@@ -1814,7 +1822,7 @@ fn main() -> status: std::process::ExitStatus pure {
         rule: "REF-4",
         sentences: &[
             "\n  disposition: Refuted\n",
-            "` is false where this range is formed: choose endpoints that satisfy it\n",
+            "\n  mechanical_fix: `5_u64 <= values.len` is false where this range is formed: choose endpoints that satisfy it\n",
         ],
         repaired: &[br#"fn main() -> status: std::process::ExitStatus pure {
   let values = array_filled::<u64, 4>(value: 0_u64);
@@ -3241,7 +3249,7 @@ fn main() -> status: std::process::ExitStatus pure waits {
         rule: "SHARE-2",
         sentences: &[
             "]: WaitInsideAtomic\n",
-            "\n  mechanical_fix: name both handles as targets of one statement, `atomic outer = &first, inner = &second { … }`, or end the outer statement before starting the inner one\n",
+            "\n  mechanical_fix: name both handles as targets of one statement, `atomic outer = &first, inner = &second`, followed by the block, or end the outer statement before starting the inner one\n",
         ],
         repaired: &[br#"fn main() -> status: std::process::ExitStatus pure waits {
   let first = shared_new::<u8>(value: 0_u8);
@@ -3786,5 +3794,10 @@ fn main() -> status: ExitStatus pure {
 
 #[test]
 fn each_pinned_repair_is_carried_out_by_its_programs() {
-    harness::run_pairs();
+    harness::assert_pairs_carry_out_their_repairs();
+}
+
+#[test]
+fn every_rejection_kind_has_a_repair_pair() {
+    harness::assert_every_kind_has_a_pair();
 }

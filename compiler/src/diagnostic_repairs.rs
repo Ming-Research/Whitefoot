@@ -6,6 +6,200 @@ pub(crate) use reserved_names::{reserved_name_fix, source_word};
 
 use crate::syntax::LayoutDifference;
 
+/// The mark that opens a described value.
+const DESCRIBED_OPEN: char = '\u{2039}';
+/// The mark that closes a described value.
+const DESCRIBED_CLOSE: char = '\u{203a}';
+
+/// What a rendering writes where a value has no source spelling [DIAG-1]: the
+/// value described in words between two marks no source text contains, never
+/// a stand-in character a reader could take for source. A stretch of text
+/// that holds one is not marked as source, which [`unmark_described`] sees
+/// to where the payload prints. A description holds no other: the words of
+/// one that names a place already described (`rows[‹parameter #0›]`) lose
+/// the inner marks, so the outer pair is the one description of the value.
+pub(crate) fn described(what: &str) -> String {
+    let words: String = what
+        .chars()
+        .filter(|&character| character != DESCRIBED_OPEN && character != DESCRIBED_CLOSE)
+        .collect();
+    format!("{DESCRIBED_OPEN}{words}{DESCRIBED_CLOSE}")
+}
+
+/// The text with each described value, marks included, replaced by `stand_in`,
+/// so that the source around the descriptions can be read as source; `None`
+/// where a description is not closed, or a closing mark stands with no
+/// description open.
+pub(crate) fn replace_described(text: &str, stand_in: &str) -> Option<String> {
+    let mut replaced = String::with_capacity(text.len());
+    let mut open = false;
+    for character in text.chars() {
+        match (character, open) {
+            (DESCRIBED_OPEN, false) => {
+                open = true;
+                replaced.push_str(stand_in);
+            }
+            (DESCRIBED_OPEN, true) | (DESCRIBED_CLOSE, false) => return None,
+            (DESCRIBED_CLOSE, true) => open = false,
+            (_, true) => {}
+            (_, false) => replaced.push(character),
+        }
+    }
+    (!open).then_some(replaced)
+}
+
+/// The words [FN-8] fixes for a call-argument evaluated-value datum in a
+/// payload: `argument #N pre-transfer value`, with N the zero-based argument
+/// ordinal. They are the specification's own spelling, so they are neither
+/// changed nor wrapped in the marks of a description.
+const CALL_ARGUMENT_DATUM_OPEN: &str = "argument #";
+const CALL_ARGUMENT_DATUM_CLOSE: &str = " pre-transfer value";
+
+/// `argument #N pre-transfer value` for argument ordinal `argument`.
+pub(crate) fn call_argument_datum(argument: impl std::fmt::Display) -> String {
+    format!("{CALL_ARGUMENT_DATUM_OPEN}{argument}{CALL_ARGUMENT_DATUM_CLOSE}")
+}
+
+/// The text with each exact [`call_argument_datum`] form (the words, a decimal
+/// ordinal of one or more digits, the words) replaced by `stand_in`, so that
+/// the source around the datum can be read as source. The datum is a phrase of
+/// its own: the same words glued to a longer word on either side are not it.
+pub(crate) fn replace_call_argument_datums(text: &str, stand_in: &str) -> String {
+    let in_word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut replaced = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(CALL_ARGUMENT_DATUM_OPEN) {
+        let after = &rest[at + CALL_ARGUMENT_DATUM_OPEN.len()..];
+        let digits = after.bytes().take_while(|byte| byte.is_ascii_digit()).count();
+        let begins = !text[..text.len() - rest.len() + at]
+            .chars()
+            .next_back()
+            .is_some_and(in_word);
+        // The closing words end the datum: a longer word is not the datum.
+        let closed = after[digits..]
+            .strip_prefix(CALL_ARGUMENT_DATUM_CLOSE)
+            .filter(|tail| !tail.starts_with(in_word));
+        match closed {
+            Some(tail) if digits > 0 && begins => {
+                replaced.push_str(&rest[..at]);
+                replaced.push_str(stand_in);
+                rest = tail;
+            }
+            _ => {
+                replaced.push_str(&rest[..at + CALL_ARGUMENT_DATUM_OPEN.len()]);
+                rest = after;
+            }
+        }
+    }
+    replaced.push_str(rest);
+    replaced
+}
+
+/// One sentence form of a call-separation residual [EFF-5, OP-11, SHARE-2,
+/// REF-2]: the left path, a fixed connective, the right path, a fixed tail.
+/// The renderer formats a residual from a form and the text check splits one
+/// by the same forms, so a sentence the table lacks is a defect.
+#[derive(Clone, Copy)]
+pub(crate) struct SeparationForm {
+    between: &'static str,
+    tail: &'static str,
+}
+
+impl SeparationForm {
+    const fn new(between: &'static str, tail: &'static str) -> Self {
+        Self { between, tail }
+    }
+
+    pub(crate) const INDEX_BELOW_LENGTH: Self =
+        Self::new(" requires its captured index below ", ".len after the call");
+    pub(crate) const END_AT_OR_BELOW_LENGTH: Self =
+        Self::new(" requires its captured end at or below ", ".len after the call");
+    pub(crate) const FORMATION_LENGTH_AT_OR_BELOW_LENGTH: Self = Self::new(
+        " requires the length its formation read at or below ",
+        ".len after the call",
+    );
+    pub(crate) const DISTINCT_INDICES: Self =
+        Self::new(" and ", " require their captured indices to be distinct");
+    pub(crate) const RANGES: Self = Self::new(
+        " and ",
+        " select different storage (one ends before the other starts, or one is empty)",
+    );
+    pub(crate) const INDEX_AND_WINDOW: Self = Self::new(
+        " and ",
+        " select different storage (the index is below the window's length)",
+    );
+    pub(crate) const INDEX_OUTSIDE_RANGE: Self = Self::new(
+        " and ",
+        " select different storage (the index is before the range's start or at or after its end, or the range is empty)",
+    );
+    pub(crate) const RANGE_WITHIN_LENGTH: Self = Self::new(
+        " and ",
+        " select different storage (the range ends at or below the window's length, or is empty)",
+    );
+    pub(crate) const PAGE_WITHIN_LENGTH: Self = Self::new(
+        " and ",
+        " select different storage (the page's extent ends at or below the window's length)",
+    );
+
+    /// Every form a residual is written in.
+    pub(crate) const ALL: [Self; 9] = [
+        Self::INDEX_BELOW_LENGTH,
+        Self::END_AT_OR_BELOW_LENGTH,
+        Self::FORMATION_LENGTH_AT_OR_BELOW_LENGTH,
+        Self::DISTINCT_INDICES,
+        Self::RANGES,
+        Self::INDEX_AND_WINDOW,
+        Self::INDEX_OUTSIDE_RANGE,
+        Self::RANGE_WITHIN_LENGTH,
+        Self::PAGE_WITHIN_LENGTH,
+    ];
+
+    /// The residual of this form over two paths.
+    pub(crate) fn render(self, left: &str, right: &str) -> String {
+        format!("{left}{}{right}{}", self.between, self.tail)
+    }
+
+    /// The two paths of `text` when it is a residual of this form.
+    fn paths(self, text: &str) -> Option<(&str, &str)> {
+        let body = text.strip_suffix(self.tail)?;
+        let at = body.find(self.between)?;
+        let (left, right) = (&body[..at], &body[at + self.between.len()..]);
+        (!left.is_empty() && !right.is_empty()).then_some((left, right))
+    }
+}
+
+/// The two paths of a call-separation residual, by the first form that fits.
+pub(crate) fn separation_paths(text: &str) -> Option<(&str, &str)> {
+    SeparationForm::ALL.iter().find_map(|form| form.paths(text))
+}
+
+/// Takes the backticks off each backtick-marked stretch that holds a
+/// described value: a stretch is marked as source only when all of it is.
+/// A closing backtick missing leaves the text as it is. It is applied where a
+/// payload prints, so the payload keeps the stretch for the text check.
+pub(crate) fn unmark_described(text: &str) -> String {
+    if !text.contains(DESCRIBED_OPEN) {
+        return text.to_owned();
+    }
+    let pieces: Vec<&str> = text.split('`').collect();
+    let mut unmarked = String::with_capacity(text.len());
+    for (index, piece) in pieces.iter().enumerate() {
+        let marked = index % 2 == 1;
+        let closed = index + 1 < pieces.len();
+        if marked && closed && !piece.contains(DESCRIBED_OPEN) {
+            unmarked.push('`');
+            unmarked.push_str(piece);
+            unmarked.push('`');
+        } else if marked && !closed {
+            unmarked.push('`');
+            unmarked.push_str(piece);
+        } else {
+            unmarked.push_str(piece);
+        }
+    }
+    unmarked
+}
+
 pub(crate) const BOOLEAN_OPERATION_FIX: &str = "write `band(a, b)` for boolean conjunction and `bor(a, b)` for boolean disjunction; both operations are eager, so bind computed operands first with `let` in a body, or with preceding `define` bindings in a contract definition initializer when [FN-8] admits those operations [OP-1, GRAM-5, GRAM-9]";
 
 /// RANGE-1's repair for `&&`, selected by the grammar position of a
@@ -76,9 +270,9 @@ pub(crate) const GRAM9_CONTRACT_FIX: &str = "if the inner operation is a non-con
 /// `struct_decl` writes TYPEID, and no class is admitted in another's slot.
 /// The expectation list names the class and never says what the class is, so
 /// a writer who spelled a const `Limit` read only `expected: ["IDENT"]`.
-pub(crate) const FORM3_IDENT_FIX: &str = "an IDENT slot admits only [FORM-3]'s IDENT `[a-z][a-z0-9_]*`, so a `const`, `fn`, parameter, `let`, field, or binder name is lowercase and is never a TYPEID `[A-Z][A-Za-z0-9]*`, a LABEL `@[a-z][a-z0-9_]*`, or an OPNAME; rename the name written here to the IDENT shape";
-pub(crate) const FORM3_TYPEID_FIX: &str = "a TYPEID slot admits only [FORM-3]'s TYPEID `[A-Z][A-Za-z0-9]*`, so a struct, enum, contract, variant, or constructor name is capitalized and is never an IDENT `[a-z][a-z0-9_]*`, a LABEL `@[a-z][a-z0-9_]*`, or an OPNAME; rename the name written here to the TYPEID shape";
-pub(crate) const FORM3_LABEL_FIX: &str = "a LABEL slot admits only [FORM-3]'s LABEL `@[a-z][a-z0-9_]*`, so write the leading `@`; an IDENT `[a-z][a-z0-9_]*`, a TYPEID `[A-Z][A-Za-z0-9]*`, and an OPNAME are other lexical classes and none is admitted here";
+pub(crate) const FORM3_IDENT_FIX: &str = "an IDENT slot admits only [FORM-3]'s IDENT `[a-z][a-z0-9_]*`, so a `const`, `fn`, parameter, `let`, field, or binder name is lowercase and is never a TYPEID `[A-Z][A-Za-z0-9]*`, a LABEL such as `@outer`, or an OPNAME; rename the name written here to the IDENT shape";
+pub(crate) const FORM3_TYPEID_FIX: &str = "a TYPEID slot admits only [FORM-3]'s TYPEID `[A-Z][A-Za-z0-9]*`, so a struct, enum, contract, variant, or constructor name is capitalized and is never an IDENT `[a-z][a-z0-9_]*`, a LABEL such as `@outer`, or an OPNAME; rename the name written here to the TYPEID shape";
+pub(crate) const FORM3_LABEL_FIX: &str = "a LABEL slot admits only [FORM-3]'s LABEL, an `@` followed by a lowercase name such as `@outer`, so write the leading `@`; an IDENT `[a-z][a-z0-9_]*`, a TYPEID `[A-Z][A-Za-z0-9]*`, and an OPNAME are other lexical classes and none is admitted here";
 
 /// [GRAM-2] fixes the order of a `contract_block`: every `contract_define`,
 /// then every `requires_clause`, then every `ensures_clause`. A clause written

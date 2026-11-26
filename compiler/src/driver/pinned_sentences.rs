@@ -85,7 +85,7 @@ const PROBES: &[Probe] = &[
         rule: "FORM-7",
         sentences: &[
             "]: InvalidTextItem\n",
-            "\n  reason: `\\u{H}` must denote a Unicode scalar value, at most 0x10FFFF and outside the surrogates 0xD800..0xDFFF\n",
+            "\n  reason: a Unicode escape must denote a Unicode scalar value, at most 0x10FFFF and outside the surrogates 0xD800..0xDFFF\n",
         ],
     },
     // -------------------------------------------------------------------
@@ -103,7 +103,7 @@ fn main() -> status: std::process::ExitStatus pure {
         // The whole payload, so the field labels the record prints are pinned
         // with the sentence they carry.
         sentences: &[
-            "\n  expected: [\"IDENT\"]\n  found: \"Limit\"\n  mechanical_fix: an IDENT slot admits only [FORM-3]'s IDENT `[a-z][a-z0-9_]*`, so a `const`, `fn`, parameter, `let`, field, or binder name is lowercase and is never a TYPEID `[A-Z][A-Za-z0-9]*`, a LABEL `@[a-z][a-z0-9_]*`, or an OPNAME; rename the name written here to the IDENT shape",
+            "\n  expected: [\"IDENT\"]\n  found: \"Limit\"\n  mechanical_fix: an IDENT slot admits only [FORM-3]'s IDENT `[a-z][a-z0-9_]*`, so a `const`, `fn`, parameter, `let`, field, or binder name is lowercase and is never a TYPEID `[A-Z][A-Za-z0-9]*`, a LABEL such as `@outer`, or an OPNAME; rename the name written here to the IDENT shape",
         ],
     },
     Probe {
@@ -118,7 +118,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "FORM-3",
         sentences: &[
-            "a TYPEID slot admits only [FORM-3]'s TYPEID `[A-Z][A-Za-z0-9]*`, so a struct, enum, contract, variant, or constructor name is capitalized and is never an IDENT `[a-z][a-z0-9_]*`, a LABEL `@[a-z][a-z0-9_]*`, or an OPNAME; rename the name written here to the TYPEID shape",
+            "a TYPEID slot admits only [FORM-3]'s TYPEID `[A-Z][A-Za-z0-9]*`, so a struct, enum, contract, variant, or constructor name is capitalized and is never an IDENT `[a-z][a-z0-9_]*`, a LABEL such as `@outer`, or an OPNAME; rename the name written here to the TYPEID shape",
         ],
     },
     // Retired with the region spelling: the REGIONID name-slot probe
@@ -138,7 +138,7 @@ fn main() -> status: std::process::ExitStatus pure {
 "#,
         rule: "FORM-3",
         sentences: &[
-            "a LABEL slot admits only [FORM-3]'s LABEL `@[a-z][a-z0-9_]*`, so write the leading `@`; an IDENT `[a-z][a-z0-9_]*`, a TYPEID `[A-Z][A-Za-z0-9]*`, and an OPNAME are other lexical classes and none is admitted here",
+            "a LABEL slot admits only [FORM-3]'s LABEL, an `@` followed by a lowercase name such as `@outer`, so write the leading `@`; an IDENT `[a-z][a-z0-9_]*`, a TYPEID `[A-Z][A-Za-z0-9]*`, and an OPNAME are other lexical classes and none is admitted here",
         ],
     },
     // -------------------------------------------------------------------

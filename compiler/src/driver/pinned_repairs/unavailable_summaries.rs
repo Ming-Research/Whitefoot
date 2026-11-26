@@ -352,8 +352,7 @@ pub(super) const UNAVAILABLE_SUMMARIES: &[RepairPair] = &[
         rule: "FN-8",
         sentences: &[
             "\n  instantiated_goal: budget^.end == budget^.popped\n",
-            "cannot supply its summary `ensures budget^.end <= budget^.popped; ensures budget^.end >= budget^.popped;`",
-            "that callee's [FN-9] obligation `budget^.end - budget^.popped <= 0_u64` declared at callee-withholds-two-needed-clauses.wf:13 fails at callee-withholds-two-needed-clauses.wf:24",
+            "\n  mechanical_fix: the call to `batch` at callee-withholds-two-needed-clauses.wf:2 cannot supply its summary `ensures budget^.end <= budget^.popped; ensures budget^.end >= budget^.popped;` because that callee's [FN-9] obligation `budget^.end - budget^.popped <= 0_u64` declared at callee-withholds-two-needed-clauses.wf:13 fails at callee-withholds-two-needed-clauses.wf:24; repair that obligation in `batch` so it proves the summary needed by this proof; for a loop-computed bound, carry the needed bound in a loop-header `invariant`\n",
         ],
         repaired: &[budget_source!(
             "  ensures budget^.end <= budget^.popped;\n  ensures budget^.end >= budget^.popped;\n",
