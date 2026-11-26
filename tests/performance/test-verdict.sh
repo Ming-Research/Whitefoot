@@ -329,4 +329,212 @@ placement_rows stencil 2 30:1.3 6-20:1.3; placement_rows fir 2 '' ''
 expect_positions_match second-round-of-another-kernel final 2 'REFUSED: fir has a second round but was not launched again'
 placement_layout stencil; placement_rows stencil 1 30:1.3 6-20:1.3
 expect_positions_match second-round-missing aside 2 'REFUSED: stencil baseline round 2 lacks position 0'
+
+# The data-placement control end to end: data-placement.sh control and
+# qualify, then compare.sh reading the control's aside.txt, on stand-in images
+# under stand-in strace, setarch and run-check.pl, so nothing is compiled,
+# traced or timed. The stand-in image writes its trace and its times from files
+# beside it: TRACE, PROFILE lines `FIRST LAST PERCENT` of positions (an arm's
+# own PROFILE-ARM first), SLOW a percent at every position, VARY a counter that
+# makes each launch map elsewhere. Its six samples are 5000, 105, 101, 103, 102
+# and 104 percent of the rest, so a launch's median of samples 1 to 5 is 103.
+# The expectations are the plan's rule (README.md, "Data placement"): a kernel
+# is launched at the 32 positions only when its arms map differently, set aside
+# when two rounds are unlike in one direction, and then not judged by compare.sh;
+# each record and each kernel's round is a stage of its own budget row.
+if [ "$(uname -s)" = Linux ]; then
+# compare.sh refuses a data-placement directory that holds no aside.txt
+# (README.md, "Data placement"), before it launches anything.
+mkdir "$work/no-aside"
+set +e
+WF_PERFORMANCE_PLACEMENT=$work/no-aside bash "$here/compare.sh" "$work/none" "$work/none" "$work/compare" > "$work/out" 2>&1
+status=$?
+set -e
+[ "$status" -eq 2 ] && grep -F -q "no aside.txt in the data-placement results $work/no-aside" "$work/out" &&
+    [ ! -e "$work/compare" ] || fail "compare-refuses-a-placement-without-aside: status=$status"
+pass compare-refuses-a-placement-without-aside
+dp=$work/dp
+mkdir -p "$dp/tree/tests/performance" "$dp/tree/.github" "$dp/bin"
+cp "$here/data-placement.sh" "$here/positions.awk" "$here/layout.awk" "$dp/tree/tests/performance/"
+cat > "$dp/tree/.github/run-check.pl" <<'EOF'
+my $label = shift @ARGV;
+open my $log, '>>', $ENV{FAKE_STAGES} or die "stage log: $!\n";
+print $log "$label\n";
+close $log;
+exec { $ARGV[0] } @ARGV or die "execute $ARGV[0]: $!\n";
+EOF
+cat > "$dp/bin/setarch" <<'EOF'
+#!/bin/sh
+[ "$1" = "$(uname -m)" ] && [ "$2" = -R ] || { echo "stand-in setarch: $*" >&2; exit 3; }
+shift 2
+exec "$@"
+EOF
+cat > "$dp/bin/strace" <<'EOF'
+#!/bin/sh
+follow= out= traced=
+while [ $# -gt 0 ]; do
+    case $1 in
+        -f) follow=1; shift ;;
+        -e) traced=$2; shift 2 ;;
+        -o) out=$2; shift 2 ;;
+        -*) echo "stand-in strace: option $1" >&2; exit 3 ;;
+        *) break ;;
+    esac
+done
+[ -n "$follow" ] && [ -n "$out" ] && [ "$traced" = trace=mmap,munmap,mremap ] ||
+    { echo 'stand-in strace: -f, -o FILE and the mapping calls are required' >&2; exit 3; }
+FAKE_STRACE_OUT=$out
+export FAKE_STRACE_OUT
+exec "$@"
+EOF
+cat > "$dp/image" <<'EOF'
+#!/bin/sh
+dir=${0%/*}
+kernel=${0##*/}
+if [ -n "${WF_SPLIT_WORK+set}" ]; then echo 'stand-in image: WF_SPLIT_WORK is set' >&2; exit 3; fi
+position=${WF_PERFORMANCE_POSITION:-0}
+case ${1:-} in
+verify)
+    echo "$kernel oracle PASS: compared=7" ;;
+layout)
+    [ $# -eq 2 ] && [ "${WF_WORKERS:-}" = "$2" ] && [ -n "${FAKE_STRACE_OUT:-}" ] ||
+        { echo 'stand-in image: layout needs its width, WF_WORKERS and a trace' >&2; exit 3; }
+    {
+        if [ "$position" != 0 ]; then
+            echo "4001  mmap(NULL, $((position * 2097152)), PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE, -1, 0) = 0x7fff00000000"
+        fi
+        cat "$dir/$kernel.trace"
+        if [ -f "$dir/$kernel.vary" ]; then
+            n=$(($(cat "$dir/$kernel.vary") + 1))
+            echo "$n" > "$dir/$kernel.vary"
+            echo "4001  mmap(NULL, 4096, PROT_READ, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x7fff${n}000"
+        fi
+    } > "$FAKE_STRACE_OUT" ;;
+measure)
+    [ $# -eq 4 ] && [ "${WF_WORKERS:-}" = "$3" ] || { echo "stand-in image: measure $*" >&2; exit 3; }
+    percent=100
+    profile=$dir/$kernel.profile
+    if [ -f "$profile-$2" ]; then profile=$profile-$2; fi
+    if [ -f "$profile" ]; then
+        while read -r first last factor; do
+            if [ "$position" -ge "$first" ] && [ "$position" -le "$last" ]; then percent=$factor; fi
+        done < "$profile"
+    fi
+    slow=100
+    if [ -f "$dir/$kernel.slow" ]; then slow=$(cat "$dir/$kernel.slow"); fi
+    sample=0
+    for share in 5000 105 101 103 102 104; do
+        wall=$((slow * percent * share))
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t7\n' "$kernel" "$2" "$3" "$4" "$sample" "$wall" "$wall"
+        sample=$((sample + 1))
+    done ;;
+*)
+    echo "stand-in image: $*" >&2; exit 3 ;;
+esac
+EOF
+chmod +x "$dp/bin/setarch" "$dp/bin/strace" "$dp/image"
+cat > "$dp/trace" <<'EOF'
+4001  mmap(NULL, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x7ffff7fbd000
+4001  mmap(NULL, 1073745920, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK, -1, 0) = 0x7fffb7dff000
+4002  mmap(NULL, 134217728, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_NORESERVE, -1, 0) = 0x7fffa8000000
+4002  +++ exited with 0 +++
+4001  +++ exited with 0 +++
+EOF
+thread='4001  mmap(NULL, 8392704, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS|MAP_STACK, -1, 0) = 0x7fffb75fe000'
+dp_images() {
+    mkdir -p "$1"
+    for kernel in mandelbrot records fir quadrature stencil; do
+        cp "$dp/image" "$1/$kernel"
+        cp "$dp/trace" "$1/$kernel.trace"
+    done
+}
+# B: the merge base, stencil slow at positions 6 to 20. S: one more mapping in
+# fir and stencil, stencil slow at position 30 and 20 percent slower everywhere.
+# A: S's times with B's mappings. V: B with a records trace that maps elsewhere
+# at each launch and a candidate arm whose stencil is slow at position 30.
+dp_images "$dp/b"; echo '6 20 130' > "$dp/b/stencil.profile"
+dp_images "$dp/s"; echo '30 30 130' > "$dp/s/stencil.profile"; echo 120 > "$dp/s/stencil.slow"
+echo "$thread" >> "$dp/s/fir.trace"; echo "$thread" >> "$dp/s/stencil.trace"
+dp_images "$dp/a"; echo '30 30 130' > "$dp/a/stencil.profile"; echo 120 > "$dp/a/stencil.slow"
+dp_images "$dp/v"; echo '6 20 130' > "$dp/v/stencil.profile"; echo '30 30 130' > "$dp/v/stencil.profile-candidate"
+echo 0 > "$dp/v/records.vary"
+# NAME STATUS COMMAND...: the command under the stand-ins, its output in $work/out.
+dp_run() {
+    name=$1; want=$2; shift 2
+    : > "$dp/stages"
+    set +e
+    FAKE_STAGES=$dp/stages PATH="$dp/bin:$PATH" WF_SPLIT_WORK=1 "$@" > "$work/out" 2>&1
+    status=$?
+    set -e
+    [ "$status" -eq "$want" ] || fail "$name: status=$status expected=$want"
+}
+# NAME FILE FORMAT: FILE holds exactly the printf FORMAT.
+dp_file() {
+    printf "$3" > "$work/want"
+    cmp -s "$work/want" "$2" || { cat "$2" >> "$work/out"; fail "$1: $2"; }
+}
+dp_has() {
+    grep -E -q "$3" "$2" || { cat "$2" >> "$work/out"; fail "$1: $2 lacks $3"; }
+}
+control="$dp/tree/tests/performance/data-placement.sh"
+
+dp_run control-sets-aside-the-placed-kernel 0 bash "$control" control "$dp/b" "$dp/s" "$dp/data-s"
+dp_file control-sets-aside-the-placed-kernel "$dp/data-s/layout.txt" \
+    'mandelbrot alike\nrecords alike\nfir differ\nquadrature alike\nstencil differ\n'
+dp_file control-sets-aside-the-placed-kernel "$dp/data-s/aside.txt" 'stencil\n'
+dp_file control-sets-aside-the-placed-kernel "$dp/stages" \
+    'performance-data-layout\nperformance-data-round-fir\nperformance-data-round-stencil\nperformance-data-round-stencil\n'
+dp_has control-sets-aside-the-placed-kernel "$dp/data-s/verdict.txt" '^fir +judged round 1: 0 unlike'
+dp_has control-sets-aside-the-placed-kernel "$dp/data-s/verdict.txt" '^stencil +aside '
+dp_has control-sets-aside-the-placed-kernel "$dp/data-s/verdict.txt" '^ASIDE: stencil$'
+test "$(grep -c -E '^stencil round [12] (baseline|candidate) median ' "$dp/data-s/verdict.txt")" -eq 4 ||
+    fail 'control-sets-aside-the-placed-kernel: four series of stencil quotients'
+test "$(wc -l < "$dp/data-s/rows.tsv")" -eq 192 || fail 'control-sets-aside-the-placed-kernel: 192 rows'
+dp_has control-sets-aside-the-placed-kernel "$dp/data-s/rows.tsv" '^stencil baseline 0 1 1030000$'
+dp_has control-sets-aside-the-placed-kernel "$dp/data-s/rows.tsv" '^stencil candidate 30 2 1606800$'
+pass control-sets-aside-the-placed-kernel
+
+dp_run compare-leaves-the-set-aside-kernel-unjudged 0 \
+    env WF_PERFORMANCE_PLACEMENT="$dp/data-s" bash "$here/compare.sh" "$dp/b" "$dp/s" "$dp/compare-s"
+dp_has compare-leaves-the-set-aside-kernel-unjudged "$dp/compare-s/verdict.txt" '^not judged: stencil \(data placement\)$'
+dp_has compare-leaves-the-set-aside-kernel-unjudged "$dp/compare-s/verdict.txt" \
+    '^VERDICT: PASS -- 0 kernel\(s\) adverse at two widths; 1 kernel\(s\) not judged \(data placement\)$'
+test "$(grep -c 'not judged (data placement)$' "$dp/compare-s/verdict.txt")" -eq \
+    "$(grep -c '^stencil  *W=.* not judged (data placement)$' "$dp/compare-s/verdict.txt")" &&
+    test "$(grep -c '^stencil  *W=' "$dp/compare-s/verdict.txt")" -ge 2 &&
+    test "$(grep -c '^not judged: ' "$dp/compare-s/verdict.txt")" -eq 1 &&
+    ! grep -E -q '^stencil +W=.* (pass|suspect|FAIL)$' "$dp/compare-s/verdict.txt" ||
+    { cat "$dp/compare-s/verdict.txt" >> "$work/out"; fail 'compare-leaves-the-set-aside-kernel-unjudged: only stencil is not judged'; }
+dp_has compare-leaves-the-set-aside-kernel-unjudged "$dp/compare-s/manifest.txt" '^set aside=stencil$'
+pass compare-leaves-the-set-aside-kernel-unjudged
+
+dp_run control-launches-nothing-for-alike-mappings 0 bash "$control" control "$dp/b" "$dp/a" "$dp/data-a"
+dp_file control-launches-nothing-for-alike-mappings "$dp/data-a/aside.txt" '\n'
+dp_file control-launches-nothing-for-alike-mappings "$dp/stages" 'performance-data-layout\n'
+dp_has control-launches-nothing-for-alike-mappings "$dp/data-a/verdict.txt" '^ASIDE: none$'
+dp_run compare-judges-a-kernel-that-maps-alike 1 \
+    env WF_PERFORMANCE_PLACEMENT="$dp/data-a" bash "$here/compare.sh" "$dp/b" "$dp/a" "$dp/compare-a"
+dp_has compare-judges-a-kernel-that-maps-alike "$dp/compare-a/verdict.txt" \
+    '^VERDICT: FAIL -- 1 kernel\(s\) adverse at two widths$'
+dp_has compare-judges-a-kernel-that-maps-alike "$dp/compare-a/verdict.txt" '^stencil +W=1 .* FAIL$'
+pass compare-judges-a-kernel-that-maps-alike
+
+dp_run qualify-passes-a-steady-image 0 bash "$control" qualify "$dp/s" "$dp/qualify-s"
+dp_has qualify-passes-a-steady-image "$dp/qualify-s/verdict.txt" '^PASS: every kernel maps alike$'
+dp_has qualify-passes-a-steady-image "$dp/qualify-s/verdict.txt" \
+    '^PASS: with the candidate arm at position 1, every kernel maps differently$'
+dp_has qualify-passes-a-steady-image "$dp/qualify-s/verdict.txt" '^PASS: the 32 positions set no kernel aside$'
+dp_file qualify-passes-a-steady-image "$dp/stages" \
+    'performance-data-layout\nperformance-data-layout\nperformance-data-round-mandelbrot\nperformance-data-round-records\nperformance-data-round-fir\nperformance-data-round-quadrature\nperformance-data-round-stencil\n'
+pass qualify-passes-a-steady-image
+
+dp_run qualify-fails-an-unsteady-image 1 bash "$control" qualify "$dp/v" "$dp/qualify-v"
+dp_has qualify-fails-an-unsteady-image "$dp/qualify-v/verdict.txt" '^FAIL: 1 kernel\(s\) map differently$'
+dp_has qualify-fails-an-unsteady-image "$dp/qualify-v/verdict.txt" \
+    '^PASS: with the candidate arm at position 1, every kernel maps differently$'
+dp_has qualify-fails-an-unsteady-image "$dp/qualify-v/verdict.txt" '^FAIL: the 32 positions set aside: stencil$'
+pass qualify-fails-an-unsteady-image
+else
+    echo 'SKIP the data-placement control end to end: it runs on Linux only'
+fi
 echo "performance instrument: $cases cases PASS"
