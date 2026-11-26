@@ -288,7 +288,8 @@ expect_positions_match layout-names-a-kernel-twice first 2 'REFUSED: the layout 
 placement_layout stencil; placement_rows stencil 1 '' ''
 grep -v '^stencil candidate 17 ' "$work/rows" > "$work/new"; mv "$work/new" "$work/rows"
 expect_positions_match missing-position first 2 'REFUSED: stencil candidate round 1 lacks position 17'
-placement_layout stencil; placement_rows stencil 1 '' ''; grep '^stencil baseline 3 ' "$work/rows" >> "$work/rows"
+placement_layout stencil; placement_rows stencil 1 '' ''
+grep '^stencil baseline 3 ' "$work/rows" > "$work/new"; cat "$work/new" >> "$work/rows"
 expect_positions_match duplicate-position first 2 'REFUSED: duplicate row stencil baseline 3 1'
 placement_layout stencil; placement_rows stencil 1 '' ''
 grep -v '^stencil candidate ' "$work/rows" > "$work/new"; mv "$work/new" "$work/rows"
