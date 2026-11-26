@@ -37,15 +37,26 @@ impl ProgramChild {
     pub(crate) fn spawn_signalling_first_output(
         command: &mut Command,
     ) -> std::io::Result<(Self, std::sync::mpsc::Receiver<()>)> {
+        Self::spawn_signalling_output(command, 1)
+    }
+
+    /// Spawns as [`Self::spawn`] and reports through the returned receiver
+    /// once the program has written `bytes` bytes to its standard output, so a
+    /// program can mark a later point of its progress by its output.
+    pub(crate) fn spawn_signalling_output(
+        command: &mut Command,
+        bytes: usize,
+    ) -> std::io::Result<(Self, std::sync::mpsc::Receiver<()>)> {
         let (sender, receiver) = std::sync::mpsc::channel();
-        let child = Self::spawn_reporting_output(command, PROGRAM_DEADLINE, Some(sender))?;
+        let child =
+            Self::spawn_reporting_output(command, PROGRAM_DEADLINE, Some((bytes, sender)))?;
         Ok((child, receiver))
     }
 
     fn spawn_reporting_output(
         command: &mut Command,
         limit: Duration,
-        first_output: Option<std::sync::mpsc::Sender<()>>,
+        output_reached: Option<(usize, std::sync::mpsc::Sender<()>)>,
     ) -> std::io::Result<Self> {
         #[cfg(unix)]
         {
@@ -61,7 +72,7 @@ impl ProgramChild {
         let mut child = command.spawn()?;
         fn drain(
             reader: impl Read + Send + 'static,
-            mut first: Option<std::sync::mpsc::Sender<()>>,
+            mut reached: Option<(usize, std::sync::mpsc::Sender<()>)>,
         ) -> std::thread::JoinHandle<std::io::Result<Vec<u8>>> {
             std::thread::spawn(move || {
                 let mut reader = reader;
@@ -73,7 +84,9 @@ impl ProgramChild {
                         return Ok(bytes);
                     }
                     bytes.extend_from_slice(&chunk[..read]);
-                    if let Some(sender) = first.take() {
+                    if reached.as_ref().is_some_and(|(count, _)| bytes.len() >= *count)
+                        && let Some((_, sender)) = reached.take()
+                    {
                         let _ = sender.send(());
                     }
                 }
@@ -83,7 +96,7 @@ impl ProgramChild {
             output: child
                 .stdout
                 .take()
-                .map(|stdout| drain(stdout, first_output)),
+                .map(|stdout| drain(stdout, output_reached)),
             errors: child.stderr.take().map(|stderr| drain(stderr, None)),
             child,
             deadline: Instant::now() + limit,

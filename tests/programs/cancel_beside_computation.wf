@@ -142,7 +142,7 @@ fn compute(clock: Clock, stop: DecisionCell, source: std::time::CancelSource, fi
 }
 
 fn main(inputs: Inputs) -> status: ExitStatus pure waits {
-  doc "Reports on standard output that it is about to read, starts a context that fires the read's watch once the read has begun and then computes without waiting, and reads standard input with no deadline while its writer stays silent; afterwards it reads the byte the writer sends late. With the writer silent and no deadline, only the firing can end the read with a failure. The exit status is the time from the firing to the read's return in milliseconds, 250 for 250 ms or more, and 251 to 254 for an outcome other than the expected one, so the case can tell a firing served on time from one held until the computation ended [WAIT-2, PRE-2].";
+  doc "Reports on standard output that it is about to read, starts a context that fires the read's watch once the read has begun and then computes without waiting, and reads standard input with no deadline while its writer stays silent; once that read has ended it reports so on standard output and reads the byte the writer then sends. With the writer silent and no deadline, only the firing can end the read with a failure. The exit status is the time from the firing to the read's return in milliseconds, 250 for 250 ms or more, and 251 to 254 for an outcome other than the expected one, so the case can tell a firing served on time from one held until the computation ended [WAIT-2, PRE-2].";
   let Inputs(args: unused_args, drivers: unused_driver_count, cwd: cwd_directory, stdout: output, stderr: unused_stderr, handles: handles, stdin: input, clock: clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
   let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
   std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
@@ -200,6 +200,20 @@ fn main(inputs: Inputs) -> status: ExitStatus pure waits {
           }
         }
       }
+    }
+  }
+  let ended_bound = None<Instant>();
+  let ended_cancel = std::time::cancel_never();
+  let ended_outcome = write_once(factory: &handles, output: &output, source: &marker[0_u64..1_u64], start: 0_u64, end: 1_u64, deadline: ended_bound, cancel: &ended_cancel);
+  std::time::close_cancel_watch(watch: move ended_cancel);
+  match ended_outcome {
+    Ok(value: written) => {
+      if written != 1_u64 {
+        set code = 251_u8;
+      }
+    }
+    Err(error: problem) => {
+      set code = 251_u8;
     }
   }
   let later = &bytes[0_u64..1_u64];

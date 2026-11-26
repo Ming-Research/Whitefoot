@@ -725,7 +725,10 @@ and the read makes eight runs in each one-driver configuration and keeps 64
 placed runs at two drivers, where an idle driver's borrow meets the yield
 request; `a_read_whose_byte_arrives_returns_beside_a_computation` gives the
 reasons. The lone timer writer of `contexts.rs` runs eight times a
-configuration.
+configuration. The deadline and cancellation witnesses now report on
+standard output when their read has ended, and their byte is written then
+instead of 300 ms after the start, so a run lasts as long as its read and a
+read held until the computation ends reads 250 rather than 254.
 
 ### Plan for the 14900K measurements (written before measuring)
 

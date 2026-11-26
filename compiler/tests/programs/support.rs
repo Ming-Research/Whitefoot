@@ -890,6 +890,20 @@ impl CompiledProgram {
         native_ring: bool,
         settings: &[(&str, &str)],
     ) -> Output {
+        self.run_with_input_after_output(bytes, 1, delay, native_ring, settings)
+    }
+
+    /// Runs the program with `bytes` written to its standard input `delay`
+    /// after the program has written `written` bytes to its standard output,
+    /// each a point of its progress it reports.
+    pub fn run_with_input_after_output(
+        &self,
+        bytes: &[u8],
+        written: usize,
+        delay: std::time::Duration,
+        native_ring: bool,
+        settings: &[(&str, &str)],
+    ) -> Output {
         let (reader, mut writer) = std::io::pipe().expect("create the input pipe");
         let mut command = Command::new(&self.executable);
         command
@@ -901,7 +915,7 @@ impl CompiledProgram {
         for (name, value) in settings {
             command.env(name, value);
         }
-        let (child, started) = ProgramChild::spawn_signalling_first_output(&mut command)
+        let (child, started) = ProgramChild::spawn_signalling_output(&mut command, written)
             .expect("spawn compiled program");
         let bytes = bytes.to_vec();
         let writer = std::thread::spawn(move || {

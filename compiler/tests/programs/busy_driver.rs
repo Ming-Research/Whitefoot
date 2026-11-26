@@ -158,16 +158,23 @@ fn require(
     ))
 }
 
+/// When a witness's byte is written: `delay` after the program has written
+/// `reported` bytes to its standard output.
+#[derive(Clone, Copy)]
+struct ByteAfter {
+    reported: usize,
+    delay: Duration,
+}
+
 /// Requires the wanted runs of a standard-input witness in every
-/// configuration, the byte written `late_byte` after the program reports it
-/// is about to read; a two-driver run qualifies when the computation stayed
-/// beside the reader.
+/// configuration, its byte written as `byte` says; a two-driver run qualifies
+/// when the computation stayed beside the reader.
 fn require_beside_reader(
     program: &CompiledProgram,
     name: &str,
     wanted: Wanted,
     limit: i32,
-    late_byte: Duration,
+    byte: ByteAfter,
 ) {
     let failures = CONFIGURATIONS
         .iter()
@@ -178,9 +185,10 @@ fn require_beside_reader(
                 limit,
                 Judged::Qualifying,
                 || {
-                    program.run_with_input_after_first_output(
+                    program.run_with_input_after_output(
                         b"z",
-                        late_byte,
+                        byte.reported,
+                        byte.delay,
                         configuration.native_ring,
                         &[("WF_DRIVERS", configuration.drivers), ("WF_SCHED_REPORT", "2")],
                     )
@@ -206,30 +214,31 @@ fn require_beside_reader(
 fn a_read_whose_byte_arrives_returns_beside_a_computation() {
     let program = build_program(&compile_program("read_beside_computation.wf"));
     let wanted = Wanted { one_driver: 8, two_drivers: 64 };
-    require_beside_reader(&program, "read", wanted, 40 + HANDOFF_LIMIT_MS, Duration::from_millis(40));
+    let byte = ByteAfter { reported: 1, delay: Duration::from_millis(40) };
+    require_beside_reader(&program, "read", wanted, 40 + HANDOFF_LIMIT_MS, byte);
 }
 
+/// The byte the program reads after the bounded or watched read has ended:
+/// written once it reports that end, its second output byte, so that no byte
+/// can reach a read before it ends, and a run lasts as long as its read.
+const AFTER_THE_READ: ByteAfter = ByteAfter { reported: 2, delay: Duration::ZERO };
+
 /// The read's deadline is 50 ms away while the other context would compute for
-/// 2 s, and the byte comes 300 ms later; the read ends within 100 ms after the
-/// deadline. A byte that came before a read ending on time had ended would be
-/// returned instead, so the byte keeps 150 ms past the limit for a hosted
-/// runner's delays, and each run lasts about 300 ms.
+/// 2 s; the read ends within 100 ms after the deadline.
 #[test]
 fn a_read_whose_deadline_passes_ends_beside_a_computation() {
     let program = build_program(&compile_program("deadline_beside_computation.wf"));
     let wanted = Wanted { one_driver: 10, two_drivers: 10 };
-    require_beside_reader(&program, "deadline", wanted, 150, Duration::from_millis(300));
+    require_beside_reader(&program, "deadline", wanted, 150, AFTER_THE_READ);
 }
 
 /// The computing context fires the read's watch once the read has begun and
-/// then computes; the read ends `Cancelled` within 100 ms of the firing, and
-/// the byte comes 300 ms after the program reports it is about to read, about
-/// 180 ms past the limit, for the reason the deadline case gives.
+/// then computes; the read ends `Cancelled` within 100 ms of the firing.
 #[test]
 fn a_fired_watch_ends_a_read_beside_a_computation() {
     let program = build_program(&compile_program("cancel_beside_computation.wf"));
     let wanted = Wanted { one_driver: 10, two_drivers: 10 };
-    require_beside_reader(&program, "cancel", wanted, 100, Duration::from_millis(300));
+    require_beside_reader(&program, "cancel", wanted, 100, AFTER_THE_READ);
 }
 
 /// As many contexts compute as there are drivers once a guard is let go, and
