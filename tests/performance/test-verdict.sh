@@ -564,6 +564,29 @@ expect_positions_match second-round-of-another-kernel final 2 'REFUSED: fir has 
 placement_layout stencil; placement_rows stencil 1 30:1.3 6-20:1.3
 expect_positions_match second-round-missing aside 2 'REFUSED: stencil baseline round 2 lacks position 0'
 
+# The list judge.sh reads is the one positions.awk writes (README.md, "Data
+# placement"): two kernels set aside by their two rounds are both left untimed,
+# each with its own `not judged` line. When they are the only changed images
+# nothing is measured and the job passes, as a kernel set aside passes with a
+# warning (judge.sh: a kernel not judged changes no exit status).
+placement_layout fir stencil
+placement_rows fir 1 30:1.3 6-20:1.3; placement_rows stencil 1 30:1.3 6-20:1.3
+placement_rows fir 2 30:1.3 6-20:1.3; placement_rows stencil 2 30:1.3 6-20:1.3
+expect_positions two-kernels-aside aside 0 'fir stencil\n'
+placement=$work/placement-two; mkdir -p "$placement"; cp "$work/out" "$placement/aside.txt"
+judge_setup fir stencil
+judge_run judge-reads-two-kernels-set-aside 0 'VERDICT: PASS -- 3 image(s) identical, 0 timed, 2 not judged (data placement)'
+judge_ran 0 judge-reads-two-kernels-set-aside
+labels_are '' || { echo 'FAIL judge-reads-two-kernels-set-aside: a stage ran' >&2; exit 1; }
+for kernel in fir stencil; do
+    grep -x -F -q "not judged: $kernel (data placement)" "$judge_dir/out/verdict.txt" ||
+        { echo "FAIL judge-reads-two-kernels-set-aside: no not-judged line for $kernel" >&2; exit 1; }
+done
+[ "$(grep -c '^not judged: ' "$judge_dir/out/verdict.txt")" -eq 2 ] ||
+    { echo 'FAIL judge-reads-two-kernels-set-aside: two not-judged lines' >&2; exit 1; }
+judge_pass judge-reads-two-kernels-set-aside
+placement=
+
 # The data-placement control end to end: data-placement.sh on stand-in images
 # under stand-in strace, setarch and run-check.pl, so nothing is compiled,
 # traced or timed. The stand-in image writes its trace and its times from files
@@ -713,6 +736,24 @@ dp_file control-launches-nothing-for-alike-mappings "$dp/data-a/aside.txt" '\n'
 dp_file control-launches-nothing-for-alike-mappings "$dp/stages" 'performance-data-layout\n'
 dp_has control-launches-nothing-for-alike-mappings "$dp/data-a/verdict.txt" '^ASIDE: none$'
 pass control-launches-nothing-for-alike-mappings
+
+# judge.sh reads the control's own results directory, as compute-regression.yml
+# names it in WF_PERFORMANCE_PLACEMENT: with fir and stencil changed it times
+# fir, which the control judged, and leaves stencil, which it set aside, untimed
+# (README.md, "Data placement").
+placement=$dp/data-s
+judge_setup fir stencil
+put 1 fir; save 1
+put 2 fir; save 2
+judge_run judge-reads-the-control-results 0 'VERDICT: PASS -- 3 image(s) identical, 1 timed, 1 not judged (data placement)'
+judge_ran 2 judge-reads-the-control-results
+[ "$(cat "$judge_dir/calls")" = "$(printf '1 KERNELS=fir\n2 KERNELS=fir')" ] ||
+    { echo 'FAIL judge-reads-the-control-results: not fir alone was measured' >&2; cat "$judge_dir/calls" >&2; exit 1; }
+grep -x -F -q 'not judged: stencil (data placement)' "$judge_dir/out/verdict.txt" &&
+    ! grep -F -q 'not judged: fir' "$judge_dir/out/verdict.txt" ||
+    { echo 'FAIL judge-reads-the-control-results: not-judged lines' >&2; cat "$judge_dir/out/verdict.txt" >&2; exit 1; }
+judge_pass judge-reads-the-control-results
+placement=
 
 # The kernels are the Makefile's, as compare.sh and judge.sh read them, and
 # KERNELS in the environment names fewer.
