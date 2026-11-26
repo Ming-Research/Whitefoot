@@ -523,7 +523,7 @@ floor-test: $(COMPLETION_TMP)/floor-probe $(COMPLETION_TMP)/floor-probe-hooks
 CONCURRENT_MAP_SOURCES := src/backend/concurrent_map.c src/backend/keyed_table.c src/backend/concurrent_map_test.c \
 	src/backend/concurrent_map.h src/backend/concurrent_map_layout.h $(COMPLETION_DIR)/bridge.h
 CONCURRENT_MAP_VARIANTS := copy-out locked collide
-concurrent-map-test: $(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/concurrent-map-test-$(v)) $(COMPLETION_TMP)/concurrent-map-test-ignore-activity
+concurrent-map-test: $(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/concurrent-map-test-$(v)) $(COMPLETION_TMP)/concurrent-map-test-ignore-activity $(COMPLETION_TMP)/concurrent-map-test-refusal-continues
 	@set -e; for v in $(CONCURRENT_MAP_VARIANTS); do \
 		"$(COMPLETION_TMP)/concurrent-map-test-$$v" selection; \
 		"$(COMPLETION_TMP)/concurrent-map-test-$$v"; \
@@ -541,6 +541,14 @@ concurrent-map-test: $(foreach v,$(CONCURRENT_MAP_VARIANTS),$(COMPLETION_TMP)/co
 	cat "$(COMPLETION_TMP)/concurrent-map-ignore-activity.log"; \
 	test "$$status" -eq 1 && grep -q '^concurrent-map-test: retired reserve release did not collect the exited users' \
 		"$(COMPLETION_TMP)/concurrent-map-ignore-activity.log"
+	@for kind in 0 1 2; do \
+		status=0; "$(COMPLETION_TMP)/concurrent-map-test-refusal-continues" read-hold-write $$kind \
+			> "$(COMPLETION_TMP)/concurrent-map-refusal-continues-$$kind.log" 2>&1 || status=$$?; \
+		cat "$(COMPLETION_TMP)/concurrent-map-refusal-continues-$$kind.log"; \
+		test "$$status" -eq 1 && grep -q '^concurrent-map-test: a write selection under a read-only whole hold did not stop the program' \
+			"$(COMPLETION_TMP)/concurrent-map-refusal-continues-$$kind.log" || { \
+			echo "concurrent-map-test: without the refusals, read-hold write selection $$kind was not caught as a failure (exit $$status)"; exit 1; }; \
+	done
 $(COMPLETION_TMP)/concurrent-map-test-copy-out: $(CONCURRENT_MAP_SOURCES) Makefile
 	@mkdir -p "$(dir $@)"
 	$(CC) $(COMPLETION_BASE_CFLAGS) src/backend/concurrent_map_test.c -o "$@"
@@ -551,6 +559,11 @@ $(COMPLETION_TMP)/concurrent-map-test-locked: $(CONCURRENT_MAP_SOURCES) Makefile
 $(COMPLETION_TMP)/concurrent-map-test-collide: $(CONCURRENT_MAP_SOURCES) Makefile
 	@mkdir -p "$(dir $@)"
 	$(CC) $(COMPLETION_BASE_CFLAGS) -DWF_CMAP_TAG_MASK=15 src/backend/concurrent_map_test.c -o "$@"
+# The write selections under a read-only whole hold must each fail when the
+# runtime's refusal of them is let go by.
+$(COMPLETION_TMP)/concurrent-map-test-refusal-continues: $(CONCURRENT_MAP_SOURCES) Makefile
+	@mkdir -p "$(dir $@)"
+	$(CC) $(COMPLETION_BASE_CFLAGS) -DWF_CMAP_REFUSAL_CONTINUES src/backend/concurrent_map_test.c -o "$@"
 # The retired-table regression must reject ignoring statement activity.
 # Only its focused path runs: an unrelated failure is not a passing control.
 $(COMPLETION_TMP)/concurrent-map-test-ignore-activity: $(CONCURRENT_MAP_SOURCES) Makefile
