@@ -79,9 +79,18 @@ fn open_uses_the_directory_argument_and_reports_path_refusals() {
         run(
             &program,
             &[("inner/input", b"hello")],
-            &[b"./inner/../inner/input"],
+            &[b"./inner/./input"],
         ),
         5,
+    );
+    // A parent component is refused at conversion, before any open [PRE-2].
+    read_status(
+        run(
+            &program,
+            &[("inner/input", b"hello")],
+            &[b"./inner/../inner/input"],
+        ),
+        204,
     );
     read_status(run(&program, &[], &[b"missing"]), 203);
     read_status(run(&program, &[], &[b"/absent"]), 204);

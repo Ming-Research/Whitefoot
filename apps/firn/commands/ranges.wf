@@ -3,8 +3,9 @@ alias Bytes = pkg::bytes::Bytes;
 alias Client = pkg::protocol::Client;
 alias Entry = pkg::store::Entry;
 alias KeyEnv = pkg::bytes::KeyEnv;
+alias OrderedDirection = std::collections::ordered_map::OrderedDirection;
 alias OrderedMap = std::collections::ordered_map::OrderedMap;
-alias OrderedNode = std::collections::ordered_map::OrderedNode;
+alias OrderedSeek = std::collections::ordered_map::OrderedSeek;
 alias Rank = pkg::store::Rank;
 alias RankOrder = pkg::store::RankOrder;
 alias Sorted = pkg::store::Sorted;
@@ -23,8 +24,13 @@ alias remove_expired = pkg::store::remove_expired;
 alias hash_map_remove = std::collections::hash_map::hash_map_remove;
 alias log_command = pkg::store::log_command;
 alias log_removal = pkg::store::log_removal;
+alias ordered_map_first = std::collections::ordered_map::ordered_map_first;
+alias ordered_map_last = std::collections::ordered_map::ordered_map_last;
 alias ordered_map_len = std::collections::ordered_map::ordered_map_len;
+alias ordered_map_read = std::collections::ordered_map::ordered_map_read;
 alias ordered_map_remove = std::collections::ordered_map::ordered_map_remove;
+alias ordered_map_seek = std::collections::ordered_map::ordered_map_seek;
+alias ordered_map_step = std::collections::ordered_map::ordered_map_step;
 alias push_item = pkg::protocol::push_item;
 alias push_score = pkg::protocol::push_score;
 alias read_bound = pkg::scores::read_bound;
@@ -55,7 +61,7 @@ const text_range_float: Array<u8, 29> = "ERR min or max is not a float";
 const text_range_lex: Array<u8, 42> = "ERR min or max not valid string range item";
 
 struct Walk {
-  doc "A walk over a sorted set's order, from its lowest rank or, when reverse, from its highest, as Redis 7.0.15 walks a sorted set it encodes as a listpack: ranks before the range's start are passed over, and the first one past it must also lie before the range's end, or the walk takes nothing; offset ranks from there are skipped, then up to limit, any number when unlimited, are taken while each lies before the range's end. The range's start is its lower end and its end the upper, or the reverse when reverse is set. kind 0 walks by position, every rank in range; 1 by score, between min and max, either excluded when its open flag is set; 2 by member, between low and high, whose end flag marks the least string, -, with 1 and the greatest, +, with 2. A taken rank's member is written when act is 0, with its score when 1; it is counted when 2, and a copy of its member and score is kept among the client's prepared keys and scores when 3. While the range's start is sought, prune lets the walk pass over the subtrees wholly before it, which is sound when the start can be found by comparison: by score, and by member when every score is equal. phase is 0 while the start is sought, 1 while skipping and 2 while taking; taken counts the ranks taken and ended stops the walk.";
+  doc "A walk over a sorted set's order, from its lowest rank or, when reverse, from its highest, as Redis 7.0.15 walks a sorted set it encodes as a listpack: ranks before the range's start are passed over, and the first one past it must also lie before the range's end, or the walk takes nothing; offset ranks from there are skipped, then up to limit, any number when unlimited, are taken while each lies before the range's end. The range's start is its lower end and its end the upper, or the reverse when reverse is set. kind 0 walks by position, every rank in range; 1 by score, between min and max, either excluded when its open flag is set; 2 by member, between low and high, whose end flag marks the least string, -, with 1 and the greatest, +, with 2. A taken rank's member is written when act is 0, with its score when 1; it is counted when 2, and a copy of its member and score is kept among the client's prepared keys and scores when 3. When prune is set the walk starts at the first rank past the range's start, found by a seek, which is sound when the start can be found by comparison: by score, and by member when every score is equal. phase is 0 while the start is sought, 1 while skipping and 2 while taking; taken counts the ranks taken and ended stops the walk.";
   reverse: Bool;
   kind: u64;
   act: u64;
@@ -259,141 +265,91 @@ fn continues(walk: &Walk, rank: &Rank) -> within: Bool reads(walk), reads(rank) 
   return inside;
 }
 
-fn walk_visit(walk: &Walk, client: &Client, rank: &Rank) -> result: unit reads(rank), writes(walk), writes(client) {
-  doc "Takes one rank in the walk's order through its phases, acting on it when it is taken.";
+fn walk_decide(env: &Walk, key: &Rank, value: &unit) -> result: Bool reads(key), writes(env) {
+  doc "Takes one rank in the walk's order through its phases and returns whether it is taken, counting it when it is.";
+  let walk = env;
+  let rank = key;
   if walk^.ended {
-    return unit;
+    return False();
   }
   if walk^.phase == 0_u64 {
     let begun = starts(walk: walk, rank: rank);
     if begun {
     } else {
-      return unit;
+      return False();
     }
     let inside = continues(walk: walk, rank: rank);
     if inside {
     } else {
       set walk^.ended = True();
-      return unit;
+      return False();
     }
     set walk^.phase = 1_u64;
   }
   if walk^.phase == 1_u64 {
     if walk^.offset > 0_u64 {
       set walk^.offset = walk^.offset -wrap 1_u64;
-      return unit;
+      return False();
     }
     set walk^.phase = 2_u64;
   }
   if walk^.unlimited {
   } else if walk^.limit == 0_u64 {
     set walk^.ended = True();
-    return unit;
+    return False();
   }
   let within = continues(walk: walk, rank: rank);
   if within {
   } else {
     set walk^.ended = True();
-    return unit;
+    return False();
   }
   if walk^.unlimited {
   } else {
     set walk^.limit = walk^.limit -wrap 1_u64;
   }
   set walk^.taken = walk^.taken +wrap 1_u64;
-  if walk^.act == 0_u64 {
-    reply_text(client: client, text: &rank^.member.bytes);
-  } else if walk^.act == 1_u64 {
-    reply_text(client: client, text: &rank^.member.bytes);
-    reply_score(client: client, score: rank^.score);
-  } else if walk^.act == 3_u64 {
-    let member = copy_key(key: &rank^.member);
-    push_item(client: client, item: move member);
-    push_score(client: client, score: rank^.score);
+  return True();
+}
+
+fn walk_place(env: &Walk, left: &Rank, right: &Walk) -> order: i32 reads(env), reads(left) {
+  doc "Orders a rank against the walk's start for a seek: in order, before the start or at or past it; in reverse, at or before the start or past it. Its probe is the walk itself.";
+  let begun = starts(walk: env, rank: left);
+  if env^.reverse {
+    if begun {
+      return 0_i32;
+    }
+    return 1_i32;
   }
+  if begun {
+    return 0_i32;
+  }
+  return -1_i32;
+}
+
+fn reply_member(env: &Client, key: &Rank, value: &unit) -> result: unit reads(key), writes(env) {
+  doc "Writes a taken rank's member.";
+  reply_text(client: env, text: &key^.member.bytes);
   return unit;
 }
 
-fn walk_link(link: &Slots<Box<OrderedNode<Rank, unit>>, 1>, walk: &Walk, client: &Client) -> result: unit reads(link), writes(walk), writes(client) {
-  doc "Walks the subtree a link holds, if any.";
-  if walk^.ended {
-    return unit;
-  }
-  if link^.len > 0_u64 {
-    walk_node(node: &link^[0_u64].inner, walk: walk, client: client);
-  }
+fn reply_scored(env: &Client, key: &Rank, value: &unit) -> result: unit reads(key), writes(env) {
+  doc "Writes a taken rank's member and its score.";
+  reply_text(client: env, text: &key^.member.bytes);
+  reply_score(client: env, score: key^.score);
   return unit;
 }
 
-fn walk_node(node: &OrderedNode<Rank, unit>, walk: &Walk, client: &Client) -> result: unit reads(node), writes(walk), writes(client) {
-  doc "Walks a node's subtree in the walk's order, visiting each rank. While the range's start is sought and prune is set, the entries before it are compared without being visited, and the subtrees wholly before it are passed over: in order, those before the subtree that precedes the first entry past the start; in reverse, those after the subtree that follows the last such entry.";
-  let count = node^.entries.len;
-  let seeking = walk^.phase == 0_u64;
-  let pruning = band(seeking, walk^.prune);
-  if walk^.reverse {
-    let position = count;
-    if pruning {
-      loop @seek {
-        if position == 0_u64 {
-          break @seek;
-        }
-        let index = position -wrap 1_u64;
-        if index < node^.entries.len {
-          let begun = starts(walk: walk, rank: &node^.entries[index].pair.key);
-          if begun {
-            break @seek;
-          }
-        }
-        set position = index;
-      }
-    }
-    for @entries (step in 0_u64..position) {
-      if walk^.ended {
-        return unit;
-      }
-      let back = position -wrap step;
-      let index = back -wrap 1_u64;
-      if index < node^.entries.len {
-        walk_link(link: &node^.entries[index].after, walk: walk, client: client);
-        walk_visit(walk: walk, client: client, rank: &node^.entries[index].pair.key);
-      }
-    }
-    walk_link(link: &node^.leading, walk: walk, client: client);
-    return unit;
-  }
-  let first = 0_u64;
-  if pruning {
-    loop @seek {
-      if first >= count {
-        break @seek;
-      }
-      let begun = starts(walk: walk, rank: &node^.entries[first].pair.key);
-      if begun {
-        break @seek;
-      }
-      set first = first +wrap 1_u64;
-    }
-  }
-  if first == 0_u64 {
-    walk_link(link: &node^.leading, walk: walk, client: client);
-  } else {
-    let previous = first -wrap 1_u64;
-    if previous < node^.entries.len {
-      walk_link(link: &node^.entries[previous].after, walk: walk, client: client);
-    }
-  }
-  for @entries (index in first..count) {
-    if walk^.ended {
-      return unit;
-    }
-    walk_visit(walk: walk, client: client, rank: &node^.entries[index].pair.key);
-    walk_link(link: &node^.entries[index].after, walk: walk, client: client);
-  }
+fn push_rank(env: &Client, key: &Rank, value: &unit) -> result: unit reads(key), writes(env) {
+  doc "Keeps a copy of a taken rank's member and its score in the client's prepared keys and scores.";
+  let member = copy_key(key: &key^.member);
+  push_item(client: env, item: move member);
+  push_score(client: env, score: key^.score);
   return unit;
 }
 
 fn walk_from(order: &OrderedMap<Rank, unit, ceiling>, walk: &Walk, client: &Client, offset: u64, limit: u64, unlimited: Bool, act: u64) -> taken: u64 reads(order), writes(walk), writes(client) {
-  doc "Walks the order afresh, skipping offset ranks from the range's start and then taking up to limit, any number when unlimited, each acted on as act says, and returns how many it took.";
+  doc "Walks the order afresh, skipping offset ranks from the range's start and then taking up to limit, any number when unlimited, each acted on as act says, and returns how many it took. When prune is set the cursor starts at the first rank past the range's start; otherwise at the first rank in the walk's order, the phases skipping those before the start.";
   set walk^.phase = 0_u64;
   set walk^.offset = offset;
   set walk^.limit = limit;
@@ -401,7 +357,46 @@ fn walk_from(order: &OrderedMap<Rank, unit, ceiling>, walk: &Walk, client: &Clie
   set walk^.act = act;
   set walk^.taken = 0_u64;
   set walk^.ended = False();
-  walk_link(link: &order^.root, walk: walk, client: client);
+  let direction = OrderedDirection::OrderedForward();
+  let cursor = ordered_map_first::<Rank, unit, ceiling>(map: order);
+  if walk^.reverse {
+    set direction = OrderedDirection::OrderedBackward();
+    set cursor = ordered_map_last::<Rank, unit, ceiling>(map: order);
+  }
+  if walk^.prune {
+    let seek = OrderedSeek::OrderedAtLeast();
+    if walk^.reverse {
+      set seek = OrderedSeek::OrderedAtMost();
+    }
+    set cursor = ordered_map_seek::<Rank, unit, Walk, Walk, fn walk_place, ceiling>(map: order, seek: seek, probe: walk, env: walk);
+  }
+  loop @ranks {
+    if walk^.ended {
+      break @ranks;
+    }
+    let decided = ordered_map_read::<Rank, unit, Walk, Bool, fn walk_decide, ceiling>(map: order, cursor: &cursor, env: walk);
+    match decided {
+      Err(error: absent) => {
+        break @ranks;
+      }
+      Ok(value: take) => {
+        if take {
+          if walk^.act == 0_u64 {
+            let replied = ordered_map_read::<Rank, unit, Client, unit, fn reply_member, ceiling>(map: order, cursor: &cursor, env: client);
+          } else if walk^.act == 1_u64 {
+            let replied = ordered_map_read::<Rank, unit, Client, unit, fn reply_scored, ceiling>(map: order, cursor: &cursor, env: client);
+          } else if walk^.act == 3_u64 {
+            let kept = ordered_map_read::<Rank, unit, Client, unit, fn push_rank, ceiling>(map: order, cursor: &cursor, env: client);
+          }
+        }
+      }
+    }
+    let moved = ordered_map_step::<Rank, unit, ceiling>(map: order, cursor: &cursor, direction: direction);
+    if moved {
+    } else {
+      break @ranks;
+    }
+  }
   return walk^.taken;
 }
 

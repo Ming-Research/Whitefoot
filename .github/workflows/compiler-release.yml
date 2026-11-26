@@ -84,12 +84,19 @@
 # host uses that same major, which Whitefoot-kit installs from the manifest's
 # linux_llvm_major (compiler/downstream-releases).
 #
-# A push that changes this file, package-acceptance.yml, .github/toolchain or
-# the witness programs in tests/package-fixtures runs it as a dry run: it
-# builds, smoke-tests and packages the pushed commit as a bundled package, runs
-# that package's acceptance and keeps the files as a workflow artifact,
-# publishing nothing, so a change to the release path runs before it reaches
-# main. The push dry run exercises the bundled path only; `-f dry_run=true` on
+# A pull request whose own change touches this file, package-acceptance.yml,
+# .github/toolchain or the witness programs in tests/package-fixtures runs it
+# as a dry run when it opens and on each push to its branch, drafts included:
+# it builds, smoke-tests and packages the pull request's head commit as a
+# bundled package, runs that package's acceptance and keeps the files as a
+# workflow artifact, publishing nothing, so a change to the release path runs
+# before it reaches main. A push to main that brings such a change runs it
+# again on the pushed commit. GitHub reads a pull request's paths from its
+# change since its merge base, so merging main into a branch, as the wf-agents
+# engine does for its works, starts no dry run, and a push to any branch but
+# main starts none. GitHub sends no pull request event while the pull request
+# conflicts with its base, so such a pull request runs it once the conflict is
+# resolved. The dry run exercises the bundled path only; `-f dry_run=true` on
 # a dispatch runs the lightweight path, or with `-f bundle_toolchain=true` the
 # bundled one, the same way and publishes nothing, so a change to the
 # lightweight path is run by dispatching that. A dry run stops before the
@@ -119,6 +126,13 @@ on:
         type: boolean
         default: false
   push:
+    branches: [main]
+    paths:
+      - .github/workflows/compiler-release.yml
+      - .github/workflows/package-acceptance.yml
+      - .github/toolchain/**
+      - tests/package-fixtures/**
+  pull_request:
     paths:
       - .github/workflows/compiler-release.yml
       - .github/workflows/package-acceptance.yml
@@ -162,25 +176,33 @@ jobs:
           fetch-depth: 0
 
       # A release is only ever of a main commit whose own gate run passed; the
-      # dry run takes the pushed commit and reports the gate lookup instead of
-      # requiring it, since the push that triggers it starts that commit's
-      # gate at the same moment.
+      # dry run takes the pushed commit, or the pull request's head, and
+      # reports the gate lookup instead of requiring it, since the push or
+      # opening that starts it starts that commit's gate, if any, at the same
+      # moment.
       - name: Resolve the commit, its gate run and its specification version
         id: resolve
         env:
           GH_TOKEN: ${{ github.token }}
           REQUESTED: ${{ inputs.commit }}
           EXPERIMENT: ${{ inputs.experiment }}
-          # A push dry run takes the bundled path, the one with acceptance
-          # jobs, so a change to it is qualified before anything is published.
-          BUNDLE_TOOLCHAIN: ${{ inputs.bundle_toolchain || github.event_name == 'push' }}
+          # A dry run of a push or a pull request takes the bundled path, the
+          # one with acceptance jobs, so a change to it is qualified before
+          # anything is published.
+          BUNDLE_TOOLCHAIN: ${{ inputs.bundle_toolchain || github.event_name == 'push' || github.event_name == 'pull_request' }}
           DRY_RUN: ${{ inputs.dry_run }}
+          PULL_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
           prefix=wf-
           if [ "$GITHUB_EVENT_NAME" = push ]; then
             commit=$GITHUB_SHA
+            publish=false
+          elif [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            # GITHUB_SHA is GitHub's trial merge of the head into the base,
+            # which no branch holds; the head is the commit that was pushed.
+            commit=$(git rev-parse --verify "$PULL_HEAD^{commit}")
             publish=false
           elif [ "$EXPERIMENT" = true ]; then
             if [ -z "$REQUESTED" ]; then
