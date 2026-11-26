@@ -129,16 +129,16 @@ positions() {
         unit "performance-data-round-$kernel" round "$baseline" "$candidate" "$results" "$kernel" 1 ||
             refuse "round 1 of $kernel"
     done
-    awk -v stage=first -f "$here/positions.awk" "$results/layout.txt" "$results/rows.tsv" \
+    awk -v stage=first -v kernels="${kernels[*]}" -f "$here/positions.awk" "$results/layout.txt" "$results/rows.tsv" \
         > "$results/again.txt" || { cat "$results/again.txt" >&2; refuse 'the first round'; }
     while read -r kernel word; do
         [[ $word == again ]] || refuse "unreadable line of again.txt: $kernel $word"
         unit "performance-data-round-$kernel" round "$baseline" "$candidate" "$results" "$kernel" 2 ||
             refuse "round 2 of $kernel"
     done < "$results/again.txt"
-    awk -v stage=final -f "$here/positions.awk" "$results/layout.txt" "$results/rows.tsv" \
+    awk -v stage=final -v kernels="${kernels[*]}" -f "$here/positions.awk" "$results/layout.txt" "$results/rows.tsv" \
         > "$results/verdict.txt" || { cat "$results/verdict.txt" >&2; refuse 'the rounds'; }
-    awk -v stage=aside -f "$here/positions.awk" "$results/layout.txt" "$results/rows.tsv" \
+    awk -v stage=aside -v kernels="${kernels[*]}" -f "$here/positions.awk" "$results/layout.txt" "$results/rows.tsv" \
         > "$results/aside.txt" || { cat "$results/aside.txt" >&2; refuse 'the rounds'; }
     cat "$results/verdict.txt"
 }

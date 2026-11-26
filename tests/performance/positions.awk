@@ -1,10 +1,11 @@
 # The data-placement control's comparison of two arms' 32 positions
 # (tests/performance/README.md, "Data placement").
 #
-#   awk -v stage=first|final|aside -f positions.awk LAYOUT ROWS
+#   awk -v stage=first|final|aside -v kernels="a b ..." -f positions.awk LAYOUT ROWS
 #
-# LAYOUT holds one line per kernel, `KERNEL alike|differ`, as data-placement.sh
-# record writes it. ROWS holds `KERNEL ARM POSITION ROUND MEDIAN_NS`, one per
+# The kernels are named by the caller (data-placement.sh reads them from the
+# Makefile's KERNELS, as compare.sh does). LAYOUT holds one line per kernel
+# named, `KERNEL alike|differ`, as data-placement.sh record writes it. ROWS holds `KERNEL ARM POSITION ROUND MEDIAN_NS`, one per
 # launch, only for kernels that differ: each position 0 to 31 once for each arm
 # in round 1, and in round 2 for exactly the kernels round 1 launches again.
 #
@@ -64,8 +65,12 @@ function summary(kernel, round) {
                    down[kernel, round], low[kernel, round], high[kernel, round])
 }
 BEGIN {
-    nk = split("mandelbrot records fir quadrature stencil", names, " ")
-    for (k = 1; k <= nk; k++) known[names[k]] = 1
+    nk = split(kernels, names, " ")
+    if (nk < 1) refuse("no kernels named")
+    for (k = 1; k <= nk; k++) {
+        if (names[k] !~ /^[a-z][a-z0-9_]*$/ || names[k] in known) refuse("invalid or repeated kernel name " names[k])
+        known[names[k]] = 1
+    }
     arms[1] = "baseline"; arms[2] = "candidate"
     line = 1.10
     if (stage != "first" && stage != "final" && stage != "aside") refuse("stage must be first, final or aside")
