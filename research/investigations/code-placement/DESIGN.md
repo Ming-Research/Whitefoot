@@ -817,3 +817,197 @@ link. An empty `placement_event` given to a dispatch was replaced by the
 input's default in run 45731244532, so every placement job ends failed at
 that step, after every reading and before the artifact's upload, which runs
 regardless.
+
+### The decisive runs
+
+A temporary workflow dispatched them on the engine's push of `f2a1a495f`,
+which adds only that workflow to `542cd620a`, the commit recording the loop
+arms: compute-bench run 45737803637, 48 hosted jobs of which those on an
+EPYC 9V74 or 9V45 measure, run 45737806327, four hosted jobs for an EPYC
+7763 or a Xeon 6975P-C, and run 45737811705 on the 14900K, each with 20
+rounds and `placement_loop_arms` as above. Fifteen jobs measured: seven on
+a 9V74 (jobs 2, 8, 9, 30, 40, 44 and 48 of the first run), three on a 9V45
+(4, 21, 43), one on a 7763, three on a Xeon 6975P-C and the 14900K. Every
+one passed the layout check with 277 images and ended failed only at the
+replay step. The null moved no cell on a hosted job and one on the 14900K.
+
+`records`, `FR` against `U` (per round, `U`'s median over its code
+placements divided by `FR`'s; below 1 the aligned images are slower):
+
+| run, job | processor | width 1 | width 2 | width 4 |
+|---|---|---|---|---|
+| 45737803637, 2 | EPYC 9V74 | 0.900 (0.892 to 0.916) | 0.981 (0.970 to 0.997) | 0.959 (0.952 to 0.964) |
+| 45737803637, 8 | EPYC 9V74 | 0.905 (0.877 to 0.913) | 0.983 (0.970 to 0.994) | 0.963 (0.947 to 0.973) |
+| 45737803637, 9 | EPYC 9V74 | 0.887 (0.861 to 0.910) | 0.988 (0.973 to 0.992) | 0.964 (0.959 to 0.971) |
+| 45737803637, 30 | EPYC 9V74 | 0.891 (0.859 to 0.904) | 0.980 (0.967 to 0.994) | 0.968 (0.960 to 0.973) |
+| 45737803637, 40 | EPYC 9V74 | 0.898 (0.882 to 0.906) | 0.988 (0.978 to 0.995) | 0.967 (0.960 to 0.973) |
+| 45737803637, 44 | EPYC 9V74 | 0.896 (0.867 to 0.910) | 0.985 (0.972 to 0.996) | 0.957 (0.951 to 0.966) |
+| 45737803637, 48 | EPYC 9V74 | 0.892 (0.884 to 0.911) | 0.986 (0.973 to 0.993) | 0.955 (0.944 to 0.964) |
+| 45737803637, 4 | EPYC 9V45 | 1.016 (1.004 to 1.026) | 1.017 (1.006 to 1.031) | 0.997 (0.990 to 1.012) |
+| 45737803637, 21 | EPYC 9V45 | 1.013 (0.993 to 1.028) | 1.010 (0.998 to 1.026) | 1.015 (1.007 to 1.039) |
+| 45737803637, 43 | EPYC 9V45 | 1.007 (1.000 to 1.014) | 1.020 (0.998 to 1.040) | 1.020 (1.010 to 1.027) |
+| 45737806327, 2 | EPYC 7763 | 0.999 (0.997 to 1.002) | 1.002 (0.998 to 1.008) | 1.000 (0.998 to 1.002) |
+| 45737806327, 1 | Xeon 6975P-C | 0.993 (0.990 to 0.994) | 1.001 (0.996 to 1.003) | 1.008 (1.003 to 1.009) |
+| 45737806327, 3 | Xeon 6975P-C | 0.995 (0.992 to 0.995) | 1.001 (0.998 to 1.008) | 1.005 (0.999 to 1.012) |
+| 45737806327, 4 | Xeon 6975P-C | 0.993 (0.993 to 0.996) | 1.002 (0.999 to 1.006) | 1.006 (0.996 to 1.016) |
+| 45737811705, 1 | i9-14900K | 1.001 (1.001 to 1.002) | 1.000 (0.998 to 1.000) | 0.995 (0.976 to 1.003) |
+
+Each arm against `U` the same way, the median over a model's jobs:
+
+| processor (jobs) | width | `F` | `UR` | `O16` | `O32` | `O48` | `L32` | `L64` | `A32` | `P` |
+|---|---|---|---|---|---|---|---|---|---|---|
+| EPYC 9V74 (7) | 1 | 0.898 | 0.924 | 0.969 | 1.043 | 0.907 | 1.040 | 0.972 | 1.039 | 0.968 |
+| EPYC 9V74 (7) | 2 | 0.981 | 1.080 | 1.053 | 1.128 | 0.997 | 1.132 | 1.075 | 1.122 | 0.990 |
+| EPYC 9V74 (7) | 4 | 0.962 | 1.102 | 1.059 | 1.170 | 1.032 | 1.174 | 1.110 | 1.162 | 0.959 |
+| EPYC 9V45 (3) | 1 | 1.015 | 1.000 | 0.927 | 1.015 | 0.965 | 1.008 | 1.011 | 1.012 | 0.927 |
+| EPYC 9V45 (3) | 2 | 1.018 | 1.013 | 0.935 | 1.041 | 0.968 | 1.036 | 1.030 | 1.033 | 1.014 |
+| EPYC 9V45 (3) | 4 | 1.015 | 1.023 | 0.907 | 1.049 | 0.996 | 1.045 | 1.041 | 1.042 | 1.013 |
+| EPYC 7763 (1) | 1 | 1.000 | 0.999 | 0.934 | 1.003 | 1.001 | 1.002 | 1.001 | 1.002 | 0.935 |
+| EPYC 7763 (1) | 2 | 1.001 | 0.998 | 0.937 | 1.004 | 1.005 | 1.001 | 1.001 | 1.002 | 1.001 |
+| EPYC 7763 (1) | 4 | 0.999 | 1.061 | 0.915 | 1.087 | 1.047 | 1.094 | 1.063 | 1.085 | 1.000 |
+| Xeon 6975P-C (3) | 1 | 0.994 | 0.993 | 0.948 | 1.008 | 0.989 | 1.008 | 1.003 | 1.005 | 0.949 |
+| Xeon 6975P-C (3) | 2 | 1.002 | 1.003 | 0.951 | 1.009 | 1.004 | 1.011 | 1.003 | 1.007 | 1.001 |
+| Xeon 6975P-C (3) | 4 | 1.006 | 1.016 | 0.884 | 1.033 | 0.973 | 1.030 | 1.019 | 1.029 | 1.008 |
+| i9-14900K (1) | 1 | 1.001 | 1.000 | 0.947 | 1.002 | 1.000 | 1.001 | 1.000 | 1.001 | 0.949 |
+| i9-14900K (1) | 2 | 1.000 | 1.001 | 0.999 | 1.002 | 1.002 | 1.002 | 1.002 | 1.002 | 1.000 |
+| i9-14900K (1) | 4 | 0.999 | 1.002 | 1.000 | 1.001 | 1.002 | 1.005 | 1.001 | 1.001 | 1.002 |
+
+The readings, by the criterion above:
+
+- **Cost: established** at widths 1, 2 and 4: `FR`'s interval lies wholly
+  below 1 on all seven 9V74 jobs.
+- **Attribution:** at width 1 **not separated**, since `F` and `UR` both lie
+  wholly below 1 on all seven; at widths 2 and 4 **the module's
+  alignment**, `F` wholly below 1 and `UR` wholly above it on all seven.
+- **Loop reading:** at width 1 it **holds**, `O16` faster than `O48` by the
+  gate's rule on all seven (ratio 1.067 to 1.068), and **does not account
+  for the cost**, since `O16` itself lies wholly below `U` (0.967 to 0.971).
+  At widths 2 and 4 it is **rejected**: `FR`, the arm of fewest crossing
+  loops, is slower than `O48` (0.984 to 0.991 at width 2, 0.929 to 0.937 at
+  width 4, by the gate's rule at width 4). In the table `FR` leaves one of
+  the sequential function's two loops across a line and none of the split
+  function's.
+- **Data reading: rejected** on every job: no data placement moved `FR`,
+  and `dFR` did not move `U`.
+- **Baseline reading.** On the 9V45, **rejected** at width 2 on all three
+  jobs, and at width 4 rejected on jobs 21 and 43 and **holds** on job 4; on
+  the 7763, rejected at width 2 and holds at width 4. The seven 9V74 jobs
+  agree on each comparison of the reading (`FR` slower than `UR` and not
+  than `U` at both widths, on every one); the three 9V45 jobs disagree at
+  width 4, where `FR` against `UR` is 0.966 on job 4 and 0.981 and 0.988 on
+  the other two, about the gate's 0.97. `UR` is not `U`'s layout with an
+  aligned runtime alone: its module lies 0x120 bytes later in the image than
+  `U`'s (at `p0`, `wf__par_seq_summarize_records` at 0x4740 against 0x4620),
+  which starts the split function 32 bytes past a line.
+- **Rules: none passes.**
+  - `FR`: the cost, and C2 at `m2048`: at width 4 on every 9V74 job,
+    faster than at `p0` by 12 to 13 percent, and at width 2 on six of them,
+    by 3.6 to 7.7 percent; at width 4 on every 9V45 job, slower by 9 to 10
+    percent, and at width 2 on two of them, by 4 to 5 percent; and `fir` at
+    width 2 on 9V45 job 21.
+  - `L32`: no cost on any 9V74 job at any width, slower than `FR` nowhere,
+    and C2 fails at `m2048` on the three 9V45 jobs at width 4 (0.899 to
+    0.932); it moved nothing else.
+  - `L64`: the cost at width 1 on all seven 9V74 jobs (0.968 to 0.974); C2
+    holds and it is slower than `FR` nowhere.
+  - `A32`: no cost, and C2 fails on every 9V74 job, where `m32` and `m48`
+    make `records` 11 to 18 percent slower, and at `m32` or `m48` on every
+    other hosted job.
+  - `P`: the cost, C2 as `FR`'s and at `m1024` at width 1 on the 9V45, and
+    slower than `FR` at width 1 on every model but the 9V74 (by 4 to 9
+    percent), where it starts the sequential function 16 bytes past a line.
+
+What the arms locate. With the function's code unchanged, `records`' time
+on the 9V74 follows where its hot function starts within a 64-byte line,
+in one order at every width: median cells, in ms, of the seven jobs at
+widths 1, 2 and 4:
+
+| hot function's start past a line | arm at that start | width 1 | width 2 | width 4 |
+|---|---|---|---|---|
+| 0 | `FR` | 17.56 | 8.80 | 9.00 |
+| 16 | `O16` | 16.21 | 8.20 | 8.16 |
+| 32 | `O32` | 15.05 | 7.64 | 7.36 |
+| 48 | `O48` | 17.28 | 8.68 | 8.34 |
+
+Every image whose hot functions have `FR`'s code, which is every arm but
+`L32` and `L64`, lies within 0.12 ms of the row of its hot function's start
+at every width, by `nm`, except `FR` at `m1024` at width 1 and `FR` and `P`
+at `m2048` at widths 2 and 4. At `p0` `U` starts the sequential function at
+32 and the split function at 0, at `m16` at 48 and 16, at `m32` at 0 and
+32, at `m48` at 16 and 48, so `U`'s median over its placements mixes these
+rows, while `F` and `FR` take the slowest. The crossing count of the table does
+not order them: 16 leaves no loop of the hot functions across a line and is
+second, 32 leaves one of the sequential function's and is first. Every
+layout measured that puts the 21-byte loop 32 bytes past its line, `O32`,
+`L32` (where `-falign-loops=32` puts it there with the function at 0),
+`A32` at `p0` and the fastest placements of `U`, is in the fastest row;
+`L64`, which puts it at 0 with every loop aligned to 64, lies between. The
+data's place has no part in it, as the data reading shows. With that code
+and the sequential function at 0, the 9V74's time at width 1 also varies
+from process to process of one image: the interquartile range of the 20
+process times is 7.5 to 12.8 percent of their median for every such image
+(`F`, `FR`, `UR` and `A32` at their placements that start it there, and
+`U` at `m32`), the processes falling on two or three levels (16.4, 17.5 and
+18.9 ms for `FR` at `p0` on job 2); it is at most 1.4 percent for every
+image that starts the function elsewhere, 1.0 to 1.2 percent for `L32`, and
+1.3 to 6.1 percent for `L64`. What differs between processes
+of one image is not measured here; the address-space layout's
+randomization is one candidate.
+
+A second dependence appears under a move of 2048 bytes, not of 1024. At
+widths 2 and 4 it changes `FR` and `P` on the 9V74, faster (`FR` 8.80 to
+8.23 and 9.00 to 7.96 ms, `P` 8.81 to 8.24 and 8.97 to 7.94), and `FR`,
+`P`, `L32` and `O16` on the 9V45, slower (`FR` 5.50 to 5.80 and 5.14 to
+5.71 ms, `L32` 5.45 to 5.58 and 4.97 to 5.51). It leaves `F`, the same
+module as `FR` over the unaligned runtime, unchanged on both models, as it
+leaves `O32`, `O48`, `A32` and `L64` there and every rule on the 7763, the
+Xeon and the 14900K. Such a move changes no distance within the code it
+moves, only that code's addresses and its distance from what the linker
+puts before the module, so the arms leave this dependence unlocated. The
+shifts of the earlier runs and of the regression check's placement control
+were at most 96 bytes, so neither could show it: on these two models the
+aligned layout's time does not hold under a move of 2048 bytes.
+
+Software-clock samples of the hot function on the 9V74 (job 2 of run
+45737803637), 20 processes per image, per 64-byte line as its offset from
+the function's start; `FR` at `p0` starts the function on a line, the
+fastest placement of `U` 32 bytes past one:
+
+| width | image | samples of the image, of the function | lines with the most samples |
+|---|---|---|---|
+| 1 | `FR` `p0` | 14,465, 10,598 | +0x100 4,388; +0x140 2,955; +0x1c0 1,771; +0x180 1,039 |
+| 1 | `U` `r16` | 13,019, 9,161 | +0x120 5,562; +0x1a0 1,423; +0x160 1,063; +0x1e0 885 |
+| 2 | `FR` `p0` | 16,257, 11,866 | +0x2c0 5,025; +0x300 2,865; +0x380 2,265; +0x340 1,345 |
+| 2 | `U` `m32` | 14,064, 9,793 | +0x2e0 5,979; +0x360 1,558; +0x320 1,090; +0x3a0 881 |
+| 4 | `FR` `p0` | 27,581, 21,694 | +0x2c0 11,588; +0x380 4,666; +0x340 2,780; +0x300 2,087 |
+| 4 | `U` `m32` | 23,386, 17,704 | +0x2e0 11,538; +0x360 2,803; +0x3a0 1,806; +0x320 1,231 |
+
+In both layouts the time lies in the lines of the 220-byte loop, and the
+aligned image draws more samples there at each width. The hosted AMD
+machines expose no counter ([above](#hardware-counters-on-the-hosts)), so
+the mechanism is not read on them. The same two layouts on the hosts that
+count, over ten processes per image: branch misses per branch, the share
+of micro-ops from the decoded micro-op cache, and micro-ops from the legacy
+decoders (the three Xeon jobs as a range):
+
+| host | width | `FR` `p0` | `U` at the 9V74's fastest (`r16` at width 1, `m32` at 2 and 4) |
+|---|---|---|---|
+| Xeon 6975P-C | 1 | 0.265 to 0.266 %; 95.1 to 97.0 %; 187 to 275 M | 0.268 %; 98.1 to 98.5 %; 76 to 103 M |
+| Xeon 6975P-C | 2 | 0.266 to 0.268 %; 96.8 to 97.4 %; 196 to 286 M | 0.270 to 0.271 %; 97.7 to 98.5 %; 118 to 153 M |
+| Xeon 6975P-C | 4 | 0.272 to 0.273 %; 98.6 to 98.8 %; 209 to 265 M | 0.280 to 0.281 %; 98.9 to 99.2 %; 134 to 173 M |
+| i9-14900K | 1 | 0.268 %; 98.9 %; 63 M | 0.295 %; 96.2 %; 219 M |
+| i9-14900K | 2 | 0.269 %; 96.6 %; 179 M | 0.273 %; 96.4 %; 202 M |
+| i9-14900K | 4 | 0.272 %; 96.8 %; 182 M | 0.274 %; 97.2 %; 178 M |
+
+On the Xeon the aligned image takes 1.2 to 3.6 times the micro-ops from
+the legacy decoders that `U` takes, without being slower (`FR` against `U`
+0.993 to 1.008),
+and on neither model does the branch-miss rate differ by more than 0.03
+points between the two layouts; these counts do not name what makes the
+9V74 slower.
+
+Limits. Seven 9V74 jobs of one dispatch, which may share physical
+machines; 20 rounds each. The images are this compiler's under LLVM 22, not
+October's. Only `records` was analyzed by line; the four other kernels
+enter through C2 and the comparison with `FR`. The 14900K runs other works'
+checks beside a placement job, since they take their own locks.
