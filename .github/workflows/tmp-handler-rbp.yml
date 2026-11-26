@@ -8,9 +8,9 @@
 # C-convention boundary, and runs the candidate on CoreMark. It FAILS when:
 #   - the candidate has a push or pop of %rbp in any `wf_run.arm.*` or
 #     `wf_run.cold*` function;
-#   - the base has no %rbp save in any handler of one of the families Clz, Sub,
-#     And (32- and 64-bit arms) and GlobalSet (the control: a check that cannot
-#     fail on the old compiler shows nothing);
+#   - the base has no %rbp save in any handler of one of the families Clz
+#     (32- and 64-bit arms) and GlobalSet (the control: a check that cannot
+#     fail on the old compiler shows nothing); Sub and And are reported only;
 #   - the candidate's `wf_run` does not hold exactly one `push %rbp` and at
 #     least one `pop %rbp`;
 #   - the candidate's CoreMark exits non-zero or one of the CRCs 0xe714, 0x1fd7,
@@ -89,13 +89,15 @@ jobs:
           REGISTER_COPY = re.compile(r"(%(?:r\w+|e\w+)),\s*(%r\w+)\s*$")
           EXPECTED_CRC = {"crclist": "0xe714", "crcmatrix": "0x1fd7",
                           "crcstate": "0x8e3a", "crcfinal": "0x4983"}
-          # The arms of the generated interpreter are named by value width:
-          # the control families are the ones the item names, each by its
-          # 32- and 64-bit arms, and a family is controlled when any of its
-          # base handlers saves %rbp.
-          CONTROL = {"Clz": ["I32Clz", "I64Clz"], "Sub": ["I32Sub", "I64Sub"],
-                     "And": ["I32And", "I64And"], "GlobalSet": ["GlobalSet"]}
+          # The arms of the generated interpreter are named by value width.
+          # The control families are the ones whose base handlers save %rbp
+          # in the disassembly of the merge-base build (run 45800602184:
+          # I32Clz, I64Clz and GlobalSet do; I32Sub, I64Sub, I32And and
+          # I64And do not, so they are reported but not required). A family
+          # is controlled when any of its base handlers saves %rbp.
+          CONTROL = {"Clz": ["I32Clz", "I64Clz"], "GlobalSet": ["GlobalSet"]}
           CONTROL_ARMS = [arm for arms in CONTROL.values() for arm in arms]
+          REPORTED_ARMS = CONTROL_ARMS + ["I32Sub", "I64Sub", "I32And", "I64And"]
 
           def annotate(level, title, lines):
               # Annotations are readable without credentials, unlike the log
@@ -137,7 +139,7 @@ jobs:
               start = source.index("\nfn run(") + 1
               end = source.index("\nfn ", start)
               arms = re.findall(r"^      (\w+)\([^\n]*\) => \{", source[start:end], re.M)
-              if not arms or len(set(arms)) != len(arms) or any(n not in arms for n in CONTROL_ARMS):
+              if not arms or len(set(arms)) != len(arms) or any(n not in arms for n in REPORTED_ARMS):
                   raise ValueError("generated run arm map is empty, ambiguous or lacks a control handler")
               return arms
 
@@ -215,10 +217,10 @@ jobs:
               good = evaluate(synthetic(True), synthetic(False))
               assert not good, good
               dirty = synthetic(True)
-              dirty["handlers"]["wf_run.arm.4"] = row(1, 1)
+              dirty["handlers"]["wf_run.arm.3"] = row(1, 1)
               assert evaluate(dirty, synthetic(False)), "a handler push passed"
               popped = synthetic(True)
-              popped["handlers"]["wf_run.arm.2"] = row(0, 1)
+              popped["handlers"]["wf_run.arm.1"] = row(0, 1)
               assert evaluate(popped, synthetic(False)), "a handler pop passed"
               no_boundary = synthetic(True)
               no_boundary["handlers"]["wf_run"] = row(0, 0)
@@ -229,11 +231,11 @@ jobs:
               assert evaluate(synthetic(True), synthetic(True)), "a base without saves passed"
               one_family_clean = synthetic(False)
               for symbol, arm in one_family_clean["arm_of"].items():
-                  if arm in CONTROL["Sub"]:
+                  if arm in CONTROL["Clz"]:
                       one_family_clean["handlers"][symbol] = row()
               assert evaluate(synthetic(True), one_family_clean), "a base family without saves passed"
               one_arm_enough = synthetic(False)
-              one_arm_enough["handlers"]["wf_run.arm.3"] = row()
+              one_arm_enough["handlers"]["wf_run.arm.1"] = row()
               assert not evaluate(synthetic(True), one_arm_enough), "a family with one saving arm was refused"
               annotation = []
               real_print = print
@@ -279,7 +281,7 @@ jobs:
                       saves = sum(1 for n, r in rep["handlers"].items() if n != "wf_run" and (r["rbp_pushes"] or r["rbp_pops"]))
                       lines.append(f"{kind}: {len(rep['handlers']) - 1} handlers, {total} instructions, "
                                    f"{saves} handlers with %rbp saves, {copies} tail-jump register copies")
-                  for arm in CONTROL_ARMS:
+                  for arm in REPORTED_ARMS:
                       for kind, rep in reports.items():
                           sym = {a: s for s, a in rep["arm_of"].items()}[arm]
                           r = rep["handlers"][sym]
