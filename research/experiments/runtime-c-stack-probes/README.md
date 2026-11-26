@@ -296,6 +296,36 @@ nothing for macOS. The instrument was then changed, after this reading and for
 that reason only, to report the least of 20 batch means per process, which
 leaves out the batches a busy machine slowed; the criteria are unchanged.
 
+Second reading, the instrument that reports the least of 20 batches (run
+[45749065178](https://github.com/Ming-Research/Whitefoot/actions/runs/45749065178)
+at `13482a7de`, jobs 139672182959 Linux, 139672182761 Apple, 139672183011
+upstream): median over 15 rounds of each variant's ns per call, and the median
+of the per-round ratios to the baseline (min..max).
+
+| Set | Entries | Baseline ns | Variant ns | Ratio, median (min..max) |
+| --- | --- | --- | --- | --- |
+| Linux LLVM 22, none and `-fstack-clash-protection` | 1 | 179.2 | 185.1 | 1.035 (1.027..1.040) |
+| | 64 | 670.3 | 677.9 | 1.012 (0.966..1.017) |
+| | 4096 | 27289.9 | 27359.6 | 1.003 (0.994..1.021) |
+| Apple clang 17, default and `-fstack-check` (one assembly text) | 1 | 634.3 | 625.9 | 0.995 (0.855..1.074) |
+| | 64 | 2154.6 | 2176.6 | 0.999 (0.969..1.105) |
+| | 4096 | 101166.7 | 100306.7 | 1.000 (0.828..1.076) |
+| Apple clang 17, default and `-fno-stack-check` | 1 | 634.3 | 625.8 | 0.998 (0.934..1.083) |
+| upstream 22.1.8, none and `-Xclang -fstack-clash-protection` | 1 | 622.3 | 623.1 | 1.001 (0.996..1.017) |
+| | 64 | 2114.6 | 2120.6 | 1.002 (0.995..1.019) |
+| | 4096 | 98320.0 | 98400.0 | 1.001 (0.994..1.003) |
+
+Reading, against the criteria written above: the control now reads 0.995 at
+one entry, inside 0.98 to 1.02, so macOS is decided. No criterion rejects the
+claim. Linux, where `poll` is cheapest, pays about 6 ns on a call that costs
+179 ns when the answer is immediate (3.5%, 3.2% and 3.4% in the three
+Linux readings); upstream macOS shows no difference at any size, and Apple's
+clang, which probed this function before the change, compiles it to the same
+text and times the same. A call that waits costs the kernel's sleep and
+wake-up, which these zero-timeout calls leave out, so the prologue's share
+there is smaller still. The measurement is of one function on hosted runners,
+not of a program that parks on sockets.
+
 ## Limitations
 
 The runs read assembly; none executes a runtime C frame into the guard page.
