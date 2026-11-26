@@ -1513,11 +1513,31 @@ replay's count of jobs red with no slowdown (1 of 756) cannot tell the
 rules apart there. Wall time only: CPU time was not examined. A rule
 cannot make a stale table current: the table of 2026-10-23 was not recomputed
 before 2026-11-25, and a wider margin only gives it more room. Nothing was
-measured for the other workflows' rows (io-hosts, proof, sanitizers, the
+recomputed for the other workflows' rows (io-hosts, proof, sanitizers, the
 concurrent map's sanitizers and compute-regression), which keep the values of
 the former rule or their provisional ones, each raised by a tenth in the
 owner's raise of 2026-11-25; the sanitizer rows have the most
-jobs and, unlike the gate's, a merge needs them green too. Two of the 22 jobs
+jobs and, unlike the gate's, a merge needs them green too. Their runs were
+collected once, on 2026-11-26, with the same tool (`collect --reserve`, the
+newest 80 to 100 finished runs of each workflow since 2026-10-20 or 10-24;
+the collection of `compute-regression.yml` stopped after 50 of its 100 runs
+at a network time-out, and 71 of those 100 were skipped runs).
+`sanitizers.yml`: 116 jobs from the newest 80 runs, all created within 22
+minutes of one another; 32 jobs record a CPU model, and no mapped class has
+more than 3 samples of any stage (EPYC 7763 3, EPYC 9V74 1, EPYC 9V45 1, Xeon
+8573C 2; the unmapped Xeon 6975P-C has up to 9).
+`io-hosts.yml` (112 jobs, 4 samples per stage), `proof.yml` (116 jobs, 78 to
+86 per stage), `map-sanitizers.yml` (212 jobs, 184 and 182 samples of its two
+stages) and `compute-regression.yml` (up to 34 per stage) have more samples,
+but their logs record no CPU model, so `table` has no class to give them and
+no cell can follow the rule. Of the 792 stage times these files hold of
+stages that have a row, 5 exceed the largest Linux value the table gives the
+row: `proof-build` took 97.5 s on 10-24 (table 95 s), `map-tsan` took 51.3 s
+and 50.6 s on 10-22 and 10-24 (table 50 s), and `performance-baseline-compiler`
+took 160.5 s and 163.3 s on main on 11-25 and 10-29 (table 130 s, 150 s on
+Xeon 8573C); one `map-tsan` run on main took 49.6 s of the 50 s. The table
+keeps those rows as they are. A row gets per-class values only when its
+workflow records the CPU model and holds 20 runs of a class. Two of the 22 jobs
 are not judged by the replay (above); `against` holds them to the table, as it
 does the others. A stage made 30% slower than its budget is shown to
 fail by a run of the verdict, not by this replay: see the next paragraph.

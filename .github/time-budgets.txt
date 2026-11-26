@@ -13,12 +13,14 @@
 # follows the rule had 20 to 50 of them; research/investigations/test-economy/
 # time-budgets.md, "The margin of the budget rule"). The rows of the other
 # workflows (io-hosts, proof, sanitizers, map-sanitizers, compute-regression)
-# were not recomputed then, as their runs were not collected: each holds the
-# value it had under the former rule, a fixed 10% over the maximum, or the
-# provisional value noted at it, raised by a tenth, rounded up to 5 s, in the
-# owner's raise of 2026-11-25 (cells at the 10 s floor were not raised). A cell
-# with fewer than 20 runs of its class keeps its value, except in a column the
-# owner added (see xeon-8573c below).
+# were not recomputed: the newest runs collected of them on 2026-11-26 give no
+# class 20 samples of a stage, and the logs of all but sanitizers name no CPU
+# model, so a run cannot be given a class. Each holds the value it had under
+# the former rule, a fixed 10% over the maximum, or the provisional value noted
+# at it, raised by a tenth, rounded up to 5 s, in the owner's raise of
+# 2026-11-25 (cells at the 10 s floor were not raised). A cell with fewer than
+# 20 runs of its class keeps its value, except in a column the owner added (see
+# xeon-8573c below).
 # A model with fewer than 20 runs has no column unless the owner adds one. An
 # unmapped model uses the stage's largest Linux class budget and is reported by
 # name. Unsampled rows
