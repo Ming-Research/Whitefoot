@@ -921,7 +921,7 @@ fn e1_onoff() {
     );
     assert_eq!(caught, 1, "the comparison missed a changed answer");
     assert!(records > 0, "the sample wrote no record");
-    assert!(firn_off && firn_on, "firn must be accepted both ways");
+    assert!(*firn_off && *firn_on, "firn must be accepted both ways");
     assert!(differences.is_empty(), "the shadow changed ordinary answers");
 }
 
