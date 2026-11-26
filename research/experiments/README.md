@@ -209,8 +209,8 @@ completion criterion were refused.
   results of the evidence that the concurrent map's C test no longer depends
   on the scheduler for its "a second thread acted at least once" assertions:
   the unchanged test under load, the changed test repeated on hosted Linux and
-  macOS runners, and the controls that remove the swap's locks or make a thread
-  inert. Runs once, from a temporary workflow; it goes when the temporary
+  macOS runners, and the controls that remove the swap's locks, make a thread
+  inert or start it late. Runs once, from a temporary workflow; it goes when the temporary
   workflow's results are read and the finding is kept in the test's comments.
 - `io-completion-bench/` — program-level measurement of ordinary linked I/O
   calls against native C controls (a direct loop, a thread pool and, on Linux,
