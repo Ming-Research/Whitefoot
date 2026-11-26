@@ -1358,8 +1358,8 @@ workflow and the final job are serial with it and took 35 s together. The owner'
 shortest 381 s and median 454 s with none under six minutes, give the same
 shape.
 
-The parts. The unit group's library tests run in three parts, positions p of the
-bytewise-sorted names with `p mod 3 == i-1`, by exact name. The corpus group
+The parts. The unit group's library tests run in four parts, positions p of the
+bytewise-sorted names with `p mod 4 == i-1`, by exact name. The corpus group
 runs the conformance walk in three parts over every third manifest case
 (`WHITEFOOT_CONFORMANCE_SHARD`, the variable the sanitizer workflow already
 uses), the proof-receipt test alone over every case in one process, and every
@@ -1379,6 +1379,42 @@ this change, whose record this repository does not hold): a cold run took
 Each part's time budget is its own row. Its initial value in every CPU column is
 the whole group's current row, which a part's share of the work cannot exceed;
 the existing rule recomputes it once a CPU class has 20 runs of the part.
+
+#### First run of the parts (commit e5516c68b, three unit parts)
+
+A push to a `wf-try` branch ran the gate's selection job and its matrix jobs
+from a temporary copy of the workflow (the final job and the scope check were
+left out), with the unit group in three parts. Every job was green. The run was
+created at 19:18:10 and its first job started 2 min 13 s later, which is
+queueing and counts for nothing here; the matrix jobs started 27 to 41 s after
+the selection job's 17 s ended. Per job, with its CPU model, the compile (the
+`compiler/test-build-*` stage) and the test run (the `compiler/test-*` stage),
+all in seconds, the rest of a job being its setup (checkout, toolchain, Rust
+components: 46 s to 69 s):
+
+| Job | CPU model | Job | Compile | Tests |
+|---|---|---|---|---|
+| unit 1 of 3 | Xeon 6975P-C | 256 | 153 | 47 |
+| unit 2 of 3 | Xeon 8573C | 302 | 194 | 59 |
+| unit 3 of 3 | EPYC 9V74 | 260 | 160 | 47 |
+| corpus walk 1 of 3 | Xeon 6975P-C | 202 | 102 | 44 |
+| corpus walk 2 of 3 | Xeon 6975P-C | 224 | 105 | 44 |
+| corpus walk 3 of 3 | Xeon 6975P-C | 204 | 101 | 47 |
+| corpus receipts | Xeon 6975P-C | 324 | 101 | 145 |
+| corpus rest | Xeon 6975P-C | 223 | 106 | 55 |
+| static | | 143 | | |
+| runtime | | 65 | | |
+
+The last job ended 6 min 5 s after the selection job ended. Two jobs set it:
+the receipt test, which runs over one cache in one process and took 145 s after
+a 101 s compile, and the unit part with the slowest compile. Each compile is
+the same for every part of a group (153 s to 194 s for the library's tests,
+101 s to 106 s for the integration targets), so more parts shorten only the
+test run. The setup of 46 s to 69 s is 15 s to 20 s of checkout (the whole
+history, and the design-tree submodule) and 25 s to 50 s of the toolchain step,
+which installs LLVM and then the Rust components (about 12 s), one after the
+other. The compile uses neither clang nor lld (neither `compiler/build.rs` nor
+`compiler/Cargo.toml` names them); the tests that run programs do.
 
 Not yet measured: the five runs of the question above. They are appended here,
 each with its job times and the CPU model of its jobs, when they have run.

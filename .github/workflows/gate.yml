@@ -227,12 +227,20 @@ jobs:
         # (wf-gate-no-macos, compiler/verification).
         include: ${{ fromJSON(needs.groups.outputs.matrix) }}
     steps:
+      # Only the static group reads history (the merge base, the released
+      # archives against main) and the design-tree skill's lint and CI base
+      # script, design/skill, a submodule; no other group's recipe or test
+      # runs git, so each of them takes the one commit.
       - uses: actions/checkout@v4
+        if: matrix.group == 'static'
         with:
           ref: ${{ inputs.commit || github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
-          # The design-tree skill's lint and CI base script, design/skill.
           submodules: true
+      - uses: actions/checkout@v4
+        if: matrix.group != 'static'
+        with:
+          ref: ${{ inputs.commit || github.event.pull_request.head.sha || github.sha }}
 
       # Everything the gate writes outside the checkout goes under one scratch
       # root. Naming it here keeps generated experiment files in runner-owned
@@ -251,6 +259,7 @@ jobs:
       # a branch the worktree has checked out, so the ref is only created when
       # it is missing.
       - name: Name main as a local ref
+        if: matrix.group == 'static'
         run: |
           git fetch --no-tags --prune origin +refs/heads/main:refs/remotes/origin/main
           if git symbolic-ref -q HEAD | grep -qx refs/heads/main; then
@@ -280,26 +289,14 @@ jobs:
           echo "DESIGN_REVIEW_BASE=$design_review_base" >> "$GITHUB_ENV"
           git log --oneline -1 "$design_review_base"
 
-      # A cached build links its ThinLTO fragments with LLD on Linux; the
-      # macOS toolchain's own linker does ThinLTO itself. Linux takes the
-      # LLVM major .github/llvm-major pins, from apt.llvm.org rather than
-      # Ubuntu's older clang, and makes it the /usr/bin/clang and ld.lld the
-      # compiler runs, so the gate builds with the toolchain releases are
-      # built with, including the dispatch parts' preserve_none convention,
-      # which LLVM 19 added. Raising the pin is its own change
+      # The LLVM toolchain is installed in the background while the stage
+      # compiles, and the stage waits for it where its tests begin (the
+      # Makefile's TOOLCHAIN_READY); .github/host-toolchain.sh holds both
+      # halves and says which LLVM and why. Raising the pin is its own change
       # (compiler/verification).
       - name: Install the host toolchain
         run: |
-          if [ "$RUNNER_OS" = Linux ]; then
-            curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
-            version=$(tr -d '[:space:]' < .github/llvm-major)
-            sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
-            sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
-            sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
-            ld.lld --version
-          fi
-          test -x /usr/bin/clang
-          /usr/bin/clang --version
+          sh .github/host-toolchain.sh start
           python3 --version
           rustup default stable
           rustup component add clippy rustfmt
@@ -365,6 +362,7 @@ jobs:
           STAGE_LOG: ${{ runner.temp }}/stage.log
           CHECK_GROUP: ${{ matrix.group }}
           CHECK_SHARD: ${{ matrix.shard }}
+          TOOLCHAIN_READY: sh .github/host-toolchain.sh wait
           WHITEFOOT_CHECK_TIMEOUT: 900
         run: |
           set -o pipefail

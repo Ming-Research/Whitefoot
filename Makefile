@@ -31,9 +31,14 @@ CHECK_GROUPS := static unit corpus runtime
 # cases, the proof-receipt test alone (`receipts`) or every other test
 # (`rest`); `all` is the whole group, which every group accepts and `make
 # check` runs. .github/shard-tests.pl runs the parts.
-CHECK_SHARDS_unit := 1/3 2/3 3/3
+CHECK_SHARDS_unit := 1/4 2/4 3/4 4/4
 CHECK_SHARDS_corpus := walk-1/3 walk-2/3 walk-3/3 receipts rest
 SHARD ?= all
+
+# A command a group runs where it first needs the host's LLVM toolchain, which
+# the workflow installs while the group compiles (.github/host-toolchain.sh);
+# nothing on a host that has it already.
+TOOLCHAIN_READY ?= :
 ifeq ($(strip $(CHECK_GROUPS)),)
 $(error the correctness group inventory must not be empty)
 endif
@@ -101,6 +106,7 @@ check-group:
 
 .PHONY: _check-static
 _check-static:
+	@$(TOOLCHAIN_READY)
 	@$(MAKE) static
 	@for stage in conformance performance-instrument; do \
 		$(CHECK_RUN) "$$stage" $(MAKE) --no-print-directory "$$stage" || exit 1; \
@@ -110,15 +116,18 @@ _check-static:
 .PHONY: _check-unit
 _check-unit:
 	@$(MAKE) -C compiler test-build-unit
+	@$(TOOLCHAIN_READY)
 	@$(MAKE) -C compiler test-unit SHARD="$(SHARD)"
 
 .PHONY: _check-corpus
 _check-corpus:
 	@$(MAKE) -C compiler test-build-corpus
+	@$(TOOLCHAIN_READY)
 	@$(MAKE) -C compiler test-corpus SHARD="$(SHARD)"
 
 .PHONY: _check-runtime
 _check-runtime:
+	@$(TOOLCHAIN_READY)
 	@$(MAKE) -C compiler -j"$$(getconf _NPROCESSORS_ONLN)" completion-test-images
 	@$(MAKE) -C compiler completion-test
 
@@ -154,6 +163,7 @@ repository-invariants:
 	@sh .github/test-run-check.sh
 	@$(PY) .github/recompute-time-budgets.py --self-test
 	@perl .github/shard-tests.pl --self-test
+	@sh .github/host-toolchain.sh --self-test
 	@sh .github/test-gate-matrix.sh
 	@sh .github/test-gate-scope.sh
 	@sh .github/test-gate-both-platforms.sh

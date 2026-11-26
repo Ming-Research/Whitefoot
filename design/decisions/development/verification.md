@@ -138,7 +138,7 @@ Every gate run that checks a revision runs every group on Linux; a manual run st
 - rejected: an agent proposed a daily scheduled macOS run of the main line as well; the owner rejected it, because the scheduled commit is seldom the one a downstream needs, so it cannot replace the release run, and its failures need someone to watch them.
 
 ### decision slowest-gate-groups-run-in-parts-on-linux
-On Linux the gate runs the unit group as three parts and the corpus group as five, each building for itself; macOS and local runs run groups whole, and the final job requires every matrix job.
+On Linux the gate runs the unit group as four parts and the corpus group as five, each building for itself; macOS and local runs run groups whole, and the final job requires every matrix job.
 - replaced: Running each group whole on Linux was on main; the owner changed it, because the corpus group took 438 s and the unit group 402 s in a recorded gate run, so the slowest group kept the push-to-result time over six minutes (data: `research/investigations/test-economy/time-budgets.md`).
 - rejected: an agent proposed building once and sharing the test binaries as an artifact that the part jobs download; the owner rejected it, because the build job, the upload and the download would all lie on the critical path, and the build is most of a part's time.
 - rejected: an agent proposed caching the Cargo dependencies, the build directory and LLVM between pushes; the owner rejected it, because a cold run took 228 s and a warm one 225 s, which saves nothing (data: `research/investigations/test-economy/time-budgets.md`).
