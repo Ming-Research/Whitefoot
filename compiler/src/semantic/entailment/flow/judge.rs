@@ -2,6 +2,7 @@
 //! judged where the walk reaches it and its outcome is recorded.
 
 use super::*;
+use crate::diagnostic_repairs::SeparationForm;
 use crate::semantic::model::CheckedSeparationOccasion;
 
 impl Input<'_, '_> {
@@ -438,47 +439,42 @@ impl Judging<'_, '_, '_> {
             discharged,
             refuted: false,
             contradictory: proof.is_some_and(|proof| proof.route == Some(ProofRoute::Contradiction)),
-            residual: (!discharged).then(|| match separation.positions.first() {
-                Some(CheckedCallSeparationPositions::Live(_))
-                    if separation.occasion == CheckedSeparationOccasion::WindowBound => format!(
-                        "{} requires its captured index below {}.len after the call",
-                        separation.left_spelling, separation.right_spelling
-                    ),
-                Some(CheckedCallSeparationPositions::RangeWithinLength(_))
-                    if separation.occasion == CheckedSeparationOccasion::WindowBound => format!(
-                        "{} requires its captured end at or below {}.len after the call",
-                        separation.left_spelling, separation.right_spelling
-                    ),
-                Some(CheckedCallSeparationPositions::PageWithinLength(_))
-                    if separation.occasion == CheckedSeparationOccasion::WindowBound => format!(
-                        "{} requires the length its formation read at or below {}.len after the call",
-                        separation.left_spelling, separation.right_spelling
-                    ),
-                Some(CheckedCallSeparationPositions::Indices(..)) => format!(
-                    "{} and {} require their captured indices to be distinct",
-                    separation.left_spelling, separation.right_spelling
-                ),
-                Some(CheckedCallSeparationPositions::Ranges(..)) => format!(
-                    "{} and {} select different storage (one ends before the other starts, or one is empty)",
-                    separation.left_spelling, separation.right_spelling
-                ),
-                Some(CheckedCallSeparationPositions::Live(..)) => format!(
-                    "{} and {} select different storage (the index is below the window's length)",
-                    separation.left_spelling, separation.right_spelling
-                ),
-                Some(CheckedCallSeparationPositions::IndexOutsideRange(..)) => format!(
-                    "{} and {} select different storage (the index is before the range's start or at or after its end, or the range is empty)",
-                    separation.left_spelling, separation.right_spelling
-                ),
-                Some(CheckedCallSeparationPositions::RangeWithinLength(..)) => format!(
-                    "{} and {} select different storage (the range ends at or below the window's length, or is empty)",
-                    separation.left_spelling, separation.right_spelling
-                ),
-                Some(CheckedCallSeparationPositions::PageWithinLength(..)) => format!(
-                    "{} and {} select different storage (the page's extent ends at or below the window's length)",
-                    separation.left_spelling, separation.right_spelling
-                ),
-                None => unreachable!("checker hands off at least one position candidate"),
+            residual: (!discharged).then(|| {
+                let form = match separation.positions.first() {
+                    Some(CheckedCallSeparationPositions::Live(_))
+                        if separation.occasion == CheckedSeparationOccasion::WindowBound =>
+                    {
+                        SeparationForm::INDEX_BELOW_LENGTH
+                    }
+                    Some(CheckedCallSeparationPositions::RangeWithinLength(_))
+                        if separation.occasion == CheckedSeparationOccasion::WindowBound =>
+                    {
+                        SeparationForm::END_AT_OR_BELOW_LENGTH
+                    }
+                    Some(CheckedCallSeparationPositions::PageWithinLength(_))
+                        if separation.occasion == CheckedSeparationOccasion::WindowBound =>
+                    {
+                        SeparationForm::FORMATION_LENGTH_AT_OR_BELOW_LENGTH
+                    }
+                    Some(CheckedCallSeparationPositions::Indices(..)) => {
+                        SeparationForm::DISTINCT_INDICES
+                    }
+                    Some(CheckedCallSeparationPositions::Ranges(..)) => SeparationForm::RANGES,
+                    Some(CheckedCallSeparationPositions::Live(..)) => {
+                        SeparationForm::INDEX_AND_WINDOW
+                    }
+                    Some(CheckedCallSeparationPositions::IndexOutsideRange(..)) => {
+                        SeparationForm::INDEX_OUTSIDE_RANGE
+                    }
+                    Some(CheckedCallSeparationPositions::RangeWithinLength(..)) => {
+                        SeparationForm::RANGE_WITHIN_LENGTH
+                    }
+                    Some(CheckedCallSeparationPositions::PageWithinLength(..)) => {
+                        SeparationForm::PAGE_WITHIN_LENGTH
+                    }
+                    None => unreachable!("checker hands off at least one position candidate"),
+                };
+                form.render(&separation.left_spelling, &separation.right_spelling)
             }),
             overlap_targets: Some((
                 separation.left_spelling.clone(),

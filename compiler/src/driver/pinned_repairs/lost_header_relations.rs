@@ -105,8 +105,7 @@ pub(super) const LOST_HEADER_RELATIONS: &[RepairPair] = &[
         rule: "FN-8",
         sentences: &[
             "\n  instantiated_goal: fp < stack^.inner.len\n",
-            "header invariant `fb` (`(fp + 4_u64) <= stack^.inner.len`) was not kept at the join: the path through `touch` at line 15 did not prove `(fp + 4_u64) <= stack^.inner.len`",
-            "state `ensures stack^.inner.len == entry(stack)^.inner.len;` in its contract\n",
+            "\n  mechanical_fix: header invariant `fb` (`(fp + 4_u64) <= stack^.inner.len`) was not kept at the join: the path through `touch` at line 15 did not prove `(fp + 4_u64) <= stack^.inner.len`; make that path preserve the relation: where `touch` preserves that measure, state `ensures stack^.inner.len == entry(stack)^.inner.len;` in its contract\n",
         ],
         repaired: &[proof_source!(
             " contract {\n  ensures stack^.inner.len == entry(stack)^.inner.len;\n}",
@@ -126,8 +125,7 @@ pub(super) const LOST_HEADER_RELATIONS: &[RepairPair] = &[
         rule: "INV-1",
         sentences: &[
             "\n  name: bound\n",
-            "header invariant `fb` (`(fp + 4_u64) <= stack^.inner.len`) was not kept at the join: the path through `touch` at line 15 did not prove `(fp + 4_u64) <= stack^.inner.len`",
-            "state `ensures stack^.inner.len == entry(stack)^.inner.len;` in its contract\n",
+            "\n  mechanical_fix: header invariant `fb` (`(fp + 4_u64) <= stack^.inner.len`) was not kept at the join: the path through `touch` at line 15 did not prove `(fp + 4_u64) <= stack^.inner.len`; make that path preserve the relation: where `touch` preserves that measure, state `ensures stack^.inner.len == entry(stack)^.inner.len;` in its contract\n",
         ],
         repaired: &[proof_source!(
             " contract {\n  ensures stack^.inner.len == entry(stack)^.inner.len;\n}",
@@ -146,8 +144,7 @@ pub(super) const LOST_HEADER_RELATIONS: &[RepairPair] = &[
         ),
         rule: "FN-9",
         sentences: &[
-            "header invariant `fb` (`(fp + 4_u64) <= stack^.inner.len`) was not kept at the join: the path through `touch` at line 16 did not prove `(fp + 4_u64) <= stack^.inner.len`",
-            "state `ensures stack^.inner.len == entry(stack)^.inner.len;` in its contract\n",
+            "\n  mechanical_fix: header invariant `fb` (`(fp + 4_u64) <= stack^.inner.len`) was not kept at the join: the path through `touch` at line 16 did not prove `(fp + 4_u64) <= stack^.inner.len`; make that path preserve the relation: where `touch` preserves that measure, state `ensures stack^.inner.len == entry(stack)^.inner.len;` in its contract\n",
         ],
         repaired: &[proof_source!(
             " contract {\n  ensures stack^.inner.len == entry(stack)^.inner.len;\n}",
