@@ -7,10 +7,10 @@ fn bump(marks: &[u64], x: u8) -> result: u8 pure contract {
   requires forall small(k in 0_u64..marks^.len): marks^[k] < 8_u64;
 } {
   doc "Replacing e whole leaves r valid, so the write through r makes e Full with count x, which may be 9.";
-  let e = Empty();
+  let e = Slot::Empty();
   let r = &e;
-  set e = Empty();
-  set r^ = Full(count: x);
+  set e = Slot::Empty();
+  set r^ = Slot::Full(count: x);
   match e {
     Full(count: held_value) => {
       let w = 251_u8 + held_value;
