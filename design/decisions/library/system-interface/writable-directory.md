@@ -31,3 +31,9 @@ Files can be appended, set to a length and synced, and entries renamed, removed 
 ### decision root-names-are-one-component
 A name given with a root denotes an entry directly below it only when it is one nonempty path component other than `.` and `..`; every operation refuses any other with `InvalidPath`.
 - rejected: an agent proposed passing `.` and `..` to the host; the owner rejected it, because the host resolves them to the directory itself and its parent, so a function given a subdirectory's write half could get the write half above it.
+
+### decision open-read-looks-a-path-up-below-its-root
+`relative_path` refuses a `..` component, and `open_read` looks a path up component by component below its root, failing at a link, on Windows a reparse point, at any component.
+- rejected: an agent proposed refusing only `..` and keeping the host's following of links; the owner rejected it, because a link below the root still leaves it, so a function given a read half would reach what the process can, which the name operations already prevent.
+- rejected: an agent proposed folding `..` away lexically instead of refusing it; the owner rejected it, because `a/../b` must read nothing, and the fold gives one file two spellings and a second rule to state and test.
+- replaced: A lookup of the whole path in one host call for `open_read`, which the specification left unstated, was on main; the owner changed it, because a root would then bound only the name operations, while a path read from untrusted bytes takes the multi-component route.
