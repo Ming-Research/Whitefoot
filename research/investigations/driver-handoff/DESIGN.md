@@ -757,10 +757,14 @@ widened. The scripts are `research/experiments/handoff-yield-check/` and
    and candidate. The candidate's time per statement above the base twin's
    spread rejects the claim that the check became cheaper.
 4. Firn GET, SET and MSET at one and two server CPUs and pipeline depths 16
-   and 1 through `io-bench.yml`'s firn comparison, with
-   `WF_SCHED_REPORT=2` yield-request and reassignment counts: in each of the
-   12 cells, a candidate ÷ base median ratio outside the base-twin interval
-   on the slow side rejects the claim that ordinary I/O pays nothing for the
-   change. A nonzero yield-request count under these workloads, whose
+   and 1 through `redis-bench.sh compare` (four interleaved passes of five
+   seconds, the same mode `io-bench.yml`'s firn comparison runs), with
+   `WF_SCHED_REPORT=2` yield-request and reassignment counts. In each of the
+   12 cells, the base-twin interval is the range of the per-pass ratios
+   twin ÷ base of requests per second, and the candidate's ratio is the
+   median of its per-pass ratios candidate ÷ base. A candidate ratio below
+   the interval's low end rejects the claim that ordinary I/O pays nothing
+   for the change in that cell; a cell whose interval is wider than 10
+   percent is reported as undecided. A nonzero yield-request count under these workloads, whose
    commands run for microseconds, would show that the trigger fires where no
    context computes for long, and is reported to the owner.
