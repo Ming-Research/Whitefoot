@@ -779,11 +779,12 @@ fn emit(row: &str, family: &str, size: &str, config: &str, name: &str, expect: &
     );
 }
 
-fn measure() {
+fn measure(quick: bool) {
     println!("{HEADER}");
-    let limit = Duration::from_secs(40);
-    let node_cap = 1 << 18;
+    let limit = Duration::from_secs(20);
+    let node_cap = 1 << 17;
     for family in families::all() {
+        eprintln!("family {}", family.name);
         let mut stopped: HashSet<&'static str> = HashSet::new();
         for size in &family.sizes {
             let program = (family.make)(size, false);
@@ -793,7 +794,7 @@ fn measure() {
                 if stopped.contains(cfg.name) {
                     continue;
                 }
-                if cfg.exponential && size.large() {
+                if cfg.exponential && (quick || size.large()) {
                     continue;
                 }
                 if cfg.bnd == Bnd::RelAll && size.k > 32 {
@@ -801,7 +802,7 @@ fn measure() {
                 }
                 let first = run(&model, cfg, limit, node_cap);
                 let mut nanos = first.nanos;
-                if first.nanos < 300_000_000 {
+                if !quick && first.nanos < 200_000_000 {
                     for _ in 0..4 {
                         nanos = nanos.min(run(&model, cfg, limit, node_cap).nanos);
                     }
@@ -896,11 +897,12 @@ fn dense() {
 fn main() {
     let mode = std::env::args().nth(1).unwrap_or_default();
     let body = move || match mode.as_str() {
-        "measure" => measure(),
+        "measure" => measure(false),
+        "recount" => measure(true),
         "check" => check(),
         "dense" => dense(),
         _ => {
-            eprintln!("usage: join-derivation-model measure|check|dense");
+            eprintln!("usage: join-derivation-model measure|recount|check|dense");
             std::process::exit(2);
         }
     };

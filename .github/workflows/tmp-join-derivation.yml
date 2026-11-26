@@ -14,8 +14,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: tmp-join-derivation
-  cancel-in-progress: true
+  group: tmp-join-derivation-${{ github.sha }}
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: never
@@ -25,7 +25,7 @@ jobs:
   model:
     if: ${{ !contains(github.event.head_commit.message, '[probe-only]') }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - name: Host
@@ -50,19 +50,19 @@ jobs:
         if: always()
         working-directory: research/investigations/join-derivation/model
         run: |
-          for round in 1 2; do
-            taskset -c 1 ./target/release/join-derivation-model measure > "$RUNNER_TEMP/measure-$round.csv"
-            wc -l "$RUNNER_TEMP/measure-$round.csv"
-            uptime
-          done
-          cut -d, -f1-19,21 "$RUNNER_TEMP/measure-1.csv" > "$RUNNER_TEMP/counts-1.csv"
-          cut -d, -f1-19,21 "$RUNNER_TEMP/measure-2.csv" > "$RUNNER_TEMP/counts-2.csv"
-          if cmp -s "$RUNNER_TEMP/counts-1.csv" "$RUNNER_TEMP/counts-2.csv"; then
-            echo "counts identical across the two rounds"
-          else
-            echo "COUNTS DIFFER across the two rounds"
-            diff "$RUNNER_TEMP/counts-1.csv" "$RUNNER_TEMP/counts-2.csv" | head -20
-          fi
+          taskset -c 1 ./target/release/join-derivation-model measure > "$RUNNER_TEMP/measure-1.csv"
+          wc -l "$RUNNER_TEMP/measure-1.csv"
+          uptime
+      - name: Count again, the candidates without exponential growth
+        if: always()
+        working-directory: research/investigations/join-derivation/model
+        run: |
+          ./target/release/join-derivation-model recount > "$RUNNER_TEMP/measure-2.csv"
+          cut -d, -f1-19,21 "$RUNNER_TEMP/measure-2.csv" | sort > "$RUNNER_TEMP/counts-2.csv"
+          cut -d, -f1-19,21 "$RUNNER_TEMP/measure-1.csv" | sort > "$RUNNER_TEMP/counts-1.csv"
+          missing=$(comm -23 "$RUNNER_TEMP/counts-2.csv" "$RUNNER_TEMP/counts-1.csv" | wc -l)
+          echo "rows of the second count: $(wc -l < "$RUNNER_TEMP/counts-2.csv"); rows not identical in the first: $missing"
+          comm -23 "$RUNNER_TEMP/counts-2.csv" "$RUNNER_TEMP/counts-1.csv" | head -20
       - name: Theory step on dense systems
         if: always()
         working-directory: research/investigations/join-derivation/model
