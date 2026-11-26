@@ -95,20 +95,45 @@ impl Reader<'_> {
         }
     }
 
-    fn number(&mut self) -> Result<Json, String> {
+    /// The digits at the cursor, and how many there were.
+    fn digits(&mut self) -> usize {
         let start = self.at;
-        while matches!(
-            self.peek(),
-            Some(b'-' | b'+' | b'.' | b'e' | b'E' | b'0'..=b'9')
-        ) {
+        while matches!(self.peek(), Some(b'0'..=b'9')) {
             self.at += 1;
         }
-        let digits = &self.bytes[start..self.at];
-        if digits.iter().any(u8::is_ascii_digit) {
-            Ok(Json::Number)
-        } else {
-            self.fail("malformed number")
+        self.at - start
+    }
+
+    /// A number as RFC 8259 writes it: `-? (0 | [1-9][0-9]*) (. [0-9]+)?
+    /// ([eE] [+-]? [0-9]+)?`. What follows it is the caller's to refuse, so
+    /// `01`, `1-2` and `1+2` stop at the second part and fail there.
+    fn number(&mut self) -> Result<Json, String> {
+        if self.peek() == Some(b'-') {
+            self.at += 1;
         }
+        match self.peek() {
+            Some(b'0') => self.at += 1,
+            Some(b'1'..=b'9') => {
+                self.digits();
+            }
+            _ => return self.fail("malformed number"),
+        }
+        if self.peek() == Some(b'.') {
+            self.at += 1;
+            if self.digits() == 0 {
+                return self.fail("malformed number");
+            }
+        }
+        if matches!(self.peek(), Some(b'e' | b'E')) {
+            self.at += 1;
+            if matches!(self.peek(), Some(b'+' | b'-')) {
+                self.at += 1;
+            }
+            if self.digits() == 0 {
+                return self.fail("malformed number");
+            }
+        }
+        Ok(Json::Number)
     }
 
     fn hex4(&mut self) -> Result<u32, String> {
@@ -360,6 +385,30 @@ mod tests {
             error.contains("clang version 21.1.0") && error.contains(LINE),
             "{error}"
         );
+    }
+
+    /// RFC 8259's number grammar: what is not a number makes the manifest not
+    /// JSON, so no record in it is taken.
+    #[test]
+    fn a_number_outside_the_json_grammar_is_not_trusted() {
+        for good in [
+            "0", "-0", "7", "-12", "0.5", "10.25", "1e3", "1E+3", "-2.5e-3", "0e0",
+        ] {
+            let text = manifest(LINE, &format!(",\"n\":{good}"));
+            if let Err(error) = recorded(&text, LINE) {
+                panic!("{good} is a JSON number, but the record was refused: {error}");
+            }
+        }
+        for bad in [
+            "1-2", "01", "-01", "1.", "1e", "1e+", "1+2", "-", "--1", "+1", ".5", "1.e2",
+            "0x10",
+        ] {
+            let text = manifest(LINE, &format!(",\"n\":{bad}"));
+            let Err(error) = recorded(&text, LINE) else {
+                panic!("{bad} is not a JSON number, but the record was taken");
+            };
+            assert!(error.contains("not valid JSON"), "{bad}: {error}");
+        }
     }
 
     #[test]
