@@ -212,10 +212,44 @@ fn describe_parameter(function: &IrFunction, parameter: IrValueId) -> String {
         }
     }
     format!(
-        "{}: {parameter:?}: {:?} in block {home} (match edge: {entered_by_match}) fed by {edges:?}",
+        "{}: {parameter:?}: {:?} in block {home} (match edge: {entered_by_match}) fed by {edges:?}; {}",
         function.name(),
-        function.values[parameter.index()]
+        function.values[parameter.index()],
+        feeders(function, parameter, 4)
     )
+}
+
+/// What feeds `value` if it is a block parameter, to `depth` levels: its
+/// block, the block's matches and each edge's argument.
+fn feeders(function: &IrFunction, value: IrValueId, depth: usize) -> String {
+    let blocks = function.blocks();
+    let Some(home) = blocks
+        .iter()
+        .position(|block| block.parameters().iter().any(|(parameter, _)| *parameter == value))
+    else {
+        return format!("{value:?} is no block parameter");
+    };
+    let position = blocks[home]
+        .parameters()
+        .iter()
+        .position(|(parameter, _)| *parameter == value)
+        .expect("declared");
+    let mut edges = Vec::new();
+    for (index, block) in blocks.iter().enumerate() {
+        if let IrTerminator::Jump {
+            target, arguments, ..
+        } = block.terminator()
+            && target.index() == home
+        {
+            let argument = arguments[position];
+            edges.push(if depth == 0 || argument == value {
+                format!("{index}:{argument:?}")
+            } else {
+                format!("{index}:{}", feeders(function, argument, depth - 1))
+            });
+        }
+    }
+    format!("{value:?} of block {home} fed by {edges:?}")
 }
 
 fn assert_lowered_functions_are_well_formed(overlap: OverlapLowering) {
