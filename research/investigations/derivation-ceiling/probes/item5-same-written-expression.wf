@@ -1,0 +1,19 @@
+fn at_most(value: u64, limit: u64) -> result: unit pure contract {
+  requires value <= limit;
+} {
+  return unit;
+}
+
+fn probe(total: u64, divisor: u64) -> result: unit pure contract {
+  requires 1_u64 <= divisor;
+} {
+  doc "Item 5: two occurrences of the same admitted value expression have one value identity.";
+  let first = total / divisor;
+  let second = total / divisor;
+  at_most(value: first, limit: second);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

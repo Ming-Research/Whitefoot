@@ -1,0 +1,19 @@
+fn at_most(value: u32, limit: u32) -> result: unit pure contract {
+  requires value <= limit;
+} {
+  return unit;
+}
+
+fn probe(left: u32, right: u32) -> result: unit pure contract {
+  requires left <= 255_u32;
+  requires right <= 3840_u32;
+} {
+  doc "Item 1: the bitwise-or row's result bound reads its operands' intervals, which here come only from the requirements.";
+  let joined = ior(left, right);
+  at_most(value: joined, limit: 4095_u32);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

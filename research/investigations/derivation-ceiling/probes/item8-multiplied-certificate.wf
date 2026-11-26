@@ -1,0 +1,24 @@
+fn at_most(value: u64, limit: u64) -> result: unit pure contract {
+  requires value <= limit;
+} {
+  return unit;
+}
+
+fn probe(width: u64, index: u64) -> result: unit pure contract {
+  requires width <= 32_u64;
+  requires index < 3_u64;
+} {
+  doc "Item 8: use width times multiplies a fact by a nonnegative quantity, giving the quadratic step index * width + width <= 3 * width.";
+  let cells = 3_u64 * width;
+  let begin = index * width;
+  let end = begin + width;
+  invariant bounded: end <= cells {
+    use width times (index + 1_u64 <= 3_u64);
+  }
+  at_most(value: end, limit: cells);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

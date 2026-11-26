@@ -1,0 +1,30 @@
+fn at_most(value: u64, limit: u64) -> result: unit pure contract {
+  requires value <= limit;
+} {
+  return unit;
+}
+
+fn probe(start: u64, a: Bool, b: Bool, c: Bool, d: Bool) -> result: unit pure contract {
+  requires start <= 100_u64;
+} {
+  doc "Item 7: four joins in a row each change total; the weakest bound every arm keeps proves each step without a split, while a split by the arms taken needs up to 16 cases.";
+  let total = start;
+  if a {
+    set total = total + 1_u64;
+  }
+  if b {
+    set total = total + 1_u64;
+  }
+  if c {
+    set total = total + 1_u64;
+  }
+  if d {
+    set total = total + 1_u64;
+  }
+  at_most(value: total, limit: 104_u64);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

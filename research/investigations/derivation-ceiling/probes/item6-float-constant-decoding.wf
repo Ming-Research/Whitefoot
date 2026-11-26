@@ -1,0 +1,9 @@
+fn probe() -> result: i64 pure {
+  doc "Item 6: whether a float constant converts to an integer is decided by decoding its bits.";
+  let value = cvt::<f64, i64>(1024.0_f64);
+  return value;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}

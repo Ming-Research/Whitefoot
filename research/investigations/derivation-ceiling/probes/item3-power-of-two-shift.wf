@@ -1,0 +1,20 @@
+fn at_most(value: u64, limit: u64) -> result: unit pure contract {
+  requires value <= limit;
+} {
+  return unit;
+}
+
+fn probe(total: u64, shift: u32) -> result: unit pure contract {
+  requires shift <= 60_u32;
+} {
+  doc "Item 3: ishl(1, shift) and ishr(total, shift) name one power atom, so the product of the quotient and the multiplier is a quotient times its divisor (which item 4 then bounds).";
+  let multiplier = ishl(1_u64, shift);
+  let quotient = ishr(total, shift);
+  let product = quotient * multiplier;
+  at_most(value: product, limit: total);
+  return unit;
+}
+
+fn main() -> status: std::process::ExitStatus pure {
+  return std::process::exit_status(code: 0_u8);
+}
