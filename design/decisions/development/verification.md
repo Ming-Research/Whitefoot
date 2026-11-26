@@ -38,8 +38,9 @@ A Linux stage budget per CPU model with 20 or more recorded runs is 1.1 times th
 - rejected: an agent proposed timing every push's gate against its merge base; the owner rejected it, because it doubles every job's builds and cases to detect growth that a fixed budget detects beyond a stage's headroom.
 
 ### decision a-class-budget-margin-follows-its-own-spread
-A class's budget margin grows with its own spread above its median: the unit group's quiet classes keep +26% to +42% headroom over it, and EPYC 9V74, whose runs vary most, +74%.
+A class's margin grows with its own spread above its median: the unit group's quiet classes keep +26% to +42% headroom, under the 57% once refused, and EPYC 9V74, whose runs vary most, +74%.
 - replaced: A margin of 10% over the maximum was on main; the owner changed it, because the gate's first attempt on main turned red in 22 jobs of 20 runs on overruns of at most 1.108 times the budget, every test passing (data: `research/investigations/test-economy/time-budgets.md`).
+- replaced: Refusing headroom past 57% (1.5 times the slowest run) and a 20% margin, as 10% cut false overruns to about 1%, was on main; the owner changed it, because 22 jobs went red at under 1.11 times, and only EPYC 9V74 passes 57% (data: `research/investigations/test-economy/time-budgets.md`).
 - rejected: an agent proposed a fixed 30% over the maximum; the owner rejected it, because it leaves a quiet class +40% to +50% before it trips and sees a 30% slowdown of every stage in 42 of 756 replayed jobs against 362 (data: `research/investigations/test-economy/time-budgets.md`).
 - rejected: an agent proposed a fixed 25% over the maximum; the owner rejected it, because it sees that slowdown in 118 of 756 replayed jobs against 362, with the same single red job with no slowdown (data: `research/investigations/test-economy/time-budgets.md`).
 - rejected: an agent proposed keeping 10% and rerunning an overrun stage once; the owner rejected it, because a stale table fails reruns too (6 of 18 red again) and a real slowdown goes red a gate later (data: `research/investigations/test-economy/time-budgets.md`).
