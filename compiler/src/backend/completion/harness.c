@@ -2919,8 +2919,9 @@ static void wf_unreported_aborted(int signal_number) {
  * client is unnamed, so each record is of a family the portable address holds
  * no form for.  The socket is named by a path relative to the scratch
  * directory, which keeps it within the host's limit on a socket path whatever
- * that directory's own name is.  The child returns only if the runtime handed
- * back a value. */
+ * that directory's own name is, and by the child's process id, so children of
+ * the same group can run side by side.  The child returns only if the runtime
+ * handed back a value. */
 static int wf_unreported_child(const char *scratch, int accepting) {
     struct sigaction aborted;
     memset(&aborted, 0, sizeof(aborted));
@@ -2934,7 +2935,7 @@ static int wf_unreported_child(const char *scratch, int accepting) {
         (void)wf__completion_socket_local_address(pair[0], &low, &high, &tag);
         return WF_UNREPORTED_RETURNED;
     } else {
-        static const char name[] = "wf-unreported.sock";
+        char name[48];
         wf_harness_record record;
         struct sockaddr_un address;
         int64_t value;
@@ -2942,10 +2943,11 @@ static int wf_unreported_child(const char *scratch, int accepting) {
         uint64_t low, high;
         uint32_t tag;
         CHECK(chdir(scratch) == 0);
+        CHECK(snprintf(name, sizeof(name), "wf-unreported-%ld.sock", (long)getpid()) > 0);
         (void)unlink(name);
         memset(&address, 0, sizeof(address));
         address.sun_family = AF_UNIX;
-        memcpy(address.sun_path, name, sizeof(name));
+        memcpy(address.sun_path, name, strlen(name) + 1u);
         listener = socket(AF_UNIX, SOCK_STREAM, 0);
         CHECK(listener >= 0);
         CHECK(bind(listener, (struct sockaddr *)&address, sizeof(address)) == 0);
@@ -2960,18 +2962,23 @@ static int wf_unreported_child(const char *scratch, int accepting) {
     }
 }
 
-/* Runs `group` of this harness in a child, with `refuse_ring` selecting the
- * bounded adapter route of the bridge in place of the host's kernel ring, and
- * requires that the child was stopped by the runtime with its report. */
-static int wf_unreported_run(const char *scratch, const char *group, int refuse_ring) {
-    struct timespec delay = {.tv_sec = 0, .tv_nsec = 10000000};
-    char report[512];
-    ssize_t length;
-    size_t total = 0, count = 0, kept = 0, index;
-    unsigned attempts;
-    int errors[2];
-    int status = 0;
+/* One child of this harness started for the case below, until its end is
+ * read: its process and the read end of its standard error. */
+typedef struct {
     pid_t child;
+    int report;
+} wf_unreported_started;
+
+/* Starts `group` of this harness in a child, with `refuse_ring` selecting the
+ * bounded adapter route of the bridge in place of the host's kernel ring. */
+static int wf_unreported_start(
+    const char *scratch,
+    const char *group,
+    int refuse_ring,
+    wf_unreported_started *started
+) {
+    size_t count = 0, kept = 0, index;
+    int errors[2];
     posix_spawn_file_actions_t actions;
     char *arguments[4];
     char **child_environment;
@@ -3003,29 +3010,42 @@ static int wf_unreported_run(const char *scratch, const char *group, int refuse_
     CHECK(posix_spawn_file_actions_adddup2(&actions, errors[1], 2) == 0);
     CHECK(posix_spawn_file_actions_addclose(&actions, errors[0]) == 0);
     CHECK(posix_spawn_file_actions_addclose(&actions, errors[1]) == 0);
-    CHECK(posix_spawn(&child, wf_harness_self, &actions, NULL, arguments, child_environment) == 0);
+    CHECK(posix_spawn(&started->child, wf_harness_self, &actions, NULL, arguments, child_environment) == 0);
     CHECK(posix_spawn_file_actions_destroy(&actions) == 0);
     free(child_environment);
     CHECK(close(errors[1]) == 0);
+    started->report = errors[0];
+    return 0;
+}
+
+/* Waits for a child started above and requires that it was stopped by the
+ * runtime with its report. */
+static int wf_unreported_finish(const wf_unreported_started *started) {
+    struct timespec delay = {.tv_sec = 0, .tv_nsec = 10000000};
+    char report[512];
+    ssize_t length;
+    size_t total = 0;
+    unsigned attempts;
+    int status = 0;
     for (attempts = 0; attempts < 3000u; ++attempts) {
-        pid_t done = waitpid(child, &status, WNOHANG);
+        pid_t done = waitpid(started->child, &status, WNOHANG);
         CHECK(done >= 0);
-        if (done == child) {
+        if (done == started->child) {
             break;
         }
         (void)nanosleep(&delay, NULL);
     }
     if (attempts == 3000u) {
-        (void)kill(child, SIGKILL);
-        (void)waitpid(child, &status, 0);
+        (void)kill(started->child, SIGKILL);
+        (void)waitpid(started->child, &status, 0);
     }
     CHECK(attempts < 3000u);
     while (total + 1u < sizeof(report)
-           && (length = read(errors[0], report + total, sizeof(report) - 1u - total)) > 0) {
+           && (length = read(started->report, report + total, sizeof(report) - 1u - total)) > 0) {
         total += (size_t)length;
     }
     report[total] = '\0';
-    CHECK(close(errors[0]) == 0);
+    CHECK(close(started->report) == 0);
     CHECK(WIFEXITED(status) && WEXITSTATUS(status) == WF_UNREPORTED_ABORTED);
     CHECK(strstr(report, WF_SOCKET_ADDRESS_UNREPORTED_FAMILY) != NULL);
     return 0;
@@ -3034,15 +3054,23 @@ static int wf_unreported_run(const char *scratch, const char *group, int refuse_
 /* A host report of an address of no admitted family stops the program with the
  * runtime's report and hands it no address, on the two routes the bridge has:
  * a `local_address` query, and an accept on the host's kernel ring where the
- * host has one and on the bounded adapter route. */
+ * host has one and on the bounded adapter route.  Each case is a child of this
+ * harness, ended by the stop it checks, and the children run side by side so
+ * that their start-ups and waits overlap. */
 static int test_an_address_of_no_admitted_family_stops_with_a_report(
     const char *scratch
 ) {
-    CHECK(wf_unreported_run(scratch, "unreported-local", 0) == 0);
-    CHECK(wf_unreported_run(scratch, "unreported-accept", 0) == 0);
+    wf_unreported_started started[3];
+    unsigned count = 0, index;
+    memset(started, 0, sizeof(started));
+    CHECK(wf_unreported_start(scratch, "unreported-local", 0, &started[count++]) == 0);
+    CHECK(wf_unreported_start(scratch, "unreported-accept", 0, &started[count++]) == 0);
 #if defined(__linux__)
-    CHECK(wf_unreported_run(scratch, "unreported-accept", 1) == 0);
+    CHECK(wf_unreported_start(scratch, "unreported-accept", 1, &started[count++]) == 0);
 #endif
+    for (index = 0; index < count; ++index) {
+        CHECK(wf_unreported_finish(&started[index]) == 0);
+    }
     return 0;
 }
 
@@ -3248,8 +3276,15 @@ int wf__main_body(int argc, char **argv) {
         RUN_TEST(test_a_submitted_operation_is_kicked_before_it_waits(argv[1]));
         RUN_TEST(test_socket_lifecycle_and_the_pair_two_count());
         RUN_TEST(test_process_wide_target_helper_budget());
-        RUN_TEST(test_an_address_of_no_admitted_family_stops_with_a_report(argv[1]));
         RUN_TEST(test_a_zero_address_of_an_admitted_family_is_published());
+    }
+    if (all) {
+        /* The case starts three child processes, each a whole process of
+         * the build under test, so it runs with the full run of each build
+         * and not again with the `bridge` runs that differ in helper count:
+         * the count decides which thread completes an operation, and the stop
+         * is made by the conversion that every completion calls. */
+        RUN_TEST(test_an_address_of_no_admitted_family_stops_with_a_report(argv[1]));
     }
     if (adapter) {
         RUN_TEST(test_directory_progress_is_internal());
