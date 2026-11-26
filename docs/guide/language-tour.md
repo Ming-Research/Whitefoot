@@ -390,8 +390,8 @@ fn get(items: &[u8], position: u64) -> result: u8 reads(items) {
 ```
 
 The compiler could not show `position < items^.len`. `items^` reads
-through a reference (section 8). There are two ways forward. One is to write
-the branch the failure case needs, with the failure as a value:
+through a reference (section 8). Here there are two ways forward. One is to
+write the branch the failure case needs, with the failure as a value:
 
 ```whitefoot file=guarded_index.wf
 fn get(items: &[u8], position: u64) -> result: Option<u8> reads(items) {
@@ -403,9 +403,11 @@ fn get(items: &[u8], position: u64) -> result: Option<u8> reads(items) {
 }
 ```
 
-The other is to move the fact to the caller with a contract (section 9).
-There is no third way: the compiler never inserts a check of its own, so
-every comparison that guards an access is one you can see in the source.
+The other is to move the fact to the caller with a contract (section 9). The
+next example shows a counted loop's range and a loop invariant as further
+sources of such a fact, and section 10 shows how to direct a proof by hand. In
+every case the compiler inserts no check of its own, so every comparison that
+guards an access is one you can see in the source.
 
 A counted loop proves its own index. This program appends the squares of
 `0` to `7` to a window, then adds them up:
