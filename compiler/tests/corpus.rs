@@ -40,6 +40,7 @@ mod programs {
     // POSIX `RLIMIT_NOFILE`, set through the shell's `ulimit`.
     #[cfg(unix)]
     mod open_files;
+    mod open_read_paths;
     #[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
     mod snapshot_export;
     mod network;
