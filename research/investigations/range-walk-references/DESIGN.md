@@ -62,6 +62,25 @@ because the call forgot every fact, `marks`'s included. The write one was accept
 landed in storage nothing read; after the fix it shows that a write through a joined reference keeps the facts of
 storage it cannot reach.
 
+### A subscript through a joined reference
+
+Three cases subscript `r^[3_u64]` where `r` names `a^` or `b^`, two `Slots<u64, 4>` parameters whose lengths the
+contract fixes. They were judged by the compiler of main c807b5941 with every case of this item and none of the fix
+(commit fdf8ecab4); the conformance adapter in CI run
+[45771134799](https://github.com/Ming-Research/Whitefoot/actions/runs/45771134799) reported:
+
+| Case | Lengths of `a^`, `b^` | Expected after the fix | Reached before it |
+| --- | --- | --- | --- |
+| `range2-neg-joined-reference-index-past-one-member` (a read) | 4, 2 | reject OP-4 | reject OP-4 |
+| `range2-neg-joined-reference-index-write-past-one-member` (a write) | 4, 2 | reject OP-4 | reject OP-4 |
+| `range2-pos-joined-reference-index-inside-every-member` (a read) | 4, 4 | accept | reject OP-4 |
+
+The same run gave every case of the table above the verdict listed there. Before the fix the walk bound `r` to storage
+of its own whose length nothing fixed, so every subscript through it was unproved. The two rejection cases therefore
+guard the fix rather than witness the defect: they reject only if the bound is proved at every place `r` names, so a
+check at the first member alone, or acceptance once any member is proved, makes them accepted. The acceptance case
+shows that the fix proves the bound at each member rather than giving up on a joined reference.
+
 ## The specification is not at fault
 
 Candidate one sits between two sentences of [RANGE-2]: "a construction yields new storage of its own" and "A binding is a
@@ -84,6 +103,6 @@ No rule of the specification changes.
   out, stores into the binding's existing location. A revived or declared binding still takes new storage, since storage
   it held before was handed over by a move.
 - References that differ between arms join as a view naming each of them. A write through it leaves each member unknown
-  where the write overlaps it. A call taking it substitutes the callee's row at each member. A read through it is
-  unknown. A reference binder of a value initializer, and a reference a loop body rebinds, hold an unknown reference
+  where the write overlaps it. A call taking it substitutes the callee's row at each member. A subscript through it is
+  proved in bounds at each member. A read through it is unknown. A reference binder of a value initializer, and a reference a loop body rebinds, hold an unknown reference
   rather than storage of their own.
