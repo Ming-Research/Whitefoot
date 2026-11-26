@@ -724,11 +724,14 @@ in its 16 runs.
 
 ### Plan for the 14900K measurements (written before measuring)
 
-Each comparison builds base (main 469944ea4) and candidate (this change) and
-runs them interleaved on the owner's i9-14900K, with base also under a second
-name as the noise control; a run whose host shows other load is voided under
-the rules of the #122 Firn comparison, and a cell that cannot be decided is
-reported as undecided, not widened.
+Each comparison builds base (the main revision the change was last merged
+with) and candidate (this change) and runs them interleaved on the owner's
+i9-14900K; the fixed-cost and Firn comparisons also run base under a second
+name as the noise control. The record states the host's load beside each
+result (the idle check before the runs and each fixed-cost cell's share of
+busy CPUs), and a cell that cannot be decided is reported as undecided, not
+widened. The scripts are `research/experiments/handoff-yield-check/` and
+`research/experiments/io-completion-bench/redis-bench.sh compare`.
 
 1. Ready context at one and two drivers, 64 runs each, internal timestamps:
    one handoff cycle is fixed at 2 ms (the 1 ms threshold plus one monitor
