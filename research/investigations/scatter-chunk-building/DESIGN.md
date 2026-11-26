@@ -239,7 +239,7 @@ than 128 bytes, a field of an inactive variant that holds constant-capacity
 window storage is not zero-filled; a value of at most 128 bytes is built as
 today.** The choice holds if the probes resolve a cost of the empty slots at
 eight workers; 128 is the bounded transfer's limit. They did not (see
-[Timing](#timing-2026-11-25)), so the emitter keeps main's rule and the
+[Timing](#timing-2026-11-26)), so the emitter keeps main's rule and the
 change was taken back. The other two lowerings
 lost on what they would change without a measurement: the second firn's byte
 strings and the ordered map's links, the third also the two consumers of the
@@ -344,7 +344,7 @@ The first group is the same text under both rules and the second differs, as
 selected rule the four raw deflate tests, the block pool's test and the hash
 map, slab and ordered map tests in both lowering modes passed.
 
-### Structure with every list and call site, 2026-11-25
+### Structure with every list and call site, 2026-11-26
 
 Two more runs of the structure probe as `9282c7d81` reports it, on the
 14900K runner, after main had been merged into the branch with no change to
@@ -400,7 +400,7 @@ with the tag store of a large value withheld (`a5bc0f875`,
 [run 45757880667](https://github.com/Ming-Research/Whitefoot/actions/runs/45757880667))
 `short_lived_windows.wf` aborted on a double free.
 
-### Timing, 2026-11-25
+### Timing, 2026-11-26
 
 One run of the timing probe, alone in its request, on commit `0ece5c23c`
 (the selected rule; `before` and `twin` through the probe's switch),
@@ -529,7 +529,7 @@ nothing beyond what the images separate.
   time is about eight times the wall time: all eight lanes were busy for
   some four milliseconds around 60 µs of work. The campaign does not say
   what the two fast passes had that the others lacked; other jobs shared the
-  machine for part of the run (see [Timing](#timing-2026-11-25)).
+  machine for part of the run (see [Timing](#timing-2026-11-26)).
 - What was measured is main's hand-out of that day, in which a range split
   asks the runtime's `wf__par_split_budget` for its budget. The
   demand-driven hand-out of pull request 468 was an open draft then and is

@@ -184,7 +184,7 @@ the work-branch and merge boundary.
 - [Chunk building in the stable scatter](investigations/scatter-chunk-building/DESIGN.md):
   which whole-block clears and copies the scatter's optimized code still
   holds, the lowerings that would remove them and the criteria fixed before
-  measuring; on 2026-11-25 none resolved a gain at eight workers, where the
+  measuring; on 2026-11-26 none resolved a gain at eight workers, where the
   `--par` call took about four times the sequential build's.
 
 Open research questions and evidence links are in [ideas](../docs/ideas.md);
