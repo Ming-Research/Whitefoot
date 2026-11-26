@@ -35,10 +35,14 @@ CHECK_SHARDS_unit := 1/4 2/4 3/4 4/4
 CHECK_SHARDS_corpus := walk-1/3 walk-2/3 walk-3/3 receipts rest
 SHARD ?= all
 
-# A command a group runs where it first needs the host's LLVM toolchain, which
-# the workflow installs while the group compiles (.github/host-toolchain.sh);
-# nothing on a host that has it already.
+# A command that waits for the host's LLVM toolchain, which the workflow
+# installs while a job compiles (.github/host-toolchain.sh); nothing on a host
+# that has it already. A group that compiles first (CHECK_COMPILES_FIRST) runs
+# it where its tests begin, so the install overlaps the compile; any other
+# group runs it before its stage starts, so the wait is not part of the stage's
+# time.
 TOOLCHAIN_READY ?= :
+CHECK_COMPILES_FIRST := unit corpus
 ifeq ($(strip $(CHECK_GROUPS)),)
 $(error the correctness group inventory must not be empty)
 endif
@@ -101,12 +105,12 @@ check-parts:
 check-group:
 	@$(if $(and $(filter 1,$(words $(GROUP))),$(filter $(CHECK_GROUPS),$(GROUP))),:,$(error GROUP must name one correctness group from: $(CHECK_GROUPS)))
 	@$(if $(and $(filter 1,$(words $(SHARD))),$(filter all $(CHECK_SHARDS_$(GROUP)),$(SHARD))),:,$(error SHARD must be all or a part of $(GROUP): $(CHECK_SHARDS_$(GROUP))))
+	@$(if $(filter $(GROUP),$(CHECK_COMPILES_FIRST)),,$(TOOLCHAIN_READY))
 	@$(CHECK_RUN) "check/$(GROUP)$(if $(filter all,$(SHARD)),,-$(if $(findstring walk-,$(SHARD)),walk,$(if $(findstring /,$(SHARD)),shard,$(SHARD))))" \
 		$(MAKE) --no-print-directory "_check-$(GROUP)" SHARD="$(SHARD)"
 
 .PHONY: _check-static
 _check-static:
-	@$(TOOLCHAIN_READY)
 	@$(MAKE) static
 	@for stage in conformance performance-instrument; do \
 		$(CHECK_RUN) "$$stage" $(MAKE) --no-print-directory "$$stage" || exit 1; \
@@ -127,7 +131,6 @@ _check-corpus:
 
 .PHONY: _check-runtime
 _check-runtime:
-	@$(TOOLCHAIN_READY)
 	@$(MAKE) -C compiler -j"$$(getconf _NPROCESSORS_ONLN)" completion-test-images
 	@$(MAKE) -C compiler completion-test
 
