@@ -18,66 +18,51 @@
 
 use super::*;
 
-/// Programs of `tests/programs` that, between them, hold the control-flow
+/// Single-file programs of `tests/programs` that use no host module (the
+/// bare lowering bundle has none), and that between them hold the control-flow
 /// shapes above: a header `match` interpreter, loops with `break` and
-/// `continue`, early returns that drop owners, the container kernels, the
-/// text and byte scanners and a program with data-parallel loops.
+/// `continue`, early returns that drop owners, text and byte scanners, linked
+/// owners and data-parallel loops.
 const PROGRAMS: &[(&str, &[u8])] = &[
     (
         "continue_interpreter",
         include_bytes!("../../../../tests/programs/continue_interpreter.wf"),
     ),
     (
-        "adaptive_quadrature",
-        include_bytes!("../../../../tests/programs/adaptive_quadrature.wf"),
-    ),
-    (
-        "byte_string",
-        include_bytes!("../../../../tests/programs/byte_string.wf"),
-    ),
-    (
         "utf8parse",
         include_bytes!("../../../../tests/programs/utf8parse.wf"),
-    ),
-    (
-        "growable_vec",
-        include_bytes!("../../../../tests/programs/growable_vec.wf"),
-    ),
-    (
-        "heap_run",
-        include_bytes!("../../../../tests/programs/heap_run.wf"),
     ),
     (
         "option_slots",
         include_bytes!("../../../../tests/programs/option_slots.wf"),
     ),
     (
-        "cancellation",
-        include_bytes!("../../../../tests/programs/cancellation.wf"),
+        "percent_decode",
+        include_bytes!("../../../../tests/programs/percent_decode.wf"),
     ),
     (
-        "dir_walk",
-        include_bytes!("../../../../tests/programs/dir_walk.wf"),
+        "sha256_abc",
+        include_bytes!("../../../../tests/programs/sha256_abc.wf"),
     ),
     (
-        "wfgrep",
-        include_bytes!("../../../../tests/programs/wfgrep.wf"),
+        "telemetry_packet",
+        include_bytes!("../../../../tests/programs/telemetry_packet.wf"),
     ),
     (
-        "raw_deflate_dynamic",
-        include_bytes!("../../../../tests/programs/raw_deflate_dynamic.wf"),
+        "owned_link_cursors",
+        include_bytes!("../../../../tests/programs/owned_link_cursors.wf"),
     ),
     (
-        "hash-map-program",
-        include_bytes!("../../../../tests/programs/containers/hash-map-program.wf"),
+        "block_pool",
+        include_bytes!("../../../../tests/programs/block_pool.wf"),
     ),
     (
-        "ordered-map-cursor-program",
-        include_bytes!("../../../../tests/programs/containers/ordered-map-cursor-program.wf"),
+        "prefix_expression",
+        include_bytes!("../../../../tests/programs/prefix_expression.wf"),
     ),
     (
-        "priority-queue-program",
-        include_bytes!("../../../../tests/programs/containers/priority-queue-program.wf"),
+        "unit_set",
+        include_bytes!("../../../../tests/programs/unit_set.wf"),
     ),
     (
         "bfs",
@@ -92,8 +77,20 @@ const PROGRAMS: &[(&str, &[u8])] = &[
         include_bytes!("../../../../tests/programs/compute/histogram.wf"),
     ),
     (
+        "records",
+        include_bytes!("../../../../tests/programs/compute/records.wf"),
+    ),
+    (
+        "merge_sort",
+        include_bytes!("../../../../tests/programs/compute/merge_sort.wf"),
+    ),
+    (
         "indexed_calls",
         include_bytes!("../../../../tests/programs/parallel/indexed_calls.wf"),
+    ),
+    (
+        "indexed_marks_fields",
+        include_bytes!("../../../../tests/programs/parallel/indexed_marks_fields.wf"),
     ),
 ];
 
@@ -177,27 +174,40 @@ fn assert_parameter_interfaces(function: &IrFunction) {
 
 fn assert_lowered_functions_are_well_formed(overlap: OverlapLowering) {
     let reports = crate::in_parallel(PROGRAMS, |(name, source)| {
-        with_ir_mode(source, overlap, |program| {
-            let mut redundant = Vec::new();
-            for function in program.functions() {
-                assert_parameter_interfaces(function);
-                assert_uses_follow_definitions(function);
-                let parameters = redundant_block_parameters(function);
-                if !parameters.is_empty() {
-                    redundant.push(format!("{} {parameters:?}", function.name()));
+        // A failing check panics inside the lowering fixture; the program's
+        // name is what tells the failures of different programs apart.
+        let outcome = std::panic::catch_unwind(|| {
+            with_ir_mode(source, overlap, |program| {
+                let mut redundant = Vec::new();
+                for function in program.functions() {
+                    assert_parameter_interfaces(function);
+                    assert_uses_follow_definitions(function);
+                    let parameters = redundant_block_parameters(function);
+                    if !parameters.is_empty() {
+                        redundant.push(format!("{} {parameters:?}", function.name()));
+                    }
                 }
-            }
-            (*name, redundant)
-        })
+                redundant
+            })
+        });
+        let problems = outcome.unwrap_or_else(|payload| {
+            let message = payload
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| payload.downcast_ref::<&str>().map(|text| (*text).to_owned()))
+                .unwrap_or_default();
+            vec![format!("panicked: {message}")]
+        });
+        (*name, problems)
     });
-    let kept: Vec<String> = reports
+    let failed: Vec<String> = reports
         .into_iter()
-        .filter(|(_, redundant)| !redundant.is_empty())
-        .map(|(name, redundant)| format!("{name}: {}", redundant.join("; ")))
+        .filter(|(_, problems)| !problems.is_empty())
+        .map(|(name, problems)| format!("{name}: {}", problems.join("; ")))
         .collect();
     assert!(
-        kept.is_empty(),
-        "no join or loop header may keep a parameter every edge feeds one value: {kept:#?}"
+        failed.is_empty(),
+        "every lowered function keeps its parameters well formed and none keeps a parameter every edge feeds one value: {failed:#?}"
     );
 }
 
