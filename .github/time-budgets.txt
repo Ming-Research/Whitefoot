@@ -79,7 +79,17 @@ label                           epyc-7763  epyc-9v74  epyc-9v45  xeon-8573c  xeo
 
 # gate.yml, static group
 check/static                    120        120        105        115         120         125    -
-repository-invariants           30         30         25         30          30          30     -
+# repository-invariants runs .github/test-run-check.sh, which the Windows I/O
+# job's timing (item 298) lengthens by 2.4 s: 28.13 s on epyc-9v45 against the
+# 25.73 s of main's own run of that class, and 27.06 s against 24.86 s on one
+# host. The stage was already at its budgets in main's runs of 2026-11-26. Its
+# cells are the rule above on those runs of a main-equivalent tree (4 on
+# epyc-7763, 3 on epyc-9v74, 1 on epyc-9v45, 5 on xeon-6975p), each raised by the
+# 2.4 s, so fewer than 20 runs on each class; xeon-8573c, with no run since the
+# split of test-fast-state, takes the row's largest. Main's runs alone give 35,
+# 35, 30 and 30. macos keeps its value. A class takes the rule's value on its own
+# runs once it has 20.
+repository-invariants           40         40         35         40          35          30     -
 # test-fast-state, the test of .github/fast-state.sh, ran inside
 # repository-invariants until 2026-11-26 and is a stage of its own since. Its
 # row follows the rule above over its measured runs, though they are fewer than

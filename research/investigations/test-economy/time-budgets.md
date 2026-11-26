@@ -2299,6 +2299,47 @@ These three runs hold for a head whose `.github/run-check.pl`,
 later change to any of them needs the three again. The probe commits are not on the
 branch.
 
+**The `repository-invariants` stage with the wrapper test grown (2026-11-26).**
+The full check of the merge of main at 3e59fcdde (the gate, run 45883143138, on
+bec09021f) had one failure: in `static`, on an AMD EPYC 9V45, `repository-
+invariants` took 28.13 s against its 25 s. The stage runs
+`.github/test-run-check.sh`, to which this work added the CPU case (a child that
+computes for one second), the two cygwin host cases, the case of a command that
+cannot be executed and the form checks of the Windows job. Two measurements of
+that addition, on the same script with and without it: 24.86 s against 27.06 s
+on one host (`/usr/bin/time -p sh .github/test-run-check.sh`, main's
+`.github/` taken with `git archive 3e59fcdde`), which is 2.2 s (user time 1.25 s
+against 2.50 s, so about one second of it is the CPU case), and 25.73 s on main's
+own push run 45862894314 against this branch's 28.13 s on the same class, 2.4 s.
+The rest is the seven other wrapper starts of the added cases, about 0.15 s each.
+
+The stage was already at its budgets in main's runs, which the full check does
+not show: three of them went over the table before this work (25.7 s of 25 s on
+the 9V45, 30.7 s and 30.3 s of 30 s on the 7763; runs 45862894314, 45863013206
+and 45876571777). The stage times of 2026-11-26 after `test-fast-state` left
+it, from the logs of the `static` jobs of the gate runs of that day, of main's
+pushes and of the full checks of works whose commits do not touch the files
+the stage reads (the compare of each commit with the main it was merged with
+lists none of them; two more runs, 45854669251 and 45866495281, whose commits
+change `.github/test-gate-both-platforms.sh` or
+`.github/test-completion-scratch.sh` and `Makefile`, are left out):
+
+| Class | Runs | Seconds | Rule on them | Rule with +2.4 s | Table before |
+|---|---:|---|---:|---:|---:|
+| `epyc-7763` | 4 | 29.73 29.84 30.34 30.74 | 35 | 40 | 30 |
+| `epyc-9v74` | 3 | 27.63 28.64 29.84 | 35 | 40 | 30 |
+| `epyc-9v45` | 1 | 25.73 | 30 | 35 | 25 |
+| `xeon-6975p` | 5 | 25.23 25.33 25.43 25.43 25.53 | 30 | 35 | 30 |
+
+The rule values are `budget_for` of `.github/recompute-time-budgets.py`. The
+`xeon-8573c` class has no run since the split, and takes the row's largest.
+Every class has fewer than 20 runs, so the rule does not set a value from them
+(the table's header); the owner was asked (question `repository-invariants-
+budget`) whether to raise the row to the right-hand column, which the table now
+holds (40 40 35 40 35, `macos` 30), or to shorten the stage by running this
+work's cases beside the existing ones and raise it to the middle column (35 35
+30 35 30).
+
 ## Daily loop
 
 One edit, measured in the local container with the new defaults: an unused
