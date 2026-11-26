@@ -29,7 +29,9 @@
 //! `make conformance-run` selects it for focused use; the full gate reaches
 //! it once through the normal corpus tests, with no ignored opt-in. The
 //! adapter excludes no case, weakens no expectation, and skips nothing;
-//! running it prints the complete tally.
+//! running it prints the complete tally. Only a caller that asks walks fewer
+//! cases: a shard of them (`WHITEFOOT_CONFORMANCE_SHARD`) or the cases it
+//! names by id (`WHITEFOOT_CONFORMANCE_CASES`), and the gate sets neither.
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -316,6 +318,16 @@ fn shard() -> (usize, usize) {
     (index - 1, count)
 }
 
+/// The cases this process walks when a caller names them:
+/// `WHITEFOOT_CONFORMANCE_CASES` holds case ids apart by white space, and
+/// only the cases with one of them are walked, in manifest order. The fast
+/// workflow of the wf-agents engine names one case as `conformance/<id>` this
+/// way (.github/workflows/fast.yml). Unset, every case is walked.
+fn named_cases() -> Option<Vec<String>> {
+    let names = std::env::var("WHITEFOOT_CONFORMANCE_CASES").ok()?;
+    Some(names.split_whitespace().map(str::to_owned).collect())
+}
+
 fn invocation_directory() -> PathBuf {
     let sequence = NEXT_INVOCATION.fetch_add(1, Ordering::Relaxed);
     let directory = std::env::temp_dir().join(format!(
@@ -430,8 +442,25 @@ fn the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path() 
     );
     let mut tally: BTreeMap<Outcome, usize> = BTreeMap::new();
     let mut reports = Vec::new();
+    // Where cases are named, each one's verdict is also printed as libtest
+    // prints a test's, under the name `conformance/<id>`, after a line that
+    // says it started; .github/junit.py reads these lines as one test each.
+    let named = named_cases();
+    if let Some(named) = &named {
+        for id in named {
+            if !cases.iter().any(|case| &case.id == id) {
+                println!("case conformance/{id}: no case of the manifest has this id");
+            }
+        }
+    }
     let (shard, shards) = shard();
-    for case in cases.iter().skip(shard).step_by(shards) {
+    let walked = cases
+        .iter()
+        .filter(|case| named.as_ref().is_none_or(|named| named.contains(&case.id)));
+    for case in walked.skip(shard).step_by(shards) {
+        if named.is_some() {
+            println!("case conformance/{} started", case.id);
+        }
         let reached = reach(case);
         let outcome = outcome(case, &reached.verdict);
         *tally.entry(outcome).or_default() += 1;
@@ -440,10 +469,24 @@ fn the_corpus_reaches_its_declared_verdict_through_the_ordinary_compiler_path() 
                 .note
                 .or_else(|| case.reason.clone())
                 .unwrap_or_default();
-            reports.push(format!(
+            let report = format!(
                 "  {outcome:?} {} want {:?} reached {:?}  {note}",
                 case.id, case.expect, reached.verdict
-            ));
+            );
+            if named.is_some() {
+                for line in report.lines() {
+                    println!("case conformance/{} said {line}", case.id);
+                }
+            }
+            reports.push(report);
+        }
+        if named.is_some() {
+            let word = if outcome == Outcome::Pass {
+                "ok"
+            } else {
+                "FAILED"
+            };
+            println!("test conformance/{} ... {word}", case.id);
         }
     }
     let summary = tally

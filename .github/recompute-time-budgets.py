@@ -39,7 +39,7 @@ comparison in `run-check.pl`.
 Cells and columns:
   * A class column with at least 20 recorded runs of a stage is recomputed.
   * A cell with fewer runs keeps its value, except in a column the owner
-    added for a model with too few runs (OWNER_COLUMNS: the Xeon): that
+    added for a model with too few runs (OWNER_COLUMNS: the Xeons): that
     takes the larger of the row's recomputed class values and, if it has
     any run, its own time by the rule: one run shows a class needs more,
     not that it needs less. The row is left alone when no class has enough
@@ -72,11 +72,11 @@ MINIMUM_RUNS = 20
 # The columns the owner added for a model with fewer than MINIMUM_RUNS runs
 # (decision `owner-added-columns-take-the-larger-value` in
 # design/decisions/development/verification.md); an addition is the owner's decision.
-OWNER_COLUMNS = ("xeon-8573c",)
+OWNER_COLUMNS = ("xeon-8573c", "xeon-6975p")
 BUDGETS = ".github/time-budgets.txt"
 DEFAULT_WINDOW = 50
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-MODEL = re.compile(r"^\S+ model name[ \t]*:[ \t]*(.*?)[ \t]*$", re.M)
+MODEL = re.compile(r"^\S+ [Mm]odel name[ \t]*:[ \t]*(.*?)[ \t]*$", re.M)
 END = re.compile(r"^(\S+) == END (\S+): (\d+)\.(\d\d) s, exit (\d+) ==$", re.M)
 BUDGET = re.compile(r"== BUDGET (\S+): [\d.]+ s of (\d+) s")
 OVER = re.compile(r"== OVER BUDGET: [\w-]+: (\S+) took [\d.]+ s, over its (\d+) s")
@@ -651,6 +651,19 @@ def self_test():
         ("check/runtime", 2185, 0, 25), ("check/corpus", 36320, 0, 360), ("compiler/lint", 500, 101, None)], found
     assert parse_log("no stages here") == (None, [])
 
+    # compute-regression logs the model as lscpu prints it ("Model name:" with
+    # a capital and padding after the colon), not as /proc/cpuinfo does; a
+    # BIOS line of a full lscpu listing is not the CPU's model.
+    lscpu = "\n".join([
+        stamp % 0 + " CPU(s):                                  4",
+        stamp % 0 + " Model name:                              AMD EPYC 7763 64-Core Processor",
+        stamp % 1 + " BIOS Model name:                          Standard PC",
+        stamp % 2 + " == END performance-candidate-compiler: 93.20 s, exit 0 ==",
+    ])
+    model, found = parse_log(lscpu)
+    assert model == "AMD EPYC 7763 64-Core Processor", model
+    assert [(r["label"], r["cs"]) for r in found] == [("performance-candidate-compiler", 9320)], found
+
     # The rules, exactly, on windows of stage times in hundredths of a second.
     # A window of equal times has no spread: 110.00 s is 110 s, not 115 s;
     # 59.95 rounds to 60 and 60.005 to 65; the floor is 10 s (a 1 s stage
@@ -677,6 +690,19 @@ def self_test():
     with open(BUDGETS) as handle:
         shipped = Table(handle.read())
     assert set(OWNER_COLUMNS) <= set(shipped.classes), (OWNER_COLUMNS, list(shipped.classes))
+    # The table does not say who added a column, so the vendor stands for it:
+    # every column the owner added so far is a Xeon model, whose runs the pool
+    # gives too few for the rule, and a Xeon class left out of OWNER_COLUMNS
+    # would be held at its cells until it has 20 runs and fall behind the
+    # others. A Xeon class that later has 20 runs in every row stays listed
+    # without effect, since a cell with 20 runs is recomputed as a class's before
+    # the owner-column rule applies; so this does not fire on that. A Xeon class
+    # that should follow only the class rule is taken out of OWNER_COLUMNS, and
+    # this assertion then names the decision that makes it a class; a thin
+    # column for a model that is not a Xeon is listed by hand, which this does
+    # not check.
+    assert all(column in OWNER_COLUMNS for column, model in shipped.classes.items() if "xeon" in model.lower()), \
+        (OWNER_COLUMNS, shipped.classes)
     owner = OWNER_COLUMNS[0]
     table_text = "\n".join([
         "# comment", "cpu big-1  Big CPU", "cpu small-2  Small CPU", f"cpu {owner}  Thin CPU", "",

@@ -1,0 +1,328 @@
+alias AcceptedConnection = std::net::AcceptedConnection;
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias IoError = std::io::IoError;
+alias TcpConnection = std::net::TcpConnection;
+alias TcpReceive = std::net::TcpReceive;
+alias TcpSend = std::net::TcpSend;
+alias arg_get = std::text::arg_get;
+alias args_count = std::text::args_count;
+alias close_listener = std::net::close_listener;
+alias close_receive = std::net::close_receive;
+alias close_send = std::net::close_send;
+alias exit_status = std::process::exit_status;
+alias host_copy_utf8 = std::text::host_copy_utf8;
+alias listener_address = std::net::listener_address;
+alias local_address = std::net::local_address;
+alias receive_next = std::net::receive_next;
+alias send_once = std::net::send_once;
+alias socket_address_port = std::net::socket_address_port;
+alias socket_address_v4 = std::net::socket_address_v4;
+alias tcp_accept = std::net::tcp_accept;
+alias tcp_connect = std::net::tcp_connect;
+alias tcp_listen = std::net::tcp_listen;
+
+const endpoint_digit_glyphs: Array<u8, 10> =[48_u8, 49_u8, 50_u8, 51_u8, 52_u8, 53_u8, 54_u8, 55_u8, 56_u8, 57_u8];
+
+fn byte_at(store: &[u8], index: u64) -> result: u8 reads(store) {
+  doc "Reads one stored byte, delivering zero for a position the range reference does not hold.";
+  let room = store^.len;
+  let inside = index < room;
+  if inside {
+    let value = store^[index];
+    return value;
+  }
+  return 0_u8;
+}
+
+fn parse_port(digits: &[u8], length: u64) -> result: u16 reads(digits) {
+  doc "Reads one decimal port out of the argument bytes the invocation supplied; a byte that is not a digit ends the number.";
+  let port = 0_u16;
+  let ended = 0_u8;
+  let index = 0_u64;
+  loop @scan {
+    let more = index < length;
+    if more {
+    } else {
+      break @scan;
+    }
+    let byte = byte_at(store: digits, index: index);
+    let low = byte >= 48_u8;
+    let high = byte <= 57_u8;
+    let digit = band(low, high);
+    if digit {
+      let value = byte -wrap 48_u8;
+      let widened = cvt::<u8, u16>(value);
+      let scaled = port *wrap 10_u16;
+      set port = scaled +wrap widened;
+    } else {
+      set ended = 1_u8;
+    }
+    if ended == 0_u8 {
+      set index = index +wrap 1_u64;
+    } else {
+      break @scan;
+    }
+  }
+  return port;
+}
+
+fn put_byte(destination: &[u8], at: u64, value: u8) -> result: u64 writes(destination) {
+  doc "Writes value at offset at when the range holds that offset, and returns the offset just past it.";
+  let spare = destination^.len;
+  let writable = at < spare;
+  if writable {
+    set destination^[at] = value;
+  }
+  return at +wrap 1_u64;
+}
+
+fn put_decimal(destination: &[u8], at: u64, value: u64) -> result: u64 writes(destination) {
+  doc "Writes the decimal spelling of one unsigned value at one offset and returns the offset just past it, counting its digits first so it needs no scratch storage.";
+  let digits = 1_u64;
+  let probe = value;
+  loop @measure {
+    let single = probe < 10_u64;
+    if single {
+      break @measure;
+    }
+    set probe = probe / 10_u64;
+    set digits = digits +wrap 1_u64;
+  }
+  let spare = destination^.len;
+  let glyphs = endpoint_digit_glyphs.len;
+  let end = at +wrap digits;
+  let cursor = end;
+  let rest = value;
+  loop @emit {
+    let started = cursor <= at;
+    if started {
+      break @emit;
+    }
+    set cursor = cursor -wrap 1_u64;
+    let digit = rest % 10_u64;
+    let writable = cursor < spare;
+    if writable {
+      let glyph = endpoint_digit_glyphs[digit];
+      set destination^[cursor] = glyph;
+    }
+    set rest = rest / 10_u64;
+  }
+  return end;
+}
+
+fn send_all(send: &TcpSend, source: &[u8], length: u64) -> result: Result<unit, IoError> reads(source), writes(send) waits contract {
+  define source_length = source^.len;
+  requires length <= source_length;
+} {
+  doc "Sends one prefix of the source range, reattempting until the connection has accepted every byte or refused it.";
+  let sent = 0_u64;
+  loop @sending {
+    let pending = sent < length;
+    if pending {
+    } else {
+      break @sending;
+    }
+    let no_deadline = None<std::time::Instant>();
+    let wait_cancel = std::time::cancel_never();
+    let wait_outcome = send_once(send: send, source: source, start: sent, end: length, deadline: no_deadline, cancel: &wait_cancel);
+    std::time::close_cancel_watch(watch: move wait_cancel);
+    match wait_outcome {
+      Ok(value: next) => {
+        set sent = next;
+      }
+      Err(error: problem) => {
+        return Err<unit, IoError>(error: problem);
+      }
+    }
+  }
+  return Ok<unit, IoError>(value: unit);
+}
+
+fn echo_until_end(receive: &TcpReceive, send: &TcpSend, sink: &[u8], observed: u64) -> result: u8 writes(receive), writes(send), writes(sink) waits contract {
+  define sink_length = sink^.len;
+  requires observed <= sink_length;
+} {
+  doc "Returns every byte the peer sends on the connection until the peer stops sending, and answers 0 when it stopped by ending the stream and a nonzero code when a receive or a send was refused.";
+  let no_deadline = None<std::time::Instant>();
+  let outcome = 0_u8;
+  loop @chunks {
+    let available = 0_u64;
+    let ended = 0_u8;
+    let wait_cancel = std::time::cancel_never();
+    let wait_outcome = receive_next(receive: receive, destination: sink, start: 0_u64, end: observed, deadline: no_deadline, cancel: &wait_cancel);
+    std::time::close_cancel_watch(watch: move wait_cancel);
+    match wait_outcome {
+      Ok(value: endpoint) => {
+        set available = endpoint;
+      }
+      Err(error: read_stop) => {
+        match read_stop {
+          ReadEnd() => {
+            set ended = 1_u8;
+          }
+          ReadFailed(error: problem) => {
+            set outcome = 20_u8;
+            set ended = 2_u8;
+          }
+        }
+      }
+    }
+    if ended == 0_u8 {
+      match send_all(send: send, source: sink, length: available) {
+        Ok(value: delivered) => {
+        }
+        Err(error: problem) => {
+          set outcome = 21_u8;
+          set ended = 2_u8;
+        }
+      }
+    }
+    if ended == 0_u8 {
+    } else {
+      break @chunks;
+    }
+  }
+  return outcome;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  doc "Connects to the harness's loopback listener named by the invocation, opens its own listener on 127.0.0.1 with port 0, reads the port the host chose with listener_address, reports that port to the harness as decimal text and a line feed over the first connection, accepts the harness's second connection on its own listener, and returns every byte that connection sends until the peer stops sending [PRE-2]. The harness holds the first listener throughout, so no port is reserved and released outside the program, and the harness's bytes come back only if the port reported is the one the program's own listener is bound to.";
+  let Inputs(args: args, cwd: cwd_directory, handles: handles, ..) = move inputs;
+  let std::fs::Directory(read: cwd, write: cwd_write) = move cwd_directory;
+  std::fs::close_directory_write(factory: &handles, directory: move cwd_write);
+  std::fs::close_directory(factory: &handles, directory: move cwd);
+  let digits = slots_new::<u8, 16>();
+  for @fill_digits (
+    at in 0_u64..16_u64,
+    invariant grown_digits: digits.len == at
+  ) {
+    place_back(window: &digits, value: 0_u8);
+  }
+  let line = slots_new::<u8, 32>();
+  for @fill_line (
+    at in 0_u64..32_u64,
+    invariant grown_line: line.len == at
+  ) {
+    place_back(window: &line, value: 0_u8);
+  }
+  let chunk = slots_new::<u8, 256>();
+  for @fill_chunk (
+    at in 0_u64..256_u64,
+    invariant grown_chunk: chunk.len == at
+  ) {
+    place_back(window: &chunk, value: 0_u8);
+  }
+  let room = 16_u64;
+  let kept = 32_u64;
+  let observed = 256_u64;
+  let window = &digits[0_u64..16_u64];
+  let text = &line[0_u64..32_u64];
+  let sink = &chunk[0_u64..256_u64];
+  let arguments = args_count(args: &args);
+  let named = arguments >= 2_u64;
+  if named {
+  } else {
+    return exit_status(code: 1_u8);
+  }
+  let carried = 0_u64;
+  match arg_get(args: &args, position: 1_u64) {
+    Ok(value: argument) => {
+      match host_copy_utf8(value: &argument, destination: window, start: 0_u64, end: room) {
+        Ok(value: written) => {
+          set carried = written;
+        }
+        Err(error: copy_problem) => {
+          set carried = 0_u64;
+        }
+      }
+    }
+    Err(error: argument_problem) => {
+      set carried = 0_u64;
+    }
+  }
+  if carried == 0_u64 {
+    return exit_status(code: 2_u8);
+  }
+  let harness_port = parse_port(digits: window, length: carried);
+  let harness_at = socket_address_v4(a: 127_u8, b: 0_u8, c: 0_u8, d: 1_u8, port: harness_port);
+  let no_deadline = None<std::time::Instant>();
+  let connect_cancel = std::time::cancel_never();
+  let connected = tcp_connect(factory: &handles, address: &harness_at, deadline: no_deadline, cancel: &connect_cancel);
+  std::time::close_cancel_watch(watch: move connect_cancel);
+  match move connected {
+    Ok(value: report_link) => {
+      let outcome = 0_u8;
+      let listen_at = socket_address_v4(a: 127_u8, b: 0_u8, c: 0_u8, d: 1_u8, port: 0_u16);
+      match tcp_listen(factory: &handles, address: &listen_at) {
+        Ok(value: bound) => {
+          match listener_address(listener: &bound) {
+            Ok(value: own_address) => {
+              let chosen = socket_address_port(address: &own_address);
+              if chosen == 0_u16 {
+                set outcome = 4_u8;
+              } else {
+                let wide_chosen = cvt::<u16, u64>(chosen);
+                let length = put_decimal(destination: text, at: 0_u64, value: wide_chosen);
+                set length = put_byte(destination: text, at: length, value: 10_u8);
+                let fits = length <= kept;
+                if fits {
+                  match send_all(send: &report_link.send, source: text, length: length) {
+                    Ok(value: delivered) => {
+                      let accept_cancel = std::time::cancel_never();
+                      let accepted = tcp_accept(factory: &handles, listener: &bound, deadline: no_deadline, cancel: &accept_cancel);
+                      std::time::close_cancel_watch(watch: move accept_cancel);
+                      match move accepted {
+                        Ok(value: arrival) => {
+                          let AcceptedConnection(connection: link, peer: arrived_from) = move arrival;
+                          match local_address(receive: &link.receive) {
+                            Ok(value: reached) => {
+                              let reached_port = socket_address_port(address: &reached);
+                              if reached_port == chosen {
+                                set outcome = echo_until_end(receive: &link.receive, send: &link.send, sink: sink, observed: observed);
+                              } else {
+                                set outcome = 5_u8;
+                              }
+                            }
+                            Err(error: reached_problem) => {
+                              set outcome = 6_u8;
+                            }
+                          }
+                          let TcpConnection(receive: link_receive, send: link_send) = move link;
+                          close_receive(factory: &handles, receive: move link_receive);
+                          close_send(factory: &handles, send: move link_send);
+                        }
+                        Err(error: accept_problem) => {
+                          set outcome = 7_u8;
+                        }
+                      }
+                    }
+                    Err(error: send_problem) => {
+                      set outcome = 8_u8;
+                    }
+                  }
+                } else {
+                  set outcome = 9_u8;
+                }
+              }
+            }
+            Err(error: address_problem) => {
+              set outcome = 3_u8;
+            }
+          }
+          close_listener(factory: &handles, listener: move bound);
+        }
+        Err(error: listen_problem) => {
+          set outcome = 10_u8;
+        }
+      }
+      let TcpConnection(receive: report_receive, send: report_send) = move report_link;
+      close_receive(factory: &handles, receive: move report_receive);
+      close_send(factory: &handles, send: move report_send);
+      return exit_status(code: outcome);
+    }
+    Err(error: connect_problem) => {
+      return exit_status(code: 11_u8);
+    }
+  }
+}

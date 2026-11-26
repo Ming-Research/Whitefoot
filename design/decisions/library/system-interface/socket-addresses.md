@@ -1,6 +1,6 @@
 # Socket addresses
 
-How a program reads a socket address's family, components and port, and the local address of a connection.
+How a program reads a socket address's family, components and port, the local address of a connection, and the address a listener is bound to.
 
 ### decision socket-address-ip-returns-enum
 The nonwaiting `std::net::socket_address_ip` reads only the address it is given and returns the enum `IpAddress`: `Ipv4` with four `u8` octets or `Ipv6` with eight `u16` groups, in written order.
