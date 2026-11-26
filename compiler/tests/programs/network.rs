@@ -389,6 +389,61 @@ fn a_listener_reports_the_port_the_host_chose_on_both_routes() {
     }
 }
 
+/// [PRE-2] A listener opened on the IPv6 loopback with port 0 reports the
+/// port the host chose, and its address is `::1`: `tcp_listener_address_v6.wf`
+/// does what `tcp_listener_address.wf` does with a listener on `::1`, and
+/// answers a nonzero exit code when the address `listener_address` reports is
+/// not the IPv6 loopback. The token this side sends to `[::1]:<reported>` comes
+/// back only from the program's own listener. A host without an IPv6 loopback
+/// skips the case, since the program could not listen there.
+#[test]
+fn an_ipv6_listener_reports_the_port_the_host_chose_on_both_routes() {
+    if free_port_v6().is_none() {
+        eprintln!("skipped: this host has no IPv6 loopback to bind");
+        return;
+    }
+    let llvm = compile_program("tcp_listener_address_v6.wf");
+    let program = build_program(&llvm);
+    for native_ring in [true, false] {
+        let held = TcpListener::bind("127.0.0.1:0").expect("hold a loopback listener");
+        let held_port = held.local_addr().expect("the held listener's address").port();
+        let text = held_port.to_string();
+        let child = program.spawn_on_route(native_ring, &[text.as_bytes()]);
+        let mut report = accept_when_ready(&held);
+        let mut line = Vec::new();
+        let mut byte = [0_u8; 1];
+        while line.last() != Some(&b'\n') {
+            assert!(line.len() < 16, "the report is a short line: {line:?}");
+            let count = report.read(&mut byte).expect("read the reported port");
+            assert_eq!(count, 1, "the report ended before its line feed: {line:?}");
+            line.push(byte[0]);
+        }
+        let reported: u16 = std::str::from_utf8(&line[..line.len() - 1])
+            .expect("the report is text")
+            .parse()
+            .expect("the report is one decimal port");
+        assert_ne!(reported, 0, "native ring: {native_ring}");
+        let mut stream = connect_to_when_ready(SocketAddr::new(
+            std::net::Ipv6Addr::LOCALHOST.into(),
+            reported,
+        ));
+        let token = fresh_token();
+        stream.write_all(&token).expect("send the token");
+        stream
+            .shutdown(Shutdown::Write)
+            .expect("end this side's sending");
+        let mut echoed = Vec::new();
+        stream
+            .read_to_end(&mut echoed)
+            .expect("read the echoed token");
+        drop(stream);
+        drop(report);
+        let (status, _) = finished(child);
+        assert_eq!(status, 0, "native ring: {native_ring}");
+        assert_eq!(echoed, token, "native ring: {native_ring}");
+    }
+}
+
 /// One port the host is not using on the IPv6 loopback, or `None` when the
 /// host has no IPv6 loopback to bind.
 fn free_port_v6() -> Option<u16> {
