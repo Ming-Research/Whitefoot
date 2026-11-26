@@ -118,10 +118,16 @@ gate_make() {
 }
 
 # budget_row LABEL -- a row of the time budgets with a number in each of the
-# four Linux CPU columns, which the gate's verdict needs for every labelled
-# stage (a missing row fails the final verdict on every host).
+# Linux CPU columns, which the gate's verdict needs for every labelled stage (a
+# missing row fails the final verdict on every host, and a `-` in a CPU column
+# fails every job that CPU is given). The Linux columns are the header's
+# columns that a `cpu` line names, so a column the owner adds is required too.
 budget_row() {
-    awk -v label="$1" '$1 == label && $2 ~ /^[0-9]+$/ && $3 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ && $5 ~ /^[0-9]+$/ { found = 1 } END { exit !found }' "$budgets"
+    awk -v want="$1" '
+        $1 == "cpu" { class[$2] = 1; next }
+        $1 == "label" { for (i = 2; i <= NF; i++) linux[i] = ($i in class); next }
+        $1 == want { ok = 1; for (i in linux) if (linux[i] && $i !~ /^[0-9]+$/) ok = 0; if (ok) found = 1 }
+        END { exit !found }' "$budgets"
 }
 
 # Every part's stage label, and the compiler stage label its tests run under,
