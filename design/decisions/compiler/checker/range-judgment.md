@@ -71,6 +71,11 @@ The range walk takes its scope explicitly: symbolic validation still discharges 
 A scalar binding the walk holds as a value becomes exposed when a reference to it is formed, and every write the walk cannot place and every `atomic_stmt` forgets exposed bindings.
 - rejected: an agent proposed giving a borrowed scalar binding a walk location, so that a write through the reference is placed; the owner rejected it, because it is more precise but changes how the walk models every binding.
 
+### decision joined-references-forget-each-target
+References that differ between a join's arms form one view of every place they name; a write or call through it forgets what it writes at each place, and a read through it is unknown.
+- rejected: an agent proposed treating such a reference as one the walk cannot place, so that a write or call through it forgets every location; the owner rejected it, because that also drops the facts of storage it cannot reach and rejects programs the specification accepts.
+- rejected: an agent proposed a conditional write at each place, defined through the join's selector; the owner rejected it, because it needs its own conditional write for references, elements and scalars and enlarges the walk's and solver's problems, while no program needs the written value.
+
 ### decision entry-places-use-the-ordinary-clause
 An entry storage place has an entry-qualified binding root, and an `unchanged` conclusion is an equality of exit and entry reads with a whole-selection marker.
 - rejected: an agent proposed a second clause representation for `unchanged`; the owner rejected it, because the ordinary one keeps its binder, guard, definedness and instance accounting, and the marker states a version claim without a type equality.
