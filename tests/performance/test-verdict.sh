@@ -383,7 +383,7 @@ expect_layout_refused layout-resumed-without-start "$work/trace-c" 'REFUSED: unr
 # FIRST-LAST:FACTOR,...: each position's time is 1000 ns times its factor.
 placement_layout() {
     : > "$work/layout"
-    for kernel in mandelbrot records fir quadrature stencil; do
+    for kernel in $kernels; do
         state=alike
         for differ in "$@"; do if [ "$kernel" = "$differ" ]; then state=differ; fi; done
         echo "$kernel $state" >> "$work/layout"
@@ -410,7 +410,7 @@ placement_rows() {
 }
 positions() {
     set +e
-    awk -v stage="$1" -f "$here/positions.awk" "$work/layout" "$work/rows" > "$work/out" 2>&1
+    awk -v stage="$1" -v kernels="$kernels" -f "$here/positions.awk" "$work/layout" "$work/rows" > "$work/out" 2>&1
     status=$?
     set -e
 }
@@ -476,6 +476,13 @@ placement_layout stencil; placement_rows stencil 1 '' ''; placement_rows stencil
 expect_positions_match second-round-before-the-first-is-read first 2 'REFUSED: a second round before the first is read'
 placement_layout stencil; placement_rows stencil 1 '' ''
 expect_positions_match unknown-stage none 2 'REFUSED: stage must be first, final or aside'
+# The kernels are the caller's, as for reduce.awk and verdict.awk: none is
+# refused, and a layout of the kernels named is read whatever they are.
+kernels=""; placement_layout
+expect_positions_match positions-no-kernels first 2 'REFUSED: no kernels named'
+kernels="fir stencil"; placement_layout stencil; placement_rows stencil 1 30:1.3 6-20:1.3
+expect_positions positions-of-the-kernels-named first 0 'stencil again\n'
+kernels=$all
 
 placement_layout stencil
 placement_rows stencil 1 30:1.3 6-20:1.3; placement_rows stencil 2 30:1.25 6-20:1.35
