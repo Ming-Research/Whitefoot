@@ -128,8 +128,8 @@ completion criterion were refused.
   mode runs on a hosted runner and whose pilot and main modes run only on the
   i9-14900K; never a gate, and no gate group runs the tools' self-tests. Until
   the compiler of Whitefoot#468 is on main, a smoke dispatched from main stops
-  at the identity step, since main's `--par` has no demand splitting. No
-  result is recorded yet.
+  at the identity step, which reports the sequential and demand images
+  differing. No result is recorded yet.
 
 ## Completed current-compiler bounded research
 
