@@ -263,7 +263,7 @@ jobs:
           MODE: ${{ matrix.mode }}
           COMMIT: ${{ needs.prepare.outputs.commit }}
         run: |
-          printf 'Linux %s: exact candidate %s, installed by the Linux commands of the getting started guide, built and ran the programs of the guide and passed inventory, coroutine IR, ordinary/full/ThinLTO, cold/warm caches, stack exhaustion, the runtime's frame probes, relocation and completeness checks. Successful clang/lld executions are traced; host calls are zero.\n' \
+          printf 'Linux %s: exact candidate %s, installed by the Linux commands of the getting started guide, built and ran the programs of the guide and passed inventory, coroutine IR, ordinary/full/ThinLTO, cold/warm caches, stack exhaustion, the stack probes of the runtime frames, relocation and completeness checks. Successful clang/lld executions are traced; host calls are zero.\n' \
             "$MODE" "$COMMIT" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Linux command, inventory and execution logs

@@ -72,7 +72,8 @@ jobs:
           s = p.read_text()
           old = '  %view = alloca { ptr, i64 }, align 8\n  store ptr %destination.data, ptr %view, align 8\n  %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1\n  store i64 %destination.len, ptr %view.len, align 8\n  call void @wf__body_host_copy_bytes('
           assert s.count(old) == 1
-          new = old.replace('  %view = alloca', '  %wide = alloca [65536 x i8], align 16\n  store volatile i8 1, ptr %wide, align 1\n  %view = alloca', 1)
+          new = old.replace('\n  call void @wf__body_host_copy_bytes(', '\n  %wide = alloca [65536 x i8], align 16\n  store ptr %wide, ptr %view, align 8\n  call void @wf__body_host_copy_bytes(', 1)
+          assert new != old
           p.write_text(s.replace(old, new))
           PY
           run_test ablated
@@ -158,8 +159,25 @@ jobs:
           notice 'upstream implemented' "$RUNNER_TEMP/upstream-implemented.txt"
           [ "$(cat "$RUNNER_TEMP/apple-implemented.status")" = 0 ] || { echo 'apple implemented: expected green'; failed=1; }
           [ "$(cat "$RUNNER_TEMP/upstream-implemented.status")" = 0 ] || { echo 'upstream implemented: expected green'; failed=1; }
-          grep -q 'compiled by .*/up-implemented/bin/clang' "$RUNNER_TEMP/upstream-implemented.txt" || \
-            { echo 'upstream implemented: the packaged clang was not the one used'; failed=1; }
+          real() { python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$1"; }
+          printed=$(sed -n 's/^runtime frames compiled by \(.*\): clang version .*/\1/p' "$RUNNER_TEMP/upstream-implemented.txt")
+          [ "$(real "$printed")" = "$(real "$RUNNER_TEMP/up-implemented/bin/clang")" ] || \
+            { echo "upstream implemented: the packaged clang was not the one used: $printed"; failed=1; }
+
+          # The comparison check-runtime-frames.sh makes, on the line the test
+          # prints when it runs outside any package (Apple's /usr/bin/clang) and
+          # on the line it prints beside the upstream clang.
+          comparison() { # line: the script's own python block, run against up-implemented
+            package="$RUNNER_TEMP/up-implemented"
+            reported="$1"
+            eval "$(sed -n '/^python3 -I - /,/^PY$/p' .github/toolchain/check-runtime-frames.sh)" 2>&1
+          }
+          outside=$(comparison "$(grep '^runtime frames compiled by ' "$RUNNER_TEMP/apple-implemented.txt")"); outside_status=$?
+          echo "::notice title=outside the package::status=$outside_status $(echo "$outside" | tail -1 | cut -c1-300)"
+          [ "$outside_status" != 0 ] || { echo 'outside: expected the comparison to fail'; failed=1; }
+          inside=$(comparison "$(grep '^runtime frames compiled by ' "$RUNNER_TEMP/upstream-implemented.txt")"); inside_status=$?
+          echo "::notice title=beside the package clang::status=$inside_status $(echo "$inside" | tail -1 | cut -c1-300)"
+          [ "$inside_status" = 0 ] || { echo 'beside: expected the comparison to pass'; failed=1; }
 
           python3 - <<'PY'
           import pathlib
@@ -176,7 +194,9 @@ jobs:
           s = p.read_text()
           old = '  %view = alloca { ptr, i64 }, align 8\n  store ptr %destination.data, ptr %view, align 8\n  %view.len = getelementptr inbounds { ptr, i64 }, ptr %view, i32 0, i32 1\n  store i64 %destination.len, ptr %view.len, align 8\n  call void @wf__body_host_copy_bytes('
           assert s.count(old) == 1
-          p.write_text(s.replace(old, old.replace('  %view = alloca', '  %wide = alloca [65536 x i8], align 16\n  store volatile i8 1, ptr %wide, align 1\n  %view = alloca', 1)))
+          new = old.replace('\n  call void @wf__body_host_copy_bytes(', '\n  %wide = alloca [65536 x i8], align 16\n  store ptr %wide, ptr %view, align 8\n  call void @wf__body_host_copy_bytes(', 1)
+          assert new != old
+          p.write_text(s.replace(old, new))
           PY
           build ablated
           beside_upstream ablated

@@ -107,7 +107,10 @@ fn compiler_line() -> String {
 /// Compile one runtime unit as the driver does and return its assembly and
 /// its stack-usage report (empty where clang opened none).
 fn compile(directory: &Path, relative_path: &str, probe: &[&str]) -> (String, String) {
-    let assembly = directory.join(relative_path).with_extension("s");
+    // One output per unit file name: `ordinary_values.c` and
+    // `ordinary_values.ll` share a stem, and a unit that leaves no report
+    // must not be read through the previous unit's.
+    let assembly = directory.join(format!("{relative_path}.s"));
     let mut command = resolved_toolchain().expect("the toolchain resolves").command();
     if relative_path.ends_with(".ll") {
         command
@@ -204,8 +207,11 @@ fn every_runtime_c_frame_over_a_page_is_probed() {
 
 #[test]
 fn a_stack_usage_row_is_read_by_name_size_and_kind() {
+    // The third row is an IR unit's, which has no source line: clang names
+    // the module by its input path, then the function.
     let report = "file_posix.c:748:5:wf_file_wait_readiness\t32808\tstatic\n\
                   ordinary_values.c:10:1:fill\t64\tdynamic,bounded\n\
+                  /scratch/ordinary_values.ll:wf_std.text.host_copy_bytes\t65632\tstatic\n\
                   a line that is not a row\n";
     assert_eq!(
         frames(report),
@@ -220,10 +226,15 @@ fn a_stack_usage_row_is_read_by_name_size_and_kind() {
                 bytes: 64,
                 kind: "dynamic,bounded".to_owned()
             },
+            Frame {
+                name: "wf_std.text.host_copy_bytes".to_owned(),
+                bytes: 65632,
+                kind: "static".to_owned()
+            },
         ]
     );
     let needs: Vec<bool> = frames(report).iter().map(Frame::needs_probe).collect();
-    assert_eq!(needs, [true, true], "a large frame and a dynamic one");
+    assert_eq!(needs, [true, true, true], "a large frame, a dynamic one and an IR unit's");
     let small = frames("a.c:1:1:small\t4096\tstatic\n");
     assert!(!small[0].needs_probe(), "a page exactly stays inside the guard");
 }
