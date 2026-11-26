@@ -16,6 +16,7 @@ Environment: E1_OUT, E1_CPU (default 2), E1_ROUNDS (default 5),
 E1_WARMUP (default 1), E1_BASE (baseline main commit).
 """
 
+import collections
 import json
 import os
 import re
@@ -190,36 +191,69 @@ def multicore():
         record("multicore", 0, variant, VARIANTS[variant](False))
 
 
+def std_closure(graph_text):
+    """The std modules a graph names, closed over lib/std/modules.wfg."""
+    named = set(re.findall(r"std::((?:collections::)?\w+)", graph_text))
+    edges = {}
+    for line in (ROOT / "lib/std/modules.wfg").read_text().splitlines():
+        match = re.match(r"pkg::([\w:]+):\s*\[(.*)\];", line.strip())
+        if match:
+            edges[match[1]] = re.findall(r"pkg::([\w:]+)", match[2])
+    todo, seen = list(named), set()
+    while todo:
+        module = todo.pop()
+        if module not in seen:
+            seen.add(module)
+            todo.extend(edges.get(module, []))
+    return sorted(seen)
+
+
+def runtime_c_units(requires_heap):
+    """The runtime .c units a Linux build compiles: the driver's
+    non-Windows compile lists (compiler/src/bin/whitefootc.rs,
+    runtime_units), with ordinary_values.c and, where the emitted module
+    names the allocator, heap.c."""
+    driver = (ROOT / "compiler/src/bin/whitefootc.rs").read_text()
+    units = ["ordinary_values.c"] + (["heap.c"] if requires_heap else [])
+    for group in ("FLOOR", "CORE", "COMPLETION"):
+        match = re.search(r'#\[cfg\(not\(target_os = "windows"\)\)\]\s*const ' + group
+                          + r"_COMPILE_UNITS: &\[&str\] =\s*&\[(.*?)\];", driver, re.S)
+        if not match:
+            sys.exit(f"no {group}_COMPILE_UNITS list in whitefootc.rs")
+        units += re.findall(r'"([^"]+\.c)"', match[1])
+    return units
+
+
 def count():
     counts = {}
-    # Firn: its .wf sources and the std collection modules its graph names.
-    firn = sum(nonblank(p) for p in (ROOT / "apps/firn").rglob("*.wf"))
+    # Firn: its .wf and .wfm sources, and every std module its graph reaches.
+    firn_files = [p for p in (ROOT / "apps/firn").rglob("*") if p.suffix in (".wf", ".wfm")]
+    firn = sum(nonblank(p) for p in firn_files)
     graph = (ROOT / "apps/firn/modules.wfg").read_text()
-    std_modules = sorted(set(re.findall(r"std::collections::(\w+)", graph)))
-    std = sum(nonblank(p) for module in std_modules
-              for p in (ROOT / "lib/std/collections" / module).rglob("*.wf"))
-    # Runtime C units: what clang compiles during one build, through a
-    # wrapper that counts each .c argument's lines as it is compiled.
-    wrapper_dir = OUT / "clang-wrapper"
-    wrapper_dir.mkdir(parents=True, exist_ok=True)
-    real = shutil.which("clang")
-    tally = OUT / "clang-units.txt"
-    tally.write_text("")
-    wrapper = wrapper_dir / "clang"
-    wrapper.write_text(
-        "#!/bin/sh\n"
-        f"for a in \"$@\"; do case \"$a\" in *.c) printf '%s\\t%s\\n' \"$(basename \"$a\")\" "
-        f"\"$(grep -cv '^[[:space:]]*$' \"$a\")\" >> {tally};; esac; done\n"
-        f"exec {real} \"$@\"\n")
-    wrapper.chmod(0o755)
-    time_firn(compilers()["exp-gate"], None, True,
-              {"PATH": f"{wrapper_dir}:{os.environ['PATH']}"})
-    units = {}
-    for line in tally.read_text().splitlines():
-        name, lines = line.split("\t")
-        units[name] = int(lines)
-    counts["firn"] = {"wf": firn, "std_modules": std_modules, "std": std,
-                      "runtime_units": units, "runtime": sum(units.values()),
+    std_modules = std_closure(graph)
+    std_files = [p for module in std_modules
+                 for p in (ROOT / "lib/std" / module.replace("::", "/")).rglob("*")
+                 if p.suffix in (".wf", ".wfm")]
+    std = sum(nonblank(p) for p in std_files)
+    # Runtime C units: the driver compiles a fixed list with /usr/bin/clang;
+    # whether heap.c joins it is read from the emitted module, by the test
+    # the driver applies (compiler/src/backend/runtime.rs).
+    module = OUT / "firn-out/firn.ll"
+    module.parent.mkdir(parents=True, exist_ok=True)
+    env = {k: v for k, v in os.environ.items() if not k.startswith("WHITEFOOT_E1")}
+    run([compilers()["exp-gate"], "--graph", "apps/firn/modules.wfg", "--entry", "firn",
+         "--emit-llvm", "-o", module], cwd=ROOT, env=env, capture_output=True)
+    text = module.read_text()
+    requires_heap = any(name in text for name in (
+        "@wf__heap_take(", "@wf__heap_give(", "@wf__heap_retake(", "@wf__empty_window"))
+    units = {name: nonblank(ROOT / "compiler/src/backend" / name)
+             for name in runtime_c_units(requires_heap)}
+    missing = [name for name, lines in units.items() if lines == 0]
+    if missing:
+        sys.exit(f"runtime units not found: {missing}")
+    counts["firn"] = {"files": len(firn_files), "wf": firn, "std_modules": std_modules,
+                      "std_files": len(std_files), "std": std, "runtime_units": units,
+                      "runtime": sum(units.values()),
                       "total": firn + std + sum(units.values())}
     # Redis: the .c of every object one build makes, and every .h under
     # src/ and deps/.
@@ -261,13 +295,63 @@ def profile():
         log("PROFILE UNAVAILABLE: perf record failed")
         return
     report = subprocess.run([perf, "report", "-i", str(data), "--no-children", "--stdio",
-                             "--sort", "symbol", "--percent-limit", "0.3"],
+                             "--sort", "comm,dso,symbol", "--percent-limit", "0"],
                             capture_output=True, text=True)
     (OUT / "perf-report.txt").write_text(report.stdout)
-    log("PERF REPORT BEGIN")
-    log("\n".join(line for line in report.stdout.splitlines()
-                  if line.strip() and not line.startswith("#"))[:20000])
+    categories = collections.Counter()
+    top = []
+    for line in report.stdout.splitlines():
+        match = re.match(r"\s*([\d.]+)%\s+(\S+)\s+(\S+)\s+\[(.)\]\s+(.*?)\s*$", line)
+        if not match:
+            continue
+        share, comm, dso, symbol = float(match[1]), match[2], match[3], match[5]
+        categories[profile_category(comm, dso, symbol)] += share
+        top.append(f"{share:6.2f}% {comm} {dso} {symbol[:160]}")
+    log("PROFILE CATEGORIES (self time, share of all samples)")
+    for name, share in categories.most_common():
+        log(f"  {share:6.2f}%  {name}")
+    log("PERF REPORT TOP 60")
+    log("\n".join(top[:60]))
     log("PERF REPORT END")
+
+
+ALLOCATION = ("malloc", "free", "_int_", "__libc_", "cfree", "realloc", "calloc", "__rdl_", "__rust_alloc",
+              "__rust_dealloc", "__rust_realloc", "unlink_chunk", "finish_grow", "tcache",
+              "malloc_consolidate", "sysmalloc", "brk", "mmap", "munmap")
+COPYING = ("memmove", "memcpy", "memcmp", "memset", "__memmove", "__memcpy", "__memcmp",
+           "__memset", "bcmp")
+
+
+def profile_category(comm, dso, symbol):
+    """One self-time sample's category. Named functions of the derivation
+    (range_judgment) and of ordinary entailment are their algorithms;
+    allocation, copying, standard-container code and hashing are
+    implementation overhead wherever they are called from."""
+    if not comm.startswith("whitefootc"):
+        return f"process {comm} (LLVM, link and other children)"
+    bare = symbol.lstrip("<")
+    if any(bare.startswith(name) for name in ALLOCATION):
+        return "overhead: allocation"
+    if any(name in symbol for name in COPYING):
+        return "overhead: copying"
+    if bare.startswith(("core::hash", "hashbrown", "<std::hash", "std::collections::hash")) \
+            or "core::hash::" in symbol.split(" as ")[0]:
+        return "overhead: hashing"
+    if bare.startswith(("alloc::", "core::")):
+        if "range_judgment" in symbol:
+            return "overhead: containers and clones in the derivation"
+        if "entailment" in symbol:
+            return "overhead: containers and clones in ordinary entailment"
+        return "overhead: containers and clones elsewhere"
+    if bare.startswith("whitefoot::semantic::range_judgment") or \
+            symbol.startswith("<whitefoot::semantic::range_judgment"):
+        return "algorithm: derivation (range_judgment)"
+    if bare.startswith("whitefoot::semantic::entailment") or \
+            symbol.startswith("<whitefoot::semantic::entailment"):
+        return "algorithm: ordinary entailment"
+    if "whitefoot::" in symbol:
+        return "compiler: other phases (syntax, resolution, lowering, emission)"
+    return f"other in whitefootc ({dso})"
 
 
 def summary():
@@ -304,10 +388,12 @@ def summary():
                 continue
             alone = statistics.median(r["seconds"] - r["ordinary_ms"] / 1000 for r in per_round)
             whole = statistics.median(r["seconds"] for r in per_round)
+            wf_kloc = (counts["firn"]["wf"] + counts["firn"]["std"]) / 1000
             lines.append(
                 f"{variant:24} derivation-alone {alone:.2f} s; verdict ratio per KLOC "
                 f"{(alone / firn_kloc) / redis_rate:.2f}; whole-time ratio per KLOC "
-                f"{(whole / firn_kloc) / redis_rate:.2f}; raw ratio {alone / redis[0]:.2f}")
+                f"{(whole / firn_kloc) / redis_rate:.2f}; raw ratio {alone / redis[0]:.2f}; "
+                f"ratio per Whitefoot-source KLOC (reference) {(alone / wf_kloc) / redis_rate:.2f}")
         main = stats("firn-main", "seconds")
         if main:
             lines.append(f"firn-main ratio per KLOC {(main[0] / firn_kloc) / redis_rate:.2f}")

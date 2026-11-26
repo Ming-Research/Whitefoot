@@ -22,8 +22,9 @@ env:
   CARGO_TERM_COLOR: never
   CARGO_INCREMENTAL: 0
   E1_CPU: "2"
-  E1_ROUNDS: "1"
-  E1_WARMUP: "0"
+  E1_ROUNDS: "5"
+  E1_WARMUP: "1"
+  E1_MULTICORE: "1"
   WHITEFOOT_CHECK_TIMEOUT: "10800"
 
 jobs:
@@ -80,7 +81,6 @@ jobs:
             ${{ env.E1_OUT }}/counts.json
             ${{ env.E1_OUT }}/summary.txt
             ${{ env.E1_OUT }}/perf-report.txt
-            ${{ env.E1_OUT }}/clang-units.txt
           if-no-files-found: warn
           retention-days: 30
 
