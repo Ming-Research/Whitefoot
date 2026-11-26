@@ -1,0 +1,98 @@
+# Temporary (removed before the full check): runs the conformance case
+# share1-pos-close-leaves-the-state-to-an-executing-statement on the compiler
+# as it is (control) and on a compiler whose atomic statements count no handle
+# of their own (mutant), plain and under each sanitizer, 30 times each, and
+# prints the tally of exit statuses and the first report of each mode.
+name: tmp-executing-statement-mutant
+
+on:
+  push:
+
+concurrency:
+  group: tmp-executing-statement-mutant-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  run:
+    name: ${{ matrix.variant }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [control, mutant]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the host toolchain
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o "$RUNNER_TEMP/llvm.sh"
+          version=$(tr -d '[:space:]' < .github/llvm-major)
+          sudo bash "$RUNNER_TEMP/llvm.sh" "$version"
+          sudo apt-get install -y --no-install-recommends "libclang-rt-$version-dev"
+          sudo ln -sf "/usr/bin/clang-$version" /usr/bin/clang
+          sudo ln -sf "/usr/bin/ld.lld-$version" /usr/bin/ld.lld
+          rustup default stable
+          nproc
+
+      - name: Fetch locked compiler dependencies
+        run: cargo fetch --locked --manifest-path compiler/Cargo.toml
+
+      - name: Make the mutant
+        if: matrix.variant == 'mutant'
+        run: |
+          python3 - <<'PY'
+          p = 'compiler/src/semantic/check/control/atomic.rs'
+          s = open(p).read()
+          old = 'target.kept_by_place = watch.as_ref()'
+          assert s.count(old) == 1
+          open(p, 'w').write(s.replace(old, 'target.kept_by_place = true || watch.as_ref()'))
+          PY
+          git diff
+
+      - name: Build the compiler
+        run: |
+          perl .github/run-check.pl build-compiler cargo build --profile gate --locked --offline --manifest-path compiler/Cargo.toml --bin whitefootc
+
+      - name: Run the case
+        run: |
+          set +e
+          ulimit -c 0
+          bin="$PWD/compiler/target/gate/whitefootc"
+          case_file="$PWD/tests/conformance/cases/share1-pos-close-leaves-the-state-to-an-executing-statement.wf"
+          export ASAN_OPTIONS=detect_leaks=0:detect_stack_use_after_return=0
+          export TSAN_OPTIONS=halt_on_error=1
+          export UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1
+          for mode in plain par address address-par thread thread-par; do
+            case "$mode" in
+              plain) flags="" ;;
+              par) flags="--par" ;;
+              address) flags="--sanitize address" ;;
+              address-par) flags="--sanitize address --par" ;;
+              thread) flags="--sanitize thread" ;;
+              thread-par) flags="--sanitize thread --par" ;;
+            esac
+            out="$RUNNER_TEMP/case-$mode"
+            echo "== ${{ matrix.variant }} $mode: whitefootc $flags"
+            "$bin" "$case_file" $flags -o "$out" || { echo "compile failed for $mode"; continue; }
+            : > "$RUNNER_TEMP/codes-$mode"
+            for i in $(seq 1 30); do
+              "$out" > "$RUNNER_TEMP/out-$mode-$i" 2>&1
+              code=$?
+              echo "$code" >> "$RUNNER_TEMP/codes-$mode"
+              if [ "$code" != 9 ] && [ ! -e "$RUNNER_TEMP/first-$mode" ]; then
+                cp "$RUNNER_TEMP/out-$mode-$i" "$RUNNER_TEMP/first-$mode"
+              fi
+            done
+            echo "exit statuses over 30 runs of ${{ matrix.variant }} $mode:"
+            sort "$RUNNER_TEMP/codes-$mode" | uniq -c
+            if [ -e "$RUNNER_TEMP/first-$mode" ]; then
+              echo "first output with a status other than 9:"
+              head -c 3000 "$RUNNER_TEMP/first-$mode"
+            fi
+          done
+          exit 0
