@@ -1284,6 +1284,27 @@ pub(super) fn interval(
         collect_literal(literal, &mut atoms);
     }
     collect_linear(target, &mut atoms);
+    // A read's index tuple and a segment length's row name atoms of their
+    // own, which localization maps too; no definition is added.
+    loop {
+        let mut more = BTreeSet::new();
+        for atom in &atoms {
+            match &world.atoms[*atom as usize].def {
+                AtomDef::Read { indices, .. } => {
+                    for index in indices {
+                        collect_linear(index, &mut more);
+                    }
+                }
+                AtomDef::SegmentLength { row, .. } => collect_linear(row, &mut more),
+                _ => {}
+            }
+        }
+        let before = atoms.len();
+        atoms.extend(more);
+        if atoms.len() == before {
+            break;
+        }
+    }
     let mut query = Query {
         units: units.to_vec(),
         ..Query::default()
