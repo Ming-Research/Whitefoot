@@ -277,12 +277,80 @@ not read or close the peer. The test does not discriminate the pre-fix
 path: on windows-latest loopback that path completed the first phase with
 the whole range accepted, as described above.
 
-The review also identified an unverified, pre-existing question about a
-Windows helper's blocking `connect`: unlike accept/receive/send, it has no
-bounded readiness loop. Its interruption behavior and a separate connection
-regression are deferred in [the maintained TODO](../../../docs/todo.md),
-under "Windows helper connects have no demonstrated cancellation bound".
-This fix makes no claim about that distinct path.
+## Windows helper connects
+
+The review of that change also left a question about a Windows helper's
+blocking `connect`, which, unlike accept, receive and send, had no bounded
+readiness loop: `CancelSynchronousIo`, the only thing that interrupts a
+helper, is not documented to end a blocking Winsock call. The helper now makes
+a connect that carries a deadline or a watch, and every other helper connect,
+in nonblocking mode and waits for it in slices of at most 50 ms with the rule
+the accept uses (`wf_file_windows_bound_slice`), looking once more before a
+bound ends it so a connect the host already finished keeps its outcome, and
+restores blocking mode before it hands the connection out.
+
+`windows_bounded_connect_test.c` runs in the Windows `io-hosts` job on the
+helper route and on the completion-port route as the control. Its target is a
+loopback listener with `SO_CONDITIONAL_ACCEPT` that never calls `WSAAccept`:
+the [`SO_CONDITIONAL_ACCEPT`](https://learn.microsoft.com/en-us/windows/win32/winsock/so-conditional-accept)
+page says the stack then waits for the application and the client may time
+out first, whereas the [`listen`](https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-listen)
+page says a full queue answers WSAECONNREFUSED, so a full-backlog listener
+would refuse instead of staying silent. A raw nonblocking connect to the
+listener must stay pending for three seconds before anything is measured. The
+cases are a cancellation while the helper is inside the connect, a deadline,
+a watch already fired and a deadline already passed at the call, two hundred
+connects that can succeed raced by a firing delayed from 0 to 2 ms, a connect
+with no bound, and a refused connect; each bounded call must end within one
+second of the firing or the deadline, and after a warm-up pass the process's
+handle count, the handle factory's credit, the driver's cancellation list and
+its timers must be what they were. Three arguments, `control-bound`,
+`control-leak` and `control-blocking`, make the one-second bound, the handle
+comparison and the blocking-mode probe fail on purpose, and the job requires
+each to fail through that check.
+
+Five more cases were added to those, each aimed at something the first seven
+cannot show. F: a bound that is never reached (a watch, a far deadline, both)
+still returns a blocking-mode connection at once, which the first cases only
+show for a connect with no bound. G: thirty firings, 0 to 29 ms after the
+submit, meet the helper before it has claimed the record, while it creates the
+socket, inside the connect and inside the wait, where A fires at one phase
+only. H: a deadline and a watch on one connect, the one reached first deciding
+the outcome, which no earlier case combines. I: deadlines of 1 to 99 ms, on
+both sides of the 50 ms slice, where B1 uses one deadline. J: a connect that
+can succeed raced by a deadline a few tens of microseconds away, the deadline
+twin of C. Their outcome after the change is read from the same temporary
+workflow on commit `d11a8051c`: it passed on the helper route and on the
+completion-port route in three runs
+([45614928392](https://github.com/Ming-Research/Whitefoot/actions/runs/45614928392),
+[45615539500](https://github.com/Ming-Research/Whitefoot/actions/runs/45615539500),
+[45615539854](https://github.com/Ming-Research/Whitefoot/actions/runs/45615539854)),
+and the connect step took 45 s there, against about 35 s for the first seven
+cases. The code before the change stops at case A, 21 s in, so G, H and I were
+never observed red on it one by one; each would wait for the host's connect
+timeout in the same way, which is a reading of the code and not an
+observation.
+
+Results, on windows-latest, of a temporary workflow that built and ran the
+test on the engine's pushes of the work's commits. Before the change
+([run 45610437036](https://github.com/Ming-Research/Whitefoot/actions/runs/45610437036),
+commit `af00f2346`): the helper route's first cancellation case, fired 150 ms
+into the connect, did not return until about 21 s later, at the host's own
+connect timeout, and then with `TimedOut` instead of `Cancelled` (the test
+stopped there, 24 s after it started, three of them the silent-target
+check); `CancelSynchronousIo` did not end the blocking connect. The
+completion-port route, which makes the connect with `ConnectEx`, passed every
+case: cancellation 0 ms, deadline 5 to 6 ms, 200 raced connects all connected.
+After the change ([run 45610437198](https://github.com/Ming-Research/Whitefoot/actions/runs/45610437198),
+commit `42543d469`): the helper route passed in 9 s with cancellation returning
+51 and 63 ms after the firing, deadline 12 and 0 ms after the deadline, a
+fired watch and a passed deadline 0 ms, 198 of 200 raced connects connected
+and 2 cancelled; the completion-port route passed unchanged; the existing
+send test printed the same four outcomes as before. `control-bound` failed
+with "took 20 ms, over the 0 ms bound", `control-leak` with "handle count 132
+after the cases, 131 before them" and `control-blocking` at the
+`WSAETIMEDOUT` check, each through its own check. The silent target stayed
+pending for the three-second self-check on that image.
 
 ## Cancellation conformance observations
 
