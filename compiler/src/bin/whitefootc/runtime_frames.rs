@@ -142,7 +142,13 @@ fn compile(directory: &Path, relative_path: &str, probe: &[&str]) -> (String, St
 }
 
 /// Every unit a link compiles, with the allocator unit a heap reference adds.
-/// A frame over a page in any of them must reach its probe.
+/// A frame over a page in any of them must reach its probe. The corpus group
+/// of the gate runs it, with the clang the host resolves.
+///
+/// The hand-written LLVM unit is read as IR, where no compile argument adds a
+/// probe: its definitions carry no attributes, so a frame over a page there
+/// fails this test until the definition's text gains a `probe-stack`
+/// attribute.
 #[test]
 fn every_runtime_c_frame_over_a_page_is_probed() {
     println!("{}", compiler_line());
