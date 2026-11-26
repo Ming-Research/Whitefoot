@@ -104,6 +104,11 @@ decide() {
                     for (c = 2; c <= fields; c++)
                         if (field[c] == workflow)
                             column = c
+                    if (!column) {
+                        printf "change-scope: the table has no column for the workflow \"%s\"\n", workflow > "/dev/stderr"
+                        broken = 1
+                        exit
+                    }
                     width = fields
                     continue
                 }
@@ -115,11 +120,6 @@ decide() {
                 count++
                 entry[count] = field[1]
                 mark[count] = field[column]
-            }
-            if (!column) {
-                printf "change-scope: the table has no column for the workflow \"%s\"\n", workflow > "/dev/stderr"
-                broken = 1
-                exit
             }
         }
         $0 != "" {

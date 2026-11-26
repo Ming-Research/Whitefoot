@@ -39,3 +39,13 @@ jobs:
           echo "merges: $(grep -c '' "$RUNNER_TEMP/merges.txt")"
           echo "sanitizers skipped: $(grep -c 'sanitizers=false' "$RUNNER_TEMP/merges.txt")"
           echo "io-hosts skipped: $(grep -c 'io-hosts=false' "$RUNNER_TEMP/merges.txt")"
+          # The merges that run only for a path of one kind.
+          for leave in '.github/time-budgets.txt' 'docs/guide/|README.md|README.zh-CN.md'; do
+            only=0
+            for merge in $(git log --first-parent --merges --since=2026-11-24T00:00 --format='%H' origin/main); do
+              all=$(git diff --name-only --no-renames "$merge^1" "$merge" | sh .github/change-scope.sh --decide io-hosts x 2> /dev/null | sed -n 's/^needed=//p')
+              rest=$(git diff --name-only --no-renames "$merge^1" "$merge" | grep -v -E "^($leave)" | sh .github/change-scope.sh --decide io-hosts x 2> /dev/null | sed -n 's/^needed=//p')
+              if [ "$all" = true ] && [ "$rest" = false ]; then only=$((only + 1)); echo "  only $leave: $(git log -1 --format='%h %s' "$merge" | cut -c1-80)"; fi
+            done
+            echo "io-hosts runs only for $leave: $only"
+          done

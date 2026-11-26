@@ -212,10 +212,17 @@ if grep -q ': no row$' "$work/err"; then
 fi
 
 # reads WORKFLOW FROM < PATHS: each path is read by the workflow by a row that
-# names it or a directory above it; FROM says where the paths were found.
+# names it or a directory above it; FROM says where the paths were found. A
+# path that names a directory of tracked files is that directory, with its `/`.
 reads() {
     : > "$work/out"
-    sort -u > "$work/found"
+    awk -v tracked="$work/tracked" '
+        BEGIN {
+            while ((getline line < tracked) > 0)
+                while (sub(/\/[^\/]*$/, "", line)) dir[line] = 1
+        }
+        { sub(/\/$/, ""); print (($0 in dir) ? $0 "/" : $0) }
+    ' | sort -u > "$work/found"
     [ -s "$work/found" ] || return 0
     if ! sh "$script" --decide "$1" "$base" < "$work/found" > /dev/null 2> "$work/err"; then
         fail "$2: the paths could not be decided"
