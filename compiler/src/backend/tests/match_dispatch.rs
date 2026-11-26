@@ -3728,10 +3728,9 @@ fn part_rbp_saves(assembly: &str) -> Vec<(String, usize)> {
 fn the_attribute_removes_every_rbp_save_from_the_parts_it_is_written_on() {
     let attribute = host_attribute();
     if attribute.is_empty() {
-        assert!(
-            !cfg!(all(target_arch = "x86_64", target_os = "linux")),
-            "the pinned LLVM on Linux x86-64 honors the attribute"
-        );
+        if cfg!(all(target_arch = "x86_64", target_os = "linux")) {
+            panic!("the pinned LLVM on Linux x86-64 honors the attribute");
+        }
         return;
     }
     let mut controlled = 0;
