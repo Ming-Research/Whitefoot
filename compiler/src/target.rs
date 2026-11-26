@@ -215,6 +215,30 @@ impl TargetLayout {
         }
     }
 
+    /// The clang arguments that give the runtime's own C definitions the
+    /// probing method [`Self::stack_probe_attributes`] gives generated ones,
+    /// because clang adds none by default for upstream targets.
+    ///
+    /// Linux names the driver option. Where the Darwin helper is available
+    /// Apple's own `-fstack-check` is named rather than left to Apple's
+    /// default, so a changed default cannot silently remove the probes.
+    /// Upstream clang's driver forwards `-fstack-clash-protection` only for
+    /// Linux, FreeBSD and Fuchsia targets, so the Darwin inline method asks
+    /// the front end for it with `-Xclang`. The MinGW target probes a large
+    /// frame through `___chkstk_ms` by its ABI and needs no argument.
+    pub(crate) fn runtime_stack_probe_arguments(
+        self,
+        darwin_helper: bool,
+    ) -> &'static [&'static str] {
+        match self.stack_probe() {
+            "inline-asm" => &["-fstack-clash-protection"],
+            "__chkstk_darwin" if darwin_helper => &["-fstack-check"],
+            "__chkstk_darwin" => &["-Xclang", "-fstack-clash-protection"],
+            "___chkstk_ms" => &[],
+            _ => unreachable!("the closed target records select a known stack probe"),
+        }
+    }
+
     /// How many integer-class argument words the selected target's C calling
     /// convention passes in registers: six on x86-64 System V, four on
     /// x86-64 Windows and eight on AArch64; a call that passes more puts the
@@ -2501,6 +2525,26 @@ mod stack_probe_tests {
                 target.stack_probe_attributes(false),
                 "\"probe-stack\"=\"inline-asm\" \"stack-probe-size\"=\"4096\"",
                 "{triple} must retain 4 KiB page probing without the helper"
+            );
+        }
+    }
+
+    #[test]
+    fn the_runtime_c_probe_arguments_follow_the_method_generated_code_uses() {
+        for (triple, helper, arguments) in [
+            ("x86_64-unknown-linux-gnu", false, &["-fstack-clash-protection"][..]),
+            ("aarch64-unknown-linux-gnu", true, &["-fstack-clash-protection"][..]),
+            ("aarch64-apple-darwin", true, &["-fstack-check"][..]),
+            ("x86_64-apple-darwin", true, &["-fstack-check"][..]),
+            ("aarch64-apple-darwin", false, &["-Xclang", "-fstack-clash-protection"][..]),
+            ("x86_64-apple-darwin", false, &["-Xclang", "-fstack-clash-protection"][..]),
+            ("x86_64-w64-windows-gnu", false, &[][..]),
+        ] {
+            let target = TargetLayout::for_triple(triple).expect("supported target");
+            assert_eq!(
+                target.runtime_stack_probe_arguments(helper),
+                arguments,
+                "{triple} with helper {helper}"
             );
         }
     }

@@ -396,13 +396,18 @@ impl Walker<'_> {
                     );
                 }
                 View::Place(location) => state.havoc_location(&mut self.world, &location),
+                View::Either(members) => {
+                    for member in members {
+                        self.forget_call_write(state, Write::view(member));
+                    }
+                }
                 View::Scalar(_) | View::Unknown => state.havoc_everything(&mut self.world),
             },
         }
     }
 }
 
-fn effect_target(view: &View) -> Target {
+pub(super) fn effect_target(view: &View) -> Target {
     match view {
         View::Place(location) => Target::Location(location.clone()),
         View::Element {
