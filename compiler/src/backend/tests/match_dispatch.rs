@@ -3720,9 +3720,10 @@ fn part_rbp_saves(assembly: &str) -> Vec<(String, usize)> {
 /// x86-64 System V (psABI 3.2.1): RBP is callee-saved and a part that uses it
 /// as a scratch register under the ordinary `preserve_none` convention saves
 /// and restores it on every transfer; with the attribute written on every
-/// definition and call no part does, and the same loop without the attribute
-/// still does, so the check can fail. Judged on the host's own assembly, not
-/// on the emitted text.
+/// definition and call no part of any of the four loop shapes does. The
+/// unattributed module of the first shape that has parts is the control: it
+/// shows the check can fail, one program being enough for that. Judged on the
+/// host's own assembly, not on the emitted text.
 #[test]
 fn the_attribute_removes_every_rbp_save_from_the_parts_it_is_written_on() {
     let attribute = host_attribute();
@@ -3750,9 +3751,11 @@ fn the_attribute_removes_every_rbp_save_from_the_parts_it_is_written_on() {
         for (label, saves) in &attributed {
             assert_eq!(*saves, 0, "{name}: {label} saves RBP under the attribute");
         }
-        let legacy = part_rbp_saves(&host_assembly(&module.replace(attribute, "")));
-        assert_eq!(legacy.len(), attributed.len(), "{name}: the same parts");
-        controlled += legacy.iter().filter(|(_, saves)| *saves > 0).count();
+        if controlled == 0 {
+            let legacy = part_rbp_saves(&host_assembly(&module.replace(attribute, "")));
+            assert_eq!(legacy.len(), attributed.len(), "{name}: the same parts");
+            controlled += legacy.iter().filter(|(_, saves)| *saves > 0).count();
+        }
     }
     assert!(
         controlled > 0,
