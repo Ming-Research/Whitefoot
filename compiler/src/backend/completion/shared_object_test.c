@@ -180,6 +180,18 @@ static void relax(unsigned *spins) {
         sched_yield();
 }
 
+/* A context that waits for another context of its own driver passes until
+ * the runtime's monitor asks its run to yield, which it does once the run
+ * has lasted about a millisecond while another context is ready or parked
+ * there. Such a wait fails the test once STALL_SECONDS have passed since its
+ * phase began. */
+static struct timespec phase_started;
+static void phase_clock_begin(void) { clock_gettime(CLOCK_MONOTONIC, &phase_started); }
+static void pass_bound(const char *what, unsigned long long a, unsigned long long b) {
+    if (seconds_since(&phase_started) >= STALL_SECONDS)
+        fail(what, a, b);
+}
+
 /* P stops only between statements, so that a statement that never ends
  * fails the test rather than ending it, and fails as soon as one statement
  * has been handed the object twice or overtaken after it resumed. It begins
@@ -1068,7 +1080,7 @@ static void cross_fresh_step(test_frame *f) {
  * with the tests word0 == 2, word0 == 1 and an equal copy of word0 == 1;
  * watcher 3's guard also needs word1 == 5. R writes at time 10, below the
  * threshold, or past it in the aged case. */
-enum { WAKE_WATCHERS = 3, WAKE_PASSES = 1000 };
+enum { WAKE_WATCHERS = 3 };
 static void *wake_object;
 static wf_wake_test wake_two, wake_one, wake_one_copy;
 static int wake_aged;
@@ -1164,8 +1176,7 @@ static void wake_r_step(test_frame *f) {
                 return;
         } else {
             while (wake_done != 1u || wake_parks != WAKE_WATCHERS + 1u) {
-                if (++f->statements > WAKE_PASSES)
-                    fail("the young notification stalled (done, parks)", wake_done, wake_parks);
+                pass_bound("the young notification stalled (done, parks)", wake_done, wake_parks);
                 if (wf__context_pass(f))
                     return;
             }
@@ -1192,6 +1203,7 @@ static void wake_r_step(test_frame *f) {
 }
 
 static void wake_phase_begin(test_frame *root, int aged) {
+    phase_clock_begin();
     atomic_store(&guard_now, 1u);
     wake_aged = aged;
     wake_registered = wake_parks = wake_done = 0u;
@@ -1287,8 +1299,7 @@ static void callback_r_step(test_frame *f) {
         f->begun = 1;
     }
     while (callback_done != 1u) {
-        if (++f->statements > WAKE_PASSES)
-            fail("true callback waiter did not finish (done, parks)", callback_done, callback_parks);
+        pass_bound("true callback waiter did not finish (done, parks)", callback_done, callback_parks);
         if (wf__context_pass(f)) return;
     }
     if (callback_order[0] != 2u || callback_evaluations[1] != 1u || callback_parks != 2u)
@@ -1306,6 +1317,7 @@ static void callback_r_step(test_frame *f) {
 }
 
 static void callback_phase_begin(test_frame *root) {
+    phase_clock_begin();
     atomic_store(&guard_now, 1u);
     callback_registered = callback_parks = callback_done = 0u;
     memset(callback_evaluations, 0, sizeof(callback_evaluations));
@@ -1347,19 +1359,12 @@ static void callback_phase_end(void) {
  *
  * No write follows the owner's release in either case, so a watch the rescan
  * misses is never woken and R's wait for it fails. */
-enum { RESCAN_PASSES = 64 * 32 };
 static void *rescan_object;
 static wf_wake_test rescan_x_first, rescan_x_second, rescan_y;
 static int rescan_late, rescan_first_written;
 static unsigned rescan_ids, rescan_done;
 static unsigned rescan_evaluations[3], rescan_parks[3], rescan_order[2];
 static uint64_t rescan_ready;
-
-static void rescan_wait_bound(test_frame *f, const char *what, unsigned long long a,
-                              unsigned long long b) {
-    if (++f->statements > RESCAN_PASSES)
-        fail(what, a, b);
-}
 
 static void rescan_w_step(test_frame *f) {
     if (!f->begun) {
@@ -1370,8 +1375,8 @@ static void rescan_w_step(test_frame *f) {
     unsigned id = (unsigned)f->begun;
     /* The late watcher's statement begins only after R's first write. */
     while (rescan_late && id == 2u && !rescan_first_written) {
-        rescan_wait_bound(f, "the late watcher never saw the first write (parks, late)", rescan_parks[1],
-                          (unsigned long long)rescan_late);
+        pass_bound("the late watcher never saw the first write (parks, late)", rescan_parks[1],
+                   (unsigned long long)rescan_late);
         if (wf__context_pass(f))
             return;
     }
@@ -1398,8 +1403,8 @@ static void rescan_w_step(test_frame *f) {
  * and before watcher 1, the notification's owner, retries. */
 static void rescan_z_step(test_frame *f) {
     while (rescan_parks[2] == 0u) {
-        rescan_wait_bound(f, "the late watcher never registered (parks, evaluations)", rescan_parks[2],
-                          rescan_evaluations[2]);
+        pass_bound("the late watcher never registered (parks, evaluations)", rescan_parks[2],
+                   rescan_evaluations[2]);
         if (wf__context_pass(f))
             return;
     }
@@ -1442,8 +1447,8 @@ static void rescan_r_step(test_frame *f) {
         /* Watcher 1's false retry re-registers it behind the cursor and
          * passes the notification to watcher 2, which has not retried. */
         while (rescan_parks[1] != 2u) {
-            rescan_wait_bound(f, "the oldest watch's false retry did not re-register (parks, evaluations)",
-                              rescan_parks[1], rescan_evaluations[1]);
+            pass_bound("the oldest watch's false retry did not re-register (parks, evaluations)",
+                       rescan_parks[1], rescan_evaluations[1]);
             if (wf__context_pass(f))
                 return;
         }
@@ -1461,11 +1466,10 @@ static void rescan_r_step(test_frame *f) {
         f->begun = 2;
     }
     while (rescan_done != 2u) {
-        rescan_wait_bound(f,
-                          rescan_late
-                              ? "a watch registered past the write's cutoff, whose test a later write made true, was never woken (done, its evaluations)"
-                              : "an older watch behind the sweep cursor, whose test a later write made true, was never woken (done, its evaluations)",
-                          rescan_done, rescan_evaluations[rescan_late ? 2 : 1]);
+        pass_bound(rescan_late
+                       ? "a watch registered past the write's cutoff, whose test a later write made true, was never woken (done, its evaluations)"
+                       : "an older watch behind the sweep cursor, whose test a later write made true, was never woken (done, its evaluations)",
+                   rescan_done, rescan_evaluations[rescan_late ? 2 : 1]);
         if (wf__context_pass(f))
             return;
     }
@@ -1473,6 +1477,7 @@ static void rescan_r_step(test_frame *f) {
 }
 
 static void rescan_phase_begin(test_frame *root, int late) {
+    phase_clock_begin();
     atomic_store(&guard_now, 1u);
     rescan_late = late;
     rescan_first_written = 0;
@@ -1657,9 +1662,8 @@ static void release_r_step(test_frame *f) {
         f->begun = 1;
     }
     while (!release_w_done) {
-        if (++f->statements > RESCAN_PASSES)
-            fail("the release case's watch never completed (evaluations, done)", release_w_evaluations,
-                 release_w_done);
+        pass_bound("the release case's watch never completed (evaluations, done)", release_w_evaluations,
+                   release_w_done);
         if (wf__context_pass(f))
             return;
     }
@@ -1667,6 +1671,7 @@ static void release_r_step(test_frame *f) {
 }
 
 static void release_phase_begin(test_frame *root) {
+    phase_clock_begin();
     atomic_store(&guard_now, 1u);
     release_w_evaluations = release_w_done = 0u;
     wake_equal(&release_test, 1u);

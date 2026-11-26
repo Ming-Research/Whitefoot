@@ -1300,9 +1300,9 @@ int main(void) {
     wf_test_guard_start(30);
     wf_bridge_require();
     CHECK(!wf_bridge_ring_ready()); /* deterministic service-only fixture */
-    wf_test_guard_phase("fairness yields unwind for a peer, displacement and pending host work");
+    wf_test_guard_phase("a pass unwinds only for a yield request or a displacement");
     fair_yield_boundaries();
-    wf_test_guard_phase("64 lone-context resumptions service an expired sleep without monitor");
+    wf_test_guard_phase("a yielded run's driver services an expired sleep before resuming anyone");
     yield_services_before_resuming();
     wf_test_guard_phase("executor generations reject complete intervening invocations");
     invocation_collections();
@@ -1332,6 +1332,7 @@ int main(void) {
     adoption_and_early_wake();
     wf_test_guard_phase("return versus monitor, borrow exclusion and repeated stale epochs");
     reassignment_races();
+    wf_test_guard_phase("the monitor asks a long run beside others to yield, then hands its role over");
     monitor_watch_stages();
     wf_test_guard_phase("timer takeover, physical map users and exactly-once ingress dispositions");
     displaced_dispositions();

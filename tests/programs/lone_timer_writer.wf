@@ -21,7 +21,7 @@ fn timer_writer(counter: Shared<u64>, started: Shared<Bool>, stop: DecisionCell)
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
   doc "Sleeps 1 ms sixteen times beside a context that loops on atomic statements and never otherwise waits, checking each time that the writer has made progress, then reports on standard output that it is about to read and reads one byte of standard input, which the case sends 20 ms after that report. The exit status is the largest lateness in milliseconds of the sleeps past their wake instants and of the read past those 20 ms, 250 for 250 ms or more, and 251 to 253 for an outcome other than the expected one, so the case can tell timers and I/O served beside the writer from ones held behind it [WAIT-2].";
-  let std::process::Inputs(cwd: directory, handles: handles, clock: clock, stdout: output, stdin: input, ..) = move inputs;
+  let std::process::Inputs(cwd: directory, stdout: output, handles: handles, stdin: input, clock: clock, ..) = move inputs;
   let std::fs::Directory(read: readable, write: writable) = move directory;
   std::fs::close_directory_write(factory: &handles, directory: move writable);
   std::fs::close_directory(factory: &handles, directory: move readable);
