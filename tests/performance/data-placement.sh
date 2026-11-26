@@ -7,8 +7,8 @@
 #       map differently, launches both at the 32 positions and compares them in
 #       order of time (positions.awk), and launches both again when a rank is
 #       unlike. Writes RESULTS/verdict.txt and RESULTS/aside.txt, the kernels
-#       compare.sh then leaves unjudged. Exit 0 whether or not a kernel is set
-#       aside, 2 on a refusal.
+#       judge.sh then neither times nor judges. Exit 0 whether or not a kernel
+#       is set aside, 2 on a refusal.
 #   qualify CANDIDATE RESULTS
 #       The control on the candidate against itself must find every kernel
 #       mapping alike; with the candidate arm at position 1 every kernel's

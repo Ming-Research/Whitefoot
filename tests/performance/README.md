@@ -147,10 +147,11 @@ sees no effect under 10 percent (adjacent grids cost the 7763 6 to 10
 percent), and only blocks the mapping calls show: not an offset of static data
 within the image or of a small block within a heap. Which launches of either
 arm land in a slow placement under address randomization is still noise of
-the ordinary comparison, which each kernel's null control bounds. One slow
-launch of an arm in each round, at any positions, also sets a kernel aside:
-the rule cannot tell it from placement, and the control's confirmation met it
-once in 20 jobs.
+the ordinary comparison, which each kernel's null control bounds. Slow
+launches of one arm in each round, even one a round and at positions that
+change between rounds, also set a kernel aside: the rule cannot tell them
+from placement, and the control's two confirmation runs met that on 2 of 32
+jobs, both on EPYC 9V45 hosts.
 
 ## Entries and artifacts
 
