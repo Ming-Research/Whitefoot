@@ -1143,12 +1143,10 @@ fn unchanged_by_value_parameters_are_read_in_place_across_branches() {
                 .filter(|(_, parameter_ty)| *parameter_ty == ty)
                 .map(|(value, _)| *value)
                 .collect();
-            // rec_pick reads r after its branch. rec_push and rec_set return
-            // False on their continuation, so their old r carry is dead.
-            assert_eq!(carries.len(), usize::from(name == "rec_pick"), "{name}");
-            for carry in carries {
-                assert_eq!(storage.slot(parameter), storage.slot(carry), "{name}");
-            }
+            // Every edge hands the branch the same r, so lowering leaves no
+            // block parameter of r's type: rec_pick reads r itself after its
+            // branch, and its slot is the parameter's.
+            assert!(carries.is_empty(), "{name}: {carries:?}");
             assert!(storage.holds_only(parameter), "{name}: unchanged contents");
         }
     });
