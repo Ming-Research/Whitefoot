@@ -35,7 +35,7 @@ fn main() -> status: ExitStatus pure waits {
   let seen = spawn worker(first: move one, second: move two);
   let joined = seen -wrap 9_u8;
   let closed = shared_close::<Box<u8>>(shared: move cell);
-  let held = held_value(found: move closed);
-  let total = held +wrap joined;
+  let state_value = held_value(found: move closed);
+  let total = state_value +wrap joined;
   return exit_status(code: total);
 }
