@@ -1902,6 +1902,28 @@ commit e1f0431cc, GitHub's ubuntu-24.04, AMD EPYC 7763, clang 22.1.8; base =
   that trial (candidate/base 0.9490 at 2000, 0.9694 at 20000, twin 1.0017 and
   1.0341) are two rounds on a shared host and judge nothing.
 
+**Result: first 14900K runs, invalid timing data.** Runs 45762228469 (2000
+iterations) and 45762241095 (20000) of `interpreter-compare`, each 10 rounds
+on CPU 2 of the 14900K with no floor given, candidate e1f0431cc, base 1caef2cd5,
+dispatched from main. Neither is counted and neither is reinterpreted.
+
+| run | iterations | candidate/base (95%) | twin/base (95%) | twin noise | spread (upper) | residual median / max |
+| --- | --- | --- | --- | --- | --- | --- |
+| 45762228469 | 2000 | 0.8856 [0.7658, 0.9981] | 1.0166 [0.8205, 1.1671] | 0.1733 | 0.1187 (0.2728) | 0.0026 / 0.0904 s |
+| 45762241095 | 20000 | 0.9247 [0.6816, 1.1243] | 0.9258 [0.6926, 1.3772] | 0.3423 | 0.2749 (0.3798) | 1.0278 / 3.7313 s |
+
+The twin, a byte copy of the base, differs from it by a median 12% at 2000 and
+27% at 20000; the 20000 run's median residual is 1.03 s against the 0.005 s
+limit set before measuring, and single launches of one image at 2000 took
+0.39 s to 0.58 s of CPU time. The floors these runs would print
+(coremark=0.2728 and coremark=0.3799) are noise, not a floor to judge with.
+The cause was not isolated here. Observed (checked with `gh run view`): job
+`par-suite paired (14900k)` of another work's temporary workflow, run
+45748510034, was in progress on the same machine from 03:22 UTC to past
+06:05 UTC, and other works' CI ran on it at the same time; competing load on
+the pinned CPU or its sibling thread would raise both the residual and the CPU
+time as seen, and is the inferred cause. No timing result is recorded yet.
+
 ### Constructor and runtime-boundary audit
 
 The handler-word repair distinguishes values built by emitted constructors
