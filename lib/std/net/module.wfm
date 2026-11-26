@@ -61,6 +61,8 @@ public fn send_once(send: &TcpSend, source: &[u8], start: u64, end: u64, deadlin
 
 public fn local_address(receive: &TcpReceive) -> result: Result<SocketAddress, IoError> reads(receive) doc "Returns the address of this end of the connection whose receiving half is receive, as the host reports it [PRE-2].";
 
+public fn listener_address(listener: &TcpListener) -> result: Result<SocketAddress, IoError> reads(listener) doc "Returns the address listener is bound to, as the host reports it [PRE-2].";
+
 public fn close_listener(factory: &HandleFactory, listener: TcpListener) -> result: Result<unit, IoError> writes(factory) waits doc "Closes listener.";
 
 public fn close_receive(factory: &HandleFactory, receive: TcpReceive) -> result: Result<unit, IoError> writes(factory) waits doc "Closes the receiving half of a connection.";
