@@ -450,7 +450,11 @@ fn zero_cell(c: &Cell) -> result: unit reads(c) {
 ```
 
 ```whitefoot-output
-placeholder
+row.wf:6:7: error[SET-1]: InvalidSetTarget
+  source:   set c^.value = 0_i32;
+  marker:       ^^^^^^^^
+  root_class: a reference whose declared row does not write this path
+  required_classes: a live own-mode value binding, or a path below `^` of a reference whose row declares that write
 ```
 
 The repaired program declares the write:
