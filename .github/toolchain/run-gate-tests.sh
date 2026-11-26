@@ -99,8 +99,15 @@ case "$mode" in
         /usr/lib/llvm-*/bin/clang* /usr/lib/llvm-*/bin/ld.lld* /usr/lib/llvm-*/bin/lld; do
       if [ -e "$path" ]; then sudo chmod a-x "$(readlink -f "$path")"; fi
     done
-    if command -v clang; then echo 'A host clang is still reachable' >&2; exit 1; fi
-    if /usr/bin/clang --version > /dev/null 2>&1; then
+    # `command -v` names a file found on PATH even when it cannot be run, so
+    # the proof is an attempt to run it and a look for an executable one.
+    IFS=: read -ra entries <<< "$PATH"
+    for entry in "${entries[@]}"; do
+      if [ -n "$entry" ] && [ -x "$entry/clang" ]; then
+        echo "A host clang is still executable: $entry/clang" >&2; exit 1
+      fi
+    done
+    if clang --version > /dev/null 2>&1 || /usr/bin/clang --version > /dev/null 2>&1; then
       echo 'The host clang still runs' >&2; exit 1
     fi
     ;;
