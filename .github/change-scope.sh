@@ -11,10 +11,11 @@
 # says so where it does not (AGENTS.md, "Branch and main boundary", item 4).
 # What a change left unchecked, the nightly run on main checks.
 #
-# The table below names what each workflow's jobs read. A changed path takes
-# the row of the longest entry that is the path itself or a directory above
-# it, a directory ending in `/`, and counts where that row says `read` for the
-# workflow. A path that no row names counts as read, and the reason names it.
+# The table below names what each workflow's jobs read. An entry names a file
+# or a directory and everything under it. A changed path takes the row of the
+# longest entry that is the path itself or a directory above it, and counts
+# where that row says `read` for the workflow. A path that no row names counts
+# as read, and the reason names it.
 # The diff lists a renamed file at both its names, so that moving a file out
 # of what the jobs read counts as touching it.
 #
@@ -43,14 +44,14 @@ path                                      sanitizers  io-hosts
 # that test runs. The test-change-scope.sh check finds these reads in the
 # package's sources; it cannot tell which of the corpus test's tests a job
 # runs, so both workflows read all of them.
-compiler/                                 read        read
-lib/                                      read        read
+compiler                                  read        read
+lib                                       read        read
 spec/kernel-spec.md                       read        read
-tests/conformance/                        read        read
-tests/programs/                           read        read
-tests/package-fixtures/                   read        read
-apps/                                     read        read
-docs/guide/                               read        read
+tests/conformance                         read        read
+tests/programs                            read        read
+tests/package-fixtures                    read        read
+apps                                      read        read
+docs/guide                                read        read
 README.md                                 read        read
 README.zh-CN.md                           read        read
 # A checkout writes each .wf, .wfm and .wfg file byte for byte by this file.
@@ -69,20 +70,20 @@ README.zh-CN.md                           read        read
 .github/toolchain/llvm-assets.json        -           read
 #
 # What no job of either workflow reads.
-.github/                                  -           -
+.github                                   -           -
 .gitignore                                -           -
 .gitmodules                               -           -
 AGENTS.md                                 -           -
 LICENSE                                   -           -
 Makefile                                  -           -
-archive/                                  -           -
-design/                                   -           -
-docs/                                     -           -
-governance/                               -           -
-proof/                                    -           -
-research/                                 -           -
-spec/                                     -           -
-tests/                                    -           -
+archive                                   -           -
+design                                    -           -
+docs                                      -           -
+governance                                -           -
+proof                                     -           -
+research                                  -           -
+spec                                      -           -
+tests                                     -           -
 wf-agents.toml                            -           -
 EOF
 }
@@ -127,7 +128,7 @@ decide() {
             best = 0
             for (r = 1; r <= count; r++) {
                 e = entry[r]
-                if ($0 == e || (substr(e, length(e)) == "/" && substr($0, 1, length(e)) == e))
+                if ($0 == e || substr($0, 1, length(e) + 1) == e "/")
                     if (!best || length(e) > length(entry[best]))
                         best = r
             }

@@ -58,7 +58,7 @@ expect() {
 # --- The decision for changed paths.
 
 for workflow in $workflows; do
-    decide "$workflow" docs/ideas.md research/README.md design/decisions/compiler.md AGENTS.md
+    decide "$workflow" docs/ideas.md governance/README.md design/decisions/compiler.md AGENTS.md
     expect "$workflow, prose only" false "$workflow.yml checks nothing: the change from 0123456789ab touches none of the paths its jobs read"
     decide "$workflow"
     expect "$workflow, no change" false 'touches none of the paths its jobs read'
@@ -66,8 +66,8 @@ for workflow in $workflows; do
     expect "$workflow, a runtime unit" true "$workflow.yml checks the change from 0123456789ab: it touches compiler/src/backend/heap.c, which its jobs read"
     decide "$workflow" docs/ideas.md compiler/src/backend/heap.c tests/programs/a.wf lib/std/x.wf
     expect "$workflow, several reads" true 'it touches compiler/src/backend/heap.c and 2 more paths its jobs read'
-    # The longest entry decides, and an entry is a whole path or a whole
-    # directory.
+    # The longest entry decides, and an entry names a whole path: a file, or
+    # a directory and what is under it.
     decide "$workflow" spec/kernel-spec.md
     expect "$workflow, the specification" true 'touches spec/kernel-spec.md'
     decide "$workflow" spec/log.md spec/kernel-spec-v0.1.md docs/articles/a.md .github/test-run-check.sh
@@ -75,7 +75,7 @@ for workflow in $workflows; do
     decide "$workflow" docs/guide/a.md
     expect "$workflow, the guide" true 'touches docs/guide/a.md'
     # A path no row names counts as read, and the reason names it.
-    for path in elsewhere/a.md compilers/a.rs compiler README; do
+    for path in elsewhere/a.md compilers/a.rs README docsguide/a.md; do
         decide "$workflow" docs/ideas.md "$path"
         expect "$workflow, unnamed $path" true "it touches $path, which no row of .github/change-scope.sh names"
     done
@@ -89,8 +89,8 @@ expect 'io-hosts, the file of the sanitizers' false 'checks nothing'
 decide sanitizers .github/workflows/sanitizers.yml
 expect 'sanitizers, its own file' true 'touches .github/workflows/sanitizers.yml'
 
-# The table names a path and the two workflows, and each row decides for a
-# path under it as its mark says.
+# The table names a path and the two workflows, and each row decides for its
+# own path and a path under it as its mark says.
 : > "$work/out"
 sh "$script" --rows > "$work/rows" || fail 'the table could not be printed'
 header=$(sed -n 1p "$work/rows" | awk '{ $1 = $1; print }')
@@ -103,15 +103,13 @@ for workflow in $workflows; do
             sanitizers) mark=$sanitizers ;;
             io-hosts) mark=$io_hosts ;;
         esac
-        case "$entry" in
-            */) path=${entry}a-file ;;
-            *) path=$entry ;;
-        esac
-        decide "$workflow" "$path"
-        case "$mark" in
-            read) expect "$workflow, the row $entry" true "$path" ;;
-            *) expect "$workflow, the row $entry" false 'checks nothing' ;;
-        esac
+        for path in "$entry" "$entry/a-file"; do
+            decide "$workflow" "$path"
+            case "$mark" in
+                read) expect "$workflow, the row $entry, $path" true "$path" ;;
+                *) expect "$workflow, the row $entry, $path" false 'checks nothing' ;;
+            esac
+        done
     done 2> "$work/row-failures"
     if [ -s "$work/row-failures" ]; then
         cat "$work/row-failures" >&2
@@ -178,7 +176,7 @@ git_in mv compiler/src/a.c docs/old/a.c
 commit 'move'
 scope sanitizers || fail 'a move out of the compiler: the decision failed'
 expect 'a move out of the compiler' true 'it touches compiler/src/a.c, which its jobs read'
-grep -q '^  docs/old/a.c: row docs/, -$' "$work/err" ||
+grep -q '^  docs/old/a.c: row docs, -$' "$work/err" ||
     fail 'a move out of the compiler: its new name was not listed'
 
 # --- The table against the repository.
@@ -189,12 +187,9 @@ top=$(git ls-tree --name-only HEAD | tr '\n' ' ')
 
 # Every row names something tracked.
 sed 1d "$work/rows" | while read -r entry rest; do
-    case "$entry" in
-        */) awk -v entry="$entry" 'index($0, entry) == 1 { found = 1; exit } END { exit !found }' "$work/tracked" ||
-            echo "the row $entry names no directory that holds a tracked file" ;;
-        *) grep -qxF -- "$entry" "$work/tracked" ||
-            echo "the row $entry names no tracked file" ;;
-    esac
+    grep -qxF -- "$entry" "$work/tracked" ||
+        awk -v entry="$entry/" 'index($0, entry) == 1 { found = 1; exit } END { exit !found }' "$work/tracked" ||
+        echo "the row $entry names no tracked file and no directory that holds one"
 done > "$work/stale"
 if [ -s "$work/stale" ]; then
     sed 's/^/change-scope: /' "$work/stale" >&2
@@ -212,17 +207,10 @@ if grep -q ': no row$' "$work/err"; then
 fi
 
 # reads WORKFLOW FROM < PATHS: each path is read by the workflow by a row that
-# names it or a directory above it; FROM says where the paths were found. A
-# path that names a directory of tracked files is that directory, with its `/`.
+# names it or a directory above it; FROM says where the paths were found.
 reads() {
     : > "$work/out"
-    awk -v tracked="$work/tracked" '
-        BEGIN {
-            while ((getline line < tracked) > 0)
-                while (sub(/\/[^\/]*$/, "", line)) dir[line] = 1
-        }
-        { sub(/\/$/, ""); print (($0 in dir) ? $0 "/" : $0) }
-    ' | sort -u > "$work/found"
+    sed 's#/$##' | sort -u > "$work/found"
     [ -s "$work/found" ] || return 0
     if ! sh "$script" --decide "$1" "$base" < "$work/found" > /dev/null 2> "$work/err"; then
         fail "$2: the paths could not be decided"
