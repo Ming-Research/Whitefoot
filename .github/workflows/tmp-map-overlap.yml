@@ -13,8 +13,8 @@ on:
 env:
   CC: clang
   WHITEFOOT_CHECK_TIMEOUT: '10800'
-  N_PLAIN: '3'
-  N_LOAD: '2'
+  N_PLAIN: '50'
+  N_LOAD: '50'
   COPIES: '4'
   N_CTL: '5'
 
@@ -40,6 +40,9 @@ jobs:
       - name: Inert-thread control
         if: ${{ !cancelled() }}
         run: perl .github/run-check.pl map-overlap-inert bash .github/tmp-map-overlap.sh inert-control
+      - name: Late-start control
+        if: ${{ !cancelled() }}
+        run: perl .github/run-check.pl map-overlap-late bash .github/tmp-map-overlap.sh late-control
       - name: Before the change
         if: ${{ !cancelled() }}
         run: perl .github/run-check.pl map-overlap-before bash .github/tmp-map-overlap.sh before

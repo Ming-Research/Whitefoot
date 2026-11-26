@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Temporary: the evidence of work W291 for the concurrent map test. Removed before the full check.
-# usage: tmp-map-overlap.sh calibrate|before|after|swap-control|inert-control
+# usage: tmp-map-overlap.sh calibrate|before|after|swap-control|inert-control|late-control
 set -u
 ROOT=$(pwd)
 S=${RUNNER_TEMP:-/tmp}/map-overlap
@@ -102,6 +102,17 @@ copy_tree() { # dir
     cp -R "$ROOT/compiler/src" "$1/src"
 }
 
+# the late start of the reader, the holder or the releaser, as LATE names it
+late_patch() { # file
+    perl -0pi -e '
+        sub late { my $w = shift; return "    if (getenv(\"LATE\") != NULL && strcmp(getenv(\"LATE\"), \"$w\") == 0) { struct timespec late_ts = {1, 500000000}; nanosleep(&late_ts, NULL); }\n"; }
+        s/(uint64_t absent_length = counted_key\(999, absent\), last = 0;\n)/$1 . late("reader")/e;
+        s/(static void \*hold_entries\(void \*arg\) \{\n)/$1 . late("holder")/e;
+        s/(static void \*release_reserves\(void \*arg\) \{\n)/$1 . late("releaser")/e;
+    ' "$1"
+    [ "$(grep -c 'getenv("LATE")' "$1")" -eq 3 ] || { echo "PATCH DID NOT APPLY AS EXPECTED: $1"; grep -n LATE "$1"; exit 1; }
+}
+
 case ${1:-} in
 calibrate)
     build fixed-plain "$ROOT/compiler"
@@ -145,26 +156,45 @@ swap-control)
     done
     ;;
 inert-control)
-    copy_tree "$S/inert"
-    f="$S/inert/src/backend/concurrent_map_test.c"
+    copy_tree "$S/inert-tree"
+    f="$S/inert-tree/src/backend/concurrent_map_test.c"
     perl -0pi -e 's/(uint64_t absent_length = counted_key\(999, absent\), last = 0;\n)/$1    if (getenv("INERT") != NULL \&\& strcmp(getenv("INERT"), "reader") == 0)\n        return NULL;\n/' "$f"
     perl -0pi -e 's/(static void \*hold_entries\(void \*arg\) \{\n)/$1    if (getenv("INERT") != NULL \&\& strcmp(getenv("INERT"), "holder") == 0)\n        return NULL;\n/' "$f"
     perl -0pi -e 's/(static void \*release_reserves\(void \*arg\) \{\n)/$1    if (getenv("INERT") != NULL \&\& strcmp(getenv("INERT"), "releaser") == 0)\n        return NULL;\n/' "$f"
     [ "$(diff "$ROOT/compiler/src/backend/concurrent_map_test.c" "$f" | grep -c '^>')" -eq 6 ] || { echo "PATCH DID NOT APPLY AS EXPECTED"; diff "$ROOT/compiler/src/backend/concurrent_map_test.c" "$f"; exit 1; }
-    build inert "$S/inert"
+    build inert "$S/inert-tree"
     build ok-plain "$ROOT/compiler"
     for who in reader holder releaser; do
         args=""
         [ "$who" = releaser ] && args="release-beside-swaps"
         echo "== $who inert"
-        INERT=$who timed "inert-$who" "$S/inert" $args || true
+        export INERT=$who
+        timed "inert-$who" "$S/inert" $args || true
+        unset INERT
         echo "RESULT inert-$who: $(cat "$S/inert-$who.out" | grep -c 'concurrent-map-test:') message lines"
     done
     echo "== none inert (the same build)"
     timed inert-none "$S/inert" || true
     ;;
+late-control)
+    # The same late start of one thread, in the sources before this work and in
+    # the sources after it: the one thread begins its loop after a pause that
+    # lets the other side finish its fixed quota.
+    old_tree
+    copy_tree "$S/late-new-tree"
+    late_patch "$S/old/compiler/src/backend/concurrent_map_test.c"
+    late_patch "$S/late-new-tree/src/backend/concurrent_map_test.c"
+    build late-old "$S/old/compiler"
+    build late-new "$S/late-new-tree"
+    for who in reader holder releaser; do
+        export LATE=$who
+        expect_fail "late-old-$who" "$S/late-old" "$N_CTL"
+        expect_fail "late-new-$who" "$S/late-new" "$N_CTL"
+    done
+    unset LATE
+    ;;
 *)
-    echo "usage: $0 calibrate|before|after|swap-control|inert-control" >&2
+    echo "usage: $0 calibrate|before|after|swap-control|inert-control|late-control" >&2
     exit 2
     ;;
 esac
