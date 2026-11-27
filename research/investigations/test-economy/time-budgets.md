@@ -1590,6 +1590,243 @@ chose on 2026-10-09 (above): it is path-filtered and rare, and a path-filtered
 workflow that listed `ready_for_review` would be waited for after a ready mark
 even when no path matched.
 
+### The slowest gate groups run in parts (2026-11-25)
+
+Question: can the hosted Linux gate give every job's result within six
+minutes of the push when no job waits for a runner, with the tested cases and
+verdicts unchanged? Comparison: the gate with each group run whole against the
+gate with the unit and corpus groups run as parts that each build for
+themselves. The change is rejected if any of five consecutive hand-started runs
+of one head, each started after the previous run's jobs ended and with every
+job started within 60 s of its creation, takes more than 360 s from the run's
+creation to its last job's end.
+
+Before the change, the one gate run on the main line that the engine recorded
+for commit 1bbc3b378 (2026-11-25, Linux) took, per job: corpus 438 s, unit
+402 s, static 129 s, runtime 68 s, the job that selects the groups 12 s, the
+check for a temporary workflow 5 s and the final job 18 s. The slowest group
+bounded the run; the job that selects groups, the check for a temporary
+workflow and the final job are serial with it and took 35 s together. The owner's figures for 25 pushes since 2026-10-23,
+shortest 381 s and median 454 s with none under six minutes, give the same
+shape.
+
+The parts. The unit group's library tests run in four parts, positions p of the
+bytewise-sorted names with `p mod 4 == i-1`, by exact name. The corpus group
+runs the conformance walk in three parts over every third manifest case
+(`WHITEFOOT_CONFORMANCE_SHARD`, the variable the sanitizer workflow already
+uses), the proof-receipt test alone over every case in one process, and every
+other test of the CLI and integration targets in one part (`--exact --skip` of
+the two). The earlier trial on `claude/gate-shards`, which ran the receipt test
+over each walk subset in every corpus part and again whole, put the walk and the
+receipt test in one part when divided by name (196 s of test execution in that
+part against 26 s and 36 s in the other two), which is why the walk is divided by case and the
+receipt test runs once, whole: the whole run checks every case against one
+cache, which three subsets do not.
+
+Caching the Cargo dependencies, the build directory and LLVM was tried before
+(a pull request of the project, number 433, reported in the item that asked for
+this change, whose record this repository does not hold): a cold run took
+228 s and a warm one 225 s, so the gate does not cache them.
+
+Each part's time budget is its own row. Its initial value in every CPU column is
+the whole group's current row, which a part's share of the work cannot exceed;
+the existing rule recomputes it once a CPU class has 20 runs of the part.
+
+#### First run of the parts (commit e5516c68b, three unit parts)
+
+A push to a `wf-try` branch ran the gate's selection job and its matrix jobs
+from a temporary copy of the workflow (the final job and the scope check were
+left out), with the unit group in three parts. Every job was green. The run was
+created at 19:18:10 and its first job started 2 min 13 s later, which is
+queueing and counts for nothing here; the matrix jobs started 27 to 41 s after
+the selection job's 17 s ended. Per job, with its CPU model, the compile (the
+`compiler/test-build-*` stage) and the test run (the `compiler/test-*` stage),
+all in seconds, the rest of a job being its setup (checkout, toolchain, Rust
+components: 46 s to 69 s):
+
+| Job | CPU model | Job | Compile | Tests |
+|---|---|---|---|---|
+| unit 1 of 3 | Xeon 6975P-C | 256 | 153 | 47 |
+| unit 2 of 3 | Xeon 8573C | 302 | 194 | 59 |
+| unit 3 of 3 | EPYC 9V74 | 260 | 160 | 47 |
+| corpus walk 1 of 3 | Xeon 6975P-C | 202 | 102 | 44 |
+| corpus walk 2 of 3 | Xeon 6975P-C | 224 | 105 | 44 |
+| corpus walk 3 of 3 | Xeon 6975P-C | 204 | 101 | 47 |
+| corpus receipts | Xeon 6975P-C | 324 | 101 | 145 |
+| corpus rest | Xeon 6975P-C | 223 | 106 | 55 |
+| static | | 143 | | |
+| runtime | | 65 | | |
+
+The last job ended 6 min 5 s after the selection job ended. Two jobs set it:
+the receipt test, which runs over one cache in one process and took 145 s after
+a 101 s compile, and the unit part with the slowest compile. Each compile is
+the same for every part of a group (153 s to 194 s for the library's tests,
+101 s to 106 s for the integration targets), so more parts shorten only the
+test run. The setup of 46 s to 69 s is 15 s to 20 s of checkout (the whole
+history, and the design-tree submodule) and 25 s to 50 s of the toolchain step,
+which installs LLVM and then the Rust components (about 12 s), one after the
+other. The compile uses neither clang nor lld (neither `compiler/build.rs` nor
+`compiler/Cargo.toml` names them); the tests that run programs do.
+
+#### Changes after the first run, and two more runs
+
+Three changes followed from the table. Only the static group checks out the
+history and the design-tree submodule, since no other group's recipe or test
+runs git. The unit group runs in four parts instead of three, since its compile
+is the same for every part and more parts shorten only the 47 s to 59 s of test
+run. The LLVM install starts in the background at the start of the job
+(`.github/host-toolchain.sh`) and the stage waits for it where its tests begin,
+so it overlaps the compile; a group that does not compile first waits before
+its stage starts, so that the wait is not part of the stage's time.
+
+The second run (commit a9113839, the wait inside every group's stage) had every
+job green but one: the runtime job's stage took 57.2 s against its budget of
+40 s, because the 25 s to 35 s wait for the install was inside it with nothing
+to overlap. The third run (commit 4cb0d5565, the wait before the stage of the
+groups that do not compile first) was green in every job, the runtime stage
+taking 26.0 s. Both runs, again from the temporary workflow without the final
+job, were created and began at once (the selection job started 3 s to 4 s after
+the creation, the matrix jobs 3 s after it ended), and both ended 293 s after
+their creation:
+
+| Job (third run) | CPU model | Job | Compile | Tests |
+|---|---|---|---|---|
+| unit 1 of 4 | Xeon 6975P-C | 207 | 145.5 | 40.1 |
+| unit 2 of 4 | Xeon 6975P-C | 206 | 152.1 | 35.2 |
+| unit 3 of 4 | Xeon 6975P-C | 215 | 158.9 | 30.0 |
+| unit 4 of 4 | Xeon 6975P-C | 212 | 154.1 | 32.3 |
+| corpus walk 1 of 3 | Xeon 6975P-C | 171 | 103.2 | 42.9 |
+| corpus walk 2 of 3 | Xeon 6975P-C | 164 | 98.0 | 41.4 |
+| corpus walk 3 of 3 | EPYC 7763 | 230 | 137.1 | 68.1 |
+| corpus receipts | Xeon 6975P-C | 268 | 99.8 | 145.9 |
+| corpus rest | Xeon 6975P-C | 177 | 102.4 | 54.3 |
+| static | EPYC 9V45 | 96 | | |
+| runtime | Xeon 6975P-C | 77 | | |
+
+The receipt job, 324 s in the first run on the same CPU model, took 272 s in the
+second and 268 s in the third: a job's setup before its stage fell from 69 s to
+22 s, and the receipt test (145.9 s here) is now most of what is left of it. The
+temporary copy of the workflow has the selection job but not the final job,
+which took 18 s in the recorded run before the change, so the time from a run's
+creation to the end of its final job is not measured by these runs.
+
+The tests run are the same as before. The unit parts reported 768, 769, 769 and
+768 results, 3074 in all, as the three parts of the first run did (1025, 1025
+and 1024). The `rest` part reported 41 results of the CLI's own tests and 199
+(one ignored) of the integration target, and the walk and the receipt test were
+reported once in each of their parts: together the 41 and 202 results that the
+whole group reports on main (`41 passed` and `201 passed; 1 ignored`). Each of
+the three walk parts reported `Pass=1052`, 3156 cases together, which is the
+number of manifest lines that carry an `id` (the other 13 lines are coverage
+annotations the loader leaves out); the receipt test reported 6312 checks,
+twice 3156.
+
+#### The workflow itself, on the head
+
+Two hand-started runs of the changed `gate.yml` followed on the head
+(commit 52a0ac19b), with the temporary workflow removed.
+
+The first, Linux only (run 45734952693), was green in every job, the final job
+included, and ended 399 s after its creation. Its selection job ran 19 s, the
+check for a temporary workflow 4 s, and the matrix jobs started 34 s to 35 s
+after the creation; the final job took 23 s. The receipt job took 336 s: it ran
+on an AMD EPYC 7763, where the compile took 121.2 s and the receipt test
+202.8 s. The other jobs took 81 s to 239 s (the unit parts 205 s to 239 s, the
+slowest of them on the same CPU model).
+
+The second, with the `macos` input (run 45736574792), was green in every job and
+the final job passed, with macOS running each group whole under the group's
+name (`static (macos-15)`, `unit (macos-15)`, `corpus (macos-15)`,
+`runtime (macos-15)`, the names `compiler-release.yml` looks for). It ended
+495 s after its creation, set by the macOS corpus job (429 s). Its Linux jobs
+began 34 s after the creation; the receipt job took 353 s, again on an
+AMD EPYC 7763 (compile 134.0 s, receipt test 203.7 s).
+
+The receipt test over the same 3156 cases took 144.7 s to 146.8 s on the Xeon
+6975P-C in three runs and 202.8 s to 203.7 s on the EPYC 7763 in two; it runs on
+one thread, so only the CPU's speed shortens it. On the faster CPU the receipt
+job took 268 s to 272 s and the run's last matrix job ended 293 s after the
+creation, with the final job to follow (the temporary runs had no final job).
+On the EPYC 7763 the run ended 399 s after its creation. Whether a run is within
+360 s therefore depends on the CPU model the receipt job is given, unless the
+receipt test, whose verdicts must stay, takes less time or its job a faster host.
+
+A third hand-started run, Linux only, on the head after main's change to the
+merge base choice (run 45750511818, commit ab5a8648a), was green in every job,
+the final job included, and ended 334 s after its creation. Its matrix jobs
+started 35 s after the creation and the final job took 23 s. The receipt job
+took 272 s on a Xeon 6975P-C (compile 102.8 s, receipt test 145.2 s); the unit
+parts took 199 s to 215 s, the corpus parts 146 s to 174 s, `static` 129 s and
+`runtime` 71 s (on an EPYC 7763), so no part other than the receipt job went
+over 4 min 30 s, and the receipt job went 2 s over it. Of the three runs of the
+changed workflow, the two that gave the receipt job the EPYC 7763 ended after
+399 s and 495 s (the second with macOS), the one that gave it the Xeon 6975P-C
+after 334 s.
+
+A fourth run on the final head, Linux only (run 45752662211, commit 75412ab8c),
+was green in every job and ended 328 s after its creation: the matrix jobs
+started 36 s after it, the receipt job took 267 s, the unit parts 210 s to 242 s,
+the final job 23 s.
+
+#### Two runs on the head after the test review (commit 5f276229c)
+
+No ref held this head: the engine removes the `wf-try` ref of a call once the
+call has run, and a push of one by hand was not allowed. So `gate.yml` was
+dispatched on the ref `wf-try/work-283-26e0fade/call/57`, which holds 75412ab8c
+and a `gate.yml` with the same bytes as the head's (`git diff` between the two
+commits is empty for that file), with the workflow's `commit` input naming the
+head: every job checked out and ran the head's files. The final job reads the
+runs of the ref's own commit (75412ab8c), not of the head, so its pass says
+only that the head's `gate-both-platforms.sh` found the head's expected job
+names green there; the verdicts on the head are read below from the jobs of
+the two runs themselves.
+
+The Linux-only run (45761258632, created 05:23:18) was green in every job and
+ended 337 s after its creation; the matrix jobs started 32 s to 33 s after it,
+and the final job ran from 313 s to 337 s:
+
+| Job | CPU model | Job | Compile | Tests |
+|---|---|---|---|---|
+| unit 1 of 4 | Xeon 6975P-C | 219 | 151.9 | 39.0 |
+| unit 2 of 4 | EPYC 9V45 | 173 | 128.9 | 31.4 |
+| unit 3 of 4 | Xeon 6975P-C | 202 | 151.6 | 29.1 |
+| unit 4 of 4 | EPYC 9V45 | 165 | 122.9 | 30.1 |
+| corpus walk 1 of 3 | Xeon 8573C | 209 | 137.1 | 55.5 |
+| corpus walk 2 of 3 | Xeon 8573C | 174 | 112.0 | 48.7 |
+| corpus walk 3 of 3 | Xeon 6975P-C | 167 | 97.0 | 45.2 |
+| corpus receipts | Xeon 6975P-C | 276 | 104.9 | 145.9 |
+| corpus rest | EPYC 9V45 | 151 | 88.8 | 50.4 |
+| static | Xeon 6975P-C | 111 | | |
+| runtime | Xeon 6975P-C | 81 | | |
+
+The run with the `macos` input (45761335261, created 05:24:01) was green in
+every job, the final job included, and ended 473 s after its creation. Its jobs
+started 31 s to 33 s after it. The Linux parts took 160 s to 264 s (the receipt
+job 264 s on a Xeon 6975P-C, its test 144.6 s; the slowest other part, unit 2
+of 4, 242 s on an EPYC 7763), `runtime` 57 s and `static` 119 s. The four macOS
+jobs ran each group whole under the group's name and took `static (macos-15)`
+194 s, `unit (macos-15)` 366 s, `corpus (macos-15)` 421 s and `runtime
+(macos-15)` 46 s. On macOS `static` fetched the whole history and `main`, and
+`unit` took one commit and started the toolchain script, which installs
+nothing there. The whole macOS groups reported 3069 unit tests and 41 and 170
+corpus tests, as in the earlier macOS run (45736574792).
+
+The tests run are the same as the whole groups of main at the same sources
+(the branch changes no Rust source or test; its only change under `compiler/`
+is the 13 lines of `compiler/Makefile` that take the part). Main's gate run on
+1caef2cd5 (45757076977), whole groups: the unit job `3074 passed; 0 failed; 0
+ignored`, the corpus job `41 passed` and `201 passed; 1 ignored`. In the
+Linux-only run each unit part listed 3074 tests and ran its share, 769, 769,
+768 and 768, 3074 together. The corpus parts reported `rest` 41 passed and
+199 passed, 1 ignored (241 selected, which is the 243 listed minus the two
+manifest-wide tests), each of the three walk parts and the receipt test 1 passed:
+41 passed and 201 passed, 1 ignored together. Each walk part printed
+`Pass=1052`, 3156 cases, which is the number of lines of
+`tests/conformance/manifest.jsonl` that carry an `"id"` (`grep -c '"id"'`).
+
+Not yet measured: the five runs of the question above on pushes to main after the merge. They are appended here,
+each with its job times and the CPU model of its jobs, when they have run.
+
 ### The final job read a job listing that lagged, and two runs ended red without a failing group
 
 Read with `gh api` on 2026-11-25 from the runs' records; the listing's lag

@@ -54,6 +54,9 @@ apps                                      read        read
 docs/guide                                read        read
 README.md                                 read        read
 README.zh-CN.md                           read        read
+# The helper compiler/Makefile runs for one part of a gate group; the package
+# names it, and the check cannot tell which of its recipes a job runs.
+.github/shard-tests.pl                    read        read
 # A checkout writes each .wf, .wfm and .wfg file byte for byte by this file.
 .gitattributes                            read        read
 #
