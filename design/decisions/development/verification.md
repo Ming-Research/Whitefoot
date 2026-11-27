@@ -170,6 +170,10 @@ The gate and the I/O host checks run for a push to main, a push to a branch with
 - rejected: an agent proposed skipping branches by name, such as `research/`; the owner rejected it, because research and code work share `claude/` branch names, and a research branch with an open pull request still needs its gate.
 - rejected: an agent proposed triggering on pull request events alone; the owner rejected it, because GitHub sends no pull request event while it conflicts with its base, so pushes to a conflicting branch would go unchecked.
 
+### decision io-hosts-and-sanitizers-check-what-a-change-touches
+The I/O host checks and the sanitizers check a revision on main whole, main's head again each night, and any other revision only where its change from main touches a path their jobs read.
+- replaced: Checking every revision the gate checks, whatever its change touched, was on main; the owner changed it, because in 38 merge checks the sanitizers never failed, each check spent 6 to 7 minutes on each of the two workflows, and two of three merges changed no compiler code.
+
 ### decision pull-request-openings-run-in-their-own-group
 A pull request's opening or reopening runs in a concurrency group of its own; an opening skips if the head has moved by the time it decides, and a ready pull request's reopening always runs.
 - rejected: an agent proposed letting the opening's run share the push group; the owner rejected it, because it could cancel the run of a newer head pushed right after the opening and leave that head unchecked.

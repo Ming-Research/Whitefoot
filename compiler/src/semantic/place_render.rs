@@ -2,6 +2,7 @@
 
 use super::model::{CheckedType, IntegerType};
 use super::places::{CapturedValue, PlaceStep, WindowPart};
+use crate::diagnostic_repairs::described;
 
 #[derive(Clone)]
 pub(super) enum PlaceProjection {
@@ -18,7 +19,8 @@ pub(super) enum PlaceProjection {
 }
 
 /// The names and selected types retained by the stage rendering a place.
-/// Lookup failure remains the checker's error or the proof renderer's `?`.
+/// Lookup failure remains the checker's error or the proof renderer's
+/// description of the name it could not find.
 pub(super) trait PlaceNames {
     type Error;
 
@@ -66,13 +68,16 @@ pub(super) fn render_place_projections<N: PlaceNames>(
         let step = match projection {
             PlaceProjection::Place(step) => *step,
             PlaceProjection::FormalSubscript(ordinal) => {
-                rendered.push_str(&format!("[parameter #{ordinal}]"));
+                rendered.push_str(&format!("[{}]", described(&format!("parameter #{ordinal}"))));
                 ty = names.element(ty, range)?;
                 range = false;
                 continue;
             }
             PlaceProjection::FormalPage(ordinal) => {
-                rendered.push_str(&format!(".pages[parameter #{ordinal}]"));
+                rendered.push_str(&format!(
+                    ".pages[{}]",
+                    described(&format!("parameter #{ordinal}"))
+                ));
                 ty = names.element(ty, range)?;
                 range = true;
                 continue;
@@ -97,7 +102,8 @@ pub(super) fn render_place_projections<N: PlaceNames>(
                     ty = Some(selected);
                 }
                 None => {
-                    rendered.push_str(".?");
+                    rendered.push('.');
+                    rendered.push_str(&described("a field with no source spelling"));
                     ty = None;
                 }
             },
@@ -107,7 +113,10 @@ pub(super) fn render_place_projections<N: PlaceNames>(
                     ty = Some(selected);
                 }
                 None => {
-                    rendered.push_str(".?.?");
+                    rendered.push('.');
+                    rendered.push_str(&described("a variant with no source spelling"));
+                    rendered.push('.');
+                    rendered.push_str(&described("a field with no source spelling"));
                     ty = None;
                 }
             },

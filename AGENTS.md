@@ -84,10 +84,17 @@ Whitefoot's extra merge preconditions:
 2. Each specification change is recorded in `spec/log.md`.
 3. When the merge changes the concurrent map's runtime or its test,
    `map-sanitizers.yml` passes on the exact revision being merged.
-4. `sanitizers.yml` passes on the exact revision being merged: no sanitizer
-   reports on an accepted program
+4. `sanitizers.yml` and `io-hosts.yml` pass on the exact revision being
+   merged wherever its change from its merge base with `main` touches a path
+   their jobs read; `.github/change-scope.sh` names those paths and decides,
+   and a run whose change touches none passes saying so. The sanitizers
+   report nothing on an accepted program
    ([sanitized builds](design/decisions/compiler/command-line/sanitized-builds.md), decision
-   `sanitizers-run-in-their-own-workflow`).
+   `sanitizers-run-in-their-own-workflow`). Both run whole on `main` every
+   night, and a red nightly run is a red `main`. The owner decided this on
+   2026-11-26, because the sanitizers had failed in none of 38 merge checks,
+   each check spent 6 to 7 minutes on each of the two workflows, and two of
+   every three merges changed no compiler code.
 5. If the merge changes `spec/kernel-spec.md` or conformance evidence, the
    pull request states what changed and its selection ground, answered
    against the exact revision being merged. The specification's bytes are its
@@ -257,12 +264,12 @@ program execution.
   `compute-regression.yml` runs when the pull request is marked ready and
   skips no earlier hand-started run.
 - `make design-ready` runs in `design-readiness.yml`.
-- CI only: `io-hosts.yml`, on the same revisions as the gate (Linux io_uring
-  and Windows IOCP),
-  `sanitizers.yml` on the same revisions as the gate (the corpus target's
-  programs and running conformance cases, the cases also with `--par`, under
-  AddressSanitizer with UndefinedBehaviorSanitizer and under ThreadSanitizer;
-  any report fails it),
+- CI only: `io-hosts.yml` (Linux io_uring and Windows IOCP) and
+  `sanitizers.yml` (the corpus target's programs and running conformance
+  cases, the cases also with `--par`, under AddressSanitizer with
+  UndefinedBehaviorSanitizer and under ThreadSanitizer; any report fails it),
+  each on the same revisions as the gate where the change touches a path its
+  jobs read (`.github/change-scope.sh`), and whole on `main` every night,
   `map-sanitizers.yml` on every push to a PR that changes the concurrent
   map's runtime or its test (that test under AddressSanitizer and
   ThreadSanitizer, on the PR's head),

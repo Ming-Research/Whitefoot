@@ -2314,22 +2314,29 @@ fn main() -> status: std::process::ExitStatus pure {
             .iter()
             .find(|function| function.name() == "release_after_match")
             .expect("cleanup function");
-        let cleanup_carries = function
+        // Every arm of the match hands the join the same owner, so the join
+        // keeps no parameter for it: the one return cleanup releases the owner
+        // value itself, and an edge transfer carries nothing to release.
+        assert!(
+            function
+                .blocks()
+                .iter()
+                .all(|block| block.parameters().is_empty()),
+            "no block carries the owner as a parameter"
+        );
+        let return_cleanups = function
             .blocks()
             .iter()
-            .flat_map(|block| {
-                let drops = match block.terminator() {
-                    crate::IrTerminator::Return { drops, .. } => drops.as_slice(),
-                    _ => &[],
-                };
-                block.parameters().iter().filter(move |(parameter, _)| {
-                    drops.iter().any(|drop| drop.operand() == *parameter)
-                })
+            .filter(|block| {
+                matches!(
+                    block.terminator(),
+                    crate::IrTerminator::Return { drops, .. } if !drops.is_empty()
+                )
             })
             .count();
         assert_eq!(
-            cleanup_carries, 1,
-            "the owner reaches its return cleanup through the join"
+            return_cleanups, 1,
+            "the owner reaches its one return cleanup through the join"
         );
     });
     for overlap in [super::OverlapLowering::Off, super::OverlapLowering::On] {

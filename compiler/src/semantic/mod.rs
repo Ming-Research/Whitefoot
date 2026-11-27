@@ -1580,8 +1580,6 @@ pub enum SemanticIssueKind {
         /// EFF-2 does not require a repair when no row-only edit is validated.
         mechanical_fix: Option<String>,
     },
-    /// A generic type parameter named a source contract as its bound.
-    SourceContractGenericBound,
 }
 
 /// A written-argument count and the noun it agrees with, as `1 written type

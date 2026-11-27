@@ -1105,3 +1105,546 @@ fn integer_match_coverage_diagnostic_carries_full_domain_and_repair() {
     );
     assert_no_internal_identity(&rendered);
 }
+
+/// The failure of [`BOUNDS`] with one payload field added to its record.
+fn with_field(label: &'static str, value: Value) -> CompilationFailure {
+    let mut failure = stop("bounds.wf", BOUNDS);
+    failure.record.detail.push((label, value));
+    failure
+}
+
+/// A rejection whose words are sound reports no defect.
+#[test]
+fn a_rejection_with_sound_words_has_no_text_defects() {
+    let defects = stop("bounds.wf", BOUNDS).text_defects();
+    assert!(defects.is_empty(), "{defects:?}");
+    let defects = with_field(
+        "mechanical_fix",
+        Value::Text("write `let at = count;` before `src^[at]`".to_owned()),
+    )
+    .text_defects();
+    assert!(defects.is_empty(), "{defects:?}");
+}
+
+/// A `?` that stands for a value the renderer could not write is a defect,
+/// whichever field carries it.
+#[test]
+fn a_question_mark_standing_for_a_value_is_a_text_defect() {
+    let defects = with_field(
+        "instantiated_goal",
+        Value::Text("0_u64 < rows^[?].len".to_owned()),
+    )
+    .text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+    assert!(defects[0].starts_with("instantiated_goal:"), "{defects:?}");
+    let defects = with_field(
+        "residual",
+        Value::List(vec![Value::Text("t^[?][i] and t^[?][j]".to_owned())]),
+    )
+    .text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+}
+
+/// A stretch the text marks as source that the lexer does not read as source
+/// is a defect; an unmarked stretch and a stretch left open are not read.
+#[test]
+fn a_marked_stretch_that_is_not_source_is_a_text_defect() {
+    let defects = with_field(
+        "mechanical_fix",
+        Value::Text("write `a # b` here".to_owned()),
+    )
+    .text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+    assert!(defects[0].contains("is not source text"), "{defects:?}");
+    let defects = with_field(
+        "mechanical_fix",
+        Value::Text("the value of k before it was rewritten, then `a # b".to_owned()),
+    )
+    .text_defects();
+    assert!(defects.is_empty(), "{defects:?}");
+}
+
+/// The writer's own source bytes, which a record quotes exactly, are not
+/// read for placeholders.
+#[test]
+fn quoted_source_bytes_are_not_read_for_defects() {
+    let defects = with_field("found", Value::Exact(b"\"why?\"".to_vec())).text_defects();
+    assert!(defects.is_empty(), "{defects:?}");
+}
+
+/// A value with no source spelling is written as a description between two
+/// marks, and a backtick-marked stretch that holds one is not marked as
+/// source; other stretches and text without a description are untouched.
+#[test]
+fn a_described_value_leaves_its_stretch_unmarked() {
+    use crate::diagnostic_repairs::{described, unmark_described};
+
+    let value = described("the value of k before it was rewritten");
+    let text = format!("`0_u64 < rows^[{value}].len` reads `k`, then `let k0 = k;`");
+    assert_eq!(
+        unmark_described(&text),
+        format!("0_u64 < rows^[{value}].len reads `k`, then `let k0 = k;`")
+    );
+    assert_eq!(unmark_described("a `b` c"), "a `b` c");
+    assert_eq!(
+        unmark_described(&format!("open `{value} and no close")),
+        format!("open `{value} and no close")
+    );
+}
+
+/// The payload a rendering shows for a described value passes the text check:
+/// it holds no `?` and no stretch marked as source that is not.
+#[test]
+fn a_described_value_in_a_field_is_sound_words() {
+    use crate::diagnostic_repairs::described;
+
+    let goal = format!("2_u64 < rows[{}].len", described("the value of k before it was rewritten"));
+    let defects = with_field("instantiated_goal", Value::Source(goal)).text_defects();
+    assert!(defects.is_empty(), "{defects:?}");
+}
+
+/// A field that holds a source relation is read as source with each
+/// description replaced by a name: a place or relation written as a phrase in
+/// words is a defect, the same relation with its description is not, and the
+/// forms the grammar writes with a word beside a word are admitted.
+#[test]
+fn a_source_relation_field_is_read_as_source_around_its_descriptions() {
+    use crate::diagnostic_repairs::described;
+
+    let described_index = described("the value of k before it was rewritten");
+    for text in [
+        "rows element at k".to_owned(),
+        format!("{described_index} is below the length of rows"),
+        "a # b".to_owned(),
+        "i < rows^[?].len".to_owned(),
+        format!("i < rows^[{}", described_index.trim_end_matches('\u{203a}')),
+    ] {
+        let defects = with_field("residual", Value::Source(text.clone())).text_defects();
+        assert_eq!(defects.len(), 1, "{text}: {defects:?}");
+    }
+    for text in [
+        format!("rows^[{described_index}].len"),
+        format!("0_u64 < rows^[{described_index}].len"),
+        format!("t^[{described_index}][i].Some.value.a"),
+        "i < entry(rows)^.len".to_owned(),
+        "s +wrap 1_u64 < 10_u64".to_owned(),
+        "cvt::<u32, u64>(s) < 10_u64".to_owned(),
+        "cell^.inner.len unchanged".to_owned(),
+        "move rows".to_owned(),
+        "need::<4>".to_owned(),
+        "relay::<A, fn apply>".to_owned(),
+    ] {
+        let defects = with_field("residual", Value::Source(text.clone())).text_defects();
+        assert!(defects.is_empty(), "{text}: {defects:?}");
+    }
+    // The same phrase in a field not marked as a source relation is prose.
+    let defects =
+        with_field("reason", Value::Text("rows element at k".to_owned())).text_defects();
+    assert!(defects.is_empty(), "{defects:?}");
+}
+
+/// The words [FN-8] fixes for an evaluated-value datum are the specification's
+/// own spelling: read as a name in a source-relation field, and only in their
+/// exact form.
+#[test]
+fn the_specified_call_argument_datum_is_read_as_a_name() {
+    use crate::diagnostic_repairs::call_argument_datum;
+
+    assert_eq!(call_argument_datum(0), "argument #0 pre-transfer value");
+    for text in [
+        format!("{} < 10_u64", call_argument_datum(0)),
+        format!("{}.count < 10_u64", call_argument_datum(12)),
+    ] {
+        let defects = with_field("instantiated_goal", Value::Source(text.clone())).text_defects();
+        assert!(defects.is_empty(), "{text}: {defects:?}");
+    }
+    for text in [
+        "argument #x pre-transfer value < 10_u64",
+        "argument pre-transfer value < 10_u64",
+        "argument #0 pre-transfer values < 10_u64",
+    ] {
+        let defects =
+            with_field("instantiated_goal", Value::Source(text.to_owned())).text_defects();
+        assert_eq!(defects.len(), 1, "{text}: {defects:?}");
+    }
+}
+
+/// The residual of a call separation is read path by path through the table of
+/// its sentence forms: a path written as a phrase in words is a defect, a
+/// sentence that is no form is a defect, and every form the renderer writes is
+/// read back to its two paths.
+#[test]
+fn a_call_separation_residual_is_read_by_its_two_paths() {
+    use crate::diagnostic_repairs::{described, separation_paths, SeparationForm};
+
+    let hidden = described("a computed value with no source spelling");
+    for form in SeparationForm::ALL {
+        let left = format!("t^[{hidden}][i].Some.value.a");
+        let text = form.render(&left, "values^[a..b]");
+        let plain = crate::diagnostic_repairs::replace_described(&text, "described")
+            .expect("balanced description");
+        assert_eq!(
+            separation_paths(&plain),
+            Some(("t^[described][i].Some.value.a", "values^[a..b]")),
+            "{text}"
+        );
+        let defects = with_field("residual", Value::Separation(text.clone())).text_defects();
+        assert!(defects.is_empty(), "{text}: {defects:?}");
+        let text = form.render("rows element at k", "values^[a..b]");
+        let defects = with_field("residual", Value::Separation(text.clone())).text_defects();
+        assert_eq!(defects.len(), 1, "{text}: {defects:?}");
+        let text = form.render("rows^[i]", "the other place");
+        let defects = with_field("residual", Value::Separation(text.clone())).text_defects();
+        assert_eq!(defects.len(), 1, "{text}: {defects:?}");
+    }
+    let defects = with_field(
+        "residual",
+        Value::Separation("rows^[i] and rows^[j] differ".to_owned()),
+    )
+    .text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+    assert!(defects[0].contains("none of the forms"), "{defects:?}");
+    let defects = with_field(
+        "residual",
+        Value::Separation("rows^[?] and rows^[j] require their captured indices to be distinct".to_owned()),
+    )
+    .text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+}
+
+/// A description that names a place already described holds one pair of marks,
+/// so the text check reads the value and reports no defect; a nested pair
+/// written by hand stays a defect.
+#[test]
+fn a_description_that_names_a_described_place_has_one_pair_of_marks() {
+    use crate::diagnostic_repairs::described;
+
+    let nested = described(&format!(
+        "the value of rows[{}] before it was rewritten",
+        described("parameter #0")
+    ));
+    assert_eq!(nested, "\u{2039}the value of rows[parameter #0] before it was rewritten\u{203a}");
+    let defects = with_field(
+        "instantiated_goal",
+        Value::Source(format!("0_u64 < rows^[{nested}].len")),
+    )
+    .text_defects();
+    assert!(defects.is_empty(), "{defects:?}");
+    let defects = with_field(
+        "mechanical_fix",
+        Value::Text(format!("write `rows^[{nested}].len` here")),
+    )
+    .text_defects();
+    assert!(defects.is_empty(), "{defects:?}");
+    let by_hand = "0_u64 < rows^[\u{2039}a \u{2039}b\u{203a}\u{203a}].len".to_string();
+    let defects = with_field("instantiated_goal", Value::Source(by_hand)).text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+}
+
+/// A backtick-marked stretch that holds a description is read with the
+/// description replaced by a name, so the source around it must be source.
+#[test]
+fn a_described_stretch_is_read_around_its_description() {
+    use crate::diagnostic_repairs::described;
+
+    let value = described("the value of k before it was rewritten");
+    let defects = with_field(
+        "mechanical_fix",
+        Value::Text(format!("write `a # {value}` here")),
+    )
+    .text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+    assert!(defects[0].contains("is not source text"), "{defects:?}");
+    let defects = with_field(
+        "mechanical_fix",
+        Value::Text(format!("write `rows^[{value}].len` here")),
+    )
+    .text_defects();
+    assert!(defects.is_empty(), "{defects:?}");
+    let defects = with_field(
+        "mechanical_fix",
+        Value::Text(format!("write `rows^[{}.len` here", value.trim_end_matches('\u{203a}'))),
+    )
+    .text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+    assert!(defects[0].contains("not closed"), "{defects:?}");
+}
+
+/// A listing marks which payload fields hold a source relation, and the
+/// record holds them as source values that print as the text does.
+#[test]
+fn a_bounds_residual_is_held_as_a_source_relation() {
+    let failure = stop("bounds.wf", BOUNDS);
+    let held = failure
+        .record
+        .detail
+        .iter()
+        .find(|(label, _)| *label == "residual")
+        .map(|(_, value)| value);
+    assert!(matches!(held, Some(Value::Source(_))), "{held:?}");
+    assert!(failure.text_defects().is_empty(), "{:?}", failure.text_defects());
+}
+
+// Adversarial tests of the text check and the kind list. Their reference is
+// the acceptance of the work (the check reads a source-relation field as
+// source with each description a name, and two words, names or literals side
+// by side are a defect), the words [FN-8] fixes for the evaluated-value datum
+// (spec/kernel-spec.md, "argument #N pre-transfer value"), and the rendering
+// the record already gives a `Value::Text`.
+
+/// A description is read as a name; two names with nothing between them are
+/// two names side by side, however the stand-in is spliced into the text.
+#[test]
+fn descriptions_and_names_side_by_side_are_not_one_name() {
+    use crate::diagnostic_repairs::{SeparationForm, described};
+
+    let first = described("the value of a before it was rewritten");
+    let second = described("the value of b before it was rewritten");
+    for text in [
+        format!("rows^[{first}{second}].len"),
+        format!("rows{first}.len"),
+        format!("{first}rows < 10_u64"),
+    ] {
+        let defects = with_field("residual", Value::Source(text.clone())).text_defects();
+        assert_eq!(defects.len(), 1, "{text}: {defects:?}");
+    }
+    let text = SeparationForm::DISTINCT_INDICES.render(&format!("rows^[{first}{second}]"), "values^[c]");
+    let defects = with_field("residual", Value::Separation(text.clone())).text_defects();
+    assert_eq!(defects.len(), 1, "{text}: {defects:?}");
+    // Separated by punctuation they are two places and not a defect.
+    let text = SeparationForm::DISTINCT_INDICES
+        .render(&format!("rows^[{first}][{second}]"), "values^[c]");
+    let defects = with_field("residual", Value::Separation(text.clone())).text_defects();
+    assert!(defects.is_empty(), "{text}: {defects:?}");
+}
+
+/// [FN-8] fixes the words `argument #N pre-transfer value`; the same words
+/// glued to the end of a longer word are not that datum.
+#[test]
+fn the_specified_datum_is_not_found_inside_a_longer_word() {
+    use crate::diagnostic_repairs::replace_call_argument_datums;
+
+    for unchanged in [
+        "xargument #0 pre-transfer value",
+        "a_argument #3 pre-transfer value.n",
+        "argument # pre-transfer value",
+        "argument #-1 pre-transfer value",
+        "argument #1 pre-transfer values",
+        "argument #1 pre-transfer value_x",
+    ] {
+        assert_eq!(replace_call_argument_datums(unchanged, "D"), unchanged);
+    }
+    assert_eq!(
+        replace_call_argument_datums("0_u64 < argument #7 pre-transfer value.len", "D"),
+        "0_u64 < D.len"
+    );
+    assert_eq!(
+        replace_call_argument_datums(
+            "argument #1 pre-transfer value + argument #22 pre-transfer value",
+            "D"
+        ),
+        "D + D"
+    );
+    assert_eq!(
+        replace_call_argument_datums("\u{e9} argument #1 pre-transfer value \u{fc}", "D"),
+        "\u{e9} D \u{fc}"
+    );
+    let defects = with_field(
+        "instantiated_goal",
+        Value::Source("xargument #0 pre-transfer value < 10_u64".to_owned()),
+    )
+    .text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+    // In a backtick stretch the exact datum is read as a name, a near miss is not.
+    let defects = with_field(
+        "mechanical_fix",
+        Value::Text("write `argument #0 pre-transfer value < 10_u64` here".to_owned()),
+    )
+    .text_defects();
+    assert!(defects.is_empty(), "{defects:?}");
+    let defects = with_field(
+        "mechanical_fix",
+        Value::Text("write `argument #x pre-transfer value < 10_u64` here".to_owned()),
+    )
+    .text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+}
+
+/// A source relation inside a list or a structured payload element is read
+/// like one in a field of its own, and its defect names the inner label.
+#[test]
+fn a_source_relation_nested_in_a_payload_is_read() {
+    let defects = with_field(
+        "residual",
+        Value::List(vec![
+            Value::Source("rows^[i]".to_owned()),
+            Value::Source("rows element at k".to_owned()),
+        ]),
+    )
+    .text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+    let defects = with_field(
+        "detail",
+        Value::Variant(
+            "Inner",
+            vec![("inner", Value::Source("rows element at k".to_owned()))],
+        ),
+    )
+    .text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+    assert!(defects[0].starts_with("inner:"), "{defects:?}");
+    let defects = with_field(
+        "detail",
+        Value::Fields(vec![("inner", Value::Text("rows^[?]".to_owned()))]),
+    )
+    .text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+}
+
+/// A `?` hides in no description, and a description holding a backtick
+/// cannot leave the source around it unread.
+#[test]
+fn a_description_hides_neither_a_question_mark_nor_a_stretch_boundary() {
+    use crate::diagnostic_repairs::described;
+
+    let asking = described("what is the value of k?");
+    let defects = with_field("mechanical_fix", Value::Text(format!("write {asking} here")))
+        .text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+    let defects = with_field("residual", Value::Source(format!("rows^[{asking}].len")))
+        .text_defects();
+    assert_eq!(defects.len(), 1, "{defects:?}");
+    let ticked = described("the value of `k` before it was rewritten");
+    let defects = with_field(
+        "mechanical_fix",
+        Value::Text(format!("write `rows^[{ticked}].len` here")),
+    )
+    .text_defects();
+    assert!(!defects.is_empty(), "{defects:?}");
+}
+
+/// The descriptions are found, and only well-formed ones.
+#[test]
+fn descriptions_are_replaced_only_where_they_are_closed() {
+    use crate::diagnostic_repairs::replace_described;
+
+    assert_eq!(replace_described("", "N").as_deref(), Some(""));
+    assert_eq!(replace_described("plain", "N").as_deref(), Some("plain"));
+    assert_eq!(
+        replace_described("a\u{2039}x\u{203a}b\u{2039}\u{203a}c", "N").as_deref(),
+        Some("aNbNc")
+    );
+    assert_eq!(
+        replace_described("\u{2039}\u{e9}\u{fc} words\u{203a}", "N").as_deref(),
+        Some("N")
+    );
+    for open in [
+        "\u{2039}x",
+        "x\u{203a}",
+        "\u{2039}a\u{2039}b\u{203a}\u{203a}",
+        "\u{203a}\u{2039}x\u{203a}",
+    ] {
+        assert_eq!(replace_described(open, "N"), None, "{open:?}");
+    }
+}
+
+/// Only the stretches that hold a description lose their backticks.
+#[test]
+fn only_a_stretch_holding_a_description_is_unmarked() {
+    use crate::diagnostic_repairs::unmark_described;
+
+    assert_eq!(
+        unmark_described("`a` and `b\u{2039}x\u{203a}` and `c`"),
+        "`a` and b\u{2039}x\u{203a} and `c`"
+    );
+    assert_eq!(unmark_described("`a` and `c`"), "`a` and `c`");
+    assert_eq!(unmark_described(""), "");
+}
+
+/// A source value, a separation residual and a text print alike, in the text
+/// and the JSON rendering, alone and inside a list; a stretch that holds a
+/// description is printed without its backticks and with its marks.
+#[test]
+fn source_values_print_as_text_does() {
+    use crate::diagnostic_repairs::described;
+
+    let hidden = described("a computed value with no source spelling");
+    for text in [
+        format!("rows^[{hidden}].len"),
+        "plain `b` text, \"q\" and \\ \u{e9}".to_owned(),
+        format!("write `rows^[{hidden}].len` here, then `k`"),
+    ] {
+        let as_text = with_field("field", Value::Text(text.clone()));
+        let in_list = with_field("field", Value::List(vec![Value::Text(text.clone())]));
+        for make in [Value::Source as fn(String) -> Value, Value::Separation] {
+            let other = with_field("field", make(text.clone()));
+            assert_eq!(other.to_string(), as_text.to_string(), "{text}");
+            assert_eq!(
+                other.render(DiagnosticFormat::Json),
+                as_text.render(DiagnosticFormat::Json),
+                "{text}"
+            );
+            let listed = with_field("field", Value::List(vec![make(text.clone())]));
+            assert_eq!(listed.to_string(), in_list.to_string(), "{text}");
+            assert_eq!(
+                listed.render(DiagnosticFormat::Json),
+                in_list.render(DiagnosticFormat::Json),
+                "{text}"
+            );
+        }
+    }
+    let printed = with_field(
+        "field",
+        Value::Source(format!("write `rows^[{hidden}].len` here, then `k`")),
+    )
+    .to_string();
+    assert!(
+        printed.contains(&format!("write rows^[{hidden}].len here, then `k`")),
+        "{printed}"
+    );
+}
+
+/// The kind a record prints is the kind its summary line names and is in the
+/// list of rejection kinds, which is sorted, has no repeat and names only
+/// kinds: no variant of a field's classification, and no capability stop.
+#[test]
+fn the_kind_a_record_prints_is_listed_and_the_list_is_well_formed() {
+    let kinds = crate::rejection_kinds();
+    let mut sorted = kinds.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(kinds, sorted);
+    for kind in &kinds {
+        assert!(
+            kind.chars().next().is_some_and(|first| first.is_ascii_uppercase())
+                && kind.chars().all(|character| character.is_ascii_alphanumeric()),
+            "{kind}"
+        );
+    }
+    for not_a_kind in [
+        "Function", "Binding", "Module", "Label", "Base", "Backedge", "Generics", "Refuted",
+        "Unproved", "SemanticUnsupported",
+    ] {
+        assert!(!kinds.contains(&not_a_kind), "{not_a_kind}");
+    }
+    let mut printed = 0;
+    for (name, source) in [
+        ("bounds.wf", BOUNDS),
+        ("incomplete.wf", b"fn".as_slice()),
+        ("byte.wf", b"#".as_slice()),
+        ("utf8.wf", b"\xff\xfe".as_slice()),
+        ("layout.wf", b"fn  main() {}\n".as_slice()),
+    ] {
+        let Err(failure) = check(&[SourceInput::new(name, source)], CompilerLimits::default())
+        else {
+            panic!("{name} must be rejected");
+        };
+        if let Some(kind) = failure.kind_name() {
+            let rendered = failure.to_string();
+            assert!(rendered.contains(&format!("]: {kind}")), "{name}: {rendered}");
+            assert!(kinds.contains(&kind), "{name}: {kind} is not listed");
+            printed += 1;
+        }
+    }
+    assert!(printed >= 3, "{printed}");
+}

@@ -88,6 +88,9 @@ repository-invariants           30         30         25         30          30 
 # 4.9 s, in a form that spent 3.3 s of that sleeping, and the rule gives the
 # 10 s floor on every class.
 test-fast-state                 10         10         10         10          10          10     -
+# test-change-scope, the test of .github/change-scope.sh, has no recorded run
+# yet, and takes the 10 s floor on every class until it has 20.
+test-change-scope               10         10         10         10          10          10     -
 spec-archives                   10         10         10         10          10          10     -
 readme-translation              10         10         10         10          10          10     -
 spec-prose-integrity            10         10         10         10          10          10     -

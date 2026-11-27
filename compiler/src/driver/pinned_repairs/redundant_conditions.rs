@@ -15,7 +15,7 @@ pub(super) const REDUNDANT_CONDITIONS: &[RepairPair] = &[
         sentences: &[
             "]: RedundantCondition\n",
             "\n  decided: True\n",
-            "\n  mechanical_fix: the condition always holds here: delete the test and its else branch, keep the then branch's statements and delivery in place, and delete any statement that leaves unreachable",
+            "\n  mechanical_fix: the condition always holds here: delete the test and its else branch, keep the then branch's statements and delivery in place, and delete any statement that leaves unreachable; it is decided by x - 0_u64 <= 7_u64\n",
         ],
         repaired: &[br#"fn choose(x: u64) -> r: u64 pure contract {
   requires x < 8_u64;
@@ -38,7 +38,7 @@ fn main() -> status: std::process::ExitStatus pure {
         sentences: &[
             "]: RedundantCondition\n",
             "\n  decided: False\n",
-            "\n  mechanical_fix: the condition never holds here: delete the test and its then branch and keep the else branch's statements and delivery in place, or delete the whole statement when it has no else",
+            "\n  mechanical_fix: the condition never holds here: delete the test and its then branch and keep the else branch's statements and delivery in place, or delete the whole statement when it has no else; it is decided by 0_u64 - x <= -8_i64\n",
         ],
         repaired: &[br#"fn choose(x: u64) -> r: u64 pure contract {
   requires 8_u64 <= x;

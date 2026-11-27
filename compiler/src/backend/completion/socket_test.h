@@ -6,6 +6,7 @@
  * and result observations. No production source includes it. */
 #include "bridge.h"
 #include "contract.h"
+#include "socket_address.h"
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -62,6 +63,83 @@ static inline unsigned wf_test_socket_port(int descriptor) {
 #endif
     if (getsockname(socket, (struct sockaddr *)&address, &length)) return 0;
     return (unsigned)ntohs(address.sin_port);
+}
+
+/* The host-record to portable-address conversion every engine shares
+ * (`socket_address.h`): the two admitted families convert, and every other
+ * record answers a nonzero status and the all-zero address.  The output is
+ * filled with ones first, so a conversion that left it untouched would read as
+ * a failure of the zero rule and not as a pass. */
+static inline int wf_test_socket_address_conversion(void) {
+    wf_socket_native_address native;
+    wf_socket_address portable, back;
+    struct sockaddr_in host4;
+    unsigned length, index;
+    const char *phase = "ipv4";
+    int failed = 1;
+#define ADDRESS_REQUIRE(condition) do { if (!(condition)) goto cleanup; } while (0)
+#define ADDRESS_FILL() memset(&back, 0xff, sizeof(back))
+#define ADDRESS_ZERO() (back.words[0] == 0 && back.words[1] == 0 \
+                        && back.port_and_family == 0)
+    memset(&portable, 0, sizeof(portable));
+    portable.words[0] = UINT64_C(0x0100007f);
+    portable.port_and_family = 8080u;
+    length = wf_socket_native_from_address(&portable, &native);
+    ADDRESS_FILL();
+    ADDRESS_REQUIRE(wf_socket_address_from_native(&native, length, &back) == 0);
+    ADDRESS_REQUIRE(back.words[0] == portable.words[0] && back.words[1] == 0
+                    && back.port_and_family == 8080u);
+    phase = "ipv6";
+    memset(&portable, 0, sizeof(portable));
+    for (index = 0; index < 16u; index += 1u) {
+        wf_socket_address_set_byte(&portable, index, (unsigned char)(index + 1u));
+    }
+    portable.port_and_family = 443u | WF_SOCKET_FAMILY_V6;
+    length = wf_socket_native_from_address(&portable, &native);
+    ADDRESS_FILL();
+    ADDRESS_REQUIRE(wf_socket_address_from_native(&native, length, &back) == 0);
+    ADDRESS_REQUIRE(back.words[0] == portable.words[0]
+                    && back.words[1] == portable.words[1]
+                    && back.port_and_family == portable.port_and_family);
+    phase = "ipv6 record too short";
+    ADDRESS_FILL();
+    ADDRESS_REQUIRE(wf_socket_address_from_native(&native, length - 1u, &back) != 0);
+    ADDRESS_REQUIRE(ADDRESS_ZERO());
+    phase = "ipv4 record too short";
+    memset(&portable, 0, sizeof(portable));
+    portable.words[0] = UINT64_C(0x0100007f);
+    length = wf_socket_native_from_address(&portable, &native);
+    ADDRESS_FILL();
+    ADDRESS_REQUIRE(
+        wf_socket_address_from_native(&native, length - 1u, &back) != 0
+    );
+    ADDRESS_REQUIRE(ADDRESS_ZERO());
+    phase = "no family byte";
+    ADDRESS_FILL();
+    ADDRESS_REQUIRE(wf_socket_address_from_native(&native, 0u, &back) != 0);
+    ADDRESS_REQUIRE(ADDRESS_ZERO());
+    phase = "unspecified family";
+    memcpy(&host4, native.bytes, sizeof(host4));
+    host4.sin_family = AF_UNSPEC;
+    memcpy(native.bytes, &host4, sizeof(host4));
+    ADDRESS_FILL();
+    ADDRESS_REQUIRE(wf_socket_address_from_native(&native, length, &back) != 0);
+    ADDRESS_REQUIRE(ADDRESS_ZERO());
+#if defined(AF_UNIX)
+    phase = "unix family";
+    host4.sin_family = AF_UNIX;
+    memcpy(native.bytes, &host4, sizeof(host4));
+    ADDRESS_FILL();
+    ADDRESS_REQUIRE(wf_socket_address_from_native(&native, length, &back) != 0);
+    ADDRESS_REQUIRE(ADDRESS_ZERO());
+#endif
+    failed = 0;
+cleanup:
+    if (failed) fprintf(stderr, "socket address conversion: %s failed\n", phase);
+#undef ADDRESS_ZERO
+#undef ADDRESS_FILL
+#undef ADDRESS_REQUIRE
+    return failed;
 }
 
 static inline int wf_test_socket_lifecycle(unsigned *chosen_port) {

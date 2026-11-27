@@ -6,6 +6,7 @@
 //! a reference step substitutes the path that reference names; every
 //! [OWN-7] judgment reads that same resolved place [REF-1].
 
+use crate::diagnostic_repairs::described;
 use crate::semantic::check::CheckContext;
 use crate::semantic::check::{DeclarationInventory, TypeContext};
 use std::collections::HashMap;
@@ -109,7 +110,7 @@ impl crate::semantic::place_render::PlaceNames for CheckerPlaceNames<'_, '_> {
                 .source
                 .and_then(|node| self.types.source_spellings.get(&node))
                 .cloned()
-                .unwrap_or_else(|| "?".to_owned())),
+                .unwrap_or_else(|| described("a computed value with no source spelling"))),
             _ => self.types.render_captured_offset(value, self.bindings),
         }
     }
@@ -2207,7 +2208,7 @@ impl<'unit> TypeContext<'unit> {
                             (name, Some(local.ty))
                         }
                     }
-                    None => ("?".to_owned(), None),
+                    None => (described("a binding with no source spelling"), None),
                 }
             }
             PlaceRoot::Constant(constant) => {
@@ -2339,14 +2340,26 @@ impl<'unit> TypeContext<'unit> {
             CapturedTerm::Binding(binding) => {
                 match bindings.values().find(|local| local.binding == binding) {
                     Some(local) => self.declarations.declaration_spelling(local.declaration)?,
-                    None => "?".to_owned(),
+                    None => described("a binding with no source spelling"),
                 }
             }
             // The binding's spelling names a later value than the one this
-            // index read, and no source spelling names that one.
-            CapturedTerm::Superseded(_)
-            | CapturedTerm::SupersededPlace(_)
-            | CapturedTerm::Opaque => "?".to_owned(),
+            // index read, and no source spelling names that one, so the
+            // value is described.
+            CapturedTerm::Superseded(binding) => {
+                match bindings.values().find(|local| local.binding == binding) {
+                    Some(local) => described(&format!(
+                        "the value of {} before it was rewritten",
+                        self.declarations.declaration_spelling(local.declaration)?
+                    )),
+                    None => described("a binding with no source spelling"),
+                }
+            }
+            CapturedTerm::SupersededPlace(id) => described(&format!(
+                "the value of {} before it was rewritten",
+                self.render_resolved_place(&self.captured_places.get(id), bindings)?
+            )),
+            CapturedTerm::Opaque => described("a computed value with no source spelling"),
             CapturedTerm::Place(id) => {
                 self.render_resolved_place(&self.captured_places.get(id), bindings)?
             }
