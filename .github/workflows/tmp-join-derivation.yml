@@ -36,7 +36,9 @@ jobs:
           uptime
       - name: Build
         working-directory: research/investigations/join-derivation/model
-        run: cargo build --release 2>&1 | tail -60
+        run: |
+          set -o pipefail
+          cargo build --release 2>&1 | tail -60
       - name: Check every candidate against exhaustive evaluation
         working-directory: research/investigations/join-derivation/model
         run: |
@@ -101,7 +103,9 @@ jobs:
           uptime
       - name: Build
         working-directory: research/investigations/join-derivation/model
-        run: cargo build --release 2>&1 | tail -20
+        run: |
+          set -o pipefail
+          cargo build --release 2>&1 | tail -40
       - name: Largest sizes
         working-directory: research/investigations/join-derivation/model
         run: |

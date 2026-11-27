@@ -934,24 +934,9 @@ fn exec(stmts: &[Stmt], env: &mut HashMap<V, i128>, result: &mut HashMap<String,
 }
 
 fn truth(program: &[Stmt]) -> Option<HashMap<String, bool>> {
-    fn every(stmts: &[Stmt], fresh: &mut Vec<(V, i128, i128)>) {
-        for stmt in stmts {
-            match stmt {
-                Stmt::Fresh(value, low, high) => {
-                    let low = low.unwrap_or(0);
-                    fresh.push((*value, low, high.unwrap_or(low + 60)));
-                }
-                Stmt::Branch(arms, _) => {
-                    for (_, body) in arms {
-                        every(body, fresh);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
     let mut fresh = Vec::new();
-    every(program, &mut fresh);
+    let mut ok = true;
+    collect_fresh(program, &mut fresh, &mut ok);
     if !ok {
         return None;
     }
@@ -1130,9 +1115,24 @@ fn tighten(stmts: &mut [Stmt]) -> Option<String> {
 
 /// Looks for one run of the program on which the obligation `name` fails.
 fn witness(program: &[Stmt], name: &str) -> bool {
+    fn every(stmts: &[Stmt], fresh: &mut Vec<(V, i128, i128)>) {
+        for stmt in stmts {
+            match stmt {
+                Stmt::Fresh(value, low, high) => {
+                    let low = low.unwrap_or(0);
+                    fresh.push((*value, low, high.unwrap_or(low + 60)));
+                }
+                Stmt::Branch(arms, _) => {
+                    for (_, body) in arms {
+                        every(body, fresh);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
     let mut fresh = Vec::new();
-    let mut ok = true;
-    collect_fresh(program, &mut fresh, &mut ok);
+    every(program, &mut fresh);
     let mut state = 0x2545_F491_4F6C_DD1Du64;
     for trial in 0..6000u32 {
         let mut env: HashMap<V, i128> = HashMap::new();
