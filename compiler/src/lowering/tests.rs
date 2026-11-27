@@ -5,6 +5,7 @@
 mod atomic_groups;
 mod contexts;
 mod held_placement;
+mod merged_parameters;
 mod overlap_storage;
 mod wake;
 
@@ -1256,6 +1257,191 @@ fn main() -> status: std::process::ExitStatus pure {
     });
 }
 
+/// Every block parameter of `function` whose incoming `Jump` edges all carry
+/// one value, written independently of the lowering's merge: either the
+/// arguments are all one value or the parameter itself, or following
+/// parameter-to-parameter forwarding ends in a single non-parameter value.
+fn redundant_block_parameters(function: &IrFunction) -> Vec<IrValueId> {
+    use std::collections::{HashMap, HashSet};
+    let mut incoming: HashMap<IrValueId, Vec<IrValueId>> = HashMap::new();
+    for block in function.blocks() {
+        if let IrTerminator::Jump {
+            target, arguments, ..
+        } = block.terminator()
+        {
+            for ((parameter, _), argument) in function.blocks()[target.index()]
+                .parameters()
+                .iter()
+                .zip(arguments)
+            {
+                incoming.entry(*parameter).or_default().push(*argument);
+            }
+        }
+    }
+    let mut found = Vec::new();
+    for (parameter, arguments) in &incoming {
+        let others: HashSet<_> = arguments
+            .iter()
+            .filter(|argument| *argument != parameter)
+            .collect();
+        let mut terminals = HashSet::new();
+        let mut seen = HashSet::from([*parameter]);
+        let mut pending = arguments.clone();
+        while let Some(value) = pending.pop() {
+            match incoming.get(&value) {
+                Some(forwarded) if seen.insert(value) => pending.extend(forwarded.iter().copied()),
+                Some(_) => {}
+                None => {
+                    terminals.insert(value);
+                }
+            }
+        }
+        if others.len() == 1 || terminals.len() == 1 {
+            found.push(*parameter);
+        }
+    }
+    found.sort();
+    found
+}
+
+/// Every value `function` reads, and every value a table of it names, is a
+/// function parameter, a remaining block parameter or an instruction result,
+/// and its definition dominates the reader.
+fn assert_uses_follow_definitions(function: &IrFunction) {
+    let blocks = function.blocks();
+    let successors = |block: &IrBlock| -> Vec<usize> {
+        match block.terminator() {
+            IrTerminator::Jump { target, .. } => vec![target.index()],
+            IrTerminator::Match { targets, .. } => targets
+                .iter()
+                .map(|target| target.block().index())
+                .collect(),
+            IrTerminator::IntegerMatch {
+                targets, default, ..
+            } => targets
+                .iter()
+                .map(|target| target.block().index())
+                .chain(default.iter().map(|block| block.index()))
+                .collect(),
+            IrTerminator::Return { .. } | IrTerminator::Unreachable => Vec::new(),
+        }
+    };
+    if blocks.is_empty() {
+        // A bodiless function (a host or runtime entry) has nothing to read.
+        return;
+    }
+    let mut reachable = vec![false; blocks.len()];
+    let mut pending = vec![0];
+    while let Some(index) = pending.pop() {
+        if !std::mem::replace(&mut reachable[index], true) {
+            pending.extend(successors(&blocks[index]));
+        }
+    }
+    // dominators[b][d]: block d dominates reachable block b.
+    let mut dominators = vec![vec![true; blocks.len()]; blocks.len()];
+    dominators[0] = (0..blocks.len()).map(|index| index == 0).collect();
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for index in (1..blocks.len()).filter(|index| reachable[*index]) {
+            let mut next = vec![true; blocks.len()];
+            for (predecessor, block) in blocks.iter().enumerate() {
+                if reachable[predecessor] && successors(block).contains(&index) {
+                    for (flag, other) in next.iter_mut().zip(&dominators[predecessor]) {
+                        *flag &= *other;
+                    }
+                }
+            }
+            next[index] = true;
+            if next != dominators[index] {
+                dominators[index] = next;
+                changed = true;
+            }
+        }
+    }
+    // Where each value is defined: (block, position), parameters at position 0.
+    let mut defined = std::collections::HashMap::new();
+    for (parameter, _) in function.parameters() {
+        defined.insert(*parameter, (0, 0));
+    }
+    for (index, block) in blocks.iter().enumerate() {
+        for (parameter, _) in block.parameters() {
+            assert!(
+                defined.insert(*parameter, (index, 0)).is_none(),
+                "{}: {parameter:?} is defined twice",
+                function.name()
+            );
+        }
+        for (position, instruction) in block.instructions().iter().enumerate() {
+            if let IrInstruction::Define { result, .. } = instruction {
+                assert!(
+                    defined.insert(*result, (index, position + 1)).is_none(),
+                    "{}: {result:?} is defined twice",
+                    function.name()
+                );
+            }
+        }
+    }
+    let defined_before = |value: IrValueId, block: usize, position: usize| {
+        let Some(&(home, at)) = defined.get(&value) else {
+            return false;
+        };
+        if home == block {
+            at < position || at == 0
+        } else {
+            dominators[block][home]
+        }
+    };
+    for (index, block) in blocks
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| reachable[*index])
+    {
+        for (position, instruction) in block.instructions().iter().enumerate() {
+            for operand in instruction.operands() {
+                assert!(
+                    defined_before(operand, index, position + 1),
+                    "{}: {operand:?} is read in block {index} before a dominating definition",
+                    function.name()
+                );
+            }
+        }
+        for operand in block.terminator().operands() {
+            assert!(
+                defined_before(operand, index, block.instructions().len() + 1),
+                "{}: {operand:?} is read by block {index}'s terminator before a dominating definition",
+                function.name()
+            );
+        }
+    }
+    let named = function
+        .counted_ranges
+        .iter()
+        .flat_map(|range| [range.lower, range.upper])
+        .chain(function.source_calls.iter().map(|call| call.result))
+        .chain(
+            function
+                .overlaps
+                .iter()
+                .flat_map(|group| group.members.clone()),
+        );
+    for value in named {
+        assert!(
+            defined.contains_key(&value),
+            "{}: a table names {value:?}, which nothing defines",
+            function.name()
+        );
+    }
+}
+
+/// Fills a gap the hand-built tests of `merge_equal_block_parameters` leave:
+/// they cannot show the shapes the builder really produces. No existing test
+/// asserts, on lowered source, that a join leaves no parameter carrying one
+/// value or that a counted range's bounds name values that survive. It lowers
+/// without running, in the one source with nested counted loops and a join
+/// that the old test already compiled, plus a nest whose inner bound is a
+/// binding the outer loop carries, and a loop that sets a carried variable back
+/// to its pre-loop value on one arm.
 #[test]
 fn nested_counted_breaks_keep_each_exit_interface_local_to_its_range() {
     let source = br#"fn count() -> result: u64 pure {
@@ -1272,6 +1458,31 @@ fn nested_counted_breaks_keep_each_exit_interface_local_to_its_range() {
   return total;
 }
 
+fn nest() -> result: u64 pure {
+  let bound = 4_u64;
+  let total = 0_u64;
+  for @rows (i in 0_u64..4_u64) {
+    for @columns (j in 0_u64..bound) {
+      set total = total +wrap 1_u64;
+    }
+  }
+  return total;
+}
+
+fn restore() -> result: u64 pure {
+  let base = 7_u64;
+  let carried = base;
+  let steps = 0_u64;
+  for @trips (i in 0_u64..4_u64) {
+    if i == 2_u64 {
+      set steps = steps +wrap 1_u64;
+    } else {
+      set carried = base;
+    }
+  }
+  return carried +wrap steps;
+}
+
 fn main() -> status: std::process::ExitStatus pure {
   return std::process::exit_status(code: 0_u8);
 }
@@ -1281,6 +1492,30 @@ fn main() -> status: std::process::ExitStatus pure {
         if let Err(error) = crate::emit_llvm(program) {
             panic!("nested counted IR must emit: {error:?}\n{counted:#?}");
         }
+        // Every function is checked before one assertion reports, so a failure
+        // names all the functions that keep a redundant parameter, not the
+        // first one the iteration reaches.
+        let redundant: Vec<(String, Vec<IrValueId>)> = program
+            .functions()
+            .iter()
+            .map(|function| {
+                (
+                    function.name().to_owned(),
+                    redundant_block_parameters(function),
+                )
+            })
+            .filter(|(_, parameters)| !parameters.is_empty())
+            .collect();
+        assert!(
+            redundant.is_empty(),
+            "no join or loop header may carry one value as a parameter: {redundant:?}"
+        );
+        for function in program.functions() {
+            assert_uses_follow_definitions(function);
+        }
+        // The inner loop's bound is the outer loop's carried `bound`: the
+        // table check above is vacuous unless `nest` really has two ranges.
+        assert_eq!(function(program, "nest").counted_ranges.len(), 2);
     });
 }
 

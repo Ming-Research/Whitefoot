@@ -141,7 +141,7 @@ _check-runtime:
 # stages left the workflow naming targets that no longer exist.
 static:
 	@$(REVIEW_BASE_SH); \
-	for stage in repository-invariants test-fast-state spec-archives readme-translation spec-prose-integrity guidance source-size design-lint safety-claims; do \
+	for stage in repository-invariants test-fast-state test-change-scope spec-archives readme-translation spec-prose-integrity guidance source-size design-lint safety-claims; do \
 		$(CHECK_RUN) "$$stage" $(MAKE) --no-print-directory "$$stage" REVIEW_BASE="$$base" || exit 1; \
 	done
 
@@ -230,6 +230,13 @@ repository-invariants:
 # budgeted apart from repository-invariants'.
 test-fast-state:
 	@bash .github/test-fast-state.sh
+
+# The test of .github/change-scope.sh, which decides whether sanitizers.yml
+# and io-hosts.yml check a change, and of its table against what their jobs
+# read. It is a stage of its own, so that its time is budgeted apart from
+# repository-invariants'.
+test-change-scope:
+	@sh .github/test-change-scope.sh
 
 # The specification names no version: its version is derived from the change
 # log, an amendment adds an entry there and no archive, and released archives
@@ -382,4 +389,4 @@ install-hooks:
 	git config core.hooksPath governance/hooks
 	@echo "installed governance/hooks (pre-commit, pre-merge-commit)"
 
-.PHONY: historical-tool-tests _historical-tool-tests check _check check-groups check-parts check-group static repository-invariants test-fast-state spec-archives readme-translation guidance safety-claims source-size spec-append-only-staged spec-prose-integrity design-lint design-ready conformance compiler performance-instrument conformance-run install-hooks
+.PHONY: historical-tool-tests _historical-tool-tests check _check check-groups check-parts check-group static repository-invariants test-fast-state test-change-scope spec-archives readme-translation guidance safety-claims source-size spec-append-only-staged spec-prose-integrity design-lint design-ready conformance compiler performance-instrument conformance-run install-hooks

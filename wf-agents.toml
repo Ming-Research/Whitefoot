@@ -100,10 +100,10 @@ too_long = "25m"
 [ci.full]
 # Every check a merge needs (AGENTS.md, "Branch and main boundary" and
 # "Checks"): the gate, the I/O hosts and the sanitizers, which the full check
-# by hand runs; the Lean model and the concurrent map's sanitizers, each of
-# which checks only where the change touches its paths; and the change log of
-# the specification. The engine runs them one after the
-# other, once, on the commit to merge.
+# by hand runs; the I/O hosts, the sanitizers, the Lean model and the
+# concurrent map's sanitizers, each of which checks only where the change
+# touches its paths; and the change log of the specification. The engine runs
+# them one after the other, once, on the commit to merge.
 workflows = [
   "gate.yml",
   "io-hosts.yml",

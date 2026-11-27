@@ -7,5 +7,5 @@ How the compiler builds a program under a host sanitizer, and how CI runs accept
 - rejected: an agent proposed instrumenting only the test harness's own link; the owner rejected it, because outsiders could not then build their own programs sanitized, and the harness link is not the path the compiler ships.
 
 ### decision sanitizers-run-in-their-own-workflow
-A Linux workflow of its own runs the corpus programs and every running conformance case, also built with `--par`, under both sanitizers on the revisions the gate checks, and any report fails it.
+A Linux workflow of its own runs the corpus programs and every running conformance case, also built with `--par`, under both sanitizers, and any report fails it.
 - rejected: an agent proposed running the sanitizers as a group of the gate; the owner rejected it, because the gate would run every case twice more, and the platform-specific checks stay apart from the gate.

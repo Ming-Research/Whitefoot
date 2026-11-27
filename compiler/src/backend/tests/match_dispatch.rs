@@ -1674,6 +1674,312 @@ fn a_read_only_reference_handed_to_a_reader_keeps_its_box() {
     assert!(output.status.success(), "{output:?}");
 }
 
+/// An interpreter that reads only the length of a register file, which it
+/// reaches through `regs`, a reference it forms from `machine` before the loop:
+/// the loop does not carry that reference as a parameter of its own, so it is
+/// a value defined before the loop and read inside it. The result is 2002.
+const FIELD_REFERENCE: &str = r#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Op {
+  Add();
+  Dec();
+  Jnz(t: u64);
+  Halt();
+}
+
+struct Machine {
+  regs: Box<Slots<u64>>;
+}
+
+fn NAME(code: &Box<Slots<Op>>, machine: &Machine, start: u64, steps: u64) -> r: u64 reads(code), reads(machine) contract {
+  requires start < code^.inner.len;
+} {
+  let regs = &machine^.regs;
+  let n = code^.inner.len;
+  let pc = start;
+  let acc = 0_u64;
+  let count = steps;
+  loop (
+    invariant code_bound: pc < code^.inner.len
+  ) {
+    match code^.inner[pc] {
+      Add() => {
+        set acc = acc +wrap regs^.inner.len;
+        let next = pc + 1_u64;
+        if next < n {
+          set pc = next;
+          continue;
+        }
+        return 0_u64;
+      }
+      Dec() => {
+        set count = count -wrap 1_u64;
+        let next = pc + 1_u64;
+        if next < n {
+          set pc = next;
+          continue;
+        }
+        return 0_u64;
+      }
+      Jnz(t: tv) => {
+        let next = pc + 1_u64;
+        if count != 0_u64 {
+          set next = tv^;
+        }
+        if next < n {
+          set pc = next;
+          continue;
+        }
+        return 0_u64;
+      }
+      Halt() => {
+        return acc +wrap regs^.inner.len;
+      }
+    }
+  }
+}
+
+fn push(code: &Box<Slots<Op>>, op: Op) -> ok: Bool writes(code) {
+  if code^.inner.len < code^.inner.cap {
+    place_back(window: &code^.inner, value: op);
+    return True();
+  }
+  return False();
+}
+
+fn main() -> status: ExitStatus pure {
+  let code = box_slots_new::<Op>(capacity: 4_u64);
+  let c0 = Op::Add();
+  let p0 = push(code: &code, op: c0);
+  let c1 = Op::Dec();
+  let p1 = push(code: &code, op: c1);
+  let c2 = Op::Jnz(t: 0_u64);
+  let p2 = push(code: &code, op: c2);
+  let c3 = Op::Halt();
+  let p3 = push(code: &code, op: c3);
+  let regs = box_slots_new::<u64>(capacity: 2_u64);
+  place_back(window: &regs.inner, value: 0_u64);
+  place_back(window: &regs.inner, value: 1000_u64);
+  let machine = Machine(regs: move regs);
+  if code.inner.len > 0_u64 {
+    let r = NAME(code: &code, machine: &machine, start: 0_u64, steps: 1000_u64);
+    if r == 2002_u64 {
+      return exit_status(code: 0_u8);
+    }
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 2_u8);
+}
+"#;
+
+/// The same interpreter over a register file the function itself owns and
+/// reaches through `regs = &owner`, a reference to the owner's own storage.
+const LOCAL_REFERENCE: &str = r#"alias ExitStatus = std::process::ExitStatus;
+alias exit_status = std::process::exit_status;
+
+enum Op {
+  Add();
+  Dec();
+  Jnz(t: u64);
+  Halt();
+}
+
+fn push(code: &Box<Slots<Op>>, op: Op) -> ok: Bool writes(code) {
+  if code^.inner.len < code^.inner.cap {
+    place_back(window: &code^.inner, value: op);
+    return True();
+  }
+  return False();
+}
+
+fn NAME(code: &Box<Slots<Op>>, start: u64, steps: u64) -> r: u64 reads(code) contract {
+  requires start < code^.inner.len;
+} {
+  let owner = box_slots_new::<u64>(capacity: 2_u64);
+  place_back(window: &owner.inner, value: 0_u64);
+  place_back(window: &owner.inner, value: 1000_u64);
+  let regs = &owner;
+  let n = code^.inner.len;
+  let pc = start;
+  let acc = 0_u64;
+  let count = steps;
+  loop (
+    invariant code_bound: pc < code^.inner.len
+  ) {
+    match code^.inner[pc] {
+      Add() => {
+        set acc = acc +wrap regs^.inner.len;
+        let next = pc + 1_u64;
+        if next < n {
+          set pc = next;
+          continue;
+        }
+        return 0_u64;
+      }
+      Dec() => {
+        set count = count -wrap 1_u64;
+        let next = pc + 1_u64;
+        if next < n {
+          set pc = next;
+          continue;
+        }
+        return 0_u64;
+      }
+      Jnz(t: tv) => {
+        let next = pc + 1_u64;
+        if count != 0_u64 {
+          set next = tv^;
+        }
+        if next < n {
+          set pc = next;
+          continue;
+        }
+        return 0_u64;
+      }
+      Halt() => {
+        return acc +wrap regs^.inner.len;
+      }
+    }
+  }
+}
+
+fn main() -> status: ExitStatus pure {
+  let code = box_slots_new::<Op>(capacity: 4_u64);
+  let c0 = Op::Add();
+  let p0 = push(code: &code, op: c0);
+  let c1 = Op::Dec();
+  let p1 = push(code: &code, op: c1);
+  let c2 = Op::Jnz(t: 0_u64);
+  let p2 = push(code: &code, op: c2);
+  let c3 = Op::Halt();
+  let p3 = push(code: &code, op: c3);
+  if code.inner.len > 0_u64 {
+    let r = NAME(code: &code, start: 0_u64, steps: 1000_u64);
+    if r == 2002_u64 {
+      return exit_status(code: 0_u8);
+    }
+    return exit_status(code: 1_u8);
+  }
+  return exit_status(code: 2_u8);
+}
+"#;
+
+#[test]
+fn a_reference_formed_from_a_parameter_before_the_loop_is_projected_once() {
+    // `regs` is the address of a field of `machine`, defined by an instruction
+    // before the loop and read by every arm: it is neither a function
+    // parameter nor an address kept in the frame, so only the loop's own
+    // reads name it, and the enclosing function must still project its box
+    // once for the parts.
+    let source = FIELD_REFERENCE.replace("NAME", "formed");
+    let module = emit(source.as_bytes());
+    assert_split(&module, "wf_formed", 4);
+    assert!(
+        !some_part_reloads_a_box(&module, "wf_formed", 4),
+        "no part reloads a box the loop keeps: {module}"
+    );
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+fn a_reference_to_a_local_owner_is_projected_once() {
+    // `owner` lives in the function's frame and `regs` is its address, so no
+    // part receives the reference as a parameter and `some_part_reloads_a_box`
+    // cannot see a load through it. The arms return from inside the loop, where
+    // the function drops `owner`; that drop frees the box and is no reload.
+    // Every ordinary load of the owner's box carries the box-owner tag, so the
+    // arms must hold none: they receive the box's projection the enclosing
+    // function formed.
+    let source = LOCAL_REFERENCE.replace("NAME", "owned");
+    let module = emit(source.as_bytes());
+    assert_split(&module, "wf_owned", 4);
+    let reloads: Vec<&str> = (0..4)
+        .flat_map(|arm| definition(&module, &format!("wf_owned.arm.{arm}")).lines())
+        .filter(|line| line.contains("= load ptr, ptr ") && line.contains("!tbaa"))
+        .collect();
+    assert!(
+        reloads.is_empty(),
+        "no arm loads the owner's box again: {reloads:?}\n{module}"
+    );
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+/// `FIELD_REFERENCE` or `LOCAL_REFERENCE` whose `Dec` arm replaces the box
+/// `regs` reaches by one of five slots, so the `Add` arms of the three steps
+/// read lengths 2, 5 and 5 and `Halt` adds 5: the result is 17. A part that
+/// kept the projection of the first box would read 2 every time.
+fn replacing_reference(source: &str) -> String {
+    let fresh = "set count = count -wrap 1_u64;\n        let fresh = box_slots_new::<u64>(capacity: 8_u64);\n        place_back(window: &fresh.inner, value: 1_u64);\n        place_back(window: &fresh.inner, value: 1_u64);\n        place_back(window: &fresh.inner, value: 1_u64);\n        place_back(window: &fresh.inner, value: 1_u64);\n        place_back(window: &fresh.inner, value: 1_u64);\n        set regs^ = move fresh;";
+    source
+        .replace("NAME", "swapped")
+        .replace("set count = count -wrap 1_u64;", fresh)
+        .replace("if r == 2002_u64", "if r == 17_u64")
+        .replace("steps: 1000_u64", "steps: 3_u64")
+}
+
+#[test]
+fn a_reference_formed_before_the_loop_is_reloaded_when_an_arm_replaces_its_box() {
+    // The reference is an address the function forms from its parameter
+    // before the loop, one of the values the loop reads without any header
+    // parameter carrying it. An arm stores a new box through it, so the box
+    // the enclosing function projected is stale from then on and the arms
+    // must load it again; the result differs if one reads the first box.
+    let source = replacing_reference(&FIELD_REFERENCE.replace("reads(machine)", "writes(machine)"));
+    let module = emit(source.as_bytes());
+    assert_split(&module, "wf_swapped", 4);
+    assert!(
+        some_part_reloads_a_box(&module, "wf_swapped", 4),
+        "a part reloads the box an arm replaces: {module}"
+    );
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+fn a_reference_to_a_local_owner_is_reloaded_when_an_arm_replaces_its_box() {
+    // The owner is in the function's frame and `regs` is its address; the
+    // `Dec` arm replaces the owner's box through `regs`. The arms that read
+    // the length afterwards must load the owner's box again, which an
+    // ordinary load of it (the tag `!tbaa`) shows, and the result must be that
+    // of the second box.
+    let module = emit(replacing_reference(LOCAL_REFERENCE).as_bytes());
+    assert_split(&module, "wf_swapped", 4);
+    let reloads = (0..4)
+        .flat_map(|arm| definition(&module, &format!("wf_swapped.arm.{arm}")).lines())
+        .filter(|line| line.contains("= load ptr, ptr ") && line.contains("!tbaa"))
+        .count();
+    assert!(
+        reloads > 0,
+        "an arm loads the owner's box an arm replaces: {module}"
+    );
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
+#[test]
+fn a_local_owner_moved_out_of_the_loop_keeps_the_box_its_arms_wrote() {
+    // The `Halt` arm appends through `regs` and returns the owner itself
+    // (`return move owner`), so the loop's exit does not drop it and the
+    // result is the box the loop used: three elements.
+    let source = LOCAL_REFERENCE
+        .replace("NAME", "moved")
+        .replace("-> r: u64 reads(code)", "-> r: Box<Slots<u64>> reads(code)")
+        .replace("capacity: 2_u64", "capacity: 3_u64")
+        .replace("return 0_u64;", "return move owner;")
+        .replace(
+            "return acc +wrap regs^.inner.len;",
+            "place_back(window: &regs^.inner, value: acc);\n        return move owner;",
+        )
+        .replace("if r == 2002_u64", "if r.inner.len == 3_u64");
+    let module = emit(source.as_bytes());
+    assert_split(&module, "wf_moved", 4);
+    let output = compile_and_run(&module);
+    assert!(output.status.success(), "{output:?}");
+}
+
 /// An interpreter whose `Dec` arm replaces the box `regs` holds, returning
 /// its result through memory and carrying twenty-four values it never
 /// changes: `regs` cannot be kept, past the registers the unchanged values
