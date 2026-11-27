@@ -1,373 +1,340 @@
-# What the one derivation keeps at a join: results
+# What the one derivation keeps at a join: results, version 2
 
-Status: measurements of 2026-11-26 and 2026-11-27 against the hypotheses of
-`DESIGN.md`. The owner chooses; this record gives the numbers, a
-recommendation, and what is still uncertain.
+Status: version 2, after the first review. `RESULTS-v1.md` is version 1 as
+it was reviewed (tag `join-derivation-study-v1`); its numbers stand except
+where "Answers to the review" below corrects them. This file gives what
+version 2 measured, the choices that are the owner's, and an answer to each
+finding of the review. It decides none of the owner's choices.
 
 ## Runs and data
 
 | Run | What | Commit |
 | --- | --- | --- |
-| [45907910884](https://github.com/Ming-Research/Whitefoot/actions/runs/45907910884) | model, first measurement | `a3ece5ecf` |
-| [45906624486](https://github.com/Ming-Research/Whitefoot/actions/runs/45906624486), job `probe` | compiler probe on tag `derivation-ceiling-prototype` | `c3a6fa94` |
-| [45911803573](https://github.com/Ming-Research/Whitefoot/actions/runs/45911803573) | model with the simplex decision and the bounded forced cases | `8cf761bf3` |
-| [45916524726](https://github.com/Ming-Research/Whitefoot/actions/runs/45916524726) | model with the narrower "near"; **every model number below is from this run** | `d23fbfa82` |
+| [45997947973](https://github.com/Ming-Research/Whitefoot/actions/runs/45997947973) | model: `check`, `measure`, `recount`, `false`, `dense`, one job each; **every number below is from this run unless it names another** | `2fb50ce87` (the model of `20ad8d594`) |
+| [45957193473](https://github.com/Ming-Research/Whitefoot/actions/runs/45957193473), job `big` | the largest sizes, k = 64 to 1,024 | `20ad8d594` |
+| [45906624486](https://github.com/Ming-Research/Whitefoot/actions/runs/45906624486), job `probe` | the compiler probe of version 1, unchanged | `c3a6fa94` |
 
-All ran on GitHub-hosted `ubuntu-24.04` runners. The data is in `data/`:
-`model-measure.csv` (one `total` row per family, size and candidate, and
-`oblig` rows for the last obligation and the last OP5 question),
-`model-check.csv`, `model-dense.csv`, `compiler-probe.tsv`.
+Data in `data/`: `model-measure.csv` (34 families, 38 candidates),
+`model-check.csv`, `model-false.csv`, `model-dense.csv`, `model-big.csv`,
+`compiler-probe.tsv`; version 1's files are in `data/v1/`. The candidates
+and families new in version 2 are defined in `DESIGN.md`, "Version 2".
 
-Candidate names in the data: `sel-late`, `sel-early`, `sel-backjump` are
-SEL in the two split orders and with backjumping; `bnd-int`, `bnd-rel`,
-`bnd-relall` are BND-I, BND-R, BND-R-all; `both-late`, `both-early` are
-BOTH; `sat` is SAT; `winP` is WIN(P) with unbounded forced cases;
-`win16-nosat` and `win16-nobnd` drop the forced cases or the bounds;
-`win16-root` and `win16-depth8` are the two bounded forms of H12; `-lp`
-uses the simplex decision; `-eager` computes every join's bounds at once.
+Two runs before these were lost or superseded and are not used: one ended
+at the job's time limit before it saved its results, one was cancelled when
+the search for failing runs was replaced.
 
 ## Checks of the instrument
 
-- **Soundness and exactness (H8: holds).** On 43 small programs (every family
-  at sizes 1 to 3) the exhaustive evaluator ran every value of every unknown.
-  1,120 verdicts of the 20 candidates were compared: no candidate proved a
-  false obligation, and each SEL variant proved exactly the true ones
-  (`summary,compared,1120,findings,0`).
-- **Counts are deterministic.** A second pass counted the 13 candidates
-  without exponential growth again. Of 7,402 rows, 7,393 are identical in
-  every count. The other 9 are rows that the 20-second guard stopped, where
-  the count depends on when the guard fired.
-- **The two decisions of the theory step agree (part of H11: holds).** On 972
-  pairs of rows where the elimination and the simplex candidate both
-  finished, the verdicts are the same.
-- **The compiler probe's counter file changes no verdict.** Every generated
-  program is accepted with the counters on and off, except `chain-18`, which
-  is accepted without them and passes the 1,500-second limit with them.
-- **Instrument guards.** A model run stops at 2^17 search nodes or 20
-  seconds; elimination stops at 300,000 inequalities. A stopped row is
-  marked in the `note` column and its verdict is `abort`. No conclusion
-  below reads an aborted row as a verdict.
+- **Exhaustive evaluation.** 91 small programs, 38 candidates, 4,978
+  verdicts: no candidate proved a false obligation, and each SEL variant
+  proved exactly the true ones.
+- **False variants (V5: holds, with a gap).** Every family at every size
+  with its last obligation tightened by one: 477 programs, 16,985 verdicts.
+  **No candidate proved any of them**, with or without a known failing run.
+  The search found a failing run for 446 of the 477. The 31 without one are
+  BINSEARCH and ARMFACT and MULTIEXIT from k = 2. They are false too (set
+  every `len` one above its `i`; in BINSEARCH take the arm with
+  `mid + 1 == high`), but the search changes one value at a time and every
+  such step breaks an assumed fact, so it does not get there. For these 31
+  the evidence is the argument, not a run. V5's second sentence, that the
+  search finds a run for every family, was wrong.
+- **Counts are deterministic.** The second pass repeated 33,153 rows; all
+  are identical in every count except 110 rows that the 20-second guard
+  stopped.
+- **The two theory decisions agree** wherever both finish (no differing
+  verdict between a candidate and its `-lp` twin on any family and size).
 
-## H1. The selector alone: refuted as a rule, the hypothesis holds
+## The cost of a whole function (finding 4, V4, V13)
 
-Leaves of SEL on CHAIN(k), model:
+Version 1 said the work grows with the square of the joins. That was wrong.
+`work` counts every literal read or copied and every tableau entry touched.
+Largest sizes, `bnd-rel` (bounds only, elimination):
 
-| k | 4 | 8 | 12 | 16 |
+| k | 64 | 128 | 256 | 512 | 1,024 |
+| --- | --- | --- | --- | --- | --- |
+| CHAIN, `work` | 1.26e6 | 9.23e6 | 7.05e7 | 5.50e8 | 4.35e9 |
+| ratio to the size before | | 7.3 | 7.6 | 7.8 | 7.9 |
+| CHAIN, time | 0.19 s | 1.4 s | 11 s | 90 s | 755 s |
+| time over `work`, ns | 154 | 150 | 156 | 163 | 174 |
+
+- **The cost is cubic**, for every candidate with join bounds, both theory
+  decisions, on CHAIN, CHAINOBL, GUARDED and OP5: the ratio tends to 8.
+  With the simplex decision CHAIN takes 663 s at k = 1,024 and OP5 578 s at
+  k = 512.
+- **`work` predicts the time**: time over `work` stays within 150 to 176 ns
+  for elimination and 44 to 63 ns for simplex from k = 64 to 1,024 (V4's
+  unit holds).
+- The cause is in the rule, not in the copying version 1 blamed. A join's
+  bound is computed over every literal its values reach; a join bound names
+  the value before it, so one projection reads the whole chain, and each
+  theory call on a chain of k literals costs k times k in this model.
+- An obligation after every join (CHAINOBL) adds 16% to CHAIN: the bounds,
+  not the obligations, are the cost.
+
+**The candidate `win16-root-shallow`** (a join bound brought into a problem
+does not bring in what its other values reach; V13):
+
+| k | 64 | 128 | 256 | 512 | 1,024 |
+| --- | --- | --- | --- | --- | --- |
+| CHAIN, `work` | 4.34e4 | 1.52e5 | 5.67e5 | 2.18e6 | 8.56e6 |
+| ratio | | 3.5 | 3.7 | 3.9 | 3.9 |
+| CHAIN, time | 7 ms | 26 ms | 94 ms | 0.36 s | 1.5 s |
+| OP5, `work` | 1.01e5 | 2.06e5 | 4.16e5 | 8.38e5 | 1.68e6 |
+| OP5, time | 17 ms | 46 ms | 0.14 s | 0.46 s | 1.7 s |
+
+- CHAIN is quadratic and 500 times cheaper at k = 1,024; GUARDED and OP5
+  are linear in `work`. On GUARDED and OP5 the time grows faster than
+  `work` (3.6 times per doubling at the end): the model's walk copies the
+  literal list at every join, which `work` does not count. For this
+  candidate the unit does not predict the time, and the time is the
+  honest number: about quadratic.
+- **What it gives up (as predicted):** ADDENDS from k = 6 and MINSEL from
+  k = 10, whose proofs chain the transition bounds of every join. It keeps
+  every other verdict of `win16-root`, CHAINSYM included, and proves
+  ADDENDSINV: with the invariant written, the chain is not needed.
+
+Whether to take this rule is the owner's choice 4 below.
+
+## What each remedy does (findings 1, 6, 7, 8, 9)
+
+No remedy loses a verdict that `win16-root` has, on any family and size
+where both finish. What each gains:
+
+| Finding | Family | `win16-root` | Remedy | Result |
 | --- | --- | --- | --- | --- |
-| `sel-late`, `sel-early`, `sel-backjump` | 16 | 256 | 4,096 | 65,536 |
-| time, `sel-late` | 0.31 ms | 12 ms | 349 ms | 8.6 s |
+| 1 | ARMFACT, MULTIEXIT | proves none | `-af`: record the facts every arm states | proved at every size, 2 projections per join |
+| 1 | ARMCORR | proves none | `-nf`: near by a stated fact's value | proved to k = 4 (16 leaves), not at 6 |
+| 1 | cost on OP5 | 642, 2,850, 5,794 pairs at k = 16, 64, 128 | `-afnf` | the same counts |
+| 6 | CHAINSYMINV, bounds at the last join | 11, 19, 35, 51 at k = 8, 16, 32, 48; guard at 64 | `-pres` | 4 at every size; 4.7 s at k = 128 |
+| 6 | ADDENDSINV, the same (simplex) | 12, 20, 36, 52; guard at 64 | all remedies, simplex | 6 at every size; 3.8 s at k = 128 |
+| 7 | MATCHSHAPES(m), BIGTAG(m) | proved at every m to 256 | | see below |
+| 7 | MATCHSHAPES, `x <= 100` with no split | needs the probe | `-int` | proved with no probe |
+| 8 | SAMECOND | k <= 2 | `-rootfix` | k <= 2 |
+| 8 | ORDERXY / ORDERYX | k <= 4 / every size | `-rootfix` | every size both ways, to the guard at k = 96 |
+| 8 | FLAGCHAIN, OP5CASC | k <= 4 | `-rootfix` | every size |
+| 9 | TIE | (state bound first, for every candidate) | | proved by BND-R alone, no split |
 
-The compiler probe, baseline configuration (selector only, with the
-compiler's backjumping), on the same program written in Whitefoot:
+- **V1 holds.** The two remedies for finding 1 are complementary: recorded
+  arm facts cover what every arm states at any length; nearness covers
+  facts that differ by arm, within P.
+- **V6 holds.** The reviewer's prediction is confirmed: under the version 1
+  rule the bounds per join grow with the chain once invariants of new
+  shapes are written. Not carrying a weakened state bound removes it and
+  costs no verdict here.
+- **V7 was wrong, and so was the review's expectation.** `win16-root`
+  proves BIGTAG and MATCHSHAPES at every m. The root probe tries every arm
+  of a near join and proves the obligation when all are contradictory; that
+  is a split of one join whatever its arm count, and it costs no product.
+  So counting live arms (`-live`) and a free first split (`-free`) change no
+  verdict on these families. `-free` does prove one join more elsewhere
+  (FLAGCHAIN and OP5CASC to 6, PMONO decided at 5). The cost of a wide
+  join is real: MATCHSHAPES needs 2m^2 projections (131,072 at m = 256,
+  7.6 s), because each arm's value is a candidate and is tried in each arm.
+  Two wide joins that must be told apart together were not measured.
+- **V8 holds for the verdicts and was wrong for one cost.** The one-pass
+  probe depends on statement order (ORDERXY against ORDERYX). Repeating the
+  probe at the root removes that and proves flags derived from flags. Its
+  cost: ORDERXY needs 334 probes at k = 16 and 4,414 at k = 64 (8.5 s) and
+  reaches the guard at 96; the last OP5CASC question costs 34, 130, 258
+  pairs at k = 16, 64, 128, which is linear (the prediction said more than
+  8 times). On OP5 the repeated probe costs what one pass costs, because
+  nothing there is decided at the root. Forced cases everywhere (`win16`)
+  also prove SAMECOND at every size and keep the square of version 1's H10
+  on OP5.
+- One combination is slow for a reason not found: `win16-v2-lp` on TIE
+  takes 3.7 s at k = 64 where `win16-root-lp` takes 0.11 s, and reaches
+  the guard at 128.
 
-| k | 4 | 8 | 12 | 16 | 18 |
-| --- | --- | --- | --- | --- | --- |
-| largest `backjump_nodes` of one obligation | 15 | 255 | 4,095 | 65,535 | 262,143 |
-| derivation time, all obligations of the function | 5.6 ms | 229 ms | 6.2 s | 141 s | 649 s |
+## The combinations that ran (finding 3, V3)
 
-Both instruments double with each join; backjumping saves nothing, because
-every refutation uses every join. The compiler's own "weakest bound"
-configuration needs 2k + 2 nodes on the same programs (32 at k = 16, 0.40 s).
-On GUARDED the compiler's baseline needs 2k - 1 nodes, and on NEST no split:
-the conditions prune the first, and nested joins have d + 1 paths. The
-growth is in joins one after another that change one value.
+- `win16-root-lp` and `sat-lp` have the verdicts of `win16-root` and `sat`
+  wherever both finish, and finish ADDENDS at every size (2,561 pivots and
+  0.25 s at k = 128). **V3's last clause failed**: they reach the guard on
+  ADDENDSINV at 64 and CHAINSYMINV at 48 (finding 6's growth), and `sat-lp`
+  on OP5 at 128.
+- `win16-v2-fix-lp` (every remedy, repeated root probe, simplex) is the one
+  candidate that proves every family the others prove, SWAPS, ARMCORR and
+  SAMECOND within P excepted. Rows it does not finish: ORDERXY, TIE and
+  OP5 at k = 128, all the 20-second guard. Its cost is cubic.
 
-Consequence: a function with twenty conditional increments before a
-subscript costs 2^20 branches under SEL, or is rejected by any ceiling
-below 20 open joins. No ceiling both admits it and bounds the work.
-SEL also has no polynomial bound on MATCH (4^k: 65,536 leaves at k = 8),
-ADDENDS, SWAPS, MIX and WIDEREL.
+## The choices that are the owner's
 
-## H2. Relational bounds: holds, with one failure that H11 removes
+### Choice 1. Does the rule fix which joins are split? (finding 2a)
 
-BND-R proves CHAIN, CHAINSYM, GUARDED, MINSEL, BINSEARCH, MATCH, NEST,
-WIDEREL and WIDEIRR at every size with no branch. Fourier-Motzkin pairs of
-the whole program:
+Two decisions of the design tree stand against the recommended kind of
+rule. `range-problem-size-ceilings` rejects ceilings on branches opened;
+`split-on-any-open-item` rejects a split order stated in the specification,
+because it would fix the checker's search. Version 1 used the first against
+other candidates and did not say that a product P with "latest near join
+first" goes against both.
 
-| Family | k = 16 | k = 64 | ratio | k = 128 |
-| --- | --- | --- | --- | --- |
-| CHAIN | 3,105 | 49,281 | 15.9 | 196,865 |
-| CHAINSYM | 2,134 | 33,142 | 15.5 | 131,830 |
-| GUARDED | 2,392 | 37,240 | 15.6 | 148,216 |
-| MINSEL | 114 | 450 | 3.9 | 898 |
-| NEST | 109 | 397 | 3.6 | 781 |
-| MATCH (4 arms) | 8,129 | 130,817 | 16.1 | |
+| Option | What it is | Measured |
+| --- | --- | --- |
+| A. Keep both decisions, no bound | every open item is split, any order | 2^k on CHAIN in the model and in today's compiler (141 s at k = 16); breaks `checking-work-never-grows-exponentially` |
+| B. Keep both, add a ceiling N on open joins as a hard error | the settled design's N | see choice 3: usable only with the cut reading of an invariant; within the ceiling the work still depends on the order (MIX(14): 2 leaves or 4,944) and reaches 65,536 leaves, 13 s, on SWAPS(16) |
+| C. Change both: the rule says which joins a derivation looks at | near joins, a probe, a product P | at most P leaves per obligation on every family and size |
+| D. Change neither, give up the split | bounds and the root probe only (`sat` with a one-pass or repeated root probe; P = 1) | no split order exists to fix; proves everything in the tables except SWAPS, ARMCORR and SAMECOND beyond one join |
 
-The ratios are at or below 16: the work grows with the square of the number
-of joins, not faster. The square comes from the bounds: each join's bound is
-computed over the literals its values reach, and on a chain that is the
-whole chain so far.
+Recommendation: C, with D as its first step. Under D nothing in the rule is
+an order of search: each near join is probed alone. The owner would then
+decide whether a product P above 1 is worth changing the two decisions;
+the families that need it are those where two joins must be told apart
+together and no condition helps (SWAPS, ARMCORR, SAMECOND).
 
-**The failure.** On ADDENDS the elimination reaches its capacity from
-k = 24 (19,596 pairs at k = 16, 158,390 at the stop). H2 is refuted for
-ADDENDS as written. The cause is the theory step, not the join rule: see
-H9 and H11.
+### Choice 2. N as a hard error, or "out of reach is unproved"? (finding 2b)
 
-Wall time does not follow the pair count exactly: CHAIN takes 3.9 ms at
-k = 16 and 164 ms at k = 64, a ratio of 42. The model copies its literal
-list at every theory call, which adds a factor of k of its own. The counts
-are the result; the times only show nothing is hidden behind them.
+The settled design (section 4) makes N a hard error that names the ceiling.
+Version 1 replaced it without saying so.
 
-## H3. Which bounds a join records: holds
-
-Bounds recorded at the last join of CHAIN(k):
-
-| k | 8 | 16 | 32 |
-| --- | --- | --- | --- |
-| BND-R | 4 | 4 | 4 |
-| BND-R-all | 18 | 34 | 66 |
-| pairs, BND-R | 785 | 3,105 | 12,353 |
-| pairs, BND-R-all | 16,157 | 380,281 | 10,442,737 |
-
-Recording every bound every arm satisfies makes the facts per join grow
-with the chain (2k + 2), and the work grows about as k^5 here. Keeping a
-transition bound out of the next join's candidates keeps 4 facts per join
-and proves the same obligations in every family measured.
-
-Lazy against eager, WIDEIRR(16, 32): 256 projections lazily, 4,096 eagerly;
-40.8 ms against 669 ms. Eager computation pays for every join of the
-function; lazy computation pays for the joins some obligation reaches. Both
-give the same verdicts. This, and BND-R-all, are the two ways a "weakest
-bound" rule becomes slow, and the earlier study's variant had both.
-
-## H4. What each candidate proves
-
-"yes" is proved at every measured size up to 128; a number is the largest
-size proved.
-
-| Family | SEL | BND-I | BND-R | SAT | WIN(16) | `win16-root` |
-| --- | --- | --- | --- | --- | --- | --- |
-| CHAIN, MATCH, NEST, WIDEREL, WIDEIRR | yes, to the node cap | yes | yes | yes | yes | yes |
-| CHAINSYM, GUARDED, MINSEL, BINSEARCH | yes | **no** | yes | yes | yes | yes |
-| ADDENDS | yes, to the node cap | no | yes with simplex | yes with simplex | yes with simplex | yes with simplex |
-| FLAGS(m) | yes | no | **no** | yes | yes | yes |
-| FLAGCHAIN(k) | yes | no | no | yes | yes | 4 (fails at 6) |
-| MIX(k) | yes, to the node cap | no | no | yes | yes | yes |
-| REL1(k) | yes, to the node cap | no | no | yes | yes | yes |
-| SWAPS(k) | yes | no | no | 1 | 4 (fails at 6) | 4 |
-| SWAPSINV(k) | yes | no | no | yes | yes | yes |
-
-Where the prediction was wrong:
-
-- **SAT and WIN prove one join more than predicted.** SAT proves SWAPS(1),
-  SWAPSINV and REL1, and WIN(P) proves SWAPS up to log2(P) + 1 where sizes
-  allow the reading (WIN(2): 2, WIN(4): 3, WIN(64): 6). The forced-case step
-  probes every arm of a near join, and when every arm is contradictory the
-  branch is proved. That is a split of one join that costs no product. The
-  rule is as `DESIGN.md` states it; the prediction overlooked this.
-- **`win16-depth8` loses REL1 from k = 12** although REL1 needs one split.
-  Its eight forced decisions are spent on the chain's joins, latest first,
-  before the swap is reached. A count of forced decisions is consumed by
-  joins that did not need deciding. `win16-root` has no such loss here.
-- FLAGCHAIN under `win16-root` is proved to 4, not 5 as predicted.
-
-Predictions that held: no convex bound proves FLAGS, FLAGCHAIN, MIX, REL1
-or SWAPS; intervals fail every family with a symbolic limit; WIN without
-forced cases proves FLAGS and FLAGCHAIN only to 4, and MIX and REL1 only to
-k = 3, because the product is spent on the chain; WIN without bounds fails
-CHAIN from k = 6.
-
-## H5. A ceiling on open joins: holds for MIX, differs for REL1
-
-BOTH (selector and bounds, split every open join), leaves:
-
-| k | 4 | 8 | 12 | 16 | joins the obligation depends on |
-| --- | --- | --- | --- | --- | --- |
-| MIX, latest join first | 32 | 382 | 2,380 | 9,402 | k + 1 |
-| MIX, earliest first | 2 | 2 | 2 | 2 | k + 1 |
-| REL1, latest first | 6 | 10 | 14 | 18 | k + 1 |
-| REL1, earliest first | 2 | 2 | 2 | 2 | k + 1 |
-
-One split proves both obligations. The count of open joins is k + 1, so a
-ceiling N rejects them for k >= N, and a local invariant does not lower the
-count (F3 of `DESIGN.md`). The work depends on the split order, exponentially
-on MIX and linearly on REL1 (the prediction said exponentially for both).
-So neither the open-join count nor the work done can be the fixed rule. This
-is the case against "selector plus bounds, with a ceiling N", which is also
-what the two-step idea becomes once the second step needs a bound.
-
-## H6 and H7. The bounded split: holds
-
-- No WIN(P) derivation has more than P leaves on any family and size. On
-  SWAPS(k) beyond its reach it stops unproved after one leaf at the root.
-- At fixed P the work is polynomial: SWAPS under `win16-root` 2,205 pairs at
-  k = 16 and 33,501 at k = 64 (ratio 15.2); FLAGS 663 and 10,335 (15.6).
-- SWAPSINV is proved by WIN(2) and by SAT at every size, each stated
-  invariant included, with 2 probes per invariant and 1,150 pairs at
-  k = 128. An invariant after a join is proved by that join's arms alone,
-  and the next obligation uses it as a plain fact.
-
-## H9 and H11. The theory step
-
-DENSE(n), three seeds per n: elimination decides every instance for n <= 6
-(at most 214 pairs) and reaches its capacity of 300,000 inequalities on 23
-of the 24 instances from n = 7 to 14, the first with 14 inequalities over 7
-variables. **H9 holds.** The ceiling of 4,096 atoms does not bound one
-theory call if the call is elimination.
-
-Simplex on ADDENDS: proved at every size; 366 pivots at k = 16, 1,470 at
-k = 64 (ratio 4.0), 248 ms for the whole program at k = 128, where
-elimination stops at k = 24. On CHAIN at k = 128 the simplex candidate
-takes 875 ms against 1,237 ms. **H11 holds** for ADDENDS and for the
-agreement of verdicts.
-
-What this does not show: DENSE says nothing about the simplex method. Its
-instances have the origin as a solution, where this simplex starts, so it
-needs no pivot there. And Bland's rule gives termination, not a polynomial
-bound. The claim that stands is narrower: the verdict of step 3's last
-condition is rational feasibility of a fixed set of inequalities, so any
-exact decision of feasibility gives the same verdict, and the text should
-not make elimination part of the rule.
-
-## H10 and H12. The cost of a question whose answer is "not decided"
-
-The redundancy rule [OP-5] asks about every condition, and an accepted
-program answers "not decided". Pairs spent on the last such question of
-OP5(k):
-
-| k | 16 | 32 | 64 | 128 | ratio 64 to 16 |
-| --- | --- | --- | --- | --- | --- |
-| BND-R (no selector) | 324 | 676 | 1,380 | 2,788 | 4.3 |
-| `win16-nosat` | 528 | 1,136 | 2,352 | 4,784 | 4.5 |
-| `win16-root` | 642 | 1,378 | 2,850 | 5,794 | 4.4 |
-| `win16-depth8` | 1,130 | 2,890 | 6,410 | 13,450 | 5.7 |
-| `win16`, forced cases unbounded | 1,191 | 4,439 | 17,079 | guard | 14.3 |
-
-Whole OP5 program, time: `win16` 2.6 s at k = 64 and 11.9 s at k = 96;
-`win16-root` 0.49 s and 1.6 s; BND-R 0.21 s and 0.66 s.
-
-- **H10 is refuted for unbounded forced cases.** One arm of the last join
-  contradicts an arm of the join before it, and so on down the chain, so an
-  open question is found open only after k decisions.
-- **H12's first form failed, its second holds.** With "near" as first
-  defined, both bounded forms still grew with the square, because every
-  arm's condition names the limit `n` and so every join was near. With a
-  join near only by a join value, `win16-root` probes 2 arms per question
-  at every k, and the cost is linear.
-
-## The recommended design
-
-1. **A join keeps both.** A place whose arms disagree holds a join value
-   defined by the arm taken (as settled), and the join records the
-   relational bounds of BND-R as unconditional facts: the join value against
-   each arm's value where that is an expression of entry values, and each
-   bound that held of the place on entry, with the weakest constant over the
-   arms. A transition bound is not carried to the next join. The bounds are
-   a function of the program, so a checker may compute them when they are
-   first needed.
-2. **The decision step is bounded by what it looks at, not by a ceiling.**
-   A join is near when the obligation's values, the values of the conditions
-   on the way to it, or the values of a case already split reach one of its
-   join values through the problem's literals other than join bounds. At the
-   root, each near join is probed once: all arms contradictory proves the
-   obligation, one arm left is taken. Then the latest near join is split
-   while the product of arm counts on the branch stays within P. A join out
-   of reach keeps its bounds only.
-3. **No obligation is rejected for its size.** An obligation out of reach is
-   unproved like any other. The message names the nearest join that was not
-   split and whose join values the obligation reaches, and says to state the
-   needed relation as a local `invariant` after that join. The invariant is
-   proved from that join's arms and is then a plain fact (H7).
-4. **The theory step's text names the verdict, not elimination.** Any exact
-   decision of rational feasibility gives it.
-
-P is the owner's choice. Measured cost: at most P leaves per obligation, and
-on SWAPS, the family where every leaf is needed, WIN(16) proves 4 joins and
-WIN(64) proves 6. Each doubling of P buys one more join whose arms must be
-told apart with no condition to help. P = 16 is recommended as a start: the
-forced cases already cover a flag tested by a condition at any distance
-(FLAGS at every size), so P is spent only on relations between two values
-of one join that no bound expresses.
-
-### Why the others are rejected
-
-| Candidate | Why |
+| Option | Consequence |
 | --- | --- |
-| Selector alone | 2^k on a chain, in the model and in today's compiler; no ceiling admits the chain and bounds the work (H1). It breaks decision `checking-work-never-grows-exponentially`. |
-| Weakest bounds alone, any convex domain | Cannot prove a fact that depends on which arm was taken (FLAGS, MIX, SWAPS): a tag or flag set in one place and tested in another. Intervals also fail every symbolic limit. |
-| Both, with a ceiling N on open joins; the two-step idea with a ceiling on the second step | The count is k + 1 where one split suffices, an invariant does not lower it, and the work depends on the split order (H5). |
-| Both, every bound every arm satisfies, computed at every join | Facts per join grow with the chain and the work with them (H3); this is where the earlier study's doubled time came from. |
-| Unbounded forced cases | An unproved question costs work that grows with the square of the chain, and [OP-5] asks one at every `if` (H10). |
-| A count of forced decisions | Spent on joins that needed no decision; loses REL1 (H4). |
-| Zones, octagons, polyhedra as the state | Quadratic or worse in the live values at every statement, or exponential at a join, and still without the selector's facts. Not measured here; rejected on their known complexity and on FLAGS. |
-| A cap on branches opened, CDCL, interpolation as the rule | The work or the fact found depends on the search (F2). They remain open to an implementation as shortcuts, and interpolation to the diagnostic as a way to suggest the invariant. |
+| Hard error at a ceiling | The writer is told the size is the reason. A program is rejected although one split would prove it (MIX and REL1 from k = 16, FLAGS from m = 17 under `cut16`). The work per obligation is bounded by the ceiling only as 2^N. |
+| Out of reach is unproved | No program is rejected for size alone. The message must name the join that was not looked at. The settled sentence "the ceiling bounds the work of each obligation by a constant" no longer holds: the work of one obligation grows with what its values reach (linearly under choice 4's second option, with the square of the chain otherwise). |
 
-### Loops, calls, arrays
+Recommendation: out of reach is unproved.
 
-A loop head and a call cut the chain of joins for every candidate alike:
-past them a place holds a fresh value with the invariants or postconditions
-as facts. So k in every table above is the number of joins between two cuts
-in one function, and a loop body of twenty conditional updates is CHAIN(20)
-or GUARDED(20). No candidate needs widening, because the head's facts are
-the written invariants. The state after a loop is a join of its exits, and
-gets bounds like any join. A subscript by a join value and a requirement
-that names one are the obligations these families already ask (GUARDED's is
-a subscript bound). Reads of a written array add open items of their own
-(which write a read meets); the model does not hold them, and the product P
-must count them with the joins. That is not measured.
+### Choice 3. Is a local invariant a fact or a cut? (finding 2c)
 
-### What a Lean model would state
+The settled design says a writer "cuts" with a local invariant. Version 1's
+F3 assumed an invariant only adds a fact, and its case against a ceiling N
+(H5) rested on F3. Under the cut reading F3 is false: the invariant closes
+the joins before it, and the count starts again. `cut16` measures that
+reading with N = 16.
 
-The model's language is small enough to state directly: values, linear
-literals, a join as a list of arms each with its literals, a problem as
-literals plus joins plus a goal, and a valuation that satisfies a problem
-when it satisfies the literals and, for each join, the literals of some arm.
+| | Fact reading (`win16-root`) | Cut reading (`cut16`) |
+| --- | --- | --- |
+| SWAPSINV, MIXINV, REL1INV (the repair written) | proved at every size | proved at every size |
+| MIX, REL1 (no invariant) | proved at every size | `ceiling` from k = 16 |
+| FLAGS (no invariant) | proved at every size | `ceiling` from m = 24 (the next size after 16) |
+| SWAPS (no invariant) | proved to k = 4 | proved to k = 16 with 65,536 leaves, `ceiling` from 24 |
+| FLAGSCUT (an invariant about something else between the flags and their tests) | proved at every size | **unproved at every size** |
+| work within the ceiling | at most 16 leaves | depends on the split order |
 
-- **Soundness of the theory step.** If step 3 calls a set contradictory,
-  no integer valuation satisfies it. The proof object is a nonnegative
-  combination of the tightened inequalities that sums to a false constant;
-  the checker of that combination is a few lines and independent of how it
-  was found (elimination or simplex).
-- **Bounds are consequences.** If each arm's literals entail `form <= c_i`
-  with the arm's value in place of the join value, every valuation that
-  satisfies the join satisfies `form <= max c_i`. One lemma, by cases on the
-  arm; a contradictory arm is vacuous.
-- **Soundness of the decision step.** Deciding a join whose other arms are
-  contradictory, and splitting a join into its arms, both preserve the set
-  of satisfying valuations; ignoring a join enlarges it. So "every branch
-  contradictory" implies the goal. By induction on the search tree.
-- **Determinism.** The verdict is a function of the problem: the probe is
-  one pass in program order, the split order is fixed, and the theory
-  verdict is a property of the literal set. Defined as a total function in
-  Lean, this is true by construction; the theorem to state is that the
-  theory verdict does not depend on which certificate is found.
-- **Cost.** The number of theory calls of one derivation is bounded by the
-  arms of the joins near at the root plus a multiple of P, by induction on
-  the remaining product; the exact expression is to be read off the Lean
-  function. That the
-  implementation runs at this bound is a statement about the compiler's
-  function, proved by showing it refines the Lean one.
+So H5's conclusion is corrected: with the cut reading a ceiling N does have
+a repair by invariants, and version 1 was wrong to say it has none. What
+the cut reading costs is the FLAGSCUT row: an invariant written for one
+purpose hides what earlier arms established for every later obligation, so
+adding an invariant can make a proved obligation unproved.
 
-## What is still uncertain
+Recommendation: the fact reading. This is a choice of language meaning and
+is the owner's.
 
-1. **The model is not the compiler.** It has linear literals and joins only:
-   no element reads and writes, no quantified facts, no disequalities or
-   exclusions, no nonlinear rows. The product P must govern those open
-   items too, and how they share it is not designed here.
-2. **Absolute compile time.** The model shows growth, quadratic in the joins
-   between two cuts for a whole function. Its constants are not the
-   compiler's. Whether the design meets the compile-time aim needs the rule
-   built in the compiler's derivation and measured on the 14900K.
-3. **The square itself.** A function with k joins on one chain costs k^2
-   pairs because each join's bound is computed over everything its values
-   reach. An incremental theory state could remove a factor of k. Not
-   tried.
-4. **Flags derived from flags.** `win16-root` proves FLAGCHAIN only to 4.
-   The repair is an invariant that relates the flag and the fact, such as
-   `5 * ok <= y`, after the join; this study did not run that repair.
-   Unbounded forced cases prove it at any length and cost the square of H10.
-   This is the one place where the recommended rule gives up something
-   measured, and it is the owner's to weigh.
-5. **The exact definition of "near" and the order of splits** decide
-   verdicts at the edge of P (H12 changed "near" once for cost). They are
-   fixed rules either way; the specification item should settle them with
-   the diagnostic in mind.
-6. **The simplex method's worst case.** Agreement and ADDENDS are measured;
-   a polynomial bound is not, and DENSE does not test it.
-7. **The bounds' candidates** are the facts that name a place's entry value.
-   A relation that held of no entry value and is true after the join
-   (SWAPS's `y + z <= 1`) is not found; the writer states it. Whether a
-   wider candidate set is worth its cost was measured only at the two ends
-   (BND-R and BND-R-all).
-8. **No real program was measured, on purpose.** Nothing here says how many
-   invariants Firn or Halo would need under P = 16.
+### Choice 4. How far a join bound reaches (finding 4)
+
+| Option | Cost at k = 1,024 joins on one chain | Verdicts |
+| --- | --- | --- |
+| Full reach (version 1's rule) | cubic: 755 s for CHAIN | all |
+| Shallow reach | quadratic at most: 1.5 s for CHAIN | loses ADDENDS from k = 6 and MINSEL from k = 10; the repair is the invariant (ADDENDSINV is proved) |
+
+Recommendation: shallow reach. The aim is compile time within an order of
+magnitude of Rust and C++, and a cubic term in the joins of one function
+cannot meet it. Not measured: shallow reach together with the remedy for
+finding 6. Under both, CHAINSYM is predicted to need its invariants too,
+because the weakened bound is no longer carried and the chain is no longer
+read.
+
+### Choice 5. Where the forced cases run (finding 8)
+
+| Option | Proves | Costs |
+| --- | --- | --- |
+| One pass at the root | flags at any distance; verdict depends on statement order (ORDERXY to 4, ORDERYX at every size) | 2 probes per OP5 question |
+| Repeated at the root | also ORDERXY, FLAGCHAIN, OP5CASC at every size | probes grow with the square where a cascade is long: 4,414 at ORDERXY(64) |
+| Everywhere | also SAMECOND at every size | an unproved OP5 question costs the square of the chain |
+
+Recommendation: repeated at the root. It removes the dependence on
+statement order, which a writer cannot see, and costs more only where a
+cascade is used. Version 1 said flags derived from flags were the only
+ability given up; SAMECOND, ARMCORR beyond P and (under choice 4) ADDENDS
+and MINSEL are given up too.
+
+### Choice 6. P cannot be raised later, unless the redundancy rule asks less (finding 11)
+
+[OP-5] rejects an `if` whose condition the derivation decides. A larger P
+decides more: the PMONO question is decided for k <= 1 by the probe alone,
+k <= 4 under the one-pass rule with P = 16, k <= 5 with P = 16 and
+unbounded forced cases, k <= 7 with P = 64. A program with that `if` at
+k = 6 is accepted at P = 16 and rejected at P = 64. A written invariant can
+do the same to a later `if`.
+
+| Option | Consequence |
+| --- | --- |
+| [OP-5] asks the same derivation | P is fixed for good once programs exist; every invariant may turn a later test redundant |
+| [OP-5] asks only the bounds and the root probe | P can be raised later without rejecting an accepted program; a test that only a split shows redundant is kept |
+
+Recommendation: the second. It is a change to a rule the owner kept
+("redundant is rejected"), so it is the owner's. Not measured: how many
+tests a written invariant turns redundant; OP5 with repairs was not built.
+
+## Answers to the review
+
+1. **Holds.** ARMFACT and MULTIEXIT are unproved by every version 1
+   candidate at every size. Fixed by two remedies, measured: recorded arm
+   facts and nearness by a stated fact. Both are in `win16-v2`.
+2. **Holds, all three.** They are choices 1, 2 and 3. F3 is true only under
+   the fact reading; H5's "no repair" is withdrawn for the cut reading. The
+   review is also right that "the work depends on the split order" was no
+   argument against a ceiling; the measured argument is FLAGSCUT.
+3. **Holds.** `win16-root-lp` and `sat-lp` ran on every family. Version 1's
+   "yes with simplex" cells for ADDENDS are now measured and true.
+4. **Holds.** The cost is cubic; version 1's "square" and its explanation
+   are withdrawn. `work` predicts the time for the full-reach candidates.
+   The settled sentence about a constant per obligation is named in
+   choice 2. Choice 4 gives a measured way to quadratic.
+5. **Holds.** 16,985 verdicts on tightened obligations, none proved. The
+   exhaustive check now has 342 false obligations among 4,978.
+6. **Holds.** Measured as predicted; `-pres` fixes it without a lost
+   verdict under full reach.
+7. **Does not hold as stated; one part does.** BIGTAG is proved at every m:
+   the root probe is a free split of one join. The cost part holds:
+   2m^2 projections for a `match` whose arms give values of different
+   shapes. A relation between a tag and a payload across two wide joins was
+   not built.
+8. **Holds.** SAMECOND and the order pair are measured; it is choice 5.
+   Version 1's "the only ability given up" is withdrawn.
+9. **Holds.** The rule now says a form that is both is a state bound; TIE is
+   proved with no split.
+10. **Both hold.** The compiler's weakest-bound configuration is cheap on
+    CHAIN because its last requirement is `undecided` from k = 3: it did not
+    prove it, and it is no usable comparison. That the earlier study's
+    doubled time came from recording every bound at every join is an
+    inference from this model's H3; the earlier variant was not run here.
+11. **Holds.** It is choice 6.
+12. **Both hold.** The certificate of the theory step is: the integer
+    solution of the equalities as main's rule gives it (decision
+    `integer-equality-solving`, not the model's unit-coefficient
+    substitution), each tightening step with its divisor, and then a
+    nonnegative combination of the tightened inequalities that sums to a
+    false constant. The count of theory calls of one derivation is the
+    probes and the leaves, plus the projections of every join the
+    obligation reaches: joins times candidates times arms, which P does not
+    bound.
+
+## What stands from version 1
+
+- The selector alone doubles per join, in the model and in today's
+  compiler; backjumping does not help (H1).
+- No convex bound replaces the selector (FLAGS, MIX); intervals fail every
+  symbolic limit.
+- Recording every bound every arm satisfies is far more costly than the
+  restricted rule (H3), and version 2 shows the restricted rule needed one
+  more restriction (finding 6).
+- The theory step's text should name the verdict, not elimination (H9,
+  H11): elimination reaches its capacity on ADDENDS from k = 24 and on
+  dense systems of 7 variables.
+
+## Still open
+
+1. Shallow reach with the other remedies was not run as one candidate, so
+   the combination this file leans toward has not been measured whole.
+   Predicted loss: CHAINSYM without invariants.
+2. The model has linear literals and joins only. Reads and writes of
+   arrays, quantified facts, disequalities and nonlinear rows are open
+   items too and are not in it.
+3. Absolute compile time needs the rule in the compiler; the model gives
+   growth.
+4. Two wide `match`es that must be told apart together; a relation between
+   a tag and a payload that needs a disjunction to state.
+5. How many later tests a repair invariant turns redundant under [OP-5].
+6. Why `win16-v2-lp` is slow on TIE.
+7. The simplex method's own worst case is not bounded by measurement here.
+8. No real program was measured, on purpose.
