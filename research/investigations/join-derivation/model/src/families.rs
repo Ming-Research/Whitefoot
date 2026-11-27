@@ -354,8 +354,7 @@ fn swaps_with(size: &Size, invariants: bool) -> Vec<Stmt> {
         let pair = v(y).add(&v(z));
         if invariants {
             let stated = pair.addk(-1);
-            out.push(Stmt::Assert(format!("inv{step}"), stated.clone()));
-            out.push(Stmt::Assume(stated, false));
+            out.push(Stmt::Invariant(format!("inv{step}"), stated));
         }
         total = total.add(&pair);
     }
@@ -398,6 +397,318 @@ fn rel1(size: &Size, tiny: bool) -> Vec<Stmt> {
     out
 }
 
+/// k joins without a join value: both arms state `i < len` of a pair of
+/// their own. With `uneven`, the two arms state different bounds.
+fn armfact_with(size: &Size, tiny: bool, uneven: bool) -> Vec<Stmt> {
+    let (mut b, mut out) = (B::default(), Vec::new());
+    let range = tiny.then_some(3);
+    let mut goal = k(size.k as i128);
+    for _ in 0..size.k {
+        let i = fresh(&mut b, &mut out, 0, range);
+        let len = fresh(&mut b, &mut out, 0, range);
+        let cond = unknown(&mut b, &mut out);
+        let stated = lt(&v(i), &v(len));
+        let other = if uneven { stated.addk(2) } else { stated.clone() };
+        out.push(iff(cond, vec![Stmt::Assume(stated, false)], vec![Stmt::Assume(other, false)], vec![]));
+        goal = goal.add(&v(i)).sub(&v(len));
+    }
+    out.push(Stmt::Assert("final".into(), goal));
+    out
+}
+
+fn armfact(size: &Size, tiny: bool) -> Vec<Stmt> {
+    armfact_with(size, tiny, false)
+}
+
+fn multiexit(size: &Size, tiny: bool) -> Vec<Stmt> {
+    armfact_with(size, tiny, true)
+}
+
+/// k joins without a join value whose arms state different facts:
+/// `y >= 5` in one, `z >= 5` in the other.
+fn armcorr(size: &Size, tiny: bool) -> Vec<Stmt> {
+    let (mut b, mut out) = (B::default(), Vec::new());
+    let (low, high) = if tiny { (4, Some(5)) } else { (0, Some(10)) };
+    let mut goal = k(5 * size.k as i128);
+    for _ in 0..size.k {
+        let y = fresh(&mut b, &mut out, low, high);
+        let z = fresh(&mut b, &mut out, low, high);
+        let cond = unknown(&mut b, &mut out);
+        out.push(iff(cond, vec![Stmt::Assume(k(5).sub(&v(y)), false)], vec![Stmt::Assume(k(5).sub(&v(z)), false)], vec![]));
+        goal = goal.sub(&v(y)).sub(&v(z));
+    }
+    out.push(Stmt::Assert("final".into(), goal));
+    out
+}
+
+/// ADDENDS with the invariant `x <= x_0 + y_1 + .. + y_i` after each join.
+fn addendsinv(size: &Size, tiny: bool) -> Vec<Stmt> {
+    let (mut b, mut out) = (B::default(), Vec::new());
+    let start = fresh(&mut b, &mut out, 0, tiny.then_some(2));
+    let mut x = start;
+    let mut sum = v(start);
+    for step in 0..size.k {
+        let y = fresh(&mut b, &mut out, 0, Some(if tiny { 1 } else { 1000 }));
+        x = bump(&mut b, &mut out, x, &v(y));
+        sum = sum.add(&v(y));
+        out.push(Stmt::Invariant(format!("inv{step}"), v(x).sub(&sum)));
+    }
+    out.push(Stmt::Assert("final".into(), v(x).sub(&sum)));
+    out
+}
+
+/// CHAINSYM with an invariant of a new shape after each join:
+/// `x <= n + w_j + j` for a fresh `w_j >= 0`.
+fn chainsyminv(size: &Size, tiny: bool) -> Vec<Stmt> {
+    let (mut b, mut out) = (B::default(), Vec::new());
+    let range = tiny.then_some(2);
+    let n = fresh(&mut b, &mut out, 0, range);
+    let mut x = fresh(&mut b, &mut out, 0, range);
+    out.push(Stmt::Assume(le(&v(x), &v(n)), false));
+    for step in 0..size.k {
+        let w = fresh(&mut b, &mut out, 0, Some(if tiny { 1 } else { 3 }));
+        x = bump(&mut b, &mut out, x, &k(1));
+        out.push(Stmt::Invariant(format!("inv{step}"), v(x).sub(&v(n)).sub(&v(w)).addk(-(step as i128 + 1))));
+    }
+    out.push(Stmt::Assert("final".into(), v(x).sub(&v(n)).addk(-(size.k as i128))));
+    out
+}
+
+/// CHAIN with an obligation after every join, as an overflow check would
+/// be.
+fn chainobl(size: &Size, tiny: bool) -> Vec<Stmt> {
+    let (mut b, mut out) = (B::default(), Vec::new());
+    let high = if tiny { 2 } else { 100 };
+    let mut x = fresh(&mut b, &mut out, 0, Some(high));
+    for step in 0..size.k {
+        x = bump(&mut b, &mut out, x, &k(1));
+        let name = if step + 1 == size.k { "final".to_owned() } else { format!("step{step}") };
+        out.push(Stmt::Assert(name, v(x).addk(-(high + step as i128 + 1))));
+    }
+    out
+}
+
+/// One `match` of m arms, each giving `x` a value of its own that is at
+/// most 100.
+fn matchshapes(size: &Size, tiny: bool) -> Vec<Stmt> {
+    let (mut b, mut out) = (B::default(), Vec::new());
+    let arms = size.k as i128;
+    let top = if tiny { 2 } else { 100 };
+    let given: Vec<V> = (0..size.k).map(|_| fresh(&mut b, &mut out, 0, Some(top))).collect();
+    let selector = fresh(&mut b, &mut out, 0, Some(arms - 1));
+    let bodies = (0..arms).map(|arm| (vec![v(selector).addk(-arm), k(arm).sub(&v(selector))], vec![])).collect();
+    let joined = b.id();
+    out.push(Stmt::Branch(bodies, vec![(joined, given, None)]));
+    out.push(Stmt::Assert("final".into(), v(joined).addk(-top)));
+    out
+}
+
+/// One `match` of m arms: arm j sets `tag = j % 3` and a `len`, which is
+/// below `n` in the arms with tag 0. Then `if tag == 0 { len < n }`.
+fn bigtag(size: &Size, tiny: bool) -> Vec<Stmt> {
+    let (mut b, mut out) = (B::default(), Vec::new());
+    let arms = size.k as i128;
+    let range = Some(if tiny { 2 } else { 50 });
+    let n = fresh(&mut b, &mut out, 0, range);
+    let selector = fresh(&mut b, &mut out, 0, Some(arms - 1));
+    let (mut bodies, mut tags, mut lens) = (Vec::new(), Vec::new(), Vec::new());
+    for arm in 0..arms {
+        let mut body = Vec::new();
+        let tag = b.id();
+        body.push(Stmt::Let(tag, k(arm % 3)));
+        let len = fresh(&mut b, &mut body, 0, range);
+        if arm % 3 == 0 {
+            body.push(Stmt::Assume(lt(&v(len), &v(n)), false));
+        }
+        tags.push(tag);
+        lens.push(len);
+        bodies.push((vec![v(selector).addk(-arm), k(arm).sub(&v(selector))], body));
+    }
+    let tag = b.id();
+    let len = b.id();
+    out.push(Stmt::Branch(bodies, vec![(tag, tags, None), (len, lens, None)]));
+    out.push(iff(v(tag), vec![Stmt::Assert("final".into(), lt(&v(len), &v(n)))], vec![], vec![]));
+    out
+}
+
+/// k times the pair `if c { a = a + 1 }`, `if c { b = b + 1 }` on one
+/// condition `c`; then `a <= b`.
+fn samecond(size: &Size, _: bool) -> Vec<Stmt> {
+    let (mut b, mut out) = (B::default(), Vec::new());
+    let flag = fresh(&mut b, &mut out, 0, Some(1));
+    let cond = k(1).sub(&v(flag));
+    let mut pair = [b.id(), b.id()];
+    out.push(Stmt::Let(pair[0], k(0)));
+    out.push(Stmt::Let(pair[1], k(0)));
+    for _ in 0..size.k {
+        for place in &mut pair {
+            let raised = b.id();
+            let joined = b.id();
+            out.push(iff(cond.clone(), vec![Stmt::Let(raised, v(*place).addk(1))], vec![], vec![(joined, vec![raised, *place], Some(*place))]));
+            *place = joined;
+        }
+    }
+    out.push(Stmt::Assert("final".into(), v(pair[0]).sub(&v(pair[1]))));
+    out
+}
+
+/// k pairs of flags over equal values `y_i == w_i`: `okx_i` from
+/// `y_i >= 5` and `oky_i` from `w_i >= 5`. Inside the conditions on every
+/// `okx_i`, every `oky_i` is 1. With `x_first` the `okx` joins stand before
+/// the `oky` joins, otherwise after them.
+fn order_with(size: &Size, tiny: bool, x_first: bool) -> Vec<Stmt> {
+    let (mut b, mut out) = (B::default(), Vec::new());
+    let (low, high) = flag_range(tiny);
+    let mut pairs = Vec::new();
+    for _ in 0..size.k {
+        let y = fresh(&mut b, &mut out, low, high);
+        let w = fresh(&mut b, &mut out, low, high);
+        out.push(Stmt::Assume(v(y).sub(&v(w)), true));
+        pairs.push((y, w));
+    }
+    let (mut okx, mut oky) = (Vec::new(), Vec::new());
+    for first in [true, false] {
+        for (y, w) in &pairs {
+            if first == x_first {
+                okx.push(flag(&mut b, &mut out, k(5).sub(&v(*y))));
+            } else {
+                oky.push(flag(&mut b, &mut out, k(5).sub(&v(*w))));
+            }
+        }
+    }
+    let mut goal = k(size.k as i128);
+    for ok in &oky {
+        goal = goal.sub(&v(*ok));
+    }
+    let mut body = vec![Stmt::Assert("final".into(), goal)];
+    for ok in okx.into_iter().rev() {
+        body = vec![guard(ok, body)];
+    }
+    out.extend(body);
+    out
+}
+
+fn orderxy(size: &Size, tiny: bool) -> Vec<Stmt> {
+    order_with(size, tiny, true)
+}
+
+fn orderyx(size: &Size, tiny: bool) -> Vec<Stmt> {
+    order_with(size, tiny, false)
+}
+
+/// `lo <= hi`; `if c { lo = hi }`; k times `if d { lo += 1; hi += 1 }`;
+/// then `lo <= hi`.
+fn tie(size: &Size, tiny: bool) -> Vec<Stmt> {
+    let (mut b, mut out) = (B::default(), Vec::new());
+    let range = tiny.then_some(2);
+    let mut lo = fresh(&mut b, &mut out, 0, range);
+    let mut hi = fresh(&mut b, &mut out, 0, range);
+    out.push(Stmt::Assume(le(&v(lo), &v(hi)), false));
+    let cond = unknown(&mut b, &mut out);
+    let joined = b.id();
+    out.push(iff(cond, vec![], vec![], vec![(joined, vec![hi, lo], Some(lo))]));
+    lo = joined;
+    for _ in 0..size.k {
+        let cond = unknown(&mut b, &mut out);
+        let ids: Vec<V> = (0..4).map(|_| b.id()).collect();
+        out.push(iff(
+            cond,
+            vec![Stmt::Let(ids[0], v(lo).addk(1)), Stmt::Let(ids[1], v(hi).addk(1))],
+            vec![],
+            vec![(ids[2], vec![ids[0], lo], Some(lo)), (ids[3], vec![ids[1], hi], Some(hi))],
+        ));
+        lo = ids[2];
+        hi = ids[3];
+    }
+    out.push(Stmt::Assert("final".into(), le(&v(lo), &v(hi))));
+    out
+}
+
+/// SWAPS(k), then the question whether the sum is already decided.
+fn pmono(size: &Size, _: bool) -> Vec<Stmt> {
+    let (mut b, mut out) = (B::default(), Vec::new());
+    let mut total = k(-(size.k as i128));
+    for _ in 0..size.k {
+        let (y, z) = swap(&mut b, &mut out);
+        total = total.add(&v(y)).add(&v(z));
+    }
+    out.push(Stmt::Query("decided-last".into(), total));
+    out
+}
+
+/// FLAGCHAIN(k), and inside its condition k questions about unknowns.
+fn op5casc(size: &Size, tiny: bool) -> Vec<Stmt> {
+    let (mut b, mut out) = (B::default(), Vec::new());
+    let (low, high) = flag_range(tiny);
+    let y = fresh(&mut b, &mut out, low, high);
+    let mut ok = flag(&mut b, &mut out, k(5).sub(&v(y)));
+    for _ in 1..size.k {
+        ok = flag(&mut b, &mut out, k(1).sub(&v(ok)));
+    }
+    let mut body = Vec::new();
+    for step in 0..size.k {
+        let unknown = fresh(&mut b, &mut body, 0, Some(1));
+        let mark = if step + 1 == size.k { "-last".to_owned() } else { step.to_string() };
+        body.push(Stmt::Query(format!("asked{mark}"), k(1).sub(&v(unknown))));
+    }
+    body.push(Stmt::Assert("final".into(), k(5).sub(&v(y))));
+    out.push(guard(ok, body));
+    out
+}
+
+/// MIX with the invariant `5 * ok <= y` after the flag's join.
+fn mixinv(size: &Size, tiny: bool) -> Vec<Stmt> {
+    let (mut b, mut out) = (B::default(), Vec::new());
+    let (low, high) = flag_range(tiny);
+    let y = fresh(&mut b, &mut out, low, high);
+    let ok = flag(&mut b, &mut out, k(5).sub(&v(y)));
+    out.push(Stmt::Invariant("inv".into(), v(ok).scale(5).sub(&v(y))));
+    let top = if tiny { 1 } else { 100 };
+    let mut x = fresh(&mut b, &mut out, 0, Some(top));
+    for _ in 0..size.k {
+        x = bump(&mut b, &mut out, x, &k(1));
+    }
+    let goal = v(x).sub(&v(y)).addk(-(top - 5 + size.k as i128));
+    out.push(guard(ok, vec![Stmt::Assert("final".into(), goal)]));
+    out
+}
+
+/// REL1 with the invariant `y + z <= 1` after the swap.
+fn rel1inv(size: &Size, tiny: bool) -> Vec<Stmt> {
+    let (mut b, mut out) = (B::default(), Vec::new());
+    let (y, z) = swap(&mut b, &mut out);
+    out.push(Stmt::Invariant("inv".into(), v(y).add(&v(z)).addk(-1)));
+    let top = if tiny { 1 } else { 100 };
+    let mut x = fresh(&mut b, &mut out, 0, Some(top));
+    for _ in 0..size.k {
+        x = bump(&mut b, &mut out, x, &k(1));
+    }
+    out.push(Stmt::Assert("final".into(), v(y).add(&v(z)).add(&v(x)).addk(-(1 + top + size.k as i128))));
+    out
+}
+
+/// FLAGS with an invariant about something else between the flags and the
+/// conditions that test them.
+fn flagscut(size: &Size, tiny: bool) -> Vec<Stmt> {
+    let (mut b, mut out) = (B::default(), Vec::new());
+    let (low, high) = flag_range(tiny);
+    let mut oks = Vec::new();
+    let mut goal = k(5 * size.k as i128);
+    for _ in 0..size.k {
+        let y = fresh(&mut b, &mut out, low, high);
+        oks.push(flag(&mut b, &mut out, k(5).sub(&v(y))));
+        goal = goal.sub(&v(y));
+    }
+    let other = fresh(&mut b, &mut out, 0, Some(3));
+    out.push(Stmt::Invariant("inv".into(), v(other).scale(-1)));
+    let mut body = vec![Stmt::Assert("final".into(), goal)];
+    for ok in oks.into_iter().rev() {
+        body = vec![guard(ok, body)];
+    }
+    out.extend(body);
+    out
+}
+
 fn ks(list: &[usize]) -> Vec<Size> {
     list.iter().map(|k| Size { k: *k, n: 0 }).collect()
 }
@@ -428,6 +739,23 @@ pub fn all() -> Vec<Family> {
         family("MIX", mix),
         family("REL1", rel1),
         Family { name: "OP5", sizes: ks(&grown), tiny: ks(&[1, 2]), make: op5 },
+        family("ARMFACT", armfact),
+        family("MULTIEXIT", multiexit),
+        family("ARMCORR", armcorr),
+        family("ADDENDSINV", addendsinv),
+        family("CHAINSYMINV", chainsyminv),
+        family("CHAINOBL", chainobl),
+        Family { name: "MATCHSHAPES", sizes: ks(&[2, 4, 8, 16, 32, 64, 128, 256]), tiny: ks(&[2, 3]), make: matchshapes },
+        Family { name: "BIGTAG", sizes: ks(&[3, 6, 12, 16, 24, 48, 64, 96, 128, 192, 256]), tiny: ks(&[3, 6]), make: bigtag },
+        family("SAMECOND", samecond),
+        family("ORDERXY", orderxy),
+        family("ORDERYX", orderyx),
+        family("TIE", tie),
+        Family { name: "PMONO", sizes: ks(&[1, 2, 3, 4, 5, 6, 7, 8]), tiny: ks(&[1, 2, 3]), make: pmono },
+        Family { name: "OP5CASC", sizes: ks(&grown), tiny: ks(&[1, 2]), make: op5casc },
+        family("MIXINV", mixinv),
+        family("REL1INV", rel1inv),
+        family("FLAGSCUT", flagscut),
     ]
 }
 

@@ -90,6 +90,7 @@ struct Tableau {
     value: Vec<R>,
     upper: Vec<Option<R>>,
     pivots: u64,
+    work: u64,
 }
 
 impl Tableau {
@@ -102,6 +103,7 @@ impl Tableau {
 
     /// Moves the nonbasic `var` by `step` and every basic variable with it.
     fn shift(&mut self, var: usize, step: R) -> Option<()> {
+        self.work += self.rows.len() as u64;
         self.value[var] = self.value[var].add(step)?;
         for (basic, row) in &self.rows {
             if let Some(coefficient) = row.get(&var) {
@@ -124,8 +126,10 @@ impl Tableau {
                 solved.insert(*var, coefficient.div(pivot)?.neg());
             }
         }
+        self.work += self.rows.len() as u64;
         for other in self.rows.values_mut() {
             if let Some(factor) = other.remove(&enter) {
+                self.work += solved.len() as u64;
                 for (var, coefficient) in &solved {
                     let sum = other.get(var).copied().unwrap_or(R::ZERO).add(factor.mul(*coefficient)?)?;
                     if sum.n == 0 {
@@ -146,6 +150,7 @@ impl Tableau {
             if self.pivots > limit {
                 return None;
             }
+            self.work += self.rows.len() as u64;
             let mut broken = None;
             for basic in self.rows.keys() {
                 if let Some(bound) = self.upper[*basic] {
@@ -195,6 +200,7 @@ impl Tableau {
             }
             let Some((enter, rise)) = enter else { return Some(Some(self.value[goal])) };
             // The largest move of `enter` that keeps every bound.
+            self.work += self.rows.len() as u64;
             let mut best: Option<(R, Option<usize>)> = None;
             if rise {
                 if let Some(bound) = self.upper[enter] {
@@ -242,6 +248,7 @@ pub fn solve(les: &[Lin], keep: Option<V>, st: &mut Stats) -> Lp {
         value: vec![R::ZERO; free + les.len()],
         upper: vec![None; free + les.len()],
         pivots: 0,
+        work: 0,
     };
     for (index, lin) in les.iter().enumerate() {
         let row: BTreeMap<usize, R> = lin.t.iter().map(|(value, coefficient)| (columns[value], R::int(*coefficient))).collect();
@@ -264,5 +271,6 @@ pub fn solve(les: &[Lin], keep: Option<V>, st: &mut Stats) -> Lp {
         },
     };
     st.lp_pivots += tableau.pivots;
+    st.work += tableau.work;
     result
 }

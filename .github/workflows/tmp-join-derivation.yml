@@ -25,7 +25,7 @@ jobs:
   model:
     if: ${{ !contains(github.event.head_commit.message, '[probe-only]') }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
       - name: Host
@@ -58,17 +58,26 @@ jobs:
         working-directory: research/investigations/join-derivation/model
         run: |
           ./target/release/join-derivation-model recount > "$RUNNER_TEMP/measure-2.csv"
-          cut -d, -f1-19,21-22 "$RUNNER_TEMP/measure-2.csv" | sort > "$RUNNER_TEMP/counts-2.csv"
-          cut -d, -f1-19,21-22 "$RUNNER_TEMP/measure-1.csv" | sort > "$RUNNER_TEMP/counts-1.csv"
+          cut -d, -f1-19,21-23 "$RUNNER_TEMP/measure-2.csv" | sort > "$RUNNER_TEMP/counts-2.csv"
+          cut -d, -f1-19,21-23 "$RUNNER_TEMP/measure-1.csv" | sort > "$RUNNER_TEMP/counts-1.csv"
           missing=$(comm -23 "$RUNNER_TEMP/counts-2.csv" "$RUNNER_TEMP/counts-1.csv" | wc -l)
           echo "rows of the second count: $(wc -l < "$RUNNER_TEMP/counts-2.csv"); rows not identical in the first: $missing"
           comm -23 "$RUNNER_TEMP/counts-2.csv" "$RUNNER_TEMP/counts-1.csv" | head -20
+      - name: Every family with its last obligation made false
+        if: always()
+        working-directory: research/investigations/join-derivation/model
+        run: |
+          status=0
+          ./target/release/join-derivation-model false > "$RUNNER_TEMP/false.csv" || status=$?
+          tail -1 "$RUNNER_TEMP/false.csv"
+          grep -E 'UNSOUND|PROVED-NO-WITNESS' "$RUNNER_TEMP/false.csv" | head -40 || true
+          exit "$status"
       - name: Theory step on dense systems
         if: always()
         working-directory: research/investigations/join-derivation/model
         run: |
           ./target/release/join-derivation-model dense > "$RUNNER_TEMP/dense.csv"
-          cat "$RUNNER_TEMP/dense.csv"
+          tail -3 "$RUNNER_TEMP/dense.csv"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -77,7 +86,32 @@ jobs:
             ${{ runner.temp }}/check.csv
             ${{ runner.temp }}/measure-1.csv
             ${{ runner.temp }}/measure-2.csv
+            ${{ runner.temp }}/false.csv
             ${{ runner.temp }}/dense.csv
+
+  big:
+    if: ${{ !contains(github.event.head_commit.message, '[probe-only]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host
+        run: |
+          lscpu | sed -n '1,16p'
+          uptime
+      - name: Build
+        working-directory: research/investigations/join-derivation/model
+        run: cargo build --release 2>&1 | tail -20
+      - name: Largest sizes
+        working-directory: research/investigations/join-derivation/model
+        run: |
+          taskset -c 1 ./target/release/join-derivation-model big > "$RUNNER_TEMP/big.csv"
+          wc -l "$RUNNER_TEMP/big.csv"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: big-${{ github.run_id }}
+          path: ${{ runner.temp }}/big.csv
 
   probe:
     if: ${{ !contains(github.event.head_commit.message, '[model-only]') }}

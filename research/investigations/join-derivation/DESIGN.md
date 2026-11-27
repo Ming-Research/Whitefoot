@@ -428,3 +428,144 @@ stay as predicted there; under `win16-root` and `win16-depth8` the pair
 count of the last OP5 question at k = 64 is at most 8 times the count at
 k = 16; under `win16`, whose forced cases are not bounded, it is more than
 8 times, because the cascade still runs down the chain.
+
+## Version 2: after the first review
+
+A review of version 1 (tag `join-derivation-study-v1`) found twelve points.
+This section was committed with the model changes it describes and before
+any of their measurements. It adds families, candidate remedies and
+hypotheses. `RESULTS.md` answers each finding by its number.
+
+### Rules changed in the model for every candidate
+
+- **A form that is both a state bound and a transition bound is a state
+  bound** (finding 9). State candidates are now offered first.
+- A local invariant is one statement, `Invariant`, in place of an obligation
+  followed by a fact. Candidates read it as one more fact, except the two
+  `cut16` candidates below.
+- A new count, `work`: every literal handed to a theory call or copied to
+  form one, every inequality visited in an elimination round, every pair,
+  and every tableau row and entry a simplex step touches.
+
+### New candidates
+
+Each is `win16-root` (bounds, one probe pass at the root, P = 16) with one
+change, so that each change can be read alone:
+
+| Name | Change | For finding |
+| --- | --- | --- |
+| `win16-root-lp`, `sat-lp` | the simplex decision | 3 |
+| `win16-root-af` | a join also records, for each fact an arm states over entry values (not the arm's own condition), the weakest constant over the arms | 1 |
+| `win16-root-nf` | a join is also near by a value that such a stated fact names | 1 |
+| `win16-root-afnf` | both | 1 |
+| `win16-root-pres` | a state bound that some arm weakens is recorded but not offered to the next join | 6 |
+| `win16-root-int` | a join also records the constant interval of each join value | 7 |
+| `win16-root-live` | the product counts the arms the root probe left alive, and only those are split | 7 |
+| `win16-root-free` | the first split of a derivation costs no product | 7 |
+| `win16-rootfix` | the root probe repeats until nothing is decided; none below the root | 8 |
+| `win16-v2`, `win16-v2-lp` | all of `af`, `nf`, `pres`, `int`, `live`, `free` together, one root pass | |
+| `win16-v2-fix`, `win16-v2-fix-lp` | the same with the repeated root probe | |
+| `cut16`, `cut16-early` | the reading of the settled design: selector and bounds, an invariant closes the joins before it (they keep bounds only), the root is tried first, then more than 16 open joins since the last invariant is the verdict `ceiling`, else every open join is split, latest or earliest first | 2 |
+
+### New families
+
+| Family | Program | Obligation |
+| --- | --- | --- |
+| ARMFACT(k) | k joins with no join value; both arms state `i_j < len_j` | sum of `i_j - len_j` `<= -k` |
+| MULTIEXIT(k) | the same, the arms state `i_j < len_j` and `i_j <= len_j - 3` | the same |
+| ARMCORR(k) | k joins with no join value; one arm states `y_j >= 5`, the other `z_j >= 5` | sum of `y_j + z_j` `>= 5k` |
+| ADDENDSINV(k) | ADDENDS with `invariant x <= x_0 + y_1 + .. + y_i` after join i | the invariants and the same bound |
+| CHAINSYMINV(k) | CHAINSYM with `invariant x <= n + w_j + j`, `w_j` new each time | the invariants and `x <= n + k` |
+| CHAINOBL(k) | CHAIN with the bound asked after every join | every one |
+| MATCHSHAPES(m) | one `match` of m arms, arm j sets `x = a_j`, each `a_j <= 100` | `x <= 100` |
+| BIGTAG(m) | one `match` of m arms, arm j sets `tag = j % 3` and a `len` that is below `n` when the tag is 0; then inside `if tag == 0` | `len < n` |
+| SAMECOND(k) | k times `if c { a += 1 }`, `if c { b += 1 }` on one `c` | `a <= b` |
+| ORDERXY(k), ORDERYX(k) | k pairs `y_i == w_i`; `okx_i` flags `y_i >= 5`, `oky_i` flags `w_i >= 5`; the `okx` joins before the `oky` joins, or after; inside the conditions on every `okx_i` | every `oky_i` is 1 |
+| TIE(k) | `lo <= hi`; `if c { lo = hi }`; k times `if d { lo += 1; hi += 1 }` | `lo <= hi` |
+| PMONO(k) | SWAPS(k), then the question "is the sum already decided" | the question |
+| OP5CASC(k) | FLAGCHAIN(k), and inside its condition k questions about unknowns | each question, and `y >= 5` |
+| MIXINV(k), REL1INV(k) | MIX and REL1 with the invariant that repairs them after the first join (`5 * ok <= y`, `y + z <= 1`) | the invariant and the obligation |
+| FLAGSCUT(m) | FLAGS with an invariant about an unrelated value between the flags and their tests | the same as FLAGS |
+
+**The false variant.** For every family and size, the last obligation is
+tightened by one. A search over 6,000 runs looks for one run on which the
+tightened obligation fails; where it finds one, the obligation is known
+false, and a candidate that proves it is unsound. The exhaustive check of
+version 1 stays.
+
+**The largest sizes.** CHAIN, CHAINOBL, GUARDED and OP5 are run at k = 64,
+128, 256, 512 and 1,024 for `bnd-rel`, `bnd-rel-lp`, `win16-root`,
+`win16-root-lp`, `win16-v2` and `win16-v2-lp`, each until one run passes
+150 seconds.
+
+### Hypotheses of version 2
+
+**V1 (finding 1).** Prediction: `win16-root` proves ARMFACT, MULTIEXIT and
+ARMCORR at no size. `-af` proves ARMFACT and MULTIEXIT at every size and
+ARMCORR at none. `-nf` proves all three only up to k = 4 or 5. `-afnf`
+proves ARMFACT and MULTIEXIT at every size and ARMCORR up to k = 4 or 5.
+The pair count of the last OP5 question under `-afnf` at k = 64 stays within
+8 times the count at k = 16.
+Refuted by a verdict that differs or a faster growth.
+
+**V2 (finding 2).** Prediction: `cut16` proves SWAPSINV, MIXINV and REL1INV
+at every size, and gives `ceiling` on MIX and REL1 from k = 16 and on SWAPS
+from k = 17 (so at 24). It does not prove FLAGSCUT at any size, which every
+candidate that reads an invariant as a fact proves. On SWAPS(16) its work
+differs between the two split orders by less than a factor of 2, because
+every leaf is needed.
+Refuted by a verdict that differs.
+What it decides: nothing. It gives the owner the cut reading measured beside
+the fact reading.
+
+**V3 (finding 3).** Prediction: `win16-root-lp` and `sat-lp` have the
+verdicts of `win16-root` and `sat` wherever both finish, finish ADDENDS at
+every size, and no row of theirs up to k = 128 is stopped by a guard.
+Refuted by a differing verdict or a stopped row.
+
+**V4 (finding 4).** Prediction: on CHAIN, CHAINOBL, GUARDED and OP5, for
+both theory decisions, time divided by `work` varies by less than a factor
+of 2 between k = 64 and the largest size that finishes; and `work` grows
+between the square and the cube of k: the ratio of `work` at 2k to `work` at
+k is between 4 and 8 at the largest sizes. If the ratio is near 8, the
+whole-function cost of every candidate with bounds is cubic in this model,
+and version 1's "square" was wrong.
+Refuted (for the unit) if time over `work` varies by more than 2.
+
+**V5 (finding 5).** Prediction: no candidate proves a tightened obligation
+for which a failing run was found, at any size. Every family but PMONO has
+such a run at every size.
+Refuted by one `UNSOUND` row. A program without a found run is reported and
+counts for nothing.
+
+**V6 (finding 6).** Prediction: on ADDENDSINV and CHAINSYMINV the bounds
+recorded at the last join grow linearly with k under `win16-root` and are
+constant under `win16-root-pres`; `-pres` proves every family that
+`win16-root` proves.
+Refuted if the count under `win16-root` is the same at k = 8 and k = 32, if
+it grows under `-pres`, or if `-pres` loses a verdict.
+
+**V7 (finding 7).** Prediction: on BIGTAG(m), `win16-root` proves m <= 16
+only; `-live` proves up to m = 48 (16 live arms); `-free` proves every m
+with m / 3 leaves or m leaves. On MATCHSHAPES(m) `win16-root` proves only
+m <= 16, by splitting; `-int` proves every m with no split; the projections
+of the one join grow as m squared under every candidate with bounds.
+Refuted by a verdict that differs.
+
+**V8 (finding 8).** Prediction: `win16-root` proves SAMECOND up to k = 2
+and ORDERXY up to k = 4 and ORDERYX at every size; `win16-rootfix` proves
+both orders at every size and SAMECOND up to k = 2; `win16` (forced cases
+everywhere) proves all three at every size. On OP5CASC the pair count of
+the last question at k = 64 over k = 16 is at most 8 under `win16-root` and
+more than 8 under `win16-rootfix` and `win16`.
+Refuted by a verdict or a growth that differs.
+
+**V9 (finding 9).** Prediction: with state candidates first, TIE is proved
+at every size by BND-R alone.
+Refuted if it is not.
+
+**V11 (finding 11).** Prediction: the PMONO question is decided for k <= 4
+under `win16` and `win16-root`, for k <= 6 under `win64`, and only for k = 1
+under `sat`; so a program with that `if` at k = 5 or 6 is accepted at
+P = 16 and rejected at P = 64.
+Refuted if the sizes at which the question is decided do not grow with P.

@@ -27,6 +27,9 @@ pub struct Stats {
     pub projections: u64,
     pub bound_facts: u64,
     pub lp_pivots: u64,
+    /// Literals and tableau entries visited: the unit that is meant to
+    /// predict the time.
+    pub work: u64,
     pub use_lp: bool,
     pub peak: usize,
     pub capacity: bool,
@@ -48,6 +51,7 @@ impl Stats {
             projections: self.projections - before.projections,
             bound_facts: self.bound_facts - before.bound_facts,
             lp_pivots: self.lp_pivots - before.lp_pivots,
+            work: self.work - before.work,
             use_lp: self.use_lp,
             peak: self.peak,
             capacity: self.capacity,
@@ -233,6 +237,7 @@ fn norm_eq(mut lin: Lin) -> Norm {
 /// are returned.
 pub fn theory(input: &[TL], keep: Option<V>, st: &mut Stats) -> Out {
     st.theory_calls += 1;
+    st.work += input.len() as u64;
     if let Some(deadline) = st.deadline {
         if Instant::now() > deadline {
             st.timeout = true;
@@ -266,6 +271,7 @@ pub fn theory(input: &[TL], keep: Option<V>, st: &mut Stats) -> Out {
         });
         let Some((position, value, unit)) = found else { break };
         let (solved, solved_tag) = eqs.swap_remove(position);
+        st.work += (eqs.len() + les.len()) as u64;
         let mut next_eqs = Vec::with_capacity(eqs.len());
         for (lin, tag) in eqs {
             let coefficient = lin.coeff(value);
@@ -355,6 +361,7 @@ pub fn theory(input: &[TL], keep: Option<V>, st: &mut Stats) -> Out {
         les = unique.into_iter().map(|(t, (c, tag))| (Lin { t, c }, tag)).collect();
         les.sort_by(|left, right| left.0.t.cmp(&right.0.t));
         st.peak = st.peak.max(les.len());
+        st.work += les.len() as u64;
         let mut counts: HashMap<V, (u64, u64)> = HashMap::new();
         for (lin, _) in &les {
             for (value, coefficient) in &lin.t {
@@ -393,6 +400,7 @@ pub fn theory(input: &[TL], keep: Option<V>, st: &mut Stats) -> Out {
         for (up, up_tag, up_coefficient) in &uppers {
             for (down, down_tag, down_coefficient) in &lowers {
                 st.fm_pairs += 1;
+                st.work += 1;
                 let Some(lin) = up.checked_comb(-down_coefficient, down, *up_coefficient) else {
                     st.capacity = true;
                     return Out::Capacity;
