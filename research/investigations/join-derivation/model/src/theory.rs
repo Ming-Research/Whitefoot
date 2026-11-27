@@ -30,6 +30,14 @@ pub struct Stats {
     /// Literals and tableau entries visited: the unit that is meant to
     /// predict the time.
     pub work: u64,
+    /// Literals and terms handed to theory calls: what the rule asks to
+    /// be read, whatever the theory step then does with it.
+    pub rule_lits: u64,
+    pub rule_terms: u64,
+    /// The most distinct values in one theory call.
+    pub max_atoms: usize,
+    /// Use the theory step of `indexed.rs`.
+    pub indexed: bool,
     pub use_lp: bool,
     pub peak: usize,
     pub capacity: bool,
@@ -52,6 +60,10 @@ impl Stats {
             bound_facts: self.bound_facts - before.bound_facts,
             lp_pivots: self.lp_pivots - before.lp_pivots,
             work: self.work - before.work,
+            rule_lits: self.rule_lits - before.rule_lits,
+            rule_terms: self.rule_terms - before.rule_terms,
+            max_atoms: self.max_atoms,
+            indexed: self.indexed,
             use_lp: self.use_lp,
             peak: self.peak,
             capacity: self.capacity,
@@ -190,7 +202,7 @@ fn div_ceil(a: i128, b: i128) -> i128 {
     }
 }
 
-enum Norm {
+pub enum Norm {
     Keep(Lin),
     True,
     False,
@@ -198,7 +210,7 @@ enum Norm {
 
 /// `lin <= 0` in lowest terms. With `tighten`, the bound is rounded over
 /// the integers; without, the constant is divided only when it divides.
-fn norm_le(mut lin: Lin, tighten: bool) -> Norm {
+pub fn norm_le(mut lin: Lin, tighten: bool) -> Norm {
     if lin.t.is_empty() {
         return if lin.c > 0 { Norm::False } else { Norm::True };
     }
@@ -215,7 +227,7 @@ fn norm_le(mut lin: Lin, tighten: bool) -> Norm {
     Norm::Keep(lin)
 }
 
-fn norm_eq(mut lin: Lin) -> Norm {
+pub fn norm_eq(mut lin: Lin) -> Norm {
     if lin.t.is_empty() {
         return if lin.c == 0 { Norm::True } else { Norm::False };
     }
@@ -238,6 +250,18 @@ fn norm_eq(mut lin: Lin) -> Norm {
 pub fn theory(input: &[TL], keep: Option<V>, st: &mut Stats) -> Out {
     st.theory_calls += 1;
     st.work += input.len() as u64;
+    st.rule_lits += input.len() as u64;
+    let mut atoms: Vec<V> = Vec::new();
+    for lit in input {
+        st.rule_terms += lit.lin.t.len() as u64;
+        atoms.extend(lit.lin.vars());
+    }
+    atoms.sort_unstable();
+    atoms.dedup();
+    st.max_atoms = st.max_atoms.max(atoms.len());
+    if st.indexed && !st.use_lp {
+        return crate::indexed::theory(input, keep, st);
+    }
     if let Some(deadline) = st.deadline {
         if Instant::now() > deadline {
             st.timeout = true;

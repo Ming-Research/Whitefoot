@@ -8,6 +8,7 @@
 //! measurement. It is an instrument of an unmerged study branch.
 
 mod families;
+mod indexed;
 mod lp;
 mod theory;
 
@@ -95,6 +96,7 @@ struct Oblig {
     joins: Vec<usize>,
     /// How many of the first `joins` stand before the last invariant.
     cut: usize,
+    invariant: bool,
     goal: Lin,
 }
 
@@ -119,6 +121,8 @@ struct Model {
     /// For each entry-state value, the joins one of whose arms states a
     /// fact that names it.
     fact_joins: HashMap<V, Vec<usize>>,
+    /// The same, counting the facts of joins nested in an arm.
+    nested_fact_joins: HashMap<V, Vec<usize>>,
     seen: V,
 }
 
@@ -128,15 +132,40 @@ impl Model {
         let mut ctx = Vec::new();
         let mut joins = Vec::new();
         model.walk(program, &mut ctx, &mut joins, 0);
-        for (index, join) in model.joins.iter().enumerate() {
-            for value in &join.values {
-                model.value_joins.entry(*value).or_default().push(index);
+        // A join's values and stated facts include those of the joins nested
+        // in its arms. Nested joins have larger numbers than the join around
+        // them, so going down the numbers meets the inner ones first.
+        let count = model.joins.len();
+        let mut facts: Vec<Vec<V>> = model
+            .joins
+            .iter()
+            .map(|join| join.arms.iter().flat_map(|arm| join.arm_facts(arm)).flat_map(|lit| lit.lin.vars()).collect())
+            .collect();
+        let top = facts.clone();
+        for id in (0..count).rev() {
+            let inner: Vec<usize> = model.joins[id].arms.iter().flat_map(|arm| arm.inner.iter().copied()).collect();
+            let watermark = model.joins[id].watermark;
+            for other in inner {
+                let more = model.joins[other].values.clone();
+                model.joins[id].values.extend(more);
+                let named: Vec<V> = facts[other].iter().copied().filter(|value| *value < watermark).collect();
+                facts[id].extend(named);
             }
-            let mut named: Vec<V> = join.arms.iter().flat_map(|arm| join.arm_facts(arm)).flat_map(|lit| lit.lin.vars()).collect();
-            named.sort_unstable();
-            named.dedup();
-            for value in named {
-                model.fact_joins.entry(value).or_default().push(index);
+            model.joins[id].values.sort_unstable();
+            model.joins[id].values.dedup();
+        }
+        for index in 0..count {
+            for value in model.joins[index].values.clone() {
+                model.value_joins.entry(value).or_default().push(index);
+            }
+            for (list, into) in [(&top[index], false), (&facts[index], true)] {
+                let mut named = list.clone();
+                named.sort_unstable();
+                named.dedup();
+                for value in named {
+                    let map = if into { &mut model.nested_fact_joins } else { &mut model.fact_joins };
+                    map.entry(value).or_default().push(index);
+                }
             }
         }
         model
@@ -173,6 +202,7 @@ impl Model {
                         gamma: ctx.clone(),
                         joins: open.clone(),
                         cut,
+                        invariant: matches!(stmt, Stmt::Invariant(..)),
                         goal: goal.clone(),
                     });
                     if matches!(stmt, Stmt::Invariant(..)) {
@@ -309,6 +339,20 @@ struct Cfg {
     /// A join bound brought into a problem does not bring in what its
     /// other values reach.
     shallow: bool,
+    /// The same, but only while a join's bounds are computed.
+    shallow_proj: bool,
+    /// The theory step of `indexed.rs`.
+    indexed: bool,
+    /// Arm facts include the bounds of the joins nested in the arm.
+    nested: bool,
+    /// A transition bound is offered only for an arm value that names the
+    /// place's entry value.
+    strict_trans: bool,
+    /// How a question of the redundancy rule is asked: 0 as an obligation,
+    /// 1 with one probe pass, 2 with the bounds alone.
+    query: u8,
+    /// An invariant closes only the joins its own goal reaches.
+    cut_cone: bool,
 }
 
 const fn cfg(name: &'static str, bnd: Bnd, sat: bool, split: Split) -> Cfg {
@@ -331,6 +375,12 @@ const fn cfg(name: &'static str, bnd: Bnd, sat: bool, split: Split) -> Cfg {
         ceiling: None,
         interval: false,
         shallow: false,
+        shallow_proj: false,
+        indexed: false,
+        nested: false,
+        strict_trans: false,
+        query: 0,
+        cut_cone: false,
     }
 }
 
@@ -343,47 +393,58 @@ fn v2(name: &'static str, forced: Forced, lp: bool) -> Cfg {
     Cfg { forced, lp, armfacts: true, nearfacts: true, preserve: true, live: true, first_free: true, interval: true, ..cfg(name, Bnd::Rel, true, Split::Window(16)) }
 }
 
+/// Version 3's rule: bounds with every remedy but the free first split, the
+/// repeated root probe, P = 16, the indexed theory step.
+fn v3(name: &'static str) -> Cfg {
+    Cfg {
+        forced: Forced::RootFix,
+        armfacts: true,
+        nearfacts: true,
+        nested: true,
+        preserve: true,
+        interval: true,
+        live: true,
+        indexed: true,
+        ..cfg(name, Bnd::Rel, true, Split::Window(16))
+    }
+}
+
 fn configs() -> Vec<Cfg> {
-    vec![
+    let all = vec![
         cfg("sel-late", Bnd::None, false, Split::All),
-        Cfg { latest_first: false, ..cfg("sel-early", Bnd::None, false, Split::All) },
         Cfg { backjump: true, ..cfg("sel-backjump", Bnd::None, false, Split::All) },
-        cfg("bnd-int", Bnd::Interval, false, Split::None),
         cfg("bnd-rel", Bnd::Rel, false, Split::None),
-        Cfg { eager: true, ..cfg("bnd-rel-eager", Bnd::Rel, false, Split::None) },
-        cfg("bnd-relall", Bnd::RelAll, false, Split::None),
-        cfg("both-late", Bnd::Rel, false, Split::All),
-        Cfg { latest_first: false, ..cfg("both-early", Bnd::Rel, false, Split::All) },
+        Cfg { indexed: true, ..cfg("bnd-rel-ix", Bnd::Rel, false, Split::None) },
         cfg("sat", Bnd::Rel, true, Split::None),
-        cfg("win2", Bnd::Rel, true, Split::Window(2)),
-        cfg("win4", Bnd::Rel, true, Split::Window(4)),
         cfg("win16", Bnd::Rel, true, Split::Window(16)),
-        cfg("win64", Bnd::Rel, true, Split::Window(64)),
-        cfg("win16-nosat", Bnd::Rel, false, Split::Window(16)),
-        cfg("win16-nobnd", Bnd::None, true, Split::Window(16)),
-        Cfg { forced: Forced::Root, ..cfg("win16-root", Bnd::Rel, true, Split::Window(16)) },
-        Cfg { forced: Forced::Depth(8), ..cfg("win16-depth8", Bnd::Rel, true, Split::Window(16)) },
-        Cfg { lp: true, ..cfg("bnd-rel-lp", Bnd::Rel, false, Split::None) },
-        Cfg { lp: true, ..cfg("win16-lp", Bnd::Rel, true, Split::Window(16)) },
-        Cfg { lp: true, ..cfg("sat-lp", Bnd::Rel, true, Split::None) },
+        root("win16-root"),
+        Cfg { indexed: true, ..root("win16-root-ix") },
         Cfg { lp: true, ..root("win16-root-lp") },
-        Cfg { armfacts: true, ..root("win16-root-af") },
-        Cfg { nearfacts: true, ..root("win16-root-nf") },
-        Cfg { armfacts: true, nearfacts: true, ..root("win16-root-afnf") },
-        Cfg { preserve: true, ..root("win16-root-pres") },
-        Cfg { live: true, ..root("win16-root-live") },
-        Cfg { first_free: true, ..root("win16-root-free") },
         Cfg { forced: Forced::RootFix, ..root("win16-rootfix") },
-        Cfg { interval: true, ..root("win16-root-int") },
+        Cfg { forced: Forced::RootFix, indexed: true, ..root("win16-rootfix-ix") },
         Cfg { shallow: true, ..root("win16-root-shallow") },
-        Cfg { shallow: true, lp: true, ..root("win16-root-shallow-lp") },
+        Cfg { shallow: true, indexed: true, ..root("win16-root-shallow-ix") },
         Cfg { ceiling: Some(16), exponential: false, ..cfg("cut16", Bnd::Rel, false, Split::All) },
-        Cfg { ceiling: Some(16), exponential: false, latest_first: false, ..cfg("cut16-early", Bnd::Rel, false, Split::All) },
-        v2("win16-v2", Forced::Root, false),
-        v2("win16-v2-lp", Forced::Root, true),
-        v2("win16-v2-fix", Forced::RootFix, false),
+        Cfg { ceiling: Some(16), exponential: false, cut_cone: true, ..cfg("cut16-cone", Bnd::Rel, false, Split::All) },
         v2("win16-v2-fix-lp", Forced::RootFix, true),
-    ]
+        v3("v3-full"),
+        Cfg { shallow_proj: true, ..v3("v3-ps") },
+        Cfg { shallow: true, ..v3("v3-shallow") },
+        Cfg { shallow_proj: true, lp: true, indexed: false, ..v3("v3-ps-lp") },
+        Cfg { shallow_proj: true, query: 1, ..v3("v3-ps-q1") },
+        Cfg { shallow_proj: true, query: 2, ..v3("v3-ps-q0") },
+        Cfg { split: Split::None, ..v3("v3-full-d") },
+        Cfg { shallow_proj: true, split: Split::None, ..v3("v3-ps-d") },
+        Cfg { shallow: true, split: Split::None, ..v3("v3-shallow-d") },
+        Cfg { shallow_proj: true, nested: false, ..v3("v3-ps-nonest") },
+        Cfg { shallow_proj: true, strict_trans: true, ..v3("v3-ps-strict") },
+        Cfg { shallow_proj: true, preserve: false, ..v3("v3-ps-nopres") },
+        Cfg { shallow_proj: true, forced: Forced::Root, ..v3("v3-ps-onepass") },
+    ];
+    match std::env::var("MODEL_ONLY") {
+        Ok(only) if !only.is_empty() => all.into_iter().filter(|cfg| only.split(',').any(|name| name == cfg.name)).collect(),
+        _ => all,
+    }
 }
 
 enum Res {
@@ -402,17 +463,24 @@ struct Engine<'a> {
     sealed: Vec<usize>,
     /// The arms the root probe left alive, by join.
     alive: HashMap<usize, Vec<usize>>,
+    /// A bound's projection met a guard of the instrument: every verdict
+    /// of this run is void.
+    poisoned: bool,
+    /// Under the cone reading of a cut: the joins closed so far.
+    cone_sealed: HashSet<usize>,
 }
 
 impl<'a> Engine<'a> {
     fn new(m: &'a Model, cfg: Cfg, deadline: Instant, node_cap: u64) -> Self {
-        let st = Stats { deadline: Some(deadline), use_lp: cfg.lp, ..Stats::default() };
-        Engine { m, cfg, st, bounds: vec![None; m.joins.len()], node_cap, sealed: Vec::new(), alive: HashMap::new() }
+        let st = Stats { deadline: Some(deadline), use_lp: cfg.lp, indexed: cfg.indexed, ..Stats::default() };
+        Engine { m, cfg, st, bounds: vec![None; m.joins.len()], node_cap, sealed: Vec::new(), alive: HashMap::new(), poisoned: false, cone_sealed: HashSet::new() }
     }
 
     /// The literals connected to `roots`, with the bounds of each open join
     /// whose join value is reached.
-    fn assemble(&mut self, lits: &[TL], open: &[usize], roots: &[V]) -> Vec<TL> {
+    fn assemble(&mut self, lits: &[TL], open: &[usize], roots: &[V], shallow: bool) -> Vec<TL> {
+        let m = self.m;
+        let fact_joins = if self.cfg.nested { &m.nested_fact_joins } else { &m.fact_joins };
         let mut pool: Vec<TL> = lits.to_vec();
         self.st.work += pool.len() as u64;
         let mut index: HashMap<V, Vec<usize>> = HashMap::new();
@@ -439,7 +507,7 @@ impl<'a> Engine<'a> {
         while let Some(value) = work.pop() {
             let mut owners: Vec<usize> = open_phi.get(&value).copied().into_iter().collect();
             if self.cfg.armfacts {
-                if let Some(joins) = self.m.fact_joins.get(&value) {
+                if let Some(joins) = fact_joins.get(&value) {
                     owners.extend(joins.iter().copied().filter(|join| open_set.contains(join)));
                 }
             }
@@ -460,7 +528,7 @@ impl<'a> Engine<'a> {
             for position in positions {
                 if !included[position] {
                     included[position] = true;
-                    if self.cfg.shallow && position >= lits.len() {
+                    if shallow && position >= lits.len() {
                         continue;
                     }
                     for inner in pool[position].lin.vars() {
@@ -535,6 +603,9 @@ impl<'a> Engine<'a> {
                 for phi in &j.phis {
                     for raw in &phi.raw {
                         if let Some(expr) = m.expand(*raw, j.watermark) {
+                            if self.cfg.strict_trans && !phi.entry.is_some_and(|entry| expr.coeff(entry) != 0) {
+                                continue;
+                            }
                             let form = Lin::v(phi.v).sub(&expr);
                             offer(form.scale(-1), Kind::Trans, &mut candidates);
                             offer(form, Kind::Trans, &mut candidates);
@@ -551,6 +622,14 @@ impl<'a> Engine<'a> {
                     for arm in &j.arms {
                         for lit in j.arm_facts(arm) {
                             offer(lit.lin.clone(), Kind::Fact, &mut candidates);
+                        }
+                        if self.cfg.nested {
+                            for inner in &arm.inner {
+                                let bounds = self.bounds_of(*inner);
+                                for lit in bounds.iter().filter(|lit| lit.lin.vars().all(|value| value < j.watermark)) {
+                                    offer(lit.lin.clone(), Kind::Fact, &mut candidates);
+                                }
+                            }
                         }
                     }
                 }
@@ -573,12 +652,16 @@ impl<'a> Engine<'a> {
                     .collect();
                 let roots: Vec<V> = at_arm.vars().collect();
                 let open: Vec<usize> = j.entry_joins.iter().chain(arm.inner.iter()).copied().collect();
-                lits = self.assemble(&lits, &open, &roots);
+                let shallow = self.cfg.shallow || self.cfg.shallow_proj;
+                lits = self.assemble(&lits, &open, &roots, shallow);
                 lits.push(TL { lin: Lin::v(TOP).sub(&at_arm), eq: false, tag: 0 });
                 self.st.projections += 1;
                 match theory(&lits, Some(TOP), &mut self.st) {
                     Out::Contra(_) => continue,
-                    Out::Capacity => unbounded = true,
+                    Out::Capacity => {
+                        self.poisoned = true;
+                        unbounded = true;
+                    }
                     Out::Open(rest) => {
                         let mut best: Option<i128> = None;
                         for (lin, _) in rest {
@@ -649,7 +732,8 @@ impl<'a> Engine<'a> {
             }
             let mut owner: Vec<usize> = self.m.phi_owner.get(&value).copied().into_iter().collect();
             if self.cfg.nearfacts {
-                if let Some(joins) = self.m.fact_joins.get(&value) {
+                let fact_joins = if self.cfg.nested { &self.m.nested_fact_joins } else { &self.m.fact_joins };
+                if let Some(joins) = fact_joins.get(&value) {
                     owner.extend(joins.iter().copied());
                 }
             }
@@ -688,7 +772,7 @@ impl<'a> Engine<'a> {
     }
 
     fn contradictory(&mut self, lits: &[TL], open: &[usize], roots: &[V]) -> Option<Result<u128, ()>> {
-        let problem = self.assemble(lits, open, roots);
+        let problem = self.assemble(lits, open, roots, self.cfg.shallow);
         match theory(&problem, None, &mut self.st) {
             Out::Contra(tags) => Some(Ok(tags)),
             Out::Open(_) => None,
@@ -820,9 +904,40 @@ impl<'a> Engine<'a> {
             }
         }
         self.alive.clear();
-        let cut = if self.cfg.ceiling.is_some() { oblig.cut } else { 0 };
-        self.sealed = oblig.joins[..cut].to_vec();
-        let open: Vec<usize> = oblig.joins[cut..].to_vec();
+        let saved = self.cfg;
+        if !oblig.expect {
+            match self.cfg.query {
+                1 => self.cfg.forced = Forced::Root,
+                2 => {
+                    self.cfg.forced = Forced::No;
+                    self.cfg.split = Split::None;
+                }
+                _ => {}
+            }
+        }
+        let (verdict, cone) = self.prove_with(oblig, lits, roots);
+        self.cfg = saved;
+        if self.poisoned {
+            return ("abort", cone);
+        }
+        (verdict, cone)
+    }
+
+    fn prove_with(&mut self, oblig: &Oblig, lits: Vec<TL>, roots: Vec<V>) -> (&'static str, usize) {
+        let open: Vec<usize> = if self.cfg.cut_cone {
+            self.sealed = oblig.joins.iter().copied().filter(|join| self.cone_sealed.contains(join)).collect();
+            let open: Vec<usize> = oblig.joins.iter().copied().filter(|join| !self.cone_sealed.contains(join)).collect();
+            if oblig.invariant {
+                let goal: Vec<V> = oblig.goal.vars().collect();
+                let reached = self.near(&lits, &open, &goal, true);
+                self.cone_sealed.extend(reached);
+            }
+            open
+        } else {
+            let cut = if self.cfg.ceiling.is_some() { oblig.cut } else { 0 };
+            self.sealed = oblig.joins[..cut].to_vec();
+            oblig.joins[cut..].to_vec()
+        };
         let cone = self.near(&lits, &open, &roots, true).len();
         if let Some(ceiling) = self.cfg.ceiling {
             match self.contradictory(&lits, &open, &roots) {
@@ -978,7 +1093,7 @@ fn truth(program: &[Stmt]) -> Option<HashMap<String, bool>> {
     }
 }
 
-const HEADER: &str = "row,family,size,config,obligation,expect,verdict,cone_joins,theory_calls,fm_pairs,fm_elims,probes,forced,nodes,leaves,projections,bound_facts,facts_last_join,facts_max_join,time_ns,note,lp_pivots,work";
+const HEADER: &str = "row,family,size,config,obligation,expect,verdict,cone_joins,theory_calls,fm_pairs,fm_elims,probes,forced,nodes,leaves,projections,bound_facts,facts_last_join,facts_max_join,time_ns,note,lp_pivots,work,rule_lits,rule_terms,max_atoms";
 
 fn emit(row: &str, family: &str, size: &str, config: &str, name: &str, expect: &str, verdict: &str, cone: usize, st: &Stats, facts: (usize, usize), nanos: u128) {
     let mut note = String::new();
@@ -992,7 +1107,7 @@ fn emit(row: &str, family: &str, size: &str, config: &str, name: &str, expect: &
         note.push_str("node-cap ");
     }
     println!(
-        "{row},{family},{size},{config},{name},{expect},{verdict},{cone},{},{},{},{},{},{},{},{},{},{},{},{nanos},{},{},{}",
+        "{row},{family},{size},{config},{name},{expect},{verdict},{cone},{},{},{},{},{},{},{},{},{},{},{},{nanos},{},{},{},{},{},{}",
         st.theory_calls,
         st.fm_pairs,
         st.fm_elims,
@@ -1006,7 +1121,10 @@ fn emit(row: &str, family: &str, size: &str, config: &str, name: &str, expect: &
         facts.1,
         note.trim(),
         st.lp_pivots,
-        st.work
+        st.work,
+        st.rule_lits,
+        st.rule_terms,
+        st.max_atoms
     );
 }
 
@@ -1023,14 +1141,32 @@ fn summary(outcome: &Outcome) -> (&'static str, &'static str) {
         "unproved"
     };
     let queries_open = outcome.verdicts.iter().filter(|(_, expect, ..)| !*expect).all(|(.., verdict, _, _)| *verdict == "unproved");
-    (all, if queries_open { "queries-open" } else { "QUERY-DECIDED" })
+    let queries_stopped = outcome.verdicts.iter().filter(|(_, expect, ..)| !*expect).any(|(.., verdict, _, _)| *verdict == "abort" || *verdict == "ceiling");
+    let queries = if queries_open {
+        "queries-open"
+    } else if queries_stopped {
+        "QUERY-STOPPED"
+    } else {
+        "QUERY-DECIDED"
+    };
+    (all, queries)
+}
+
+/// The families of one part: `MODEL_PART=i/n` keeps every n-th family from
+/// the i-th, so that each part can run in a job of its own.
+fn part() -> Vec<families::Family> {
+    let all = families::all();
+    let Ok(text) = std::env::var("MODEL_PART") else { return all };
+    let Some((index, count)) = text.split_once('/') else { return all };
+    let (index, count): (usize, usize) = (index.parse().expect("a part index"), count.parse().expect("a part count"));
+    all.into_iter().enumerate().filter(|(position, _)| position % count == index).map(|(_, family)| family).collect()
 }
 
 fn measure(quick: bool) {
     println!("{HEADER}");
     let limit = Duration::from_secs(20);
     let node_cap = 1 << 17;
-    for family in families::all() {
+    for family in part() {
         eprintln!("family {}", family.name);
         let mut stopped: HashSet<&'static str> = HashSet::new();
         for size in &family.sizes {
@@ -1049,7 +1185,7 @@ fn measure(quick: bool) {
                 }
                 let first = run(&model, cfg, limit, node_cap);
                 let mut nanos = first.nanos;
-                if !quick && first.nanos < 100_000_000 {
+                if !quick && first.nanos < 50_000_000 {
                     for _ in 0..2 {
                         nanos = nanos.min(run(&model, cfg, limit, node_cap).nanos);
                     }
@@ -1075,10 +1211,10 @@ fn measure(quick: bool) {
 /// fitted.
 fn big() {
     println!("{HEADER}");
-    let wanted = ["bnd-rel", "bnd-rel-lp", "win16-root", "win16-root-lp", "win16-v2", "win16-v2-lp", "win16-root-shallow", "win16-root-shallow-lp"];
+    let wanted = ["bnd-rel", "bnd-rel-ix", "win16-root-ix", "win16-rootfix-ix", "win16-root-shallow-ix", "v3-full", "v3-ps", "v3-shallow", "v3-ps-q1", "v3-ps-q0", "v3-ps-nopres"];
     let limit = Duration::from_secs(900);
-    for family in families::all() {
-        if !["CHAIN", "CHAINOBL", "GUARDED", "OP5"].contains(&family.name) {
+    for family in part() {
+        if !["CHAIN", "CHAINOBL", "GUARDED", "OP5", "CHAINSYM", "CHAINSYMINV", "ADDENDSINV", "LIMITCHAIN", "SUMOBL", "MINSEL"].contains(&family.name) {
             continue;
         }
         let mut stopped: HashSet<&'static str> = HashSet::new();
@@ -1094,7 +1230,7 @@ fn big() {
                 let first = run(&model, cfg, limit, 1 << 22);
                 let (all, expect) = summary(&first);
                 emit("total", family.name, &size.label(), cfg.name, "*", expect, all, 0, &first.total, (first.facts_last, first.facts_max), first.nanos);
-                if first.total.timeout || first.nanos > 150_000_000_000 {
+                if first.total.timeout || first.nanos > 100_000_000_000 {
                     stopped.insert(cfg.name);
                 }
             }
@@ -1104,16 +1240,20 @@ fn big() {
 
 /// The last obligation of a program made false: its bound tightened by one.
 /// Returns the obligation's name.
-fn tighten(stmts: &mut [Stmt]) -> Option<String> {
+fn tighten(stmts: &mut [Stmt], invariant: bool) -> Option<String> {
     for stmt in stmts.iter_mut().rev() {
         match stmt {
-            Stmt::Assert(name, goal) => {
+            Stmt::Assert(name, goal) if !invariant => {
+                *goal = goal.addk(1);
+                return Some(name.clone());
+            }
+            Stmt::Invariant(name, goal) if invariant => {
                 *goal = goal.addk(1);
                 return Some(name.clone());
             }
             Stmt::Branch(arms, _) => {
                 for (_, body) in arms.iter_mut().rev() {
-                    if let Some(name) = tighten(body) {
+                    if let Some(name) = tighten(body, invariant) {
                         return Some(name);
                     }
                 }
@@ -1208,15 +1348,15 @@ fn witness(program: &[Stmt], name: &str) -> bool {
 
 /// Every family at every size with its last obligation made false. A
 /// candidate that proves one for which a failing run is known is unsound.
-fn falsified() {
+fn falsified(invariant: bool) {
     println!("row,family,size,config,obligation,witness,verdict,finding");
     let (mut compared, mut bad, mut unwitnessed) = (0, 0, 0);
-    for family in families::all() {
+    for family in part() {
         eprintln!("false {}", family.name);
         let mut stopped: HashSet<&'static str> = HashSet::new();
         for size in &family.sizes {
             let mut program = (family.make)(size, false);
-            let Some(name) = tighten(&mut program) else { continue };
+            let Some(name) = tighten(&mut program, invariant) else { continue };
             let known = witness(&program, &name);
             if !known {
                 unwitnessed += 1;
@@ -1320,7 +1460,8 @@ fn main() {
         "measure" => measure(false),
         "recount" => measure(true),
         "big" => big(),
-        "false" => falsified(),
+        "false" => falsified(false),
+        "false-inv" => falsified(true),
         "check" => check(),
         "dense" => dense(),
         _ => {

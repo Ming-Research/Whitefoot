@@ -29,7 +29,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [check, measure, recount, "false", dense, big]
+        include:
+          - { name: check, mode: check, part: "0/1" }
+          - { name: dense, mode: dense, part: "0/1" }
+          - { name: measure-0, mode: measure, part: "0/4" }
+          - { name: measure-1, mode: measure, part: "1/4" }
+          - { name: measure-2, mode: measure, part: "2/4" }
+          - { name: measure-3, mode: measure, part: "3/4" }
+          - { name: recount-0, mode: recount, part: "0/2" }
+          - { name: recount-1, mode: recount, part: "1/2" }
+          - { name: false-0, mode: "false", part: "0/2" }
+          - { name: false-1, mode: "false", part: "1/2" }
+          - { name: false-inv, mode: "false-inv", part: "0/1" }
+          - { name: big-0, mode: big, part: "0/5" }
+          - { name: big-1, mode: big, part: "1/5" }
+          - { name: big-2, mode: big, part: "2/5" }
+          - { name: big-3, mode: big, part: "3/5" }
+          - { name: big-4, mode: big, part: "4/5" }
     steps:
       - uses: actions/checkout@v4
       - name: Host
@@ -47,16 +63,16 @@ jobs:
         working-directory: research/investigations/join-derivation/model
         run: |
           status=0
-          taskset -c 1 ./target/release/join-derivation-model ${{ matrix.mode }} > "$RUNNER_TEMP/${{ matrix.mode }}.csv" || status=$?
-          wc -l "$RUNNER_TEMP/${{ matrix.mode }}.csv"
-          tail -1 "$RUNNER_TEMP/${{ matrix.mode }}.csv"
+          MODEL_PART="${{ matrix.part }}" taskset -c 1 ./target/release/join-derivation-model ${{ matrix.mode }} > "$RUNNER_TEMP/${{ matrix.name }}.csv" || status=$?
+          wc -l "$RUNNER_TEMP/${{ matrix.name }}.csv"
+          tail -1 "$RUNNER_TEMP/${{ matrix.name }}.csv"
           uptime
           exit "$status"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: model-${{ matrix.mode }}-${{ github.run_id }}
-          path: ${{ runner.temp }}/${{ matrix.mode }}.csv
+          name: model-${{ matrix.name }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/${{ matrix.name }}.csv
 
   probe:
     if: ${{ !contains(github.event.head_commit.message, '[model-only]') }}

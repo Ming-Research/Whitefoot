@@ -709,6 +709,158 @@ fn flagscut(size: &Size, tiny: bool) -> Vec<Stmt> {
     out
 }
 
+/// GUARDED with a limit that grows as it goes: `n_j = n_(j-1) + d_j`.
+fn limitchain(size: &Size, tiny: bool) -> Vec<Stmt> {
+    let (mut b, mut out) = (B::default(), Vec::new());
+    let range = tiny.then_some(3);
+    let mut n = fresh(&mut b, &mut out, 0, range);
+    let mut i = fresh(&mut b, &mut out, 0, range);
+    out.push(Stmt::Assume(lt(&v(i), &v(n)), false));
+    for _ in 0..size.k {
+        let d = fresh(&mut b, &mut out, 0, Some(1));
+        let grown = b.id();
+        out.push(Stmt::Let(grown, v(n).add(&v(d))));
+        n = grown;
+        let raised = b.id();
+        let joined = b.id();
+        out.push(iff(v(i).addk(2).sub(&v(n)), vec![Stmt::Let(raised, v(i).addk(1))], vec![], vec![(joined, vec![raised, i], Some(i))]));
+        i = joined;
+    }
+    out.push(Stmt::Assert("final".into(), lt(&v(i), &v(n))));
+    out
+}
+
+/// No join: `s_j = s_(j-1) + a_j`, each `a_j` in 0..255, and after each
+/// step the obligation that the sum is within its bound.
+fn sumobl(size: &Size, tiny: bool) -> Vec<Stmt> {
+    let (mut b, mut out) = (B::default(), Vec::new());
+    let top = if tiny { 2 } else { 255 };
+    let mut sum = fresh(&mut b, &mut out, 0, Some(top));
+    for step in 0..size.k {
+        let a = fresh(&mut b, &mut out, 0, Some(top));
+        let next = b.id();
+        out.push(Stmt::Let(next, v(sum).add(&v(a))));
+        sum = next;
+        let name = if step + 1 == size.k { "final".to_owned() } else { format!("step{step}") };
+        out.push(Stmt::Assert(name, v(sum).addk(-(top * (step as i128 + 2)))));
+    }
+    out
+}
+
+/// A branch `depth` deep whose every innermost arm states `i < len`.
+fn nested_check(b: &mut B, out: &mut Vec<Stmt>, stated: &Lin, depth: usize) {
+    if depth == 0 {
+        out.push(Stmt::Assume(stated.clone(), false));
+        return;
+    }
+    let cond = unknown(b, out);
+    let (mut then, mut otherwise) = (Vec::new(), Vec::new());
+    nested_check(b, &mut then, stated, depth - 1);
+    nested_check(b, &mut otherwise, stated, depth - 1);
+    out.push(iff(cond, then, otherwise, vec![]));
+}
+
+/// k pairs, each checked inside a branch two deep; then the sum.
+fn nestfact(size: &Size, tiny: bool) -> Vec<Stmt> {
+    let (mut b, mut out) = (B::default(), Vec::new());
+    let range = tiny.then_some(3);
+    let mut goal = k(size.k as i128);
+    for _ in 0..size.k {
+        let i = fresh(&mut b, &mut out, 0, range);
+        let len = fresh(&mut b, &mut out, 0, range);
+        nested_check(&mut b, &mut out, &lt(&v(i), &v(len)), 2);
+        goal = goal.add(&v(i)).sub(&v(len));
+    }
+    out.push(Stmt::Assert("final".into(), goal));
+    out
+}
+
+/// One pair checked inside a branch k deep.
+fn nestdeep(size: &Size, tiny: bool) -> Vec<Stmt> {
+    let (mut b, mut out) = (B::default(), Vec::new());
+    let range = tiny.then_some(3);
+    let i = fresh(&mut b, &mut out, 0, range);
+    let len = fresh(&mut b, &mut out, 0, range);
+    nested_check(&mut b, &mut out, &lt(&v(i), &v(len)), size.k);
+    out.push(Stmt::Assert("final".into(), lt(&v(i), &v(len))));
+    out
+}
+
+/// A `match` of eight arms that sets `t` to the arm's number.
+fn eight(b: &mut B, out: &mut Vec<Stmt>) -> V {
+    let selector = fresh(b, out, 0, Some(7));
+    let (mut bodies, mut raws) = (Vec::new(), Vec::new());
+    for arm in 0..8 {
+        let value = b.id();
+        raws.push(value);
+        bodies.push((vec![v(selector).addk(-arm), k(arm).sub(&v(selector))], vec![Stmt::Let(value, k(arm))]));
+    }
+    let joined = b.id();
+    out.push(Stmt::Branch(bodies, vec![(joined, raws, None)]));
+    joined
+}
+
+/// k swaps and one `match` of eight arms that needs no split; the `match`
+/// stands after the swaps or before them.
+fn split_with(size: &Size, after: bool) -> Vec<Stmt> {
+    let (mut b, mut out) = (B::default(), Vec::new());
+    let mut total = k(-(size.k as i128) - 7);
+    let mut t = None;
+    if !after {
+        t = Some(eight(&mut b, &mut out));
+    }
+    for _ in 0..size.k {
+        let (y, z) = swap(&mut b, &mut out);
+        total = total.add(&v(y)).add(&v(z));
+    }
+    let t = t.unwrap_or_else(|| eight(&mut b, &mut out));
+    out.push(Stmt::Assert("final".into(), total.add(&v(t))));
+    out
+}
+
+fn splitafter(size: &Size, _: bool) -> Vec<Stmt> {
+    split_with(size, true)
+}
+
+fn splitbefore(size: &Size, _: bool) -> Vec<Stmt> {
+    split_with(size, false)
+}
+
+/// One BIGTAG `match`; returns its `tag` and `len`.
+fn tagged(b: &mut B, out: &mut Vec<Stmt>, n: V, arms: i128, range: Option<i128>) -> (V, V) {
+    let selector = fresh(b, out, 0, Some(arms - 1));
+    let (mut bodies, mut tags, mut lens) = (Vec::new(), Vec::new(), Vec::new());
+    for arm in 0..arms {
+        let mut body = Vec::new();
+        let tag = b.id();
+        body.push(Stmt::Let(tag, k(arm % 3)));
+        let len = fresh(b, &mut body, 0, range);
+        if arm % 3 == 0 {
+            body.push(Stmt::Assume(lt(&v(len), &v(n)), false));
+        }
+        tags.push(tag);
+        lens.push(len);
+        bodies.push((vec![v(selector).addk(-arm), k(arm).sub(&v(selector))], body));
+    }
+    let tag = b.id();
+    let len = b.id();
+    out.push(Stmt::Branch(bodies, vec![(tag, tags, None), (len, lens, None)]));
+    (tag, len)
+}
+
+/// Two BIGTAG matches; inside both tests, the sum of the two lengths.
+fn bigtag2(size: &Size, tiny: bool) -> Vec<Stmt> {
+    let (mut b, mut out) = (B::default(), Vec::new());
+    let range = Some(if tiny { 2 } else { 50 });
+    let n = fresh(&mut b, &mut out, 0, range);
+    let (tag1, len1) = tagged(&mut b, &mut out, n, size.k as i128, range);
+    let (tag2, len2) = tagged(&mut b, &mut out, n, size.k as i128, range);
+    let goal = v(len1).add(&v(len2)).sub(&v(n).scale(2)).addk(2);
+    let inner = iff(v(tag2), vec![Stmt::Assert("final".into(), goal)], vec![], vec![]);
+    out.push(iff(v(tag1), vec![inner], vec![], vec![]));
+    out
+}
+
 fn ks(list: &[usize]) -> Vec<Size> {
     list.iter().map(|k| Size { k: *k, n: 0 }).collect()
 }
@@ -756,6 +908,13 @@ pub fn all() -> Vec<Family> {
         family("MIXINV", mixinv),
         family("REL1INV", rel1inv),
         family("FLAGSCUT", flagscut),
+        family("LIMITCHAIN", limitchain),
+        family("SUMOBL", sumobl),
+        Family { name: "NESTFACT", sizes: ks(&[1, 2, 3, 4, 6, 8, 16, 32, 64]), tiny: ks(&[1, 2]), make: nestfact },
+        Family { name: "NESTDEEP", sizes: ks(&[1, 2, 3, 4, 5, 6, 7, 8]), tiny: ks(&[1, 2, 3]), make: nestdeep },
+        Family { name: "SPLITAFTER", sizes: ks(&[1, 2, 3, 4]), tiny: ks(&[1, 2]), make: splitafter },
+        Family { name: "SPLITBEFORE", sizes: ks(&[1, 2, 3, 4]), tiny: ks(&[1, 2]), make: splitbefore },
+        Family { name: "BIGTAG2", sizes: ks(&[3, 6, 9, 12, 15, 24, 48]), tiny: ks(&[3]), make: bigtag2 },
     ]
 }
 

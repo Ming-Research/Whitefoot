@@ -589,3 +589,136 @@ values at random and cut every range to 60 above its lower end, so it missed
 CHAIN, whose start value must be 100, and every family that needs many
 values set exactly. It is replaced by coordinate ascent on the value of the
 obligation's form from five starts. V5's prediction is unchanged.
+
+## Version 3: after the second review
+
+The second review (of tag `join-derivation-study-v2`) has fourteen findings.
+This section was committed with the model changes it describes and before
+their measurement.
+
+### Changes to the instrument, for every candidate
+
+- **A second theory step, `indexed.rs`** (finding 2): the same verdict; a
+  substitution or an elimination touches only the rows that hold the
+  variable. Candidates named `-ix` and every `v3-` candidate use it.
+- **Counts of what the rule asks**, apart from what the theory step does
+  with it: `rule_lits` and `rule_terms` are the literals and the terms
+  handed to theory calls; `max_atoms` is the most distinct values in one
+  call, to be read against the settled ceiling of 4,096 atoms (finding 8).
+- **A guard met inside a bound's projection voids the run** (finding 8): the
+  verdicts of that candidate on that program are `abort`. Before, the bound
+  was silently left out.
+- **A join's values include those of the joins nested in its arms**
+  (finding 5), so that SEL reaches a join through a fact an inner branch
+  states.
+- A question that was stopped by a guard is reported as stopped, not as
+  decided; the mode `false-inv` tightens the last invariant of a program
+  instead of its last obligation (finding 14).
+
+### Candidates
+
+`v3-full` is one candidate that holds every remedy this study leans to:
+relational bounds; the facts every arm states, those of nested joins
+included (`nested`, finding 5); nearness by a stated fact; a weakened state
+bound not carried on; the constant interval of a join value; the product
+counted over live arms; the root probe repeated; P = 16; the indexed theory
+step. It has no free first split (finding 6). The others change one thing:
+
+| Name | Change from `v3-full` | For finding |
+| --- | --- | --- |
+| `v3-ps` | a join bound does not bring in what its other values reach while a join's bounds are computed; an obligation's problem reaches everything | 2 |
+| `v3-shallow` | the same also in an obligation's problem | 1 |
+| `v3-ps-lp` | `v3-ps` with the simplex decision | |
+| `v3-ps-q1`, `v3-ps-q0` | `v3-ps` where a question of the redundancy rule gets one probe pass, or the bounds alone | 4, 12 |
+| `v3-full-d`, `v3-ps-d`, `v3-shallow-d` | no split at all (option D of choice 1) | 11 |
+| `v3-ps-nonest` | without the nested arm facts | 5 |
+| `v3-ps-strict` | a transition bound only for an arm value that names the place's entry value | 10 |
+| `v3-ps-nopres` | a weakened state bound is carried on | 1 |
+| `v3-ps-onepass` | one probe pass at the root | |
+| `cut16-cone` | the cut reading where an invariant closes only the joins its own goal reaches | 9 |
+| `bnd-rel-ix`, `win16-root-ix`, `win16-rootfix-ix`, `win16-root-shallow-ix` | version 2's candidates on the indexed theory step | 2, 4 |
+
+### Families
+
+| Family | Program | Obligation |
+| --- | --- | --- |
+| LIMITCHAIN(k) | GUARDED with a limit that grows: `n_j = n_(j-1) + d_j` before each `if i + 1 < n_j { i += 1 }` | `i < n_k` |
+| SUMOBL(k) | no join: `s_j = s_(j-1) + a_j`, each `a_j` in 0..255 | after each step, `s_j` within its bound |
+| NESTFACT(k) | k pairs; each `i_j < len_j` is stated in every innermost arm of a branch two deep | sum of `i_j - len_j` `<= -k` |
+| NESTDEEP(d) | one pair, stated in every innermost arm of a branch d deep | `i < len` |
+| SPLITAFTER(k), SPLITBEFORE(k) | k swaps and a `match` of eight arms that sets `t` to the arm's number, after or before the swaps | sum of `y_i + z_i`, plus `t`, `<= k + 7` |
+| BIGTAG2(m) | two BIGTAG matches; inside both tests | `len_1 + len_2 <= 2n - 2` |
+
+The largest sizes (k = 64 to 1,024) are run for CHAIN, CHAINOBL, GUARDED,
+OP5, CHAINSYM, CHAINSYMINV, ADDENDSINV, LIMITCHAIN, SUMOBL and MINSEL.
+
+### Hypotheses
+
+**W1 (finding 2).** With the indexed theory step, `work` and time of
+`bnd-rel-ix` on CHAIN, CHAINOBL and OP5 grow by at most 4.5 per doubling of
+k from 256 to 1,024 (quadratic), where `bnd-rel` grows by 8. `rule_terms`
+of the full-reach candidates grows by about 4 per doubling. If so, the
+third factor of k in version 2 was the model's theory step and choice 4 of
+version 2 traded verdicts for nothing.
+Refuted if `bnd-rel-ix` grows by more than 6 per doubling at the top.
+
+**W2 (finding 2).** `v3-ps` has every verdict of `v3-full` on every family
+and size, and its `rule_terms` for the whole program is at most that of
+`v3-full`.
+Refuted by one differing verdict.
+
+**W3 (finding 1).** `v3-shallow` loses CHAINSYM from about k = 6 and
+`v3-shallow-d` from k = 2; both lose ADDENDS and MINSEL. On CHAINSYMINV and
+ADDENDSINV, `v3-shallow` and `v3-ps` keep the bounds at the last join
+constant and grow at most cubically in k; `v3-ps-nopres` grows faster and
+meets a guard by k = 128.
+Refuted by other verdicts or growths.
+
+**W4 (finding 3).** On LIMITCHAIN and SUMOBL, `rule_terms` grows with the
+square of k or faster under every candidate, `v3-shallow` included: shallow
+reach does not stop a chain of definitions.
+Refuted if `v3-shallow`'s `rule_terms` grows by less than 3 per doubling.
+
+**W5 (finding 4).** On OP5 the probes of `v3-ps` grow with the square of k
+(the forced cases at the root cascade down the chain), and those of
+`v3-ps-q1` and `v3-ps-q0` grow linearly, with the same verdict on every
+obligation that is not a question.
+Refuted if `v3-ps`'s probes at k = 128 are less than 3 times those at 64.
+
+**W6 (finding 5).** On NESTFACT and NESTDEEP: `sel-late` proves every size
+it finishes (with nested values); `v3-ps-nonest` proves none; `v3-ps`
+proves every size. The exhaustive check reports no `SEL-INEXACT`.
+Refuted by a differing verdict.
+
+**W7 (finding 7).** SPLITBEFORE(k) is proved by `v3-ps` for k <= 4 and
+SPLITAFTER(k) only for k <= 1 (the `match` is split first and takes 8 of
+the 16): the verdict depends on the order of unrelated statements.
+Refuted if the two families have the same verdicts.
+
+**W8 (finding 8).** Under full reach, `max_atoms` of CHAIN, GUARDED and OP5
+grows linearly with k and passes 4,096 before k = 1,024; under `v3-ps` the
+same holds for the obligation's problem. ADDENDSINV rows that version 2
+reported as proved with a `capacity` note are now `abort` for the
+candidates on the old theory step.
+Refuted if `max_atoms` stays below 4,096 at k = 1,024.
+
+**W9 (finding 9).** `cut16-cone` proves FLAGSCUT at every size up to the
+ceiling (m <= 16) and keeps `cut16`'s verdicts on SWAPSINV, MIXINV, REL1INV,
+MIX, REL1 and SWAPS.
+Refuted by a differing verdict.
+
+**W10 (finding 10).** `v3-ps-strict` needs about 2m projections on
+MATCHSHAPES(m) where `v3-ps` needs 2m^2; it loses MINSEL (whose proof needs
+the join value against the other arm's value) and no other family.
+Refuted by other counts or losses.
+
+**W11 (finding 11).** `v3-ps-d` (no split) proves everything `v3-ps` proves
+except SWAPS, ARMCORR, SAMECOND, PMONO's decided sizes and BIGTAG2 beyond
+what one probed join gives.
+Refuted by another loss.
+
+**W12.** BIGTAG2(m) is proved by `v3-ps` only while the live arms of the
+two matches multiply to at most 16 (m <= 12).
+
+**W13 (finding 14).** No candidate proves a tightened invariant for which a
+failing run is found, nor any obligation after it.
