@@ -904,7 +904,7 @@ fn collect_fresh(stmts: &[Stmt], fresh: &mut Vec<(V, i128, i128)>, ok: &mut bool
 fn eval(lin: &Lin, env: &HashMap<V, i128>) -> i128 {
     lin.t.iter().map(|(value, coefficient)| coefficient * env[value]).sum::<i128>() + lin.c
 }
-fn exec(stmts: &[Stmt], env: &mut HashMap<V, i128>, result: &mut HashMap<String, bool>) -> bool {
+fn exec(stmts: &[Stmt], env: &mut HashMap<V, i128>, result: &mut HashMap<String, bool>, scores: &mut HashMap<String, i128>) -> bool {
     for stmt in stmts {
         match stmt {
             Stmt::Fresh(..) => {}
@@ -919,7 +919,9 @@ fn exec(stmts: &[Stmt], env: &mut HashMap<V, i128>, result: &mut HashMap<String,
                 }
             }
             Stmt::Assert(name, goal) | Stmt::Query(name, goal) | Stmt::Invariant(name, goal) => {
-                let holds = eval(goal, env) <= 0;
+                let got = eval(goal, env);
+                scores.insert(name.clone(), got);
+                let holds = got <= 0;
                 let slot = result.entry(name.clone()).or_insert(true);
                 *slot = *slot && holds;
                 if !holds && matches!(stmt, Stmt::Invariant(..)) {
@@ -929,7 +931,7 @@ fn exec(stmts: &[Stmt], env: &mut HashMap<V, i128>, result: &mut HashMap<String,
             Stmt::Branch(arms, phis) => {
                 let taken = arms.iter().position(|(conds, _)| conds.iter().all(|cond| eval(cond, env) <= 0));
                 let Some(taken) = taken else { return false };
-                if !exec(&arms[taken].1, env, result) {
+                if !exec(&arms[taken].1, env, result, scores) {
                     return false;
                 }
                 for (value, raw, _) in phis {
@@ -960,7 +962,7 @@ fn truth(program: &[Stmt]) -> Option<HashMap<String, bool>> {
     let mut current: Vec<i128> = fresh.iter().map(|(_, low, _)| *low).collect();
     loop {
         let mut env: HashMap<V, i128> = fresh.iter().zip(&current).map(|((value, _, _), got)| (*value, *got)).collect();
-        exec(program, &mut env, &mut result);
+        exec(program, &mut env, &mut result, &mut HashMap::new());
         let mut position = 0;
         loop {
             if position == fresh.len() {
@@ -1129,7 +1131,7 @@ fn witness(program: &[Stmt], name: &str) -> bool {
             match stmt {
                 Stmt::Fresh(value, low, high) => {
                     let low = low.unwrap_or(0);
-                    fresh.push((*value, low, high.unwrap_or(low + 60)));
+                    fresh.push((*value, low, high.unwrap_or(low + 40)));
                 }
                 Stmt::Branch(arms, _) => {
                     for (_, body) in arms {
@@ -1142,28 +1144,62 @@ fn witness(program: &[Stmt], name: &str) -> bool {
     }
     let mut fresh = Vec::new();
     every(program, &mut fresh);
-    let mut state = 0x2545_F491_4F6C_DD1Du64;
-    for trial in 0..6000u32 {
-        let mut env: HashMap<V, i128> = HashMap::new();
-        for (value, low, high) in &fresh {
-            let high = (*high).min(*low + 60);
-            state = state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
-            let pick = (state >> 33) % 6;
-            let chosen = match (trial, pick) {
-                (0, _) => high,
-                (1, _) => *low,
-                (_, 0) => *low,
-                (_, 1) => (*low + 1).min(high),
-                (_, 2) => (*low + 2).min(high),
-                (_, 3) => (*low + high) / 2,
-                (_, 4) => (high - 1).max(*low),
-                _ => high,
-            };
-            env.insert(*value, chosen);
+    // The value of the obligation's form on one run, if the run reaches it.
+    let score = |chosen: &[i128]| -> Option<i128> {
+        let mut env: HashMap<V, i128> = fresh.iter().zip(chosen).map(|((value, _, _), got)| (*value, *got)).collect();
+        let mut scores = HashMap::new();
+        exec(program, &mut env, &mut HashMap::new(), &mut scores);
+        scores.get(name).copied()
+    };
+    let options = |index: usize| -> Vec<i128> {
+        let (_, low, high) = fresh[index];
+        let mut all = vec![low, (low + 1).min(high), (low + 2).min(high), (low + high) / 2, (high - 1).max(low), high];
+        all.sort_unstable();
+        all.dedup();
+        all
+    };
+    // Coordinate ascent on the form's value from several starts: a value
+    // above zero is a run on which the obligation fails.
+    for start in 0..5 {
+        let mut chosen: Vec<i128> = (0..fresh.len())
+            .map(|index| {
+                let (_, low, high) = fresh[index];
+                match start {
+                    0 => high,
+                    1 => low,
+                    2 => (low + high) / 2,
+                    3 => (low + 1).min(high),
+                    _ => (high - 1).max(low),
+                }
+            })
+            .collect();
+        let mut best = score(&chosen);
+        for _ in 0..4 {
+            let mut improved = false;
+            for index in 0..fresh.len() {
+                for option in options(index) {
+                    let kept = chosen[index];
+                    if option == kept {
+                        continue;
+                    }
+                    chosen[index] = option;
+                    let got = score(&chosen);
+                    if got.is_some() && (best.is_none() || got > best) {
+                        best = got;
+                        improved = true;
+                    } else {
+                        chosen[index] = kept;
+                    }
+                }
+                if best.is_some_and(|value| value > 0) {
+                    return true;
+                }
+            }
+            if !improved {
+                break;
+            }
         }
-        let mut result = HashMap::new();
-        exec(program, &mut env, &mut result);
-        if result.get(name) == Some(&false) {
+        if best.is_some_and(|value| value > 0) {
             return true;
         }
     }

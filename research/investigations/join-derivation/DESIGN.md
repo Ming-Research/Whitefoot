@@ -582,3 +582,10 @@ and `work` at k = 128 is at most 4.5 times `work` at k = 64. The change
 loses ADDENDS and MINSEL, whose proofs chain transition bounds through
 every join, and keeps ADDENDSINV.
 Refuted by a faster growth or by other verdicts.
+
+**The search for a failing run, changed after run 45928696201.** That run
+found a failing run for 269 of the 477 tightened programs. The search drew
+values at random and cut every range to 60 above its lower end, so it missed
+CHAIN, whose start value must be 100, and every family that needs many
+values set exactly. It is replaced by coordinate ascent on the value of the
+obligation's form from five starts. V5's prediction is unchanged.
