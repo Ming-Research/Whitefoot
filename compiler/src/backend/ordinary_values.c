@@ -2025,6 +2025,66 @@ void wf__body_meter_share(wf_value *result, const wf_value *meter) {
     memset(result, 0, sizeof(*result));
 }
 
+/* The exit capability carries no state: every one ends the same process. */
+void wf__body_exit_share(wf_value *result, const wf_value *capability) {
+    (void)capability;
+    memset(result, 0, sizeof(*result));
+}
+
+/* The floor runtime's one latch for every record that ends the process, which
+ * every program link carries (`wf_floor.c`, `wf_floor_windows.c`). A runtime
+ * probe linked without the floor takes this latch of its own, as an emitted
+ * module linked without the floor does; the floor's definition replaces it. */
+static volatile int wf__exit_fallback_latch;
+
+__attribute__((weak)) volatile int *wf__floor_record_latch(void) {
+    return &wf__exit_fallback_latch;
+}
+
+/* Ends the process with the status at once, from whichever thread runs the
+ * calling context [WAIT-2]. The exit first takes the floor's record latch, so
+ * that it never cuts a resource record another thread has begun: a thread
+ * that finds the latch taken parks, and the latch's holder, a record writer
+ * or the first of several exits, ends the process with its own outcome.
+ *
+ * Neither `exit` nor `ExitProcess` would do: `exit` runs the runtime's atexit
+ * shutdown while other drivers may still submit, and `ExitProcess` runs DLL
+ * detach after the other threads are killed, where a lock one of them held
+ * can stop it. So the process skips every atexit handler, the completion
+ * runtime's shutdown and the `WF_REQUIRE_WINDOWS_IOCP` check among them; that
+ * check requires every submission to have completed, which an exit that
+ * leaves operations outstanding cannot meet. Stream writes reach the host
+ * before their calls complete, so none is lost here. */
+int wf__body_exit_now_start(uint8_t *result, const wf_value *capability,
+                            const wf_value *status, wf_host_operation *operation) {
+    uint8_t code = wf__ordinary_exit_code(status);
+    (void)result;
+    (void)capability;
+    (void)operation;
+    if (__sync_bool_compare_and_swap(wf__floor_record_latch(), 0, 1)) {
+#if defined(_WIN32)
+        (void)TerminateProcess(GetCurrentProcess(), code);
+#else
+        _exit(code);
+#endif
+    }
+    for (;;) {
+#if defined(_WIN32)
+        Sleep(INFINITE);
+#else
+        pause();
+#endif
+    }
+}
+
+void wf__body_exit_now_finish(uint8_t *result, const wf_value *capability,
+                              const wf_value *status, wf_host_operation *operation) {
+    (void)result;
+    (void)capability;
+    (void)status;
+    (void)operation;
+}
+
 uint64_t wf__body_heap_in_use(wf_value *meter) {
     wf_transition(meter);
     return wf__heap_in_use();
