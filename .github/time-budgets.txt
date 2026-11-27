@@ -21,7 +21,10 @@
 # at it, raised by a tenth, rounded up to 5 s, in the owner's raise of
 # 2026-11-25 (cells at the 10 s floor were not raised). A cell with fewer than
 # 20 runs of its class keeps its value, except in a column the owner added (see
-# xeon-8573c and xeon-6975p below).
+# xeon-8573c and xeon-6975p below) and in a row new to the table, which has no
+# value to keep: its cell is set once by the rule above from the runs it has (a
+# class with no run takes the row's largest) and kept like any other until its
+# class has 20 runs.
 # A model with fewer than 20 runs has no column unless the owner adds one. An
 # unmapped model uses the stage's largest Linux class budget and is reported by
 # name. Unsampled rows
@@ -136,6 +139,46 @@ linux-asan-ubsan                25         25         25         25          25 
 linux-default-tsan              10         10         10         10          10          -      -
 linux-deque-tsan                10         10         10         10          10          -      -
 linux-runtime-tsan              10         10         10         10          10          -      -
+
+# io-hosts.yml, completion-windows: every run step of the job but two runs under
+# run-check.pl and is held to the row its step id names. The Windows column
+# follows the Windows rule above on runs of the job (research/investigations/
+# test-economy/time-budgets.md, "Windows I/O host stages"): 1.25 times the
+# slowest run, rounded up to 5 s, with the 10 s floor. Seven runs set the
+# first 16 rows; windows-bounded-connect, a step main added after them, is set
+# from eight runs of the job on 2026-11-26, in which every other row held.
+windows-llvm-mingw              -          -          -          -           -           -      25
+windows-clang-identity          -          -          -          -           -           -      10
+windows-host                    -          -          -          -           -           -      40
+windows-test-images             -          -          -          -           -           -      15
+windows-image-imports           -          -          -          -           -           -      10
+windows-sched-deque             -          -          -          -           -           -      10
+windows-sched-cpu-policy        -          -          -          -           -           -      10
+windows-sched-startup           -          -          -          -           -           -      10
+windows-default-route           -          -          -          -           -           -      10
+windows-adapter-probe           -          -          -          -           -           -      10
+windows-bounded-send            -          -          -          -           -           -      10
+windows-bounded-connect         -          -          -          -           -           -      65
+windows-ordinary-values         -          -          -          -           -           -      10
+windows-bridge-init             -          -          -          -           -           -      10
+windows-corpus-build            -          -          -          -           -           -      400
+windows-corpus                  -          -          -          -           -           -      65
+windows-driver-links            -          -          -          -           -           -      35
+
+# compiler/Makefile's build stage, the gate-profile compiler alone, which the
+# on-request benchmark workflows and `make -C compiler check` run and no job of
+# the gate does. Set from 20 cold builds on hosted Linux
+# (research/investigations/test-economy/time-budgets.md, "Windows I/O host
+# stages and the compiler build stage"), fewer than 20 in each class, so each
+# cell is the rule above on the runs its class has: epyc-7763 (4 runs, slowest
+# 114.29 s) 126.1 s and epyc-9v45 (2 runs, slowest 87.44 s) 99.4 s, rounded up to
+# 5 s, and the two classes with no run, epyc-9v74 and xeon-8573c, take the row's
+# largest. xeon-6975p, a column added after those cells were set, has 13 runs
+# (slowest 98.06 s, 113.3 s by the rule, 115 s rounded up) and takes the larger
+# of the row's largest and that, as every column of a model with fewer than 20
+# runs does (see xeon-8573c above); one run was on a Xeon Platinum 8370C, which
+# has no column. A class takes the rule's value on its own runs once it has 20.
+compiler/build                  130        130        100        130         130         -      -
 
 # proof.yml: the Lean model's sentence coverage (building and running its
 # checker), the build of its model, proofs and conformance harness, and its run

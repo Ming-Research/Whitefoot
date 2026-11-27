@@ -9,7 +9,10 @@
 # exact backend failures instead of marking them expected-to-fail. The Windows
 # job builds with the pinned llvm-mingw release for x86_64-w64-windows-gnu, the
 # one Windows target the compiler emits and the Windows package ships
-# (design/compiler/toolchain-resolution). The bench
+# (design/decisions/compiler/command-line/toolchain-resolution.md). Every run
+# step of the Windows job runs under .github/run-check.pl and is held to the
+# budget row that its id names in .github/time-budgets.txt, as the Linux job's
+# stages are. The bench
 # jobs that record performance live in `io-bench.yml` and run on demand.
 #
 # These checks run on the revisions gate.yml checks, decided the same way by
@@ -250,13 +253,30 @@ jobs:
       WINDOWS_CLANG: clang --target=x86_64-w64-windows-gnu
     defaults:
       run:
-        shell: bash
+        # Every run step of the job runs under run-check.pl, held to the budget
+        # of the label that its own `id` names: GitHub writes the step's script
+        # to {0} and sets GITHUB_ACTION to the step's id, or to __run,
+        # __run_2, ... for a step without one, so a step added without an id
+        # or without a row in the table fails the final verdict for want of a
+        # budget. The two steps that say `shell: bash` below are not timed.
+        shell: bash -c 'exec perl .github/run-check.pl "$GITHUB_ACTION" bash --noprofile --norc -eo pipefail "$0"' {0}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.commit || github.event.pull_request.head.sha || github.sha }}
 
+      # run-check.pl appends every stage over its budget in
+      # .github/time-budgets.txt, or without one, to this record, an absolute
+      # path in the form the msys perl that runs it reads; the stages
+      # themselves keep their own statuses. The step is not timed: it names
+      # the record the timed steps write.
+      - name: Name the time budget record
+        shell: bash
+        run: |
+          echo "WHITEFOOT_TIME_BUDGET_RECORD=$(cygpath -u "$RUNNER_TEMP")/time-budget-overruns.txt" >> "$GITHUB_ENV"
+
       - name: Install the pinned llvm-mingw
+        id: windows-llvm-mingw
         timeout-minutes: 8
         run: |
           set -euo pipefail
@@ -269,6 +289,7 @@ jobs:
       # Every later step that says `clang` must reach llvm-mingw's, not the
       # image's own LLVM.
       - name: Require llvm-mingw's clang to be the job's clang
+        id: windows-clang-identity
         run: |
           set -euo pipefail
           ours="$(cygpath -u "$LLVM_MINGW_ROOT")/bin/clang"
@@ -285,15 +306,20 @@ jobs:
             exit 1
           fi
 
+      # The processor's name says whether a stage that ran over its budget ran
+      # on a slow machine.
       - name: Record the host
+        id: windows-host
         run: |
           clang --version
           rustc -vV
           systeminfo | grep -E '^(OS Name|OS Version|System Type|Total Physical Memory)' || true
+          powershell -NoProfile -Command "(Get-CimInstance Win32_Processor).Name" || true
 
-      # The Windows steps run without run-check.pl, so no time budget holds
-      # them; their timeouts only stop a stuck run.
+      # The step timeouts only stop a stuck run; the budgets in
+      # .github/time-budgets.txt are what notice a stage growing.
       - name: Construct Windows native test images once
+        id: windows-test-images
         timeout-minutes: 5
         run: |
           if ! command -v make > /dev/null; then
@@ -308,6 +334,7 @@ jobs:
       # ucrtbase and never Visual C++'s runtime; an image the Visual Studio
       # toolchain linked imports VCRUNTIME140.
       - name: Require the test images to be MinGW UCRT images
+        id: windows-image-imports
         run: |
           set -euo pipefail
           for image in "$(cygpath -u "$RUNNER_TEMP")"/completion/*.exe; do
@@ -320,11 +347,13 @@ jobs:
           done
 
       - name: Exercise native deque reuse and live counters
+        id: windows-sched-deque
         run: |
           "$RUNNER_TEMP/completion/windows-sched-deque.exe"
           "$RUNNER_TEMP/completion/windows-sched-deque-no-stats.exe"
 
       - name: Native Windows CPU policy and wait integration
+        id: windows-sched-cpu-policy
         run: |
           WF_WORKERS=2 "$RUNNER_TEMP/completion/windows-sched-cpu-levels.exe" host
           "$RUNNER_TEMP/completion/windows-sched-cpu-levels.exe" wake
@@ -337,6 +366,7 @@ jobs:
           done
 
       - name: Exercise compute startup failures and frame lifetime
+        id: windows-sched-startup
         run: |
           for mode in normal owner-fail worker-fail partial partial-three startup-delayed startup-partial; do
             WF_WORKERS=4 "$RUNNER_TEMP/completion/windows-sched-smoke.exe" "$mode"
@@ -354,6 +384,7 @@ jobs:
             cmp - "$RUNNER_TEMP/completion/startup.normalized"
 
       - name: Run the Windows default-route probe on both routes
+        id: windows-default-route
         run: |
           # Show every run before judging it.  A process that ends through
           # `abort()` under the release UCRT takes the fast-fail path, which
@@ -394,6 +425,7 @@ jobs:
       # This image owns direct engine publication and shares compatible native
       # objects with the bridge images. The ring's real operations are evidence.
       - name: Run the Windows native adapter probe
+        id: windows-adapter-probe
         run: |
           probe_dir="$RUNNER_TEMP/completion"
           set +e
@@ -410,6 +442,7 @@ jobs:
           exit "$status"
 
       - name: Bound Windows helper sends to a silent peer
+        id: windows-bounded-send
         run: |
           WF_IO_NO_NATIVE_RING=1 WF_IO_HELPERS=2 \
             "$RUNNER_TEMP/completion/windows-bounded-send-test.exe"
@@ -421,6 +454,7 @@ jobs:
       # blocking-mode probe fail on purpose, so a pass is known to be able to
       # fail.
       - name: Bound Windows connects to a listener that never answers
+        id: windows-bounded-connect
         run: |
           set -u
           test_exe="$RUNNER_TEMP/completion/windows-bounded-connect-test.exe"
@@ -450,6 +484,7 @@ jobs:
           done
 
       - name: Run ordinary values through the production native bodies
+        id: windows-ordinary-values
         run: |
           probe_dir="$RUNNER_TEMP/completion/ordinary-values"
           mkdir -p "$probe_dir"
@@ -464,6 +499,7 @@ jobs:
       # Only the bridge object replaces initialization and the terminal abort.
       # Other objects retain their production definitions and are reused.
       - name: Require Windows bridge initialization to fail stop
+        id: windows-bridge-init
         run: |
           fault_dir="$RUNNER_TEMP/completion/windows-bridge-init-fault"
           mkdir -p "$fault_dir"
@@ -517,7 +553,20 @@ jobs:
       # programs::wfgrep_hosts searches a two-level tree and must publish the
       # lines it publishes on Linux, and conformance::file_replacement also
       # runs the listing case, whose names are the same bytes as on POSIX.
-      - name: Construct and run shared Windows program cases
+      # The build and the cases are two steps, and so two budgets: the build
+      # is most of the time and varies by minutes, so one budget for both
+      # would not notice the cases taking twice as long.
+      - name: Construct the shared Windows program cases
+        id: windows-corpus-build
+        timeout-minutes: 8
+        env:
+          CARGO_BUILD_JOBS: 2
+        run: |
+          cargo test --manifest-path compiler/Cargo.toml --profile gate --locked \
+            --test corpus --no-run
+
+      - name: Run the shared Windows program cases
+        id: windows-corpus
         timeout-minutes: 8
         env:
           CARGO_BUILD_JOBS: 2
@@ -532,6 +581,7 @@ jobs:
       # MinGW driver's --thinlto-cache-dir) and a full-LTO link each produce a
       # UCRT image that runs.
       - name: Drive whitefootc's own links for the MinGW target
+        id: windows-driver-links
         timeout-minutes: 8
         env:
           CARGO_BUILD_JOBS: 2
@@ -558,6 +608,22 @@ jobs:
           test -n "$(ls -A "$out/cache")"
           "$wfc" --full-lto -o "$out/full.exe" tests/programs/geometry_vectors.wf
           "$out/full.exe"; check_imports "$out/full.exe"
+
+      # run-check.pl appended every stage over its budget in
+      # .github/time-budgets.txt, or without one, to the record; the stages
+      # themselves kept their own statuses. This step is not timed. The
+      # wrapper creates the record before it runs a stage, and the verdict
+      # reads a missing record as "nothing over budget", so a record that does
+      # not exist, because no step ran under the wrapper, fails here.
+      - name: Hold every stage to its time budget
+        if: always()
+        shell: bash
+        run: |
+          if [ ! -e "${WHITEFOOT_TIME_BUDGET_RECORD:-}" ]; then
+            echo "no stage ran under run-check.pl: the time budget record '${WHITEFOOT_TIME_BUDGET_RECORD:-}' does not exist" >&2
+            exit 1
+          fi
+          perl .github/run-check.pl --budget-verdict "$WHITEFOOT_TIME_BUDGET_RECORD"
 
   # Only in a run the engine asked for: how each other job ended, as JUnit XML
   # in the artifact `test-results`, which the engine reads (.github/junit.py).

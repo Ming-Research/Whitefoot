@@ -249,8 +249,8 @@ program execution.
   exists in the checked head, and while it fails the correctness groups and
   `Gate on both platforms` do not run. The success of `Gate on both platforms`
   on the exact revision to be merged, a head current with `main`, is that
-  revision's `make check`. It needs `python3`, `jq`, LLD on Linux (`ld.lld`)
-  and the `time` utility.
+  revision's `make check`. It needs `python3`, `jq` and LLD on Linux
+  (`ld.lld`).
 - Writing and the full check: a push to a draft pull request starts no gate,
   so the result for what a change touches comes from a temporary workflow
   (below). Once the review has passed, delete the `tmp-` file, merge `main`
@@ -314,8 +314,9 @@ compiler/Cargo.toml --profile gate --locked --offline --lib <filter>`.
 CI runs heavy commands under `perl .github/run-check.pl <label> <command> ...`,
 as the `make` targets do. It holds one host-wide lock,
 leaves Cargo and the test harness at every available processor unless
-`CARGO_BUILD_JOBS` or `RUST_TEST_THREADS` names fewer, prints wall, user and
-system time every 30 seconds, and stops a command after 30 minutes unless
+`CARGO_BUILD_JOBS` or `RUST_TEST_THREADS` names fewer, prints the wall time
+every 30 seconds and when the command ends, with the command's user and system
+time on Linux and macOS, and stops a command after 30 minutes unless
 `WHITEFOOT_CHECK_TIMEOUT` gives another limit in seconds. It compares each
 labeled stage with its budget in `.github/time-budgets.txt` without changing
 the command's status. Linux budgets are per CPU model: 1.1 times the maximum of

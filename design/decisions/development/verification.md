@@ -45,6 +45,11 @@ A class's margin grows with its own spread above its median: the unit group's qu
 - rejected: an agent proposed a fixed 25% over the maximum; the owner rejected it, because it sees that slowdown in 118 of 756 replayed jobs against 362, with the same single red job with no slowdown (data: `research/investigations/test-economy/time-budgets.md`).
 - rejected: an agent proposed keeping 10% and rerunning an overrun stage once; the owner rejected it, because a stale table fails reruns too (6 of 18 red again) and a real slowdown goes red a gate later (data: `research/investigations/test-economy/time-budgets.md`).
 
+### decision new-budget-rows-are-set-from-the-runs-they-have
+A budget row new to the table sets each Linux class once by the budget rule from the runs it has, a class with no run taking the row's largest, and keeps it until 20 runs.
+- rejected: an agent proposed setting a new row at 1.5 times its longest run, as the proof and sanitizer rows are; the owner rejected it, because it reports growth only past half, wider than the budget rule's 26% to 74% headroom (decision a-class-budget-margin-follows-its-own-spread).
+- rejected: an agent proposed sampling a new row until each class has 20 runs before writing it; the owner rejected it, because that needs about 80 more cold builds, 3 hours of shared runner time, for a stage that never fails a job (data: `research/investigations/test-economy/time-budgets.md`).
+
 ### decision owner-added-columns-take-the-larger-value
 A Linux column the owner adds for a model with fewer than 20 runs of a stage takes the larger of the row's largest recomputed class budget and the model's own runs by the budget rule.
 - rejected: an agent proposed that the recompute script leave such columns untouched for hand edits; the owner rejected it, because those cells would fall behind as other models rise, bringing back false overruns unless someone remembered to edit them.

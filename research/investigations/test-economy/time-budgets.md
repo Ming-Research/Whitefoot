@@ -2135,6 +2135,596 @@ CPU models is not controlled (of the 320 jobs, the 6975P-C took 180, the 7763
 50, the 9V74 47, the 9V45 23, the 8573C 12, the 8370C 7 and the 6973P-C 1), so
 these shares are of one day and may change.
 
+### Windows I/O host stages and the compiler build stage (2026-11-25)
+
+**Question.** Can `run-check.pl` hold each step of `io-hosts.yml`'s
+`completion-windows` job, whose steps ran outside it with no budget, and what
+does each step take; and what does the `compiler/build` stage take on hosted
+Linux runners, a labeled stage with no row whose runs on CI are rare.
+
+**Earlier Windows runs.** Read from the Actions API on 2026-11-25: the
+`completion-windows` job of 79 `io-hosts.yml` runs, the newest 40 runs on
+`main` and the newest 40 manual runs (one is both), every one successful,
+2026-10-23 04:09Z to 2026-11-25 12:15Z, with step times at the API's
+one-second resolution. The job took 258 to
+493 s (median 380). Its Rust step, which builds the compiler with the corpus
+harness and runs the Windows cases, took 200 to 404 s (median 298); 3 of the 79
+took more than 360 s. In run 45611988088 its build took 268 s ("Finished ...
+in 4m 28s") and its cases 44.11 s. Every other step took at most 27 s (`Record
+the host`; median 8), the llvm-mingw download at most 15 s and the driver links
+at most 27 s.
+
+**Probe on windows-latest.** Temporary workflow run 45622841522, commit
+a49185fdc, job `windows-probe` (139235247506), read from its log. Every step
+that might fail was marked to continue, and the job carries four failure
+annotations, exit statuses 2, 17, 1 and 1.
+
+- *The host.* `shell: bash` is `C:\Program Files\Git\bin\bash.EXE --noprofile
+  --norc -e -o pipefail {0}`. Its `perl` is `/usr/bin/perl` (Perl 5.42.3), with
+  Strawberry Perl third on the path, and `$^O` is `cygwin`. `/usr/bin` has
+  `env`, `kill`, `ps` and `timeout` and no `time`; the one `time.exe` on the
+  image is MSYS2's, at `/c/msys64/usr/bin`. `$RUNNER_TEMP` is `D:\a\_temp`,
+  `/d/a/_temp` in the form the wrapper reads, and the step's script `{0}` is
+  a Windows path, `D:\a\_temp\<guid>.sh`.
+- *The shipped wrapper.* Its `exec '/usr/bin/time', '-p', @ARGV` fails with
+  "Can't exec /usr/bin/time" and exit status 2: that is the step whose custom
+  shell started the wrapper inline (`shell: bash -c 'exec perl
+  .github/run-check.pl probe-inline bash --noprofile --norc -eo pipefail "$0"'
+  {0}`), which shows that the single quotes and `"$0"` reach the wrapper
+  intact, and the shipped test script `.github/test-run-check.sh`, which fails
+  at its first check (status 2 where it expects 17). The same test script
+  against a copy whose child runs the command itself (`exec { $ARGV[0] }
+  @ARGV`) passed to its last line, "check runner: status, nesting, exclusion,
+  limits, timeout, cancellation, orphan cleanup and time budgets pass", in 21 s.
+  So the wrapper's fork, process group, lock under `/tmp` and absolute
+  `/d/a/_temp/...` record work under this perl.
+- *The helper form.* A step run as `shell: bash <helper> LABEL {0}`, whose
+  helper `exec`s the wrapper around `bash --noprofile --norc -eo pipefail
+  "$2"`, ran the step's script with `errexit` and `pipefail` on, kept its exit
+  status (1 for `false`, 17 for `exit 17`) and printed the `== END` line.
+- *Native processes under the wrapper.* A deadline of 3 s over `cmd //c "ping
+  -n 40 ..."` (a native child and its native child) and over `ping` alone
+  stopped both: `== STOP ...: deadline exceeded ==`, exit 124 after 5.15 s,
+  and `tasklist` listed no `ping` or `cmd` 3 s later. A native exit status
+  passes through (`cmd //c "exit 5"` gave 5). A native process left running
+  after the command exits is not seen: `cmd //c "start /b ping -n 20 ..."`
+  ended with exit 0 after 0.11 s and `ping.exe` stayed in `tasklist`; an msys
+  process left running (`sh -c 'sleep 20 & echo started'`) is seen, `== ...
+  left child processes after command exit ==`, exit 1.
+- *CPU times.* After a CPU-bound native child (`powershell` summing three
+  million integers) Perl's `times` gave children's user and system time 0 and
+  0; after a CPU-bound msys child (`sh` counting to 100,000) it gave 0.687 and
+  0.061. Under this perl the wrapper's `user` and `sys` lines would count msys
+  processes only: a native child such as `cargo`, `clang` or a test image would
+  show 0. The wrapper therefore prints no `real`, `user` or `sys` line on a
+  Windows host, and the `== END` line gives the wall time there. A job-object
+  count of the native children would give real CPU times; it needs a native
+  helper, and the budgets read wall time only.
+
+**Seven wrapped samples.** The same run's seven `windows-wrapped` jobs
+(139235248500, 139235248315, 139235248002, 139235248029, 139235248120,
+139235247910, 139235247922, in this order below) ran a copy of
+`completion-windows` with every run step under that helper and the direct-exec
+wrapper, the Rust step split into its build (`--no-run`) and its cases. All
+seven passed every step. Each time is the wrapper's `== END` line in seconds,
+and the budget is the Windows rule (1.25 times the slowest, rounded up to 5 s,
+at least 10 s):
+
+| Stage | Seven samples | Max | Budget |
+|---|---|---:|---:|
+| `windows-llvm-mingw` | 10.42 10.31 7.93 10.42 8.25 16.27 12.37 | 16.27 | 25 |
+| `windows-clang-identity` | 0.43 0.86 0.74 0.97 0.85 0.34 0.55 | 0.97 | 10 |
+| `windows-host` | 14.09 12.66 10.63 13.18 12.01 13.23 30.11 | 30.11 | 40 |
+| `windows-test-images` | 10.64 9.82 6.53 10.31 6.92 8.22 10.81 | 10.81 | 15 |
+| `windows-image-imports` | 1.39 1.38 0.84 1.40 0.86 1.08 1.40 | 1.40 | 10 |
+| `windows-sched-deque` | 0.11 0.21 0.11 0.21 0.11 0.11 0.11 | 0.21 | 10 |
+| `windows-sched-cpu-policy` | 1.49 1.38 0.95 1.44 0.95 1.08 1.38 | 1.49 | 10 |
+| `windows-sched-startup` | 0.31 0.33 0.31 0.32 0.32 0.22 0.44 | 0.44 | 10 |
+| `windows-default-route` | 0.34 0.34 0.32 0.34 0.32 0.33 0.33 | 0.34 | 10 |
+| `windows-adapter-probe` | 0.11 0.11 0.11 0.11 0.11 0.11 0.11 | 0.11 | 10 |
+| `windows-bounded-send` | 2.85 2.81 2.80 2.78 2.79 2.82 2.85 | 2.85 | 10 |
+| `windows-ordinary-values` | 0.33 0.33 0.22 0.34 0.22 0.21 0.33 | 0.34 | 10 |
+| `windows-bridge-init` | 0.22 0.21 0.12 0.21 0.11 0.11 0.22 | 0.22 | 10 |
+| `windows-corpus-build` | 266.31 255.13 179.01 266.58 188.11 212.70 317.18 | 317.18 | 400 |
+| `windows-corpus` | 50.53 42.17 31.39 42.58 33.46 36.75 45.06 | 50.53 | 65 |
+| `windows-driver-links` | 24.67 18.54 12.83 19.36 13.07 15.89 21.08 | 24.67 | 35 |
+
+The processors the host step printed were AMD EPYC 7763 (jobs 1 and 7), Intel
+Xeon Platinum 8573C (jobs 2 and 4), AMD EPYC 9V45 (jobs 3 and 5) and 9V74
+(job 6); the slowest build, 317.18 s, ran on a 7763, and the Windows column
+is one column for all of them. Against the 79 earlier
+runs, the build and case budgets together (465 s) lie above the slowest earlier
+Rust step (404 s).
+
+**Cold `compiler/build` on hosted Linux.** The same run's twenty `linux-build`
+jobs on `ubuntu-24.04` (four processors), each a fresh checkout, `cargo fetch
+--locked`, then `make -C compiler build`. The wrapper's `== END compiler/build`
+time of each job, by the processor in its log, in seconds:
+
+| Processor (`model name`) | Class column | Runs | Times | Max | Budget rule, rounded up to 5 s |
+|---|---|---:|---|---:|---:|
+| AMD EPYC 7763 64-Core Processor | `epyc-7763` | 4 | 113.68 114.29 107.98 114.10 | 114.29 | 126.12 → 130 |
+| AMD EPYC 9V45 96-Core Processor | `epyc-9v45` | 2 | 81.04 87.44 | 87.44 | 99.38 → 100 |
+| AMD EPYC 9V74 80-Core Processor | `epyc-9v74` | 0 | | | |
+| INTEL(R) XEON(R) PLATINUM 8573C | `xeon-8573c` | 0 | | | |
+| Intel(R) Xeon(R) 6975P-C | `xeon-6975p` (added by main after the sampling) | 13 | 90.74 94.56 94.95 94.05 92.03 93.95 98.06 92.75 89.42 92.15 88.62 91.73 92.63 | 98.06 | 113.30 → 115 |
+| Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz | none | 1 | 115.47 | 115.47 | |
+
+No class has the 20 runs the rule asks for; the 20 jobs are all the hosted
+runs of the stage there are. Sampling the four mapped classes to 20 runs each
+would take at least 74 more builds (four times 20, less the six runs they have),
+about 2 to 3 minutes of runner time each, so about 3 hours: an estimate from
+these 20 jobs, not a measurement, and a low one, since the job does not choose
+its processor and 14 of the 20 landed on the two models that had no column when
+the samples were read (the 6975P-C has one since the merge of main at 196152d23).
+The row's cells, by the rule of the
+budget-row decision for a row new to the table (each class with runs, the
+budget rule on the runs it has, which is 1.1 times the maximum plus the
+maximum's distance above the median, rounded up to 5 s with the 10 s floor; a
+class with no run, the row's largest value; a model without a column, the
+stage's largest Linux class value and a note): 130 for `epyc-7763`, 130 for
+`epyc-9v74`, 100 for `epyc-9v45` and 130 for `xeon-8573c`, and, after the
+merge of main at 196152d23 added the `xeon-6975p` column, 130 for it: the
+column is an owner column with 13 runs of this stage, which the rule gives 115
+(1.1 times 98.06 s plus 98.06 s less the median 92.63 s is 113.30 s; checked
+with `budget_for` of `.github/recompute-time-budgets.py`), and an owner column
+of a model with fewer than 20 runs takes the larger of that and the row's
+largest (decision owner-added-columns-take-the-larger-value). The cells were
+first computed on 2026-11-25 as the maximum plus 10%, the rule then in force;
+after the rule of "The margin of the budget rule" reached the branch on
+2026-11-26 they were recomputed with `RULES["spread"]` of
+`.github/recompute-time-budgets.py` on the same times (113.68, 114.29, 107.98
+and 114.10 s give 126.12 s; 81.04 and 87.44 s give 99.38 s) and are the same
+five-second steps under both rules. The 6975P-C's 13 runs and the one on a Xeon
+Platinum 8370C, which has no column, ran within these cells (98.06 and 115.47 s
+against 130 s). Earlier CI runs of the stage, from the logs of the `io-bench.yml`
+jobs read the same day (26 jobs that ran it, one build per compared revision):
+20.95 to 33.64 s on the self-hosted runner `whitefoot-14900k` or `14900k`
+(2026-10-04 to 2026-10-24), 107.42 and 60.40 s on `14900k-2` (2026-11-25), and
+109.68 s on one hosted runner (2026-10-24). The `compute-bench.yml` logs were
+not read. No workflow that runs the stage names a budget record, so an overrun
+there is printed in the log and fails no job.
+
+**The table in use (2026-11-25).** A temporary workflow built the stage three
+times on one hosted runner, an AMD EPYC 9V45 (class column 100 s), each build
+cold and with a budget record, which the workflows that run the stage do not
+set (run 45679642459 on commit a1109614a, whose logs were read; the same
+workflow on the head commit 23a294d48, run 45681749970, passed its three steps
+and its logs were not read):
+
+| Table | Build time | Wrapper's line | Verdict exit |
+|---|---:|---|---:|
+| the branch's | 77.53 s | `== BUDGET compiler/build: 77.5 s of 100 s (linux) ==` | 0 |
+| a copy giving the stage 1 s | 79.12 s | `== OVER BUDGET: enforced: compiler/build took 79.1 s, over its 1 s linux budget ==` | 1 |
+| `main`'s, with no row | 79.64 s | `== OVER BUDGET: enforced: compiler/build has no linux budget in ... ==` | 1 |
+
+A manual run of `io-hosts.yml` on commit 23a294d48 (run 45682294237) passed all
+19 steps of `completion-windows`, including the final verdict step. GitHub's
+step records give whole seconds: the program-case build took 259 s of its 400 s
+budget, the cases 46 s of 65 s, the driver links 23 s of 35 s and the test
+images 11 s of 15 s. The run's logs were not read, because the account's API
+quota was spent, so its `== START` and `== END` lines are not recorded here. The
+verdict then passed when its record file was never written, so that run alone
+did not show that the steps ran under the wrapper. From commit a57eb3342 the
+verdict step fails when the record does not exist, which the wrapper creates
+before it runs any stage, and the wrapper test requires the record to exist,
+and be empty, after a stage within its budget.
+
+**The wrapper test against its probes (2026-11-25).** A temporary workflow ran
+`.github/test-run-check.sh` of the head on `ubuntu-24.04` (run 45686947823, probe
+commit 7b919be69 on top of a57eb3342) against the wrapper of each probe and
+required the test to fail at the line the probe is meant to reach, reading the
+last commands of the shell's trace. All five steps passed: the head's wrapper
+passes the test; the wrapper without the Windows host guard (2fa583063) fails at
+the `grep -qE '^(real|user|sys) '` line; the wrapper that reads its own CPU
+times (270f1e7a4) fails at the awk that requires `real`, `user` of at least 0.3 s
+and `sys` before `== END cpu:`; the wrapper without the `cygwin` host name
+(1dd59da81) fails at the grep for the Windows budget; and the wrapper without
+the up-front creation of the record fails at the new `test -e` on the record.
+
+The same workflow ran again with the test as commit af527d5ca extended it: 153
+lines that read `io-hosts.yml`, the table and `compiler/Makefile`, run the job's
+default shell and run its last step (run 45690894835 on commit b7d4fee92, which
+adds the workflow to af527d5ca). All 14 steps passed. The runner's `awk` was GNU
+Awk 5.2.1 (`/usr/bin/gawk`) and its `sh` was dash; the test passes there as it
+does under the awk and `sh` of macOS. Nine probes made the test fail at the line
+each is meant to reach, read from the shell's trace: the four above; a step of
+the job without an id (`grep -qx noid`); a default shell that does not run the
+wrapper (the `grep` for `run-check.pl "$GITHUB_ACTION"`); a step with no row in
+the table (the `cmp` of the step ids and the rows); a verdict step whose message
+is not the guard's (the `grep` on `verdict-unset.log`); and no `compiler/build`
+row (the awk that ends `exit (!found || bad)`).
+
+**The Windows job under four probes (2026-11-25).** The REST quota of the
+account was spent, so no manual run was possible; four temporary workflows,
+each started by the push of its commit at 19:37 UTC, ran a copy of the
+`completion-windows` job on `windows-latest`. The copy is the text of
+`io-hosts.yml` from `completion-windows:` to the job's last step except the two
+lines that tie it to the scope job (`needs` and `if`), with one more last step
+that asserts what the record of the timing script holds. The commits are
+children of a57eb3342 and are not on the branch. Job and step results were read
+through GraphQL, where each job's annotations hold the asserting step's notice:
+
+| Probe | Commit, run | Steps that failed | The record, as the asserting step read it |
+|---|---|---|---|
+| none | c10caa455, 45686947337 | none | exists, no `ENFORCED` entry |
+| `windows-test-images` at 1 s | 6aadab2d6, 45686948134 | the verdict step | exactly one entry: `ENFORCED: windows-test-images took 6.7 s, over its 1 s windows budget` |
+| every `windows-*` row at 0 s | ce6359c6b, 45687066065 | the verdict step | 16 entries, whose labels are the 16 table rows |
+| the job's default shell is plain `bash` | 268af7a77, 45686948835 | the verdict step | the file does not exist |
+
+The labels of the 0 s run are `windows-adapter-probe`, `windows-bounded-send`,
+`windows-bridge-init`, `windows-clang-identity`, `windows-corpus`,
+`windows-corpus-build`, `windows-default-route`, `windows-driver-links`,
+`windows-host`, `windows-image-imports`, `windows-llvm-mingw`,
+`windows-ordinary-values`, `windows-sched-cpu-policy`, `windows-sched-deque`,
+`windows-sched-startup` and `windows-test-images`: every timed step reached the
+wrapper under its own id, hyphens included, and its budget row was found. The
+plain-shell run shows that the new check in the verdict step, and not the timing
+script, ends a job whose steps were not timed. In the run without a probe,
+GitHub's step records give, in whole seconds: building the program cases 179 s
+(budget 400 s), running them 31 s (65 s), the driver links 12 s (35 s) and the
+test images 7 s (15 s); the 0 s run took 253, 42, 20 and 10 s. The logs of these
+runs, whose `== START` and `== END` lines name each label, were not read.
+
+**A step that main added, found by the form test on the self-hosted runner
+(2026-11-26).** The `static` check of the fast workflow, which runs
+`.github/test-run-check.sh` as part of `repository-invariants` on the
+self-hosted 14900K runner, failed with no message about 19.6 s into the test, on
+commit 213247340 (run 45787129711) and again on 435144ab2 (run 45795788323), at
+the same recipe line and after the same time, which a timing flake would not
+repeat. A temporary
+workflow on the same runner class (run 45795787453, commit 435144ab2) ran the
+test as `sh -x` under the wrapper, as that job does. The host was Ubuntu 26.04.1
+LTS with `sh` dash, `awk` mawk 1.3.4 20260129, bash 5.3.9 and perl 5.40.1; the
+trace has 301 lines and ends at `grep -qx noid .../windows-steps` and `exit 1`:
+the awk that lists the Windows job's steps printed a step without an id. The
+step is "Bound Windows connects to a listener that never answers", which main
+added in commit fdeb8cd41 (2026-11-25) and which reached this branch when main's
+2050ce844 was merged (954c1811e), after the evidence above was read; it had no
+`id`, and so no budget row. That is the case the test is written for, not a
+difference of awk: the two earlier runs of the test on Linux (`ubuntu-24.04`,
+gawk 5.2.1) read a tree that did not have the step. The test stops at its first
+failing line, so the checks after it had not run on mawk. With the step's id
+and a row added (commit ca4e9df9d), `static` passed on the self-hosted runner
+(run 45797758879, 64 s), which runs every awk script of the test under mawk.
+Before that run the comment pattern `/^[ \t]*(#|$)/` of the test's two table
+scripts, an anchor inside an alternation, was rewritten as
+`/^[ \t]*#/ || /^[ \t]*$/`; no run shows that mawk reads the first form
+differently, and only the second form has been run on mawk.
+
+**The new step in eight runs (2026-11-26).** A temporary workflow ran the
+`completion-windows` job of `io-hosts.yml` as a matrix of eight (run
+45797757284, commit ca4e9df9d): the job's text unchanged but for its `needs` and
+`if` lines, with the new step's row provisionally at 600 s. All eight jobs
+passed, the final verdict step included. The wrapper's `== END <label>` lines
+were read from each job's log. The matrix entries ran on four processors, by
+entry: 1 EPYC 7763, 2 EPYC 9V74, 3 Xeon Platinum 8370C, 4 EPYC 7763, 5 EPYC
+7763, 6 Xeon Platinum 8370C, 7 EPYC 9V74, 8 Xeon Platinum 8573C. The wall times
+of the new step were 45.47, 44.84, 48.64, 45.35, 45.36, 47.70, 45.01 and 49.55 s
+in that order: 44.84 to 49.55 s on every processor, 11 to 13% of the job's
+timed stages (355 to 424 s in sum), with a slowest-to-fastest ratio of 1.10
+where the program-case build's is 1.22. The budget rule of the Windows column,
+1.25 times the slowest run, is 61.94 s, which rounds up to 65 s: the row
+`windows-bounded-connect` is 65. The fastest and slowest `END` time of each
+stage in the eight runs against its row:
+
+| Stage | Fastest | Slowest | Budget |
+|---|---:|---:|---:|
+| `windows-llvm-mingw` | 8.82 | 11.19 | 25 |
+| `windows-clang-identity` | 0.42 | 1.30 | 10 |
+| `windows-host` | 8.88 | 15.85 | 40 |
+| `windows-test-images` | 8.94 | 11.95 | 15 |
+| `windows-image-imports` | 1.06 | 1.59 | 10 |
+| `windows-sched-deque` | 0.11 | 0.22 | 10 |
+| `windows-sched-cpu-policy` | 1.07 | 1.39 | 10 |
+| `windows-sched-startup` | 0.32 | 0.34 | 10 |
+| `windows-default-route` | 0.21 | 0.41 | 10 |
+| `windows-adapter-probe` | 0.11 | 0.21 | 10 |
+| `windows-bounded-send` | 2.81 | 2.91 | 10 |
+| `windows-bounded-connect` | 44.84 | 49.55 | 65 |
+| `windows-ordinary-values` | 0.31 | 0.33 | 10 |
+| `windows-bridge-init` | 0.21 | 0.22 | 10 |
+| `windows-corpus-build` | 216.63 | 264.11 | 400 |
+| `windows-corpus` | 36.39 | 52.31 | 65 |
+| `windows-driver-links` | 15.57 | 21.28 | 35 |
+
+No stage of any run was over its budget, so none of the 16 rows set on 25
+November needed a raise; `windows-corpus` at 52.31 s would round to 70 s if the
+rule were applied to these eight runs alone, and keeps the 65 s of the seven
+runs it was set on, as a Windows value is raised only by the owner. The new
+image the Makefile builds for the step did not push `windows-test-images` past
+its row: 8.94 to 11.95 s against 15 s.
+
+**The branch's own workflow (2026-11-26).** The engine's full check starts
+`io-hosts.yml` by hand on main's copy of the file with the branch's commit, so
+its Windows job is main's job, which has no wrapper, no step ids and no verdict
+step, and it cannot show the new wiring. The copies of the job above are not
+the workflow itself either. Three manual runs, `gh workflow run io-hosts.yml
+--ref <branch>` on branches that `run_tests` published, so that GitHub ran each
+commit's own copy of the workflow, were read once they had ended. Their
+`event` is `workflow_dispatch` and their `headSha` the commit named, as
+`gh run view` gives them; the Windows logs were read with
+`gh run view <run> --log --job <job>`.
+
+| Run | Commit | Differs from the head a75b4997f by | Conclusion | Failed steps |
+|---|---|---|---|---|
+| 45809134331 | a75b4997f | nothing (the head) | success | none |
+| 45809139326 | b2313b365 | `windows-test-images` at 1 s in the Windows column | failure | `completion-windows`: "Hold every stage to its time budget" |
+| 45809143681 | db31cc2f3 | the job's default shell plain `bash` | failure | `completion-windows`: "Hold every stage to its time budget" |
+
+- **The head.** Every job that ran passed (`completion-linux` and
+  `completion-windows`; "Test results" is skipped in a manual run without the
+  engine's request). On an AMD EPYC 7763, the Windows log has one `START` line
+  and one `END` line, `== END <label>: <s> s, exit 0 ==`, for each of 17
+  labels, and the 17 labels sorted equal the 17 `windows-*` rows of the table
+  (`cmp`). The `END` times in seconds, in step order of the table: 11.98, 0.44,
+  12.65, 11.65, 1.49, 0.11, 1.41, 0.32, 0.43, 0.11, 2.88, 45.40 for the
+  bounded connect, 0.32, 0.22, 303.17 for the program-case build, 43.86 for the
+  program cases and 20.47, each within its row. The log has no `real`, `user` or
+  `sys` line and no `OVER BUDGET` line, and the verdict step printed
+  `time budgets: every recorded stage finished within its budget`.
+- **The 1 s row.** On an AMD EPYC 9V74 the only failed step of the run was the
+  verdict step. The log has the 17 `START` and 17 `END` lines with the labels of
+  the table, and one `== OVER BUDGET: enforced: windows-test-images took 9.6 s,
+  over its 1 s windows budget ==` line after that stage's `END` line (9.59 s,
+  exit 0). The verdict step's output is `== TIME BUDGETS EXCEEDED ==` with a
+  single entry, `ENFORCED: windows-test-images took 9.6 s, over its 1 s windows
+  budget`, and exit code 1; the stage itself kept its status 0, as the decision
+  that overruns fail only the final verdict says.
+- **The plain shell.** On an AMD EPYC 9V74 the only failed step of the run was
+  the verdict step, which printed `no stage ran under run-check.pl: the time
+  budget record '/d/a/_temp/time-budget-overruns.txt' does not exist` and exited
+  1. The log has no `== START` and no `== END` line, and every other step
+  passed: a job whose default shell does not reach the wrapper does not stay
+  green.
+
+These runs hold for a head whose `.github/run-check.pl`,
+`.github/workflows/io-hosts.yml` and Windows rows are those of a75b4997f
+(`git diff 1b58e6b97 a75b4997f` is empty for the first two, which the merge of
+main did not touch, and the rows are the same); a later change to any of them
+needs the three runs again on a new head, each probe made as a child of it.
+The probe commits are not on the branch.
+
+**After the merge of main at 196152d23.** That merge changed two of the three:
+`.github/run-check.pl` gained the `WHITEFOOT_CHECK_KILL_AFTER` setting, and the
+corpus step's filter in `.github/workflows/io-hosts.yml` gained
+`programs::open_read_paths::` (`git diff a75b4997f 6d5b0da5c --
+.github/run-check.pl .github/workflows/io-hosts.yml` is those two changes and a
+comment). The Windows values are the same and the table gained a seventh
+column, `xeon-6975p`. The three runs above therefore hold for a75b4997f only,
+and the three were made again on the merged head 6d5b0da5c and on one child of
+it for each probe, at 15:40 UTC, as before (`gh workflow run io-hosts.yml --ref
+<branch>` on the branches `run_tests` published; `workflow_dispatch` events
+whose `headSha` is the commit named).
+
+| Run | Commit | Differs from the head 6d5b0da5c by | Conclusion | Failed steps |
+|---|---|---|---|---|
+| 45851373148 | 6d5b0da5c | nothing (the head) | success | none |
+| 45851378104 | 487a5556b | `windows-test-images` at 1 s in the Windows column | failure | `completion-windows`: "Hold every stage to its time budget" |
+| 45851383306 | fa9879a58 | the job's default shell plain `bash` | failure | `completion-windows`: "Hold every stage to its time budget" |
+
+- **The head.** Every job that ran passed (`completion-linux` and
+  `completion-windows`; "Test results" is skipped in a manual run without the
+  engine's request). On an AMD EPYC 7763, the Windows log has one `START` line
+  and one `END` line for each of 17 labels, and the 17 labels sorted equal the
+  17 `windows-*` rows of the table (`cmp`). The `END` times in seconds, in step
+  order of the table: 10.71, 0.44, 11.25, 12.28, 1.49, 0.11, 1.41, 0.42, 0.34,
+  0.11, 2.82, 45.72 for the bounded connect, 0.33, 0.22, 272.97 for the
+  program-case build, 45.21 for the program cases, which now also run
+  `programs::open_read_paths::`, and 21.03 s, each within its row (the cases at
+  45.21 s of 65 s). The log has no `real`, `user` or `sys` line and no `OVER
+  BUDGET` line, and the verdict step printed `time budgets: every recorded
+  stage finished within its budget`.
+- **The 1 s row.** On an AMD EPYC 9V45 the only failed step of the run was the
+  verdict step. The log has the 17 `START` and 17 `END` lines with the labels
+  of the table (sorted, they equal the 17 `windows-*` rows), and one `== OVER
+  BUDGET: enforced: windows-test-images took 7.0 s, over its 1 s windows budget
+  ==` line after that stage's `END` line (6.97 s, exit 0). The verdict step's
+  output is `== TIME BUDGETS EXCEEDED ==` with a single entry (`grep -c
+  'ENFORCED:'` over the whole log gives 1), `ENFORCED: windows-test-images took
+  7.0 s, over its 1 s windows budget`, and exit code 1. The other 16 stages
+  ended within their rows: 6.80, 0.74, 10.94, 0.94, 0.10, 0.96, 0.31, 0.22,
+  0.11, 2.80, 50.11 for the bounded connect, 0.22, 0.21, 170.05 for the
+  program-case build, 31.49 for the program cases and 12.14 s.
+- **The plain shell.** On an AMD EPYC 9V74 the only failed step of the run was
+  the verdict step, which printed `no stage ran under run-check.pl: the time
+  budget record '/d/a/_temp/time-budget-overruns.txt' does not exist` and exited
+  1. The log has no `== START` and no `== END` line.
+
+These three runs hold for a head whose `.github/run-check.pl`,
+`.github/workflows/io-hosts.yml` and Windows rows are those of 6d5b0da5c; a
+later change to any of them needs the three again. The probe commits are not on the
+branch.
+
+**After the merge of main at 460f31abb.** That merge (main's change to when
+`io-hosts.yml` checks a revision) changed `.github/workflows/io-hosts.yml`
+outside the Windows job's steps: the nightly `schedule` trigger, the `scope`
+job, the new `reason` job, `needs.scope.outputs.needed == 'true'` in the `if:`
+of `completion-linux` and `completion-windows`, `reason` in the `needs` of
+`results`, and header comments. `.github/run-check.pl` and the 17 `windows-*`
+rows are the same as at 6d5b0da5c (`git diff 6d5b0da5c 094cf1617 --
+.github/run-check.pl` is empty and the rows compare equal), so the runs on
+6d5b0da5c hold for the unchanged steps only; the three were made again on the
+merged head 094cf1617 and on one child of it for each probe, dispatched at
+04:24 UTC on 2026-11-27 (`gh workflow run io-hosts.yml --ref <branch>` on the
+branches `run_tests` published; `workflow_dispatch` events whose `headSha` is
+the commit named). In each run the `scope` job decided to check ("io-hosts.yml
+checks the change from 460f31abb3b6: it touches .github/run-check.pl and 2
+more paths its jobs read").
+
+| Run | Commit | Differs from the head 094cf1617 by | Conclusion | Failed steps |
+|---|---|---|---|---|
+| 45939776880 | 094cf1617 | nothing (the head) | success | none |
+| 45939779676 | 92b5e14ec | `windows-test-images` at 1 s in the Windows column | failure | `completion-windows`: "Hold every stage to its time budget" |
+| 45939782821 | 86d4c41d3 | the job's default shell plain `bash` | failure | `completion-windows`: "Hold every stage to its time budget" |
+
+- **The head.** Every job that ran passed (`completion-linux`,
+  `completion-windows`; "Test results" is skipped in a manual run without the
+  engine's request). On an AMD EPYC 7763, the Windows log has one `START` line
+  and one `END` line for each of 17 labels, and the 17 labels sorted equal the
+  17 `windows-*` rows of the table (`cmp`). The `END` times in seconds, in step
+  order of the table: 13.33, 0.44, 9.25, 11.94 for the test images, 1.47,
+  0.11, 1.35, 0.33, 0.43, 0.11, 2.87, 45.33 for the bounded connect, 0.32,
+  0.21, 254.07 for the program-case build, 46.45 for the program cases and
+  21.60, each within its row (the test images at 11.94 s of 15 s, the cases at
+  46.45 s of 65 s). The log has no `real`, `user` or `sys` line and no `OVER
+  BUDGET` line, and the verdict step printed `time budgets: every recorded
+  stage finished within its budget`.
+- **The 1 s row.** On an AMD EPYC 9V74 the only failed step of the run was the
+  verdict step. The log has the 17 `START` and 17 `END` lines with the labels
+  of the table (sorted, they equal the 17 `windows-*` rows), and one `== OVER
+  BUDGET: enforced: windows-test-images took 9.7 s, over its 1 s windows budget
+  ==` line after that stage's `END` line (9.66 s, exit 0). The verdict step's
+  output is `== TIME BUDGETS EXCEEDED ==` with a single entry (`grep -c
+  'ENFORCED:'` over the whole log gives 1), `ENFORCED: windows-test-images took
+  9.7 s, over its 1 s windows budget`, and exit code 1. The other 16 stages
+  ended within their rows: 9.37, 0.97, 9.57, 1.20, 0.11, 1.08, 0.33, 0.34,
+  0.11, 2.80, 50.11 for the bounded connect, 0.32, 0.22, 204.96 for the
+  program-case build, 38.27 for the program cases and 15.91 s.
+- **The plain shell.** On an AMD EPYC 9V74 the only failed step of the run was
+  the verdict step, which printed `no stage ran under run-check.pl: the time
+  budget record '/d/a/_temp/time-budget-overruns.txt' does not exist` and exited
+  1. The log has no `== START` and no `== END` line, and every other step
+  passed.
+
+On the same two probe commits, `static` through `run_tests` read the checks of
+the wrapper's test: on the plain-shell commit it failed in the group
+`windows_shell` at `grep -q run-check.pl "\$GITHUB_ACTION"` (run 45940179125),
+and on the 1 s commit it failed in the group `windows_form`, whose table awk
+requires a Windows value of at least the 10 s floor (run 45940286107). So the
+1 s probe cannot reach the branch through `static` as it is; it exists only for
+the run above. The head's `static` passed (run 45939646815), and so did the
+conformance adapter test on it (run 45940284980, 160 s).
+
+These three runs hold for a head whose `.github/run-check.pl`,
+`.github/workflows/io-hosts.yml` and Windows rows are those of 094cf1617; a
+later change to any of them needs the three again. The probe commits are not on
+the branch.
+
+**After the merge of main at 31212ee4a.** That merge (main's change that lets
+any context end the execution with a status) added `programs::process_exit::`
+to the corpus filter of the step "Run the shared Windows program cases", the
+only line of `.github/workflows/io-hosts.yml` that differs from 094cf1617
+(`git diff 094cf1617 8781c1fe6 -- .github/workflows/io-hosts.yml`);
+`.github/run-check.pl` and the 17 `windows-*` rows are the same (main added
+rows for the gate's parts only). The runs on 094cf1617 therefore hold for the
+steps only, and the three were made again on the merged head 8781c1fe6 and on
+one child of it for each probe, dispatched at 05:12 UTC on 2026-11-27 as before
+(`gh workflow run io-hosts.yml --ref <branch>` on the branches `run_tests`
+published; `workflow_dispatch` events whose `headSha` is the commit named).
+
+| Run | Commit | Differs from the head 8781c1fe6 by | Windows job | Linux job |
+|---|---|---|---|---|
+| 45944406913 | 8781c1fe6 | nothing (the head) | success | failed at its budget verdict (attempt 1), success after one re-run (attempt 2) |
+| 45944409355 | b707bdb79 | `windows-test-images` at 1 s in the Windows column | failure: "Hold every stage to its time budget" | the same as the head's |
+| 45944412138 | 5c98a9ce3 | the job's default shell plain `bash` | failure: "Hold every stage to its time budget" | success |
+
+- **The head.** On an AMD EPYC 7763 the Windows log has one `START` line and
+  one `END` line for each of 17 labels, and the sorted labels equal the 17
+  `windows-*` rows of the table (`cmp`). The `END` times in seconds, in step
+  order of the table: 10.68, 0.53, 14.12, 11.83, 1.51, 0.11, 1.48, 0.33, 0.44,
+  0.11, 2.91, 45.53 for the bounded connect, 0.33, 0.21, 256.85 for the
+  program-case build, 48.14 for the program cases, which now also run
+  `programs::process_exit::`, and 20.95 s, each within its row (the cases at
+  48.14 s of 65 s, so no raise goes to the owner). The log has no `real`,
+  `user` or `sys` line and no `OVER BUDGET` line, and the verdict step printed
+  `time budgets: every recorded stage finished within its budget`.
+- **The 1 s row.** On an AMD EPYC 9V74 the only failed step of the Windows job
+  was the verdict step. The log has the 17 `START` and 17 `END` lines with the
+  labels of the table, and one `== OVER BUDGET: enforced: windows-test-images
+  took 8.9 s, over its 1 s windows budget ==` line after that stage's `END`
+  line (8.88 s, exit 0). The verdict step's output is `== TIME BUDGETS EXCEEDED
+  ==` with a single entry (`grep -c 'ENFORCED:'` over the log gives 1),
+  `ENFORCED: windows-test-images took 8.9 s, over its 1 s windows budget`, and
+  exit code 1. The other 16 stages ended within their rows: 10.43, 0.87,
+  12.50, 1.14, 0.12, 1.06, 0.31, 0.23, 0.11, 2.81, 44.31 for the bounded
+  connect, 0.22, 0.21, 205.91 for the program-case build, 40.58 for the program
+  cases and 15.68 s.
+- **The plain shell.** On an AMD EPYC 9V74 the only failed step of the Windows
+  job was the verdict step, which printed `no stage ran under run-check.pl: the
+  time budget record '/d/a/_temp/time-budget-overruns.txt' does not exist` and
+  exited 1. The log has no `== START` and no `== END` line, and every other
+  step passed.
+- **The Linux job.** In the first attempt of the head's run and of the 1 s
+  run, the job `completion-linux`, which this work does not change, failed at
+  its own budget verdict: `linux-runtime-tsan` took 10.52 s and 10.41 s
+  against its row of 10 s, the floor on every class. The job's other stages
+  were slow in the same two runs (`linux-default-tsan` 5.31 s and 5.51 s
+  against 4.10 to 4.41 s in every other run of the job in this section and the
+  last), and the same stage took 7.81, 8.81 and 8.71 s in the three runs on
+  094cf1617 and 8.71 s in the plain-shell run of this section, so the overrun
+  is a slow runner and not the change: the stage's command and the wrapper's
+  measured interval are the same. As the rule for an overrun the change cannot explain,
+  the failed Linux job of each of the two runs was re-run once (`gh run rerun
+  <run> --job <job>`; the Windows jobs of attempt 1 were not re-run and their
+  results stand): `linux-runtime-tsan` took 8.71 s in the head's run and 8.51 s
+  in the 1 s run, and both verdicts printed `time budgets: every recorded stage
+  finished within its budget`. The head's run then concluded `success`, and in
+  the 1 s run the only failed job was `completion-windows`. The stage's row is
+  not raised; it sits at the floor with 7.81 to 10.52 s over eight runs.
+
+On the same probe commits `static` through `run_tests` read the checks of the
+wrapper's test again: on the plain-shell commit it failed in the group
+`windows_shell` at `grep -q run-check.pl "\$GITHUB_ACTION"` (run 45944435742),
+and on the 1 s commit in the group `windows_form`, whose table awk requires a
+Windows value of at least the 10 s floor (run 45945450647). `static` passed on
+the head seven times (runs 45944289637, 45944812340, 45945071142, 45945072839,
+45945074187, 45945292379 and 45945551227, on the 14900K with the 20 groups side
+by side), `runtime` passed (45944812340, 45945292379) and so did the
+conformance adapter test (45944433771, 180 s).
+
+These three runs hold for a head whose `.github/run-check.pl`,
+`.github/workflows/io-hosts.yml` and Windows rows are those of 8781c1fe6; a
+later change to any of them needs the three again. The probe commits are not on
+the branch.
+
+**The `repository-invariants` stage with the wrapper test grown (2026-11-26).**
+The full check of the merge of main at 3e59fcdde (the gate, run 45883143138, on
+bec09021f) had one failure: in `static`, on an AMD EPYC 9V45, `repository-
+invariants` took 28.13 s against its 25 s. The stage runs
+`.github/test-run-check.sh`, to which this work added the CPU case (a child that
+computes for one second), the two cygwin host cases, the case of a command that
+cannot be executed and the form checks of the Windows job. Two measurements of
+that addition, on the same script with and without it: 24.86 s against 27.06 s
+on one host (`/usr/bin/time -p sh .github/test-run-check.sh`, main's
+`.github/` taken with `git archive 3e59fcdde`), which is 2.2 s (user time 1.25 s
+against 2.50 s, so about one second of it is the CPU case), and 25.73 s on main's
+own push run 45862894314 against this branch's 28.13 s on the same class, 2.4 s.
+The rest is the seven other wrapper starts of the added cases, about 0.15 s each.
+
+The stage was already at its budgets in main's runs, which the full check does
+not show: three of them went over the table before this work (25.7 s of 25 s on
+the 9V45, 30.7 s and 30.3 s of 30 s on the 7763; runs 45862894314, 45863013206
+and 45876571777). The stage times of 2026-11-26 after `test-fast-state` left
+it, from the logs of the `static` jobs of the gate runs of that day, of main's
+pushes and of the full checks of works whose commits do not touch the files
+the stage reads (the compare of each commit with the main it was merged with
+lists none of them; two more runs, 45854669251 and 45866495281, whose commits
+change `.github/test-gate-both-platforms.sh` or
+`.github/test-completion-scratch.sh` and `Makefile`, are left out):
+
+| Class | Runs | Seconds | Rule on them | Rule with +2.4 s | Table before |
+|---|---:|---|---:|---:|---:|
+| `epyc-7763` | 4 | 29.73 29.84 30.34 30.74 | 35 | 40 | 30 |
+| `epyc-9v74` | 3 | 27.63 28.64 29.84 | 35 | 40 | 30 |
+| `epyc-9v45` | 1 | 25.73 | 30 | 35 | 25 |
+| `xeon-6975p` | 5 | 25.23 25.33 25.43 25.43 25.53 | 30 | 35 | 30 |
+
+The rule values are `budget_for` of `.github/recompute-time-budgets.py`; they
+were a proposal for the owner and are not in the table. The owner did not raise
+the row: Whitefoot #599, merged as 10c976ebb, made `.github/test-run-check.sh`
+run its cases in 14 groups side by side, each with a lock of its own, so that
+the test takes about as long as its slowest group and the stage takes 8 to 14 s
+on every class against the 25 to 30 s above (the owner's figure; it was not
+re-measured here). The cases this work added are in groups of their own in that
+structure: `cpu` (the one-second computing child), `cygwin` (the two Windows
+host cases), `missing_command`, and three for the Windows job's form,
+`windows_form` (the steps against the table rows and the `compiler/build` row),
+`windows_shell` (the default shell, run as the runner runs it) and
+`windows_verdict` (the job's last step). The `repository-invariants` row is main's
+(30 30 25 30 30 30), and the question `repository-invariants-budget` was
+withdrawn.
+
 ## Daily loop
 
 One edit, measured in the local container with the new defaults: an unused
@@ -2167,9 +2757,6 @@ full local gate, warm, in about three.
 - The corpus stage cannot drop below its longest case, one conformance walk
   (78 s on the local container); splitting that walk across threads is
   recorded in `docs/todo.md`.
-- The Windows io-hosts steps have no budget, only step timeouts, and the
-  Windows job is now the longest CI job at 251–285 s; recorded in
-  `docs/todo.md`.
 - The unit job's two builds of one 243,000-line crate remain the largest
   cost and grow with the compiler; the budget makes that growth visible and
   forces the decision when it arrives.
