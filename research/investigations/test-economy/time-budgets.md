@@ -2601,6 +2601,83 @@ These three runs hold for a head whose `.github/run-check.pl`,
 later change to any of them needs the three again. The probe commits are not on
 the branch.
 
+**After the merge of main at 31212ee4a.** That merge (main's change that lets
+any context end the execution with a status) added `programs::process_exit::`
+to the corpus filter of the step "Run the shared Windows program cases", the
+only line of `.github/workflows/io-hosts.yml` that differs from 094cf1617
+(`git diff 094cf1617 8781c1fe6 -- .github/workflows/io-hosts.yml`);
+`.github/run-check.pl` and the 17 `windows-*` rows are the same (main added
+rows for the gate's parts only). The runs on 094cf1617 therefore hold for the
+steps only, and the three were made again on the merged head 8781c1fe6 and on
+one child of it for each probe, dispatched at 05:12 UTC on 2026-11-27 as before
+(`gh workflow run io-hosts.yml --ref <branch>` on the branches `run_tests`
+published; `workflow_dispatch` events whose `headSha` is the commit named).
+
+| Run | Commit | Differs from the head 8781c1fe6 by | Windows job | Linux job |
+|---|---|---|---|---|
+| 45944406913 | 8781c1fe6 | nothing (the head) | success | failed at its budget verdict (attempt 1), success after one re-run (attempt 2) |
+| 45944409355 | b707bdb79 | `windows-test-images` at 1 s in the Windows column | failure: "Hold every stage to its time budget" | the same as the head's |
+| 45944412138 | 5c98a9ce3 | the job's default shell plain `bash` | failure: "Hold every stage to its time budget" | success |
+
+- **The head.** On an AMD EPYC 7763 the Windows log has one `START` line and
+  one `END` line for each of 17 labels, and the sorted labels equal the 17
+  `windows-*` rows of the table (`cmp`). The `END` times in seconds, in step
+  order of the table: 10.68, 0.53, 14.12, 11.83, 1.51, 0.11, 1.48, 0.33, 0.44,
+  0.11, 2.91, 45.53 for the bounded connect, 0.33, 0.21, 256.85 for the
+  program-case build, 48.14 for the program cases, which now also run
+  `programs::process_exit::`, and 20.95 s, each within its row (the cases at
+  48.14 s of 65 s, so no raise goes to the owner). The log has no `real`,
+  `user` or `sys` line and no `OVER BUDGET` line, and the verdict step printed
+  `time budgets: every recorded stage finished within its budget`.
+- **The 1 s row.** On an AMD EPYC 9V74 the only failed step of the Windows job
+  was the verdict step. The log has the 17 `START` and 17 `END` lines with the
+  labels of the table, and one `== OVER BUDGET: enforced: windows-test-images
+  took 8.9 s, over its 1 s windows budget ==` line after that stage's `END`
+  line (8.88 s, exit 0). The verdict step's output is `== TIME BUDGETS EXCEEDED
+  ==` with a single entry (`grep -c 'ENFORCED:'` over the log gives 1),
+  `ENFORCED: windows-test-images took 8.9 s, over its 1 s windows budget`, and
+  exit code 1. The other 16 stages ended within their rows: 10.43, 0.87,
+  12.50, 1.14, 0.12, 1.06, 0.31, 0.23, 0.11, 2.81, 44.31 for the bounded
+  connect, 0.22, 0.21, 205.91 for the program-case build, 40.58 for the program
+  cases and 15.68 s.
+- **The plain shell.** On an AMD EPYC 9V74 the only failed step of the Windows
+  job was the verdict step, which printed `no stage ran under run-check.pl: the
+  time budget record '/d/a/_temp/time-budget-overruns.txt' does not exist` and
+  exited 1. The log has no `== START` and no `== END` line, and every other
+  step passed.
+- **The Linux job.** In the first attempt of the head's run and of the 1 s
+  run, the job `completion-linux`, which this work does not change, failed at
+  its own budget verdict: `linux-runtime-tsan` took 10.52 s and 10.41 s
+  against its row of 10 s, the floor on every class. The job's other stages
+  were slow in the same two runs (`linux-default-tsan` 5.31 s and 5.51 s
+  against 4.10 to 4.41 s in every other run of the job in this section and the
+  last), and the same stage took 7.81, 8.81 and 8.71 s in the three runs on
+  094cf1617 and 8.71 s in the plain-shell run of this section, so the overrun
+  is a slow runner and not the change: the stage's command and the wrapper's
+  measured interval are the same. As the rule for an overrun the change cannot explain,
+  the failed Linux job of each of the two runs was re-run once (`gh run rerun
+  <run> --job <job>`; the Windows jobs of attempt 1 were not re-run and their
+  results stand): `linux-runtime-tsan` took 8.71 s in the head's run and 8.51 s
+  in the 1 s run, and both verdicts printed `time budgets: every recorded stage
+  finished within its budget`. The head's run then concluded `success`, and in
+  the 1 s run the only failed job was `completion-windows`. The stage's row is
+  not raised; it sits at the floor with 7.81 to 10.52 s over eight runs.
+
+On the same probe commits `static` through `run_tests` read the checks of the
+wrapper's test again: on the plain-shell commit it failed in the group
+`windows_shell` at `grep -q run-check.pl "\$GITHUB_ACTION"` (run 45944435742),
+and on the 1 s commit in the group `windows_form`, whose table awk requires a
+Windows value of at least the 10 s floor (run 45945450647). `static` passed on
+the head seven times (runs 45944289637, 45944812340, 45945071142, 45945072839,
+45945074187, 45945292379 and 45945551227, on the 14900K with the 20 groups side
+by side), `runtime` passed (45944812340, 45945292379) and so did the
+conformance adapter test (45944433771, 180 s).
+
+These three runs hold for a head whose `.github/run-check.pl`,
+`.github/workflows/io-hosts.yml` and Windows rows are those of 8781c1fe6; a
+later change to any of them needs the three again. The probe commits are not on
+the branch.
+
 **The `repository-invariants` stage with the wrapper test grown (2026-11-26).**
 The full check of the merge of main at 3e59fcdde (the gate, run 45883143138, on
 bec09021f) had one failure: in `static`, on an AMD EPYC 9V45, `repository-
