@@ -2299,6 +2299,71 @@ These three runs hold for a head whose `.github/run-check.pl`,
 later change to any of them needs the three again. The probe commits are not on the
 branch.
 
+**After the merge of main at 460f31abb.** That merge (main's change to when
+`io-hosts.yml` checks a revision) changed `.github/workflows/io-hosts.yml`
+outside the Windows job's steps: the nightly `schedule` trigger, the `scope`
+job, the new `reason` job, `needs.scope.outputs.needed == 'true'` in the `if:`
+of `completion-linux` and `completion-windows`, `reason` in the `needs` of
+`results`, and header comments. `.github/run-check.pl` and the 17 `windows-*`
+rows are the same as at 6d5b0da5c (`git diff 6d5b0da5c 094cf1617 --
+.github/run-check.pl` is empty and the rows compare equal), so the runs on
+6d5b0da5c hold for the unchanged steps only; the three were made again on the
+merged head 094cf1617 and on one child of it for each probe, dispatched at
+04:24 UTC on 2026-11-27 (`gh workflow run io-hosts.yml --ref <branch>` on the
+branches `run_tests` published; `workflow_dispatch` events whose `headSha` is
+the commit named). In each run the `scope` job decided to check ("io-hosts.yml
+checks the change from 460f31abb3b6: it touches .github/run-check.pl and 2
+more paths its jobs read").
+
+| Run | Commit | Differs from the head 094cf1617 by | Conclusion | Failed steps |
+|---|---|---|---|---|
+| 45939776880 | 094cf1617 | nothing (the head) | success | none |
+| 45939779676 | 92b5e14ec | `windows-test-images` at 1 s in the Windows column | failure | `completion-windows`: "Hold every stage to its time budget" |
+| 45939782821 | 86d4c41d3 | the job's default shell plain `bash` | failure | `completion-windows`: "Hold every stage to its time budget" |
+
+- **The head.** Every job that ran passed (`completion-linux`,
+  `completion-windows`; "Test results" is skipped in a manual run without the
+  engine's request). On an AMD EPYC 7763, the Windows log has one `START` line
+  and one `END` line for each of 17 labels, and the 17 labels sorted equal the
+  17 `windows-*` rows of the table (`cmp`). The `END` times in seconds, in step
+  order of the table: 13.33, 0.44, 9.25, 11.94 for the test images, 1.47,
+  0.11, 1.35, 0.33, 0.43, 0.11, 2.87, 45.33 for the bounded connect, 0.32,
+  0.21, 254.07 for the program-case build, 46.45 for the program cases and
+  21.60, each within its row (the test images at 11.94 s of 15 s, the cases at
+  46.45 s of 65 s). The log has no `real`, `user` or `sys` line and no `OVER
+  BUDGET` line, and the verdict step printed `time budgets: every recorded
+  stage finished within its budget`.
+- **The 1 s row.** On an AMD EPYC 9V74 the only failed step of the run was the
+  verdict step. The log has the 17 `START` and 17 `END` lines with the labels
+  of the table (sorted, they equal the 17 `windows-*` rows), and one `== OVER
+  BUDGET: enforced: windows-test-images took 9.7 s, over its 1 s windows budget
+  ==` line after that stage's `END` line (9.66 s, exit 0). The verdict step's
+  output is `== TIME BUDGETS EXCEEDED ==` with a single entry (`grep -c
+  'ENFORCED:'` over the whole log gives 1), `ENFORCED: windows-test-images took
+  9.7 s, over its 1 s windows budget`, and exit code 1. The other 16 stages
+  ended within their rows: 9.37, 0.97, 9.57, 1.20, 0.11, 1.08, 0.33, 0.34,
+  0.11, 2.80, 50.11 for the bounded connect, 0.32, 0.22, 204.96 for the
+  program-case build, 38.27 for the program cases and 15.91 s.
+- **The plain shell.** On an AMD EPYC 9V74 the only failed step of the run was
+  the verdict step, which printed `no stage ran under run-check.pl: the time
+  budget record '/d/a/_temp/time-budget-overruns.txt' does not exist` and exited
+  1. The log has no `== START` and no `== END` line, and every other step
+  passed.
+
+On the same two probe commits, `static` through `run_tests` read the checks of
+the wrapper's test: on the plain-shell commit it failed in the group
+`windows_shell` at `grep -q run-check.pl "\$GITHUB_ACTION"` (run 45940179125),
+and on the 1 s commit it failed in the group `windows_form`, whose table awk
+requires a Windows value of at least the 10 s floor (run 45940286107). So the
+1 s probe cannot reach the branch through `static` as it is; it exists only for
+the run above. The head's `static` passed (run 45939646815), and so did the
+conformance adapter test on it (run 45940284980, 160 s).
+
+These three runs hold for a head whose `.github/run-check.pl`,
+`.github/workflows/io-hosts.yml` and Windows rows are those of 094cf1617; a
+later change to any of them needs the three again. The probe commits are not on
+the branch.
+
 **The `repository-invariants` stage with the wrapper test grown (2026-11-26).**
 The full check of the merge of main at 3e59fcdde (the gate, run 45883143138, on
 bec09021f) had one failure: in `static`, on an AMD EPYC 9V45, `repository-
