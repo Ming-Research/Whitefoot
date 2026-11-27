@@ -25,7 +25,11 @@ jobs:
   model:
     if: ${{ !contains(github.event.head_commit.message, '[probe-only]') }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 300
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [check, measure, recount, "false", dense, big]
     steps:
       - uses: actions/checkout@v4
       - name: Host
@@ -39,83 +43,20 @@ jobs:
         run: |
           set -o pipefail
           cargo build --release 2>&1 | tail -60
-      - name: Check every candidate against exhaustive evaluation
-        working-directory: research/investigations/join-derivation/model
-        run: |
-          set -o pipefail
-          status=0
-          ./target/release/join-derivation-model check > "$RUNNER_TEMP/check.csv" || status=$?
-          tail -1 "$RUNNER_TEMP/check.csv"
-          grep -E 'UNSOUND|SEL-INEXACT|NOT-ENUMERATED' "$RUNNER_TEMP/check.csv" | head -40 || true
-          exit "$status"
-      - name: Measure
-        if: always()
-        working-directory: research/investigations/join-derivation/model
-        run: |
-          taskset -c 1 ./target/release/join-derivation-model measure > "$RUNNER_TEMP/measure-1.csv"
-          wc -l "$RUNNER_TEMP/measure-1.csv"
-          uptime
-      - name: Count again, the candidates without exponential growth
-        if: always()
-        working-directory: research/investigations/join-derivation/model
-        run: |
-          ./target/release/join-derivation-model recount > "$RUNNER_TEMP/measure-2.csv"
-          cut -d, -f1-19,21-23 "$RUNNER_TEMP/measure-2.csv" | sort > "$RUNNER_TEMP/counts-2.csv"
-          cut -d, -f1-19,21-23 "$RUNNER_TEMP/measure-1.csv" | sort > "$RUNNER_TEMP/counts-1.csv"
-          missing=$(comm -23 "$RUNNER_TEMP/counts-2.csv" "$RUNNER_TEMP/counts-1.csv" | wc -l)
-          echo "rows of the second count: $(wc -l < "$RUNNER_TEMP/counts-2.csv"); rows not identical in the first: $missing"
-          comm -23 "$RUNNER_TEMP/counts-2.csv" "$RUNNER_TEMP/counts-1.csv" | head -20
-      - name: Every family with its last obligation made false
-        if: always()
+      - name: Run
         working-directory: research/investigations/join-derivation/model
         run: |
           status=0
-          ./target/release/join-derivation-model false > "$RUNNER_TEMP/false.csv" || status=$?
-          tail -1 "$RUNNER_TEMP/false.csv"
-          grep -E 'UNSOUND|PROVED-NO-WITNESS' "$RUNNER_TEMP/false.csv" | head -40 || true
-          exit "$status"
-      - name: Theory step on dense systems
-        if: always()
-        working-directory: research/investigations/join-derivation/model
-        run: |
-          ./target/release/join-derivation-model dense > "$RUNNER_TEMP/dense.csv"
-          tail -3 "$RUNNER_TEMP/dense.csv"
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: model-${{ github.run_id }}
-          path: |
-            ${{ runner.temp }}/check.csv
-            ${{ runner.temp }}/measure-1.csv
-            ${{ runner.temp }}/measure-2.csv
-            ${{ runner.temp }}/false.csv
-            ${{ runner.temp }}/dense.csv
-
-  big:
-    if: ${{ !contains(github.event.head_commit.message, '[probe-only]') }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 300
-    steps:
-      - uses: actions/checkout@v4
-      - name: Host
-        run: |
-          lscpu | sed -n '1,16p'
+          taskset -c 1 ./target/release/join-derivation-model ${{ matrix.mode }} > "$RUNNER_TEMP/${{ matrix.mode }}.csv" || status=$?
+          wc -l "$RUNNER_TEMP/${{ matrix.mode }}.csv"
+          tail -1 "$RUNNER_TEMP/${{ matrix.mode }}.csv"
           uptime
-      - name: Build
-        working-directory: research/investigations/join-derivation/model
-        run: |
-          set -o pipefail
-          cargo build --release 2>&1 | tail -40
-      - name: Largest sizes
-        working-directory: research/investigations/join-derivation/model
-        run: |
-          taskset -c 1 ./target/release/join-derivation-model big > "$RUNNER_TEMP/big.csv"
-          wc -l "$RUNNER_TEMP/big.csv"
+          exit "$status"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: big-${{ github.run_id }}
-          path: ${{ runner.temp }}/big.csv
+          name: model-${{ matrix.mode }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/${{ matrix.mode }}.csv
 
   probe:
     if: ${{ !contains(github.event.head_commit.message, '[model-only]') }}
