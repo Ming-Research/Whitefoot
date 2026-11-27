@@ -27,8 +27,9 @@
 //! the process inside the trusted base. The tests below cover the resource
 //! record and abort edges for scalar, array, Slots and Ring cells, cleanup of
 //! initialized elements before their backing allocation, probe attachment to
-//! every emitted definition, native containment on a guarded stack, and two
-//! lanes of one `--par` module refused an allocation at the same moment.
+//! every emitted definition, native containment on a guarded stack, two
+//! lanes of one `--par` module refused an allocation at the same moment, and
+//! an `exit_now` that finds a record already begun.
 
 use super::BoundedOutput;
 use std::process::Command;
@@ -693,6 +694,98 @@ ssize_t wf_test_record_write(int fd, const void *bytes, size_t length) {
 }
 "#;
 
+/// An entry that ends the execution with `exit_now` and status 1 [WAIT-2].
+const EXIT_FROM_ENTRY: &[u8] = br#"alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias exit_status = std::process::exit_status;
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(cwd: directory, handles: factory, exit: exit, ..) = move inputs;
+  let std::fs::Directory(read: read_directory, write: write_directory) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move write_directory);
+  std::fs::close_directory(factory: &factory, directory: move read_directory);
+  let one = exit_status(code: 1_u8);
+  std::process::exit_now(exit: &exit, status: move one);
+  return exit_status(code: 0_u8);
+}
+"#;
+
+/// An exit never cuts a resource record another thread has begun.
+///
+/// [`EXIT_WITH_A_RECORD_BEGUN`] takes the floor's record latch before the
+/// entry runs, as a record writer does, and ends the process with that record
+/// once the exit has asked for the latch and half a second more has passed.
+/// An exit that takes the latch finds it held and parks, so the process ends
+/// with the record and its abort. An exit that skips the latch, or takes it
+/// and ends the process anyway, ends it with status 1 instead, the record
+/// unwritten. Resource exhaustion is no source outcome [SCOPE-3]; that one
+/// record is written whole is the runtime contract the latch keeps.
+#[test]
+fn an_exit_leaves_the_process_to_a_record_already_begun() {
+    let module = super::emit(EXIT_FROM_ENTRY);
+    let directory = test_directory();
+    let executable = super::build_linked_executable_with_library_defines(
+        &module,
+        Some(EXIT_WITH_A_RECORD_BEGUN),
+        &[],
+        &["wf__floor_record_latch=wf_test_exit_latch".to_owned()],
+        &directory,
+    );
+    let output = Command::new(&executable)
+        .bounded_output()
+        .expect("run the exit with a record begun");
+    assert_eq!(
+        signal_of(&output),
+        Some(libc_sigabrt()),
+        "the record's writer, not the exit, must end the process: {output:?}"
+    );
+    assert_resource_record(&output.stderr, "stack");
+    std::fs::remove_dir_all(directory).expect("remove the exit and record case");
+}
+
+/// The host side of [`an_exit_leaves_the_process_to_a_record_already_begun`].
+///
+/// The ordinary library is compiled with its latch accessor renamed to
+/// `wf_test_exit_latch`, so the writer below starts only once the exit has
+/// asked for the latch; the half second after that is the time an exit that
+/// does not park has to end the process first.
+const EXIT_WITH_A_RECORD_BEGUN: &str = r#"
+#define _POSIX_C_SOURCE 200809L
+#include <pthread.h>
+#include <sched.h>
+#include <stdatomic.h>
+#include <stdlib.h>
+#include <time.h>
+#include <unistd.h>
+
+extern volatile int *wf__floor_record_latch(void);
+
+static atomic_uint exit_arrivals;
+
+volatile int *wf_test_exit_latch(void) {
+    atomic_fetch_add(&exit_arrivals, 1);
+    return wf__floor_record_latch();
+}
+
+static const char STACK_RECORD[] = "{\"resource\":\"stack\"}\n";
+
+static void *record_writer(void *unused) {
+    struct timespec interval = {0, 500000000};
+    (void)unused;
+    while (atomic_load(&exit_arrivals) == 0) sched_yield();
+    nanosleep(&interval, NULL);
+    ssize_t ignored = write(2, STACK_RECORD, sizeof(STACK_RECORD) - 1);
+    (void)ignored;
+    abort();
+}
+
+__attribute__((constructor)) static void take_the_record_latch(void) {
+    pthread_t writer;
+    *wf__floor_record_latch() = 1;
+    if (pthread_create(&writer, NULL, record_writer, NULL) != 0) _exit(90);
+}
+"#;
+
 /// Filled and empty windows whose proved byte ceilings fit the selected target
 /// carry no runtime target-domain path. The allocator can still return null,
 /// so each operation keeps its ordinary heap-resource edge, which is the
@@ -840,7 +933,7 @@ fn runtime_count_allocation(statements: &str) -> String {
 }}
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {{
-  let std::process::Inputs(args: args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
+  let std::process::Inputs(args: args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id, exit: unused_exit) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);
@@ -1028,7 +1121,7 @@ fn spine(depth: u64, v: u64, i: u8) -> result: u64 pure {
 }
 
 fn main(inputs: std::process::Inputs) -> status: std::process::ExitStatus pure waits {
-  let std::process::Inputs(args: args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id) = move inputs;
+  let std::process::Inputs(args: args, drivers: unused_driver_count, cwd: unused_cwd_directory, stdout: unused_stdout, stderr: unused_stderr, handles: entry_factory, stdin: unused_stdin, clock: unused_clock, wall_clock: unused_wall_clock, stops: unused_stops, memory_meter: unused_memory_meter, host_paths: unused_host_paths, process_id: unused_process_id, exit: unused_exit) = move inputs;
   let std::fs::Directory(read: unused_cwd, write: unused_cwd_write) = move unused_cwd_directory;
   std::fs::close_directory_write(factory: &entry_factory, directory: move unused_cwd_write);
   std::fs::close_directory(factory: &entry_factory, directory: move unused_cwd);

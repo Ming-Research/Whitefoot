@@ -121,7 +121,9 @@ static const char WF_FLOOR_STACK_RECORD[] = "{\"resource\":\"stack\"}\n";
  * per writer leaves them unserialized against each other and two records can
  * interleave on the same channel — which is exactly what "exactly one record"
  * is supposed to rule out. The module asks for the address rather than keeping
- * its own, and a module linked without this unit falls back to one of its own. */
+ * its own, and a module linked without this unit falls back to one of its own.
+ * A call of `exit_now` takes the same latch before it ends the process, so an
+ * exit never cuts a record another thread has begun. */
 static volatile int wf__floor_latch;
 
 volatile int *wf__floor_record_latch(void) { return &wf__floor_latch; }

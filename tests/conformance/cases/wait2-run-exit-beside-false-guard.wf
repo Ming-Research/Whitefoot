@@ -1,0 +1,29 @@
+alias ExitStatus = std::process::ExitStatus;
+alias Inputs = std::process::Inputs;
+alias ProcessExit = std::process::ProcessExit;
+alias exit_status = std::process::exit_status;
+
+fn wait_forever(cell: Shared<u8>) -> result: unit pure waits {
+  atomic value = &cell when value^ != 0_u8 {
+  }
+  return unit;
+}
+
+fn leave(exit: ProcessExit) -> result: unit pure waits {
+  let failed = exit_status(code: 1_u8);
+  std::process::exit_now(exit: &exit, status: move failed);
+  return unit;
+}
+
+fn main(inputs: Inputs) -> status: ExitStatus pure waits {
+  let Inputs(cwd: directory, handles: factory, exit: exit, ..) = move inputs;
+  let std::fs::Directory(read: read_directory, write: write_directory) = move directory;
+  std::fs::close_directory_write(factory: &factory, directory: move write_directory);
+  std::fs::close_directory(factory: &factory, directory: move read_directory);
+  let cell = shared_new::<u8>(value: 0_u8);
+  let waiting = shared_share::<u8>(shared: &cell);
+  spawn wait_forever(cell: move waiting);
+  let leaving = std::process::exit_share(exit: &exit);
+  spawn leave(exit: move leaving);
+  return exit_status(code: 0_u8);
+}

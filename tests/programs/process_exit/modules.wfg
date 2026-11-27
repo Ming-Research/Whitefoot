@@ -1,0 +1,3 @@
+pkg: [std::process, std::io, std::time, std::text, std::fs];
+
+entry process_exit = pkg::main;
