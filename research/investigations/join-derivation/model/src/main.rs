@@ -306,6 +306,9 @@ struct Cfg {
     ceiling: Option<usize>,
     /// A join also records the constant interval of each join value.
     interval: bool,
+    /// A join bound brought into a problem does not bring in what its
+    /// other values reach.
+    shallow: bool,
 }
 
 const fn cfg(name: &'static str, bnd: Bnd, sat: bool, split: Split) -> Cfg {
@@ -327,6 +330,7 @@ const fn cfg(name: &'static str, bnd: Bnd, sat: bool, split: Split) -> Cfg {
         first_free: false,
         ceiling: None,
         interval: false,
+        shallow: false,
     }
 }
 
@@ -371,6 +375,8 @@ fn configs() -> Vec<Cfg> {
         Cfg { first_free: true, ..root("win16-root-free") },
         Cfg { forced: Forced::RootFix, ..root("win16-rootfix") },
         Cfg { interval: true, ..root("win16-root-int") },
+        Cfg { shallow: true, ..root("win16-root-shallow") },
+        Cfg { shallow: true, lp: true, ..root("win16-root-shallow-lp") },
         Cfg { ceiling: Some(16), exponential: false, ..cfg("cut16", Bnd::Rel, false, Split::All) },
         Cfg { ceiling: Some(16), exponential: false, latest_first: false, ..cfg("cut16-early", Bnd::Rel, false, Split::All) },
         v2("win16-v2", Forced::Root, false),
@@ -454,6 +460,9 @@ impl<'a> Engine<'a> {
             for position in positions {
                 if !included[position] {
                     included[position] = true;
+                    if self.cfg.shallow && position >= lits.len() {
+                        continue;
+                    }
                     for inner in pool[position].lin.vars() {
                         if reached.insert(inner) {
                             work.push(inner);
@@ -1064,7 +1073,7 @@ fn measure(quick: bool) {
 /// fitted.
 fn big() {
     println!("{HEADER}");
-    let wanted = ["bnd-rel", "bnd-rel-lp", "win16-root", "win16-root-lp", "win16-v2", "win16-v2-lp"];
+    let wanted = ["bnd-rel", "bnd-rel-lp", "win16-root", "win16-root-lp", "win16-v2", "win16-v2-lp", "win16-root-shallow", "win16-root-shallow-lp"];
     let limit = Duration::from_secs(900);
     for family in families::all() {
         if !["CHAIN", "CHAINOBL", "GUARDED", "OP5"].contains(&family.name) {

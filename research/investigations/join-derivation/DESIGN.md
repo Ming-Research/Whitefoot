@@ -569,3 +569,16 @@ under `win16` and `win16-root`, for k <= 6 under `win64`, and only for k = 1
 under `sat`; so a program with that `if` at k = 5 or 6 is accepted at
 P = 16 and rejected at P = 64.
 Refuted if the sizes at which the question is decided do not grow with P.
+
+**V13 (finding 4, added after run 45928696201 and before its own
+measurement).** That run's `work` on CHAIN grows by 7.3 from k = 64 to
+k = 128 under `bnd-rel`: cubic. Each join's bound is computed over every
+literal its values reach, and a join bound reaches the join before it, so
+one projection reads the whole chain. The candidates `win16-root-shallow`
+and `win16-root-shallow-lp` change one thing: a join bound that is brought
+into a problem does not bring in what its other values reach.
+Prediction: on CHAIN, CHAINOBL, CHAINSYM, GUARDED and OP5 the verdicts stay
+and `work` at k = 128 is at most 4.5 times `work` at k = 64. The change
+loses ADDENDS and MINSEL, whose proofs chain transition bounds through
+every join, and keeps ADDENDSINV.
+Refuted by a faster growth or by other verdicts.
