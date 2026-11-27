@@ -1,6 +1,11 @@
 CARGO := cargo
 .DELETE_ON_ERROR:
 CHECK_RUN := perl $(abspath ../.github/run-check.pl)
+# `all` runs a group's tests whole. Any other value is one part of the group,
+# named in the root Makefile and run by shard-tests.pl, with its own stage
+# label and so its own time budget.
+SHARD ?= all
+SHARD_RUN := perl $(abspath ../.github/shard-tests.pl)
 CC ?= cc
 LLVM_CC ?= clang
 WINDOWS_CC ?= x86_64-w64-mingw32-gcc
@@ -184,14 +189,22 @@ _test: test-build test-unit test-corpus
 
 # Private compiler obligations in the library's own test modules.
 test-unit:
+ifeq ($(SHARD),all)
 	$(NO_CORE_DUMPS) $(CHECK_RUN) compiler/test-unit $(CARGO) test --profile gate --lib --locked --offline
+else
+	$(NO_CORE_DUMPS) $(CHECK_RUN) compiler/test-unit-shard $(SHARD_RUN) unit "$(SHARD)" "$(CARGO)"
+endif
 
 # Every integration target is discovered by Cargo, so adding one cannot fall
 # out of a copied target list. The shared corpus owns programs, conformance,
 # canonical rendering and the CLI's own tests; no baseline compiler or timed
 # comparison is involved.
 test-corpus:
+ifeq ($(SHARD),all)
 	$(NO_CORE_DUMPS) $(CHECK_RUN) compiler/test-corpus $(CARGO) test --profile gate --bins --test '*' --locked --offline
+else
+	$(NO_CORE_DUMPS) $(CHECK_RUN) compiler/test-corpus-$(firstword $(subst -, ,$(SHARD))) $(SHARD_RUN) corpus "$(SHARD)" "$(CARGO)"
+endif
 
 # The corpus target again with every program it builds, its running
 # conformance cases also with the `--par` lowering, compiled and linked under

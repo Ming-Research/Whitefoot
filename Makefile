@@ -19,8 +19,30 @@ RESEARCH_CARGO_TARGET := $(WHITEFOOT_SCRATCH_ROOT)/whitefoot-research-tests-targ
 
 # One group inventory for local execution and the hosted correctness matrix.
 # The _check-<group> recipes below own the commands on both paths. CI reads
-# check-groups and invokes check-group; it keeps no second command inventory.
+# check-groups (and check-parts, for the groups it runs in parts) and invokes
+# check-group; it keeps no second command inventory.
 CHECK_GROUPS := static unit corpus runtime
+
+# A group may also be run as parts that together run what the whole group runs
+# once, each part compiling for itself. The parts are named here and nowhere
+# else, with no host in the list: which host runs the parts and which the whole
+# group is the workflow's choice (.github/gate-matrix.sh). A part is `I/N` of
+# a group's tests by sorted name (unit), `walk-I/N` of the conformance walk's
+# cases, the proof-receipt test alone (`receipts`) or every other test
+# (`rest`); `all` is the whole group, which every group accepts and `make
+# check` runs. .github/shard-tests.pl runs the parts.
+CHECK_SHARDS_unit := 1/4 2/4 3/4 4/4
+CHECK_SHARDS_corpus := walk-1/3 walk-2/3 walk-3/3 receipts rest
+SHARD ?= all
+
+# A command that waits for the host's LLVM toolchain, which the workflow
+# installs while a job compiles (.github/host-toolchain.sh); nothing on a host
+# that has it already. A group that compiles first (CHECK_COMPILES_FIRST) runs
+# it where its tests begin, so the install overlaps the compile; any other
+# group runs it before its stage starts, so the wait is not part of the stage's
+# time.
+TOOLCHAIN_READY ?= :
+CHECK_COMPILES_FIRST := unit corpus
 ifeq ($(strip $(CHECK_GROUPS)),)
 $(error the correctness group inventory must not be empty)
 endif
@@ -54,16 +76,38 @@ _check:
 	@echo "== WHITEFOOT ALL TESTS GREEN =="
 
 # JSON is consumed directly by the GitHub Actions matrix. This is a view of
-# CHECK_GROUPS, not generated source or another list to maintain.
+# CHECK_GROUPS, not generated source or another list to maintain. It stays a
+# list of group names: the wf-agents engine runs main's gate.yml against a
+# commit's Makefile, so a change to this output would break the check of the
+# very commit that makes it.
 check-groups:
 	@printf '['; separator=''; \
 	for group in $(CHECK_GROUPS); do \
 		printf '%s"%s"' "$$separator" "$$group"; separator=,; \
 	done; printf ']\n'
 
+# The parts of the groups, for the workflow that runs a group in parts (a view
+# of CHECK_GROUPS and CHECK_SHARDS_*, as check-groups is of CHECK_GROUPS): one
+# object for each part of a split group and one `all` object for each group
+# that is not split, in the group order. A part's job name is the group and the
+# part with no `/`, which no file or artifact name may hold.
+check-parts:
+	@printf '['; separator=''; \
+	for entry in $(foreach group,$(CHECK_GROUPS),$(if $(CHECK_SHARDS_$(group)),$(foreach shard,$(CHECK_SHARDS_$(group)),$(group):$(shard)),$(group):all)); do \
+		group=$${entry%%:*}; shard=$${entry#*:}; name=$$group; \
+		test "$$shard" = all || name=$$(printf '%s %s' "$$group" "$$shard" | sed 's|-| |; s|/| of |'); \
+		printf '%s{"group":"%s","shard":"%s","name":"%s"}' "$$separator" "$$group" "$$shard" "$$name"; separator=,; \
+	done; printf ']\n'
+
+# The stage label of a part tells its kind (check/unit-shard, check/corpus-walk,
+# check/corpus-receipts, check/corpus-rest), so that each kind has its own time
+# budget.
 check-group:
 	@$(if $(and $(filter 1,$(words $(GROUP))),$(filter $(CHECK_GROUPS),$(GROUP))),:,$(error GROUP must name one correctness group from: $(CHECK_GROUPS)))
-	@$(CHECK_RUN) "check/$(GROUP)" $(MAKE) --no-print-directory "_check-$(GROUP)"
+	@$(if $(and $(filter 1,$(words $(SHARD))),$(filter all $(CHECK_SHARDS_$(GROUP)),$(SHARD))),:,$(error SHARD must be all or a part of $(GROUP): $(CHECK_SHARDS_$(GROUP))))
+	@$(if $(filter $(GROUP),$(CHECK_COMPILES_FIRST)),,$(TOOLCHAIN_READY))
+	@$(CHECK_RUN) "check/$(GROUP)$(if $(filter all,$(SHARD)),,-$(if $(findstring walk-,$(SHARD)),walk,$(if $(findstring /,$(SHARD)),shard,$(SHARD))))" \
+		$(MAKE) --no-print-directory "_check-$(GROUP)" SHARD="$(SHARD)"
 
 .PHONY: _check-static
 _check-static:
@@ -76,12 +120,14 @@ _check-static:
 .PHONY: _check-unit
 _check-unit:
 	@$(MAKE) -C compiler test-build-unit
-	@$(MAKE) -C compiler test-unit
+	@$(TOOLCHAIN_READY)
+	@$(MAKE) -C compiler test-unit SHARD="$(SHARD)"
 
 .PHONY: _check-corpus
 _check-corpus:
 	@$(MAKE) -C compiler test-build-corpus
-	@$(MAKE) -C compiler test-corpus
+	@$(TOOLCHAIN_READY)
+	@$(MAKE) -C compiler test-corpus SHARD="$(SHARD)"
 
 .PHONY: _check-runtime
 _check-runtime:
@@ -136,6 +182,9 @@ repository-invariants:
 	@$(PY) .github/check-research-inputs.py
 	@sh .github/test-run-check.sh
 	@$(PY) .github/recompute-time-budgets.py --self-test
+	@perl .github/shard-tests.pl --self-test
+	@sh .github/host-toolchain.sh --self-test
+	@sh .github/test-gate-matrix.sh
 	@sh .github/merge-base.sh --self-test
 	@sh .github/test-merge-base.sh
 	@sh .github/test-gate-scope.sh
@@ -340,4 +389,4 @@ install-hooks:
 	git config core.hooksPath governance/hooks
 	@echo "installed governance/hooks (pre-commit, pre-merge-commit)"
 
-.PHONY: historical-tool-tests _historical-tool-tests check _check check-groups check-group static repository-invariants test-fast-state test-change-scope spec-archives readme-translation guidance safety-claims source-size spec-append-only-staged spec-prose-integrity design-lint design-ready conformance compiler performance-instrument conformance-run install-hooks
+.PHONY: historical-tool-tests _historical-tool-tests check _check check-groups check-parts check-group static repository-invariants test-fast-state test-change-scope spec-archives readme-translation guidance safety-claims source-size spec-append-only-staged spec-prose-integrity design-lint design-ready conformance compiler performance-instrument conformance-run install-hooks

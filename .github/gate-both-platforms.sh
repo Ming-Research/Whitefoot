@@ -1,9 +1,9 @@
 #!/bin/sh
-# Require every correctness group green on Linux and macOS for a revision,
-# read from the jobs of gate.yml's runs for that revision. Only jobs of those
+# Require every job the gate was asked for green for a revision, read from the
+# jobs of gate.yml's runs for that revision. Only jobs of those
 # runs count (`filter=latest` drops a job superseded by a re-run attempt), and
 # the latest completed job of a name decides, so a re-run run supersedes an
-# earlier one. Each `<group> (<os>)` must have concluded success.
+# earlier one. Each expected `<name> (<os>)` must have concluded success.
 #
 # A run whose own group jobs all succeeded needs no listing. GitHub may record
 # a finished job as complete minutes late: run 39607651901's corpus job ended
@@ -11,9 +11,10 @@
 # script listed, so a group that had passed read as absent; in run 40115097375
 # the runtime job's steps ended 17:14:20 and it was recorded complete 17:24:40
 # (research/investigations/test-economy/time-budgets.md). The run's own result
-# is not late: GATE_RUN_RESULT is `needs.gate.result` of the run's group
-# matrix, `success` exactly when every group on every platform the run was
-# asked for succeeded, so the verdict is that result, with no GitHub call. A
+# is not late: GATE_RUN_RESULT is `needs.gate.result` of the run's job
+# matrix, `success` exactly when every job (every group, or every part of a
+# group that runs in parts) on every platform the run was asked for succeeded,
+# so the verdict is that result, with no GitHub call. A
 # group job that GitHub stops at its time limit without having recorded it
 # complete ends `cancelled` and has no result: the run is then not `success`,
 # this script reads the listing as below, finds no completed job and fails;
@@ -34,12 +35,12 @@
 #   result: it fails the step at once, with no further listing, after every
 #   group's line is printed; a cancelled job is no entry (see list).
 #
-# It reads GH_TOKEN, HEAD_SHA, GATE_GROUPS (a JSON array of group names),
-# GATE_PLATFORMS (space-separated, default `ubuntu-24.04 macos-15`),
-# GATE_RUN_RESULT (the run's group matrix result, optional) and
-# GITHUB_REPOSITORY, uses RUNNER_TEMP (or a fresh temporary directory) for
-# scratch files, and queries GitHub with `gh`. .github/test-gate-both-platforms.sh
-# exercises it.
+# It reads GH_TOKEN, HEAD_SHA, GATE_JOBS (a JSON array of the expected job
+# names, `<name> (<os>)`, as .github/gate-matrix.sh gives them: a name may hold
+# spaces, so each is read as one), GATE_RUN_RESULT (the run's group matrix
+# result, optional) and GITHUB_REPOSITORY, uses RUNNER_TEMP (or a fresh
+# temporary directory) for scratch files, and queries GitHub with `gh`.
+# .github/test-gate-both-platforms.sh exercises it.
 set -eu
 
 wait_retry=${GATE_RETRY_WAIT:-5}
@@ -47,21 +48,21 @@ wait_relist=${GATE_RELIST_WAIT:-30}
 attempts=5
 listings=4
 
-groups=$(printf '%s\n' "$GATE_GROUPS" | jq -er '.[]')
-test -n "$groups"
-
-if [ "${GATE_RUN_RESULT:-}" = success ]; then
-    for group in $groups; do
-        for os in ${GATE_PLATFORMS:-ubuntu-24.04 macos-15}; do
-            echo "ok      $group ($os)"
-        done
-    done
-    echo "$HEAD_SHA: every group of this run succeeded; no listing is needed"
-    exit 0
-fi
-
 work=$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/gate-both-platforms.XXXXXX")
 trap 'rm -rf "$work"' EXIT
+
+# One job name to a line: a name may hold spaces (`unit 1 of 3 (ubuntu-24.04)`),
+# so it is read a line at a time and never split on white space.
+printf '%s\n' "$GATE_JOBS" | jq -er '.[]' > "$work/expected"
+test -s "$work/expected"
+
+if [ "${GATE_RUN_RESULT:-}" = success ]; then
+    while IFS= read -r name; do
+        echo "ok      $name"
+    done < "$work/expected"
+    echo "$HEAD_SHA: every job of this run succeeded; no listing is needed"
+    exit 0
+fi
 
 # api LABEL ARGS...: gh api with retries; the answer goes to $work/answer.
 api() {
@@ -110,21 +111,18 @@ list() {
 judge() {
     absent=0
     failed=0
-    for group in $groups; do
-        for os in ${GATE_PLATFORMS:-ubuntu-24.04 macos-15}; do
-            name="$group ($os)"
-            found=$(awk -F '\t' -v name="$name" '$2 == name && !seen { seen = 1; print "x" $3 }' "$work/sorted.tsv")
-            if [ -z "$found" ]; then
-                echo "MISSING $name: no gate job"
-                absent=$((absent + 1))
-            elif [ "$found" = xsuccess ]; then
-                echo "ok      $name"
-            else
-                echo "MISSING $name: ${found#x}"
-                failed=$((failed + 1))
-            fi
-        done
-    done
+    while IFS= read -r name; do
+        found=$(awk -F '\t' -v name="$name" '$2 == name && !seen { seen = 1; print "x" $3 }' "$work/sorted.tsv")
+        if [ -z "$found" ]; then
+            echo "MISSING $name: no gate job"
+            absent=$((absent + 1))
+        elif [ "$found" = xsuccess ]; then
+            echo "ok      $name"
+        else
+            echo "MISSING $name: ${found#x}"
+            failed=$((failed + 1))
+        fi
+    done < "$work/expected"
 }
 
 count=1
