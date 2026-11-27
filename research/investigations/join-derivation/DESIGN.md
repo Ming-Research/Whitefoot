@@ -415,3 +415,16 @@ is at most 8 times the count at k = 16. `win16-root` proves FLAGS(m) and
 MIX(k) at every size and FLAGCHAIN(k) only up to k = 5. `win16-depth8`
 proves FLAGS(m) and FLAGCHAIN(k) up to 12 and not from 14.
 Refuted by a pair count that grows faster, or by a verdict that differs.
+
+**A narrower "near", after run 45911803573.** H12's cost prediction failed
+for both bounded forms: the last OP5 question still cost work that grew with
+the square of the chain. The cause is the definition of "near" above. Every
+arm's condition names the limit `n`, the obligation reaches `n`, so every
+join of the chain was near and was probed. From model commit after
+`8cf761bf3`, a join is near only when one of its join values is reached; a
+value that an arm's literals merely name no longer makes the join near.
+Prediction, written before the new measurement: the verdicts of H4 and H12
+stay as predicted there; under `win16-root` and `win16-depth8` the pair
+count of the last OP5 question at k = 64 is at most 8 times the count at
+k = 16; under `win16`, whose forced cases are not bounded, it is more than
+8 times, because the cascade still runs down the chain.

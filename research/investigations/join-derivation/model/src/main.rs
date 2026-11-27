@@ -473,9 +473,10 @@ impl<'a> Engine<'a> {
         recorded
     }
 
-    /// The open joins that share a value with what `roots` reach through
-    /// `lits`. With `through`, a join found this way makes its own values
-    /// reached too, which gives every join the obligation can depend on.
+    /// The open joins one of whose join values `roots` reach through `lits`.
+    /// With `through`, a join is also found by a value its arms name, and a
+    /// join found makes its own values reached too, which gives every join
+    /// the obligation can depend on.
     fn near(&self, lits: &[TL], open: &[usize], roots: &[V], through: bool) -> Vec<usize> {
         let mut index: HashMap<V, Vec<usize>> = HashMap::new();
         for (position, lit) in lits.iter().enumerate() {
@@ -501,7 +502,9 @@ impl<'a> Engine<'a> {
                     }
                 }
             }
-            if let Some(joins) = self.m.value_joins.get(&value) {
+            let owner: Vec<usize> = self.m.phi_owner.get(&value).copied().into_iter().collect();
+            let adjacent = if through { self.m.value_joins.get(&value) } else { Some(&owner) };
+            if let Some(joins) = adjacent {
                 for join in joins {
                     if open_set.contains(join) && found.insert(*join) && through {
                         for inner in &self.m.joins[*join].values {
