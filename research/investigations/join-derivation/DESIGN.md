@@ -722,3 +722,113 @@ two matches multiply to at most 16 (m <= 12).
 
 **W13 (finding 14).** No candidate proves a tightened invariant for which a
 failing run is found, nor any obligation after it.
+
+## Version 4: after the third review
+
+The third review (of tag `join-derivation-study-v3`) has eight findings.
+This section was committed with the model changes it describes and before
+their measurement.
+
+### Changes to the instrument
+
+- **The indexed theory step solves the equalities over the integers
+  completely** (finding 3). An equality with no unit coefficient is reduced
+  by steps of Euclid's algorithm, each a one-to-one change of the integer
+  solutions, until it has one. The theory step of `theory.rs` is kept as it
+  was, to show the difference. Where an equality has several unit
+  coefficients, the variable that the fewest rows hold is the one solved
+  for; by [RANGE-3]'s own words no choice of parameters changes the verdict,
+  and this choice keeps the rows short on a chain of definitions (finding
+  7).
+- **The simplex decision can follow the indexed equality step**, so that one
+  theory step has both.
+- The mode `props` checks three properties of each theory step on 40,000
+  random systems of 3 or 4 values with coefficients in -4..4: the verdict is
+  the same when the literals are reversed or rotated; a set that is not
+  contradictory has no contradictory subset of one literal fewer; a
+  contradictory set has no integer solution in -4..4.
+- Every row carries `prog_terms`, the terms of the program's own literals,
+  so that growth can be read against the program's size (finding 8).
+- Jobs `shapes` and `survey` (finding 7): the shapes of CHAIN, GUARDED,
+  SUMOBL and LIMITCHAIN written as C and as Rust and checked by clang and
+  rustc at k = 64 to 16,384; and a count of branch points per function in
+  Linux 6.6, SQLite 3.46, CPython 3.12 and Lua 5.4, as a bound on the sizes
+  this study should reach.
+
+### Candidates
+
+`v4` is the candidate that the recommendations of version 3's choices
+describe, taken together (finding 5): no split (choice 1, D); the root probe
+repeated for obligations and the bounds alone for questions of the
+redundancy rule (choice 5); bounds computed with shallow reach (choice 4);
+the remedies of choice 7 except live arms, which mean nothing without a
+split; complete integer equalities and the simplex decision. Its shallow
+reach differs from version 3's in one thing (finding 2): the other values
+of a join bound still bring in the facts that name them, and what those
+facts reach through facts, but no further join bound (`bridge`).
+
+| Name | Change from `v4` | For finding |
+| --- | --- | --- |
+| `v4-fm` | elimination in place of simplex | 5 |
+| `v4-work`, `v4-work-fm` | after the first probe pass, only the joins that share a value with a case just decided, or with a literal next to it, are probed again | 1 |
+| `v4-onepass` | one probe pass | 1 |
+| `v4-c` | P = 16 with live arms (option C) | 5 |
+| `v4-ps` | version 3's shallow reach, without the facts beside a bound | 2 |
+| `v4-full` | full reach | 2 |
+| `v4-q` | questions asked as obligations | |
+
+### Families
+
+| Family | Program | Obligation |
+| --- | --- | --- |
+| FLAGNOISE(k), FLAGNOISE2(k) | FLAGCHAIN(k) and k joins `t_i = if c_i { 1 } else { 0 }` that need no decision, after the flags or before them; inside the last flag's test | `y + t_1 + .. + t_k >= 5` |
+| PSBRIDGE(k) | k pairs: `z = if c { n - 5 } else { n - 3 }` with `n >= 10`; `x <= z`; `if d { x = 5 }` | sum of every `x - z` `<= 0` |
+| STRIDE(k) | `3x == 2y`, `x <= 5`; k times `if c { x = x + 6 }` | `x <= 4 + 6k` |
+| SUMOBLCUT(k) | SUMOBL where after every 16 steps the sum is stated within its bound and replaced by a new value that has only that bound | every step's bound |
+
+The largest sizes go to 4,096 and now include ORDERXY, FLAGNOISE,
+FLAGNOISE2, PSBRIDGE, SUMOBLCUT and STRIDE; a candidate stops on a family
+after a run of more than 60 seconds.
+
+### Hypotheses
+
+**X1 (finding 3).** The unit-only theory step shows order changes and
+additions that revive a contradiction among the 40,000 systems; the
+complete one shows none of either, with elimination and with simplex; no
+theory step calls a set contradictory that has an integer solution in the
+box. STRIDE is proved at every size by every `v4` candidate and by no
+candidate on `theory.rs`.
+Refuted by one order change or revival under the complete step, or by one
+unsound verdict.
+
+**X2 (finding 1).** On FLAGNOISE one obligation costs about 2k^2 probes
+under `v4` and `rule_terms` grows by about 8 per doubling; on FLAGNOISE2
+about 4k probes. Under `v4-work` both cost a number of probes linear in k.
+`v4-work` has the verdicts of `v4` on every family, ORDERXY included.
+Refuted if `v4-work`'s probes on FLAGNOISE at k = 256 are more than 3 times
+those at 128, or by a lost verdict (which is then reported as the cost of
+the rule).
+
+**X3 (finding 2).** PSBRIDGE is proved at every size by `v4` and `v4-full`
+with no split and by `v4-ps` only at k = 1. On CHAIN and GUARDED the
+`rule_terms` of `v4` stay linear in k.
+Refuted by a differing verdict, or if `v4`'s `rule_terms` on CHAIN grow by
+more than 2.5 per doubling.
+
+**X4 (finding 5).** `v4` finishes every family at every size up to 128 with
+no row stopped by a guard, ADDENDSINV included. Against `v3-ps` it loses
+exactly the families option D loses (SWAPS, ARMCORR, SAMECOND, SPLITAFTER,
+SPLITBEFORE and BIGTAG2 beyond one probed join, and the decided PMONO
+question) and gains PSBRIDGE and STRIDE.
+Refuted by a stopped row or another difference.
+
+**X5 (finding 7).** With the rows kept short, the time of `v4-fm` on
+LIMITCHAIN and SUMOBL grows by at most 5 per doubling of k up to 4,096.
+clang and rustc grow by about 2 per doubling on the same shapes.
+Refuted if LIMITCHAIN or SUMOBL grows by more than 6 per doubling at the
+top.
+
+**X6 (finding 4).** The most values in one theory call (`max_atoms`) under
+`v4` passes 4,096 on LIMITCHAIN, SUMOBL, MINSEL and CHAINSYMINV before
+k = 4,096, and stays below 100 on SUMOBLCUT at every size.
+Refuted if `max_atoms` stays below 4,096 at k = 4,096 on those four.

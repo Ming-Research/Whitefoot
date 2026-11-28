@@ -6,6 +6,7 @@
 use std::collections::{BTreeSet, HashMap};
 use std::time::Instant;
 
+use crate::lp::{self, Lp};
 use crate::theory::{norm_eq, norm_le, Lin, Norm, Out, Stats, TL, V};
 
 const CAPACITY: usize = 300_000;
@@ -14,6 +15,8 @@ struct Rows {
     rows: Vec<Option<(Lin, u128, bool)>>,
     holds: HashMap<V, Vec<usize>>,
     live: usize,
+    /// The next parameter the integer solution of an equality may name.
+    fresh: V,
 }
 
 impl Rows {
@@ -48,7 +51,7 @@ impl Rows {
 }
 
 pub fn theory(input: &[TL], keep: Option<V>, st: &mut Stats) -> Out {
-    let mut rows = Rows { rows: Vec::with_capacity(input.len() * 2), holds: HashMap::new(), live: 0 };
+    let mut rows = Rows { rows: Vec::with_capacity(input.len() * 2), holds: HashMap::new(), live: 0, fresh: 1 << 30 };
     let mut pending: Vec<usize> = Vec::new();
     for lit in input {
         if lit.eq {
@@ -67,45 +70,89 @@ pub fn theory(input: &[TL], keep: Option<V>, st: &mut Stats) -> Out {
             }
         }
     }
-    // Substitute each equality that has a variable with a unit coefficient.
-    let mut unsolved: Vec<usize> = Vec::new();
+    // Solve the equalities over the integers. An equality with a unit
+    // coefficient is substituted, on the unit variable that the fewest rows
+    // hold. One without is first reduced by a step of Euclid's algorithm:
+    // its variable of least coefficient `a` is replaced by a new parameter
+    // minus the others times their quotients by `a`, which maps the integer
+    // solutions one to one and leaves every other coefficient below `a`.
     let mut next = 0;
     while next < pending.len() {
         let id = pending[next];
         next += 1;
         let Some((lin, _, true)) = rows.rows[id].as_ref() else { continue };
-        let unit = lin.t.iter().find(|(value, coefficient)| coefficient.abs() == 1 && Some(*value) != keep).copied();
-        let Some((value, unit)) = unit else {
-            unsolved.push(id);
-            continue;
+        let unit = lin
+            .t
+            .iter()
+            .filter(|(value, coefficient)| coefficient.abs() == 1 && Some(*value) != keep)
+            .min_by_key(|(value, _)| (rows.holds.get(value).map_or(0, Vec::len), *value))
+            .copied();
+        let (value, replacement, replaced_tag) = match unit {
+            Some((value, unit)) => {
+                let (solved, solved_tag, _) = rows.take(id).expect("the row is there");
+                // unit * value + rest == 0, so value == -unit * rest.
+                let rest = Lin { t: solved.t.iter().copied().filter(|(other, _)| *other != value).collect(), c: solved.c };
+                (value, rest.scale(-unit), solved_tag)
+            }
+            None => {
+                let Some((least, a)) = lin.t.iter().filter(|(value, _)| Some(*value) != keep).min_by_key(|(value, coefficient)| (coefficient.abs(), *value)).copied() else {
+                    continue;
+                };
+                let parameter = rows.fresh;
+                rows.fresh += 1;
+                let mut replacement = Lin::v(parameter);
+                for (other, coefficient) in &lin.t {
+                    if *other != least {
+                        replacement = replacement.comb(1, &Lin::v(*other), -coefficient.div_euclid(a));
+                    }
+                }
+                st.euclid += 1;
+                (least, replacement, 0)
+            }
         };
-        let (solved, solved_tag, _) = rows.take(id).expect("the row is there");
+        let change = replacement.sub(&Lin::v(value));
         for other in rows.holding(value, st) {
             let (lin, tag, eq) = rows.take(other).expect("a holding row is there");
             let coefficient = lin.coeff(value);
-            let Some(lin) = lin.checked_comb(1, &solved, -coefficient * unit) else {
+            let Some(lin) = lin.checked_comb(1, &change, coefficient) else {
                 st.capacity = true;
                 return Out::Capacity;
             };
             let normal = if eq { norm_eq(lin) } else { norm_le(lin, true) };
             match normal {
                 Norm::Keep(lin) => {
-                    let id = rows.push(lin, tag | solved_tag, eq);
+                    let id = rows.push(lin, tag | replaced_tag, eq);
                     if eq {
                         pending.push(id);
                     }
                 }
                 Norm::True => {}
-                Norm::False => return Out::Contra(tag | solved_tag),
+                Norm::False => return Out::Contra(tag | replaced_tag),
             }
         }
     }
-    for id in unsolved {
+    // What is left as an equality names only the kept variable.
+    for id in 0..rows.rows.len() {
         if let Some((lin, tag, true)) = rows.rows[id].clone() {
             rows.take(id);
             rows.push(lin.scale(-1), tag, false);
             rows.push(lin, tag, false);
         }
+    }
+    if st.use_lp {
+        let les: Vec<Lin> = rows.rows.iter().flatten().map(|(lin, _, _)| lin.clone()).collect();
+        return match lp::solve(&les, keep, st) {
+            Lp::Infeasible => Out::Contra(0),
+            Lp::Feasible | Lp::Unbounded => Out::Open(Vec::new()),
+            Lp::Supremum(numerator, denominator) => {
+                let kept = keep.expect("a supremum has a kept variable");
+                Out::Open(vec![(Lin { t: vec![(kept, denominator)], c: -numerator }, 0)])
+            }
+            Lp::Capacity => {
+                st.capacity = true;
+                Out::Capacity
+            }
+        };
     }
     // One row for each form: the tightest.
     let mut forms: HashMap<Vec<(V, i128)>, usize> = HashMap::new();

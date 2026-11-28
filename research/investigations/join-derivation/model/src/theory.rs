@@ -36,6 +36,11 @@ pub struct Stats {
     pub rule_terms: u64,
     /// The most distinct values in one theory call.
     pub max_atoms: usize,
+    /// Steps of Euclid's algorithm taken on equalities without a unit
+    /// coefficient.
+    pub euclid: u64,
+    /// The terms of the program's own literals.
+    pub prog_terms: u64,
     /// Use the theory step of `indexed.rs`.
     pub indexed: bool,
     pub use_lp: bool,
@@ -63,6 +68,8 @@ impl Stats {
             rule_lits: self.rule_lits - before.rule_lits,
             rule_terms: self.rule_terms - before.rule_terms,
             max_atoms: self.max_atoms,
+            euclid: self.euclid - before.euclid,
+            prog_terms: self.prog_terms,
             indexed: self.indexed,
             use_lp: self.use_lp,
             peak: self.peak,
@@ -259,7 +266,7 @@ pub fn theory(input: &[TL], keep: Option<V>, st: &mut Stats) -> Out {
     atoms.sort_unstable();
     atoms.dedup();
     st.max_atoms = st.max_atoms.max(atoms.len());
-    if st.indexed && !st.use_lp {
+    if st.indexed {
         return crate::indexed::theory(input, keep, st);
     }
     if let Some(deadline) = st.deadline {

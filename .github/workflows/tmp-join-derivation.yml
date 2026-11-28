@@ -31,6 +31,7 @@ jobs:
       matrix:
         include:
           - { name: check, mode: check, part: "0/1" }
+          - { name: props, mode: props, part: "0/1" }
           - { name: dense, mode: dense, part: "0/1" }
           - { name: measure-0, mode: measure, part: "0/4" }
           - { name: measure-1, mode: measure, part: "1/4" }
@@ -41,11 +42,14 @@ jobs:
           - { name: false-0, mode: "false", part: "0/2" }
           - { name: false-1, mode: "false", part: "1/2" }
           - { name: false-inv, mode: "false-inv", part: "0/1" }
-          - { name: big-0, mode: big, part: "0/5" }
-          - { name: big-1, mode: big, part: "1/5" }
-          - { name: big-2, mode: big, part: "2/5" }
-          - { name: big-3, mode: big, part: "3/5" }
-          - { name: big-4, mode: big, part: "4/5" }
+          - { name: big-0, mode: big, part: "0/8" }
+          - { name: big-1, mode: big, part: "1/8" }
+          - { name: big-2, mode: big, part: "2/8" }
+          - { name: big-3, mode: big, part: "3/8" }
+          - { name: big-4, mode: big, part: "4/8" }
+          - { name: big-5, mode: big, part: "5/8" }
+          - { name: big-6, mode: big, part: "6/8" }
+          - { name: big-7, mode: big, part: "7/8" }
     steps:
       - uses: actions/checkout@v4
       - name: Host
@@ -73,6 +77,59 @@ jobs:
         with:
           name: model-${{ matrix.name }}-${{ github.run_id }}
           path: ${{ runner.temp }}/${{ matrix.name }}.csv
+
+  shapes:
+    if: ${{ !contains(github.event.head_commit.message, '[probe-only]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Host
+        run: |
+          lscpu | sed -n '1,16p'
+          clang --version | head -1
+          rustc --version
+      - name: The same shapes in C and Rust
+        run: taskset -c 1 python3 -B research/investigations/join-derivation/probe/shapes.py "$RUNNER_TEMP/shapes" | tee "$RUNNER_TEMP/shapes.csv"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shapes-${{ github.run_id }}
+          path: ${{ runner.temp }}/shapes.csv
+
+  survey:
+    if: ${{ !contains(github.event.head_commit.message, '[probe-only]') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch the sources
+        working-directory: ${{ runner.temp }}
+        run: |
+          curl -sSL -o linux.tar.xz https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.6.tar.xz
+          tar -xf linux.tar.xz
+          curl -sSL -o sqlite.zip https://www.sqlite.org/2024/sqlite-amalgamation-3460000.zip
+          unzip -q sqlite.zip
+          curl -sSL -o cpython.tar.gz https://github.com/python/cpython/archive/refs/tags/v3.12.4.tar.gz
+          tar -xf cpython.tar.gz
+          curl -sSL -o lua.tar.gz https://www.lua.org/ftp/lua-5.4.6.tar.gz
+          tar -xf lua.tar.gz
+          ls
+      - name: Count
+        working-directory: ${{ runner.temp }}
+        run: |
+          S="$GITHUB_WORKSPACE/research/investigations/join-derivation/probe/survey.py"
+          {
+            python3 -B "$S" linux-6.6 linux-6.6
+            python3 -B "$S" sqlite-3.46 sqlite-amalgamation-3460000/sqlite3.c
+            python3 -B "$S" cpython-3.12 cpython-3.12.4
+            python3 -B "$S" lua-5.4 lua-5.4.6/src
+          } | tee survey.csv
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: survey-${{ github.run_id }}
+          path: ${{ runner.temp }}/survey.csv
 
   probe:
     if: ${{ !contains(github.event.head_commit.message, '[model-only]') }}

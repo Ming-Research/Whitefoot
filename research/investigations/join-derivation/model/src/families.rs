@@ -861,6 +861,102 @@ fn bigtag2(size: &Size, tiny: bool) -> Vec<Stmt> {
     out
 }
 
+/// FLAGCHAIN(k) and k joins that need no decision; inside the last flag's
+/// test, `y` plus the k values is at least 5. The k joins stand after the
+/// flags, or before them.
+fn flagnoise_with(size: &Size, tiny: bool, noise_first: bool) -> Vec<Stmt> {
+    let (mut b, mut out) = (B::default(), Vec::new());
+    let (low, high) = flag_range(tiny);
+    let y = fresh(&mut b, &mut out, low, high);
+    let mut goal = k(5).sub(&v(y));
+    let mut ok = 0;
+    for first in [true, false] {
+        if first == noise_first {
+            for _ in 0..size.k {
+                let cond = unknown(&mut b, &mut out);
+                let t = flag(&mut b, &mut out, cond);
+                goal = goal.sub(&v(t));
+            }
+        } else {
+            ok = flag(&mut b, &mut out, k(5).sub(&v(y)));
+            for _ in 1..size.k {
+                ok = flag(&mut b, &mut out, k(1).sub(&v(ok)));
+            }
+        }
+    }
+    out.push(guard(ok, vec![Stmt::Assert("final".into(), goal)]));
+    out
+}
+
+fn flagnoise(size: &Size, tiny: bool) -> Vec<Stmt> {
+    flagnoise_with(size, tiny, false)
+}
+
+fn flagnoise2(size: &Size, tiny: bool) -> Vec<Stmt> {
+    flagnoise_with(size, tiny, true)
+}
+
+/// k pairs: `z = if c { n - 5 } else { n - 3 }` with `n >= 10`; `x <= z`;
+/// `if d { x = 5 }`. Then the sum of every `x - z` is at most 0. The bound
+/// of the second join needs a fact about `n`, which only the first join's
+/// bound names.
+fn psbridge(size: &Size, tiny: bool) -> Vec<Stmt> {
+    let (mut b, mut out) = (B::default(), Vec::new());
+    let mut goal = k(0);
+    for _ in 0..size.k {
+        let n = fresh(&mut b, &mut out, 10, tiny.then_some(11));
+        let cond = unknown(&mut b, &mut out);
+        let (low, high, z) = (b.id(), b.id(), b.id());
+        out.push(iff(cond, vec![Stmt::Let(low, v(n).addk(-5))], vec![Stmt::Let(high, v(n).addk(-3))], vec![(z, vec![low, high], None)]));
+        let x = fresh(&mut b, &mut out, 0, tiny.then_some(8));
+        out.push(Stmt::Assume(le(&v(x), &v(z)), false));
+        let cond = unknown(&mut b, &mut out);
+        let (five, joined) = (b.id(), b.id());
+        out.push(iff(cond, vec![Stmt::Let(five, k(5))], vec![], vec![(joined, vec![five, x], Some(x))]));
+        goal = goal.add(&v(joined)).sub(&v(z));
+    }
+    out.push(Stmt::Assert("final".into(), goal));
+    out
+}
+
+/// `3 * x == 2 * y` and `x <= 5`, so `x` is even and at most 4; then k
+/// times `if c { x = x + 6 }`; then `x <= 4 + 6k`. The equality has no unit
+/// coefficient.
+fn stride(size: &Size, tiny: bool) -> Vec<Stmt> {
+    let (mut b, mut out) = (B::default(), Vec::new());
+    let y = fresh(&mut b, &mut out, 0, Some(if tiny { 7 } else { 1000 }));
+    let mut x = fresh(&mut b, &mut out, 0, Some(5));
+    out.push(Stmt::Assume(v(x).scale(3).sub(&v(y).scale(2)), true));
+    for _ in 0..size.k {
+        x = bump(&mut b, &mut out, x, &k(6));
+    }
+    out.push(Stmt::Assert("final".into(), v(x).addk(-(4 + 6 * size.k as i128))));
+    out
+}
+
+/// SUMOBL where after every 16 steps the sum is stated to be within its
+/// bound and then replaced by a new value that has only that bound: what a
+/// cut that forgets definitions would leave.
+fn sumoblcut(size: &Size, tiny: bool) -> Vec<Stmt> {
+    let (mut b, mut out) = (B::default(), Vec::new());
+    let top = if tiny { 2 } else { 255 };
+    let mut sum = fresh(&mut b, &mut out, 0, Some(top));
+    for step in 0..size.k {
+        let a = fresh(&mut b, &mut out, 0, Some(top));
+        let next = b.id();
+        out.push(Stmt::Let(next, v(sum).add(&v(a))));
+        sum = next;
+        let bound = top * (step as i128 + 2);
+        let name = if step + 1 == size.k { "final".to_owned() } else { format!("step{step}") };
+        out.push(Stmt::Assert(name, v(sum).addk(-bound)));
+        if step % 16 == 15 {
+            out.push(Stmt::Invariant(format!("inv{step}"), v(sum).addk(-bound)));
+            sum = fresh(&mut b, &mut out, 0, Some(bound));
+        }
+    }
+    out
+}
+
 fn ks(list: &[usize]) -> Vec<Size> {
     list.iter().map(|k| Size { k: *k, n: 0 }).collect()
 }
@@ -908,6 +1004,11 @@ pub fn all() -> Vec<Family> {
         family("MIXINV", mixinv),
         family("REL1INV", rel1inv),
         family("FLAGSCUT", flagscut),
+        family("FLAGNOISE", flagnoise),
+        family("FLAGNOISE2", flagnoise2),
+        Family { name: "PSBRIDGE", sizes: ks(&grown), tiny: ks(&[1, 2]), make: psbridge },
+        family("STRIDE", stride),
+        Family { name: "SUMOBLCUT", sizes: ks(&[16, 32, 48, 64, 96, 128]), tiny: ks(&[]), make: sumoblcut },
         family("LIMITCHAIN", limitchain),
         family("SUMOBL", sumobl),
         Family { name: "NESTFACT", sizes: ks(&[1, 2, 3, 4, 6, 8, 16, 32, 64]), tiny: ks(&[1, 2]), make: nestfact },
